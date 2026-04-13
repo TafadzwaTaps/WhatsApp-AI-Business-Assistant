@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WaziBot SaaS</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+  :root{--bg:#0a0f0d;--surface:#111a15;--surface2:#172010;--border:#1f3025;--green:#22c55e;--green-dim:#16a34a;--green-glow:rgba(34,197,94,0.15);--amber:#f59e0b;--red:#ef4444;--blue:#38bdf8;--purple:#a78bfa;--text:#e8f5e9;--text-dim:#6b8f71;--mono:'DM Mono',monospace;--sans:'Syne',sans-serif;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;}
+
+  /* LOGIN */
+  #login-screen{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center;}
+  .login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px 40px;width:400px;text-align:center;}
+  .login-logo{font-size:28px;font-weight:800;color:var(--green);margin-bottom:4px;}
+  .login-sub{font-size:11px;font-family:var(--mono);color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:36px;}
+  .login-box .form-group{text-align:left;margin-bottom:16px;}
+  .login-box label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;}
+  .login-box input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:border-color 0.15s;}
+  .login-box input:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
+  .btn-login{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;margin-top:8px;transition:all 0.15s;}
+  .btn-login:hover{background:var(--green-dim);}
+  .login-error{color:var(--red);font-size:12px;font-family:var(--mono);margin-top:12px;min-height:18px;}
+  .role-badge{display:inline-block;padding:3px 10px;border-radius:4px;font-size:10px;font-family:var(--mono);margin-bottom:20px;}
+  .role-super{background:rgba(167,139,250,0.15);color:var(--purple);border:1px solid rgba(167,139,250,0.3);}
+  .role-business{background:var(--green-glow);color:var(--green);border:1px solid var(--green-dim);}
+
+  /* SIDEBAR */
+  .sidebar{width:230px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:28px 0;position:fixed;top:0;left:0;bottom:0;}
+  .logo{padding:0 24px 20px;border-bottom:1px solid var(--border);}
+  .logo-name{font-size:22px;font-weight:800;color:var(--green);}
+  .logo-sub{font-size:10px;color:var(--text-dim);font-family:var(--mono);letter-spacing:2px;text-transform:uppercase;margin-top:2px;}
+  .logo-role{margin-top:8px;}
+  .nav{padding:20px 12px;display:flex;flex-direction:column;gap:4px;flex:1;}
+  .nav-section{font-size:9px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:2px;padding:8px 12px 4px;}
+  .nav-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--text-dim);transition:all 0.15s;border:none;background:none;width:100%;text-align:left;}
+  .nav-item:hover{background:var(--surface2);color:var(--text);}
+  .nav-item.active{background:var(--green-glow);color:var(--green);}
+  .nav-item.admin-item.active{background:rgba(167,139,250,0.1);color:var(--purple);}
+  .nav-item .icon{font-size:16px;width:20px;text-align:center;}
+  .status-dot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);margin-left:auto;animation:pulse 2s infinite;}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+  .sidebar-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px;}
+  .footer-user{font-size:11px;color:var(--text-dim);font-family:var(--mono);}
+  .btn-logout{background:transparent;border:1px solid rgba(239,68,68,0.3);color:var(--red);padding:8px 12px;border-radius:6px;font-family:var(--mono);font-size:11px;cursor:pointer;}
+  .btn-logout:hover{background:rgba(239,68,68,0.1);}
+
+  /* MAIN */
+  .main{margin-left:230px;flex:1;padding:32px 36px;max-width:calc(100vw - 230px);}
+  .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;}
+  .page-title{font-size:26px;font-weight:800;letter-spacing:-0.5px;}
+  .page-title span{color:var(--green);}
+  .page-title span.purple{color:var(--purple);}
+  .api-badge{display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--mono);color:var(--text-dim);background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;}
+  .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin 0.6s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  /* STATS */
+  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:28px;}
+  .stat-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden;}
+  .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:var(--green);opacity:0.5;}
+  .stat-card.purple::before{background:var(--purple);}
+  .stat-label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;}
+  .stat-value{font-size:32px;font-weight:800;color:var(--green);line-height:1;font-family:var(--mono);}
+  .stat-card.purple .stat-value{color:var(--purple);}
+  .stat-sub{font-size:11px;color:var(--text-dim);margin-top:6px;}
+
+  /* PANELS */
+  .panels{display:grid;grid-template-columns:1fr 1fr;gap:20px;}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .panel.full{grid-column:1/-1;}
+  .panel-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;}
+  .panel-title{font-size:13px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;}
+  .panel-action{font-size:12px;font-family:var(--mono);color:var(--green);background:var(--green-glow);border:1px solid var(--green-dim);padding:5px 12px;border-radius:6px;cursor:pointer;transition:all 0.15s;}
+  .panel-action:hover{background:rgba(34,197,94,0.25);}
+  .panel-body{padding:20px;}
+
+  /* TABLE */
+  table{width:100%;border-collapse:collapse;}
+  th{text-align:left;font-size:10px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1.5px;padding:0 12px 12px;border-bottom:1px solid var(--border);}
+  td{padding:12px;border-bottom:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:var(--surface2);}
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-family:var(--mono);}
+  .badge-green{background:var(--green-glow);color:var(--green);border:1px solid var(--green-dim);}
+  .badge-amber{background:rgba(245,158,11,0.1);color:var(--amber);border:1px solid rgba(245,158,11,0.3);}
+  .badge-red{background:rgba(239,68,68,0.1);color:var(--red);border:1px solid rgba(239,68,68,0.3);}
+  .badge-purple{background:rgba(167,139,250,0.1);color:var(--purple);border:1px solid rgba(167,139,250,0.3);}
+
+  /* FORM */
+  .form-group{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;}
+  label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;}
+  input,textarea,select{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:border-color 0.15s;width:100%;}
+  input:focus,textarea:focus,select:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
+  textarea{resize:vertical;min-height:100px;line-height:1.6;}
+  .btn{padding:10px 20px;border-radius:8px;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer;border:none;transition:all 0.15s;}
+  .btn-primary{background:var(--green);color:#000;}
+  .btn-primary:hover{background:#16a34a;transform:translateY(-1px);}
+  .btn-primary:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
+  .btn-ghost{background:transparent;color:var(--red);border:1px solid rgba(239,68,68,0.3);padding:6px 10px;font-size:11px;}
+  .btn-ghost:hover{background:rgba(239,68,68,0.1);}
+  .btn-purple{background:rgba(167,139,250,0.15);color:var(--purple);border:1px solid rgba(167,139,250,0.3);}
+  .btn-purple:hover{background:rgba(167,139,250,0.25);}
+  .empty{text-align:center;padding:40px;color:var(--text-dim);font-family:var(--mono);font-size:12px;}
+
+  /* BROADCAST */
+  .broadcast-layout{display:grid;grid-template-columns:1fr 320px;gap:20px;}
+  .char-count{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-align:right;margin-top:4px;}
+  .preview-box{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:14px;font-family:var(--mono);font-size:12px;line-height:1.6;min-height:100px;white-space:pre-wrap;color:var(--text);}
+  .broadcast-result{margin-top:14px;padding:12px 16px;border-radius:8px;font-family:var(--mono);font-size:12px;display:none;}
+  .broadcast-result.success{background:var(--green-glow);border:1px solid var(--green-dim);color:var(--green);}
+  .broadcast-result.error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:var(--red);}
+
+  /* CHAT */
+  .chat-layout{display:grid;grid-template-columns:280px 1fr;height:580px;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .contact-list{border-right:1px solid var(--border);overflow-y:auto;}
+  .contact-item{padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;}
+  .contact-item:hover{background:var(--surface2);}
+  .contact-item.active{background:var(--green-glow);}
+  .contact-phone{font-family:var(--mono);font-size:12px;font-weight:600;}
+  .contact-preview{font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .contact-time{font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:2px;}
+  .chat-window{display:flex;flex-direction:column;}
+  .chat-header{padding:16px 20px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:13px;color:var(--text-dim);}
+  .chat-header span{color:var(--green);font-weight:600;}
+  .chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;}
+  .msg{max-width:72%;padding:10px 14px;border-radius:12px;font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre-wrap;}
+  .msg-in{background:var(--surface2);border:1px solid var(--border);align-self:flex-start;border-bottom-left-radius:4px;}
+  .msg-out{background:var(--green-glow);border:1px solid var(--green-dim);color:var(--green);align-self:flex-end;border-bottom-right-radius:4px;}
+  .msg-broadcast{background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.3);color:var(--purple);align-self:flex-end;border-bottom-right-radius:4px;}
+  .msg-time{font-size:10px;color:var(--text-dim);margin-top:4px;}
+  .chat-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:12px;}
+
+  /* MODAL */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:50;display:none;align-items:center;justify-content:center;}
+  .modal-overlay.open{display:flex;}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:480px;max-width:90vw;}
+  .modal-title{font-size:18px;font-weight:800;margin-bottom:24px;}
+  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;}
+
+  /* TOAST */
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--green-dim);border-left:3px solid var(--green);padding:14px 20px;border-radius:8px;font-size:13px;font-family:var(--mono);color:var(--green);transform:translateY(80px);opacity:0;transition:all 0.3s cubic-bezier(.34,1.56,.64,1);z-index:200;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .section{display:none;}
+  .section.active{display:block;}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">WaziBot</div>
+    <div class="login-sub">SaaS Platform</div>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" id="login-username" placeholder="admin or business username"/>
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="login-password" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter') doLogin()"/>
+    </div>
+    <button class="btn-login" onclick="doLogin()">Sign In →</button>
+    <div class="login-error" id="login-error"></div>
+  </div>
+</div>
+
+<!-- ADD BUSINESS MODAL -->
+<div class="modal-overlay" id="add-business-modal">
+  <div class="modal">
+    <div class="modal-title">➕ Add New Business</div>
+    <div class="form-group"><label>Business Name</label><input type="text" id="b-name" placeholder="e.g. Mama's Kitchen"/></div>
+    <div class="form-row">
+      <div class="form-group"><label>Username</label><input type="text" id="b-username" placeholder="mamaskitchen"/></div>
+      <div class="form-group"><label>Password</label><input type="text" id="b-password" placeholder="their login password"/></div>
+    </div>
+    <div class="form-group"><label>WhatsApp Phone Number ID</label><input type="text" id="b-phone-id" placeholder="From Meta dashboard"/></div>
+    <div class="form-group"><label>WhatsApp Access Token</label><input type="text" id="b-token" placeholder="EAAn..."/></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="createBusiness()">Create Business</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-name">WaziBot</div>
+    <div class="logo-sub" id="sidebar-role-label">Dashboard</div>
+    <div class="logo-role" id="sidebar-role-badge"></div>
+  </div>
+  <nav class="nav" id="sidebar-nav">
+    <!-- injected by JS based on role -->
+  </nav>
+  <div class="sidebar-footer">
+    <div class="footer-user" id="footer-user"></div>
+    <div class="api-badge" style="margin:0;padding:6px 10px;font-size:10px;"><span class="spin"></span><span id="api-status-text" style="margin-left:4px;">Connecting...</span></div>
+    <button class="btn-logout" onclick="logout()">⏻ Sign Out</button>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+
+  <!-- SUPERADMIN: OVERVIEW -->
+  <div id="section-admin-overview" class="section">
+    <div class="topbar">
+      <div class="page-title">Platform <span class="purple">Overview</span></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card purple"><div class="stat-label">Businesses</div><div class="stat-value" id="sa-stat-businesses">—</div><div class="stat-sub">Registered clients</div></div>
+      <div class="stat-card purple"><div class="stat-label">Active</div><div class="stat-value" id="sa-stat-active">—</div><div class="stat-sub">Running bots</div></div>
+      <div class="stat-card purple"><div class="stat-label">Total Orders</div><div class="stat-value" id="sa-stat-orders">—</div><div class="stat-sub">Across all clients</div></div>
+      <div class="stat-card purple"><div class="stat-label">Revenue Processed</div><div class="stat-value" id="sa-stat-revenue">—</div><div class="stat-sub">All businesses</div></div>
+    </div>
+    <div class="panel full">
+      <div class="panel-header">
+        <div class="panel-title">All Businesses</div>
+        <button class="panel-action" style="color:var(--purple);background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.3);" onclick="showSection('admin-businesses',null)">Manage →</button>
+      </div>
+      <div class="panel-body">
+        <table>
+          <thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody id="admin-businesses-overview"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SUPERADMIN: BUSINESSES -->
+  <div id="section-admin-businesses" class="section">
+    <div class="topbar">
+      <div class="page-title">Manage <span class="purple">Businesses</span></div>
+      <button class="btn btn-purple" onclick="openModal()">➕ Add Business</button>
+    </div>
+    <div class="panel full">
+      <div class="panel-header">
+        <div class="panel-title">All Clients</div>
+        <button class="panel-action" onclick="loadAdminBusinesses()">↻ Refresh</button>
+      </div>
+      <div class="panel-body">
+        <table>
+          <thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="admin-businesses-table"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUSINESS: OVERVIEW -->
+  <div id="section-overview" class="section">
+    <div class="topbar">
+      <div class="page-title">Dashboard <span>Overview</span></div>
+      <div class="api-badge"><span class="spin"></span><span id="biz-name-header">Loading...</span></div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
+      <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
+      <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
+      <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
+    </div>
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title">Recent Orders</div><button class="panel-action" onclick="showSection('orders',null)">View All →</button></div>
+      <div class="panel-body">
+        <table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Time</th></tr></thead>
+        <tbody id="recent-orders-body"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUSINESS: ORDERS -->
+  <div id="section-orders" class="section">
+    <div class="topbar"><div class="page-title">All <span>Orders</span></div></div>
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title">Order History</div><button class="panel-action" onclick="loadOrders()">↻ Refresh</button></div>
+      <div class="panel-body">
+        <table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Time</th></tr></thead>
+        <tbody id="orders-body"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUSINESS: PRODUCTS -->
+  <div id="section-products" class="section">
+    <div class="topbar"><div class="page-title">Manage <span>Products</span></div></div>
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Add Product</div></div>
+        <div class="panel-body">
+          <div class="form-row">
+            <div class="form-group"><label>Name</label><input type="text" id="product-name" placeholder="e.g. Sadza"/></div>
+            <div class="form-group"><label>Price (USD)</label><input type="number" id="product-price" placeholder="2.50" step="0.01"/></div>
+          </div>
+          <button class="btn btn-primary" onclick="addProduct()">+ Add to Menu</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Current Menu</div><button class="panel-action" onclick="loadProducts()">↻ Refresh</button></div>
+        <div class="panel-body">
+          <table><thead><tr><th>Product</th><th>Price</th><th>Action</th></tr></thead>
+          <tbody id="products-body"><tr><td colspan="3"><div class="empty">Loading...</div></td></tr></tbody></table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUSINESS: CONVERSATIONS -->
+  <div id="section-conversations" class="section">
+    <div class="topbar"><div class="page-title">Customer <span>Conversations</span></div><button class="panel-action" onclick="loadConversations()">↻ Refresh</button></div>
+    <div class="chat-layout">
+      <div class="contact-list" id="contact-list"><div class="empty">Loading...</div></div>
+      <div class="chat-window" id="chat-window">
+        <div class="chat-header">Select a conversation</div>
+        <div class="chat-empty">👈 Pick a customer</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BUSINESS: BROADCAST -->
+  <div id="section-broadcast" class="section">
+    <div class="topbar"><div class="page-title">📢 <span>Broadcast</span></div></div>
+    <div class="broadcast-layout">
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Compose</div></div>
+        <div class="panel-body">
+          <div class="form-group">
+            <label>Message</label>
+            <textarea id="broadcast-msg" placeholder="Type your broadcast message..." oninput="updatePreview()"></textarea>
+            <div class="char-count" id="char-count">0 / 1024</div>
+          </div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+            <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🔥 Special offer today! Reply menu to order.')">🔥 Promo</button>
+            <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('📦 Back in stock! Reply menu to see what\'s available.')">📦 Restock</button>
+            <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🙏 Thank you for your support! Reply menu to order anytime.')">🙏 Thanks</button>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <button class="btn btn-primary" id="send-btn" onclick="sendBroadcast()">📢 Send to All</button>
+            <span id="recipient-count" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">Loading...</span>
+          </div>
+          <div class="broadcast-result" id="broadcast-result"></div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Preview</div></div>
+          <div class="panel-body"><div class="preview-box" id="preview-box" style="color:var(--text-dim);font-style:italic;">Message preview...</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Recipients</div><button class="panel-action" onclick="loadCustomers()">↻</button></div>
+          <div class="panel-body"><div id="recipient-list"><div class="empty">Loading...</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'http://127.0.0.1:8000';
+let token = localStorage.getItem('wazibot_token');
+let userRole = localStorage.getItem('wazibot_role');
+let userName = localStorage.getItem('wazibot_user');
+let bizName = localStorage.getItem('wazibot_biz');
+let activePhone = null;
+let customerPhones = [];
+
+// ── AUTH ──────────────────────────────────────────────────
+async function doLogin() {
+  const username = document.getElementById('login-username').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  if (!username || !password) { errEl.textContent = 'Enter credentials'; return; }
+  try {
+    const res = await fetch(`${API}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+    });
+    if (!res.ok) { errEl.textContent = 'Invalid username or password'; return; }
+    const data = await res.json();
+    token = data.access_token;
+    userRole = data.role;
+    userName = username;
+    bizName = data.business_name || '';
+    localStorage.setItem('wazibot_token', token);
+    localStorage.setItem('wazibot_role', userRole);
+    localStorage.setItem('wazibot_user', userName);
+    localStorage.setItem('wazibot_biz', bizName);
+    document.getElementById('login-screen').style.display = 'none';
+    init();
+  } catch(e) { errEl.textContent = 'Cannot reach server'; }
+}
+
+function logout() {
+  ['wazibot_token','wazibot_role','wazibot_user','wazibot_biz'].forEach(k => localStorage.removeItem(k));
+  token = userRole = userName = bizName = null;
+  document.getElementById('login-screen').style.display = 'flex';
+}
+
+// ── SIDEBAR ───────────────────────────────────────────────
+function buildSidebar() {
+  const nav = document.getElementById('sidebar-nav');
+  document.getElementById('footer-user').textContent = userName;
+
+  if (userRole === 'superadmin') {
+    document.getElementById('sidebar-role-label').textContent = 'Super Admin';
+    document.getElementById('sidebar-role-badge').innerHTML = '<span class="badge badge-purple">SUPERADMIN</span>';
+    nav.innerHTML = `
+      <div class="nav-section">Platform</div>
+      <button class="nav-item admin-item active" onclick="showSection('admin-overview',this)"><span class="icon">🌐</span> Overview <span class="status-dot"></span></button>
+      <button class="nav-item admin-item" onclick="showSection('admin-businesses',this)"><span class="icon">🏢</span> Businesses</button>`;
+  } else {
+    document.getElementById('sidebar-role-label').textContent = bizName || 'Business';
+    document.getElementById('sidebar-role-badge').innerHTML = '<span class="badge badge-green">BUSINESS</span>';
+    nav.innerHTML = `
+      <div class="nav-section">Dashboard</div>
+      <button class="nav-item active" onclick="showSection('overview',this)"><span class="icon">📊</span> Overview <span class="status-dot"></span></button>
+      <button class="nav-item" onclick="showSection('orders',this)"><span class="icon">🛒</span> Orders</button>
+      <button class="nav-item" onclick="showSection('products',this)"><span class="icon">📦</span> Products</button>
+      <button class="nav-item" onclick="showSection('conversations',this)"><span class="icon">💬</span> Conversations</button>
+      <button class="nav-item" onclick="showSection('broadcast',this)"><span class="icon">📢</span> Broadcast</button>`;
+    if (bizName) document.getElementById('biz-name-header').textContent = bizName;
+  }
+}
+
+// ── NAV ───────────────────────────────────────────────────
+function showSection(name, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+  if (name === 'admin-overview' || name === 'admin-businesses') loadAdminData();
+  if (name === 'orders') loadOrders();
+  if (name === 'products') loadProducts();
+  if (name === 'conversations') loadConversations();
+  if (name === 'broadcast') loadCustomers();
+}
+
+// ── TOAST ─────────────────────────────────────────────────
+function toast(msg, isError=false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderLeftColor = isError ? 'var(--red)' : 'var(--green)';
+  t.style.color = isError ? 'var(--red)' : 'var(--green)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ── API ───────────────────────────────────────────────────
+async function apiFetch(path, opts={}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    ...opts
+  });
+  if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// ── SUPERADMIN ────────────────────────────────────────────
+async function loadAdminData() {
+  try {
+    const [stats, businesses] = await Promise.all([
+      apiFetch('/admin/stats'),
+      apiFetch('/admin/businesses')
+    ]);
+    document.getElementById('sa-stat-businesses').textContent = stats.businesses;
+    document.getElementById('sa-stat-active').textContent = stats.active_businesses;
+    document.getElementById('sa-stat-orders').textContent = stats.total_orders;
+    document.getElementById('sa-stat-revenue').textContent = '$' + stats.total_revenue.toFixed(2);
+    renderBusinessTable(businesses, 'admin-businesses-overview', false);
+    renderBusinessTable(businesses, 'admin-businesses-table', true);
+  } catch(e) { toast('Failed to load admin data: ' + e.message, true); }
+}
+
+function renderBusinessTable(businesses, bodyId, showActions) {
+  const tbody = document.getElementById(bodyId);
+  if (!businesses.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses yet.</div></td></tr>`; return; }
+  tbody.innerHTML = businesses.map(b => `
+    <tr>
+      <td><span class="badge badge-purple">#${b.id}</span></td>
+      <td><strong>${b.name}</strong></td>
+      <td><span class="badge badge-amber">${b.owner_username}</span></td>
+      <td style="color:var(--text-dim)">${b.whatsapp_phone_id || '—'}</td>
+      <td><span class="badge ${b.is_active?'badge-green':'badge-red'}">${b.is_active?'Active':'Suspended'}</span></td>
+      <td>${showActions ? `
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-ghost" style="color:var(--amber);border-color:rgba(245,158,11,0.3);" onclick="toggleBusiness(${b.id},${b.is_active})">${b.is_active?'Suspend':'Activate'}</button>
+          <button class="btn btn-ghost" onclick="deleteBusiness(${b.id})">✕ Delete</button>
+        </div>` : (b.created_at ? fmtTime(b.created_at) : '—')}</td>
+    </tr>`).join('');
+}
+
+function openModal() { document.getElementById('add-business-modal').classList.add('open'); }
+function closeModal() { document.getElementById('add-business-modal').classList.remove('open'); }
+
+async function createBusiness() {
+  const name = document.getElementById('b-name').value.trim();
+  const username = document.getElementById('b-username').value.trim();
+  const password = document.getElementById('b-password').value.trim();
+  const phoneId = document.getElementById('b-phone-id').value.trim();
+  const btoken = document.getElementById('b-token').value.trim();
+  if (!name || !username || !password) { toast('Name, username and password required', true); return; }
+  try {
+    await apiFetch('/admin/businesses', { method: 'POST', body: JSON.stringify({ name, owner_username: username, owner_password: password, whatsapp_phone_id: phoneId || null, whatsapp_token: btoken || null }) });
+    toast(`✅ ${name} created`);
+    closeModal();
+    ['b-name','b-username','b-password','b-phone-id','b-token'].forEach(id => document.getElementById(id).value='');
+    loadAdminData();
+  } catch(e) { toast('Failed: ' + e.message, true); }
+}
+
+async function toggleBusiness(id, currentlyActive) {
+  try {
+    await apiFetch(`/admin/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: !currentlyActive }) });
+    toast(currentlyActive ? 'Business suspended' : 'Business activated');
+    loadAdminData();
+  } catch(e) { toast('Failed', true); }
+}
+
+async function deleteBusiness(id) {
+  if (!confirm('Delete this business and ALL their data?')) return;
+  try {
+    await apiFetch(`/admin/businesses/${id}`, { method: 'DELETE' });
+    toast('Business deleted');
+    loadAdminData();
+  } catch(e) { toast('Failed', true); }
+}
+
+// ── BUSINESS: ORDERS ──────────────────────────────────────
+async function loadOrders() {
+  try {
+    const orders = await apiFetch('/orders');
+    renderOrders(orders, 'orders-body');
+    renderOrders(orders.slice(0,5), 'recent-orders-body');
+    document.getElementById('stat-orders').textContent = orders.length;
+    document.getElementById('stat-revenue').textContent = '$' + orders.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
+  } catch(e) {
+    ['orders-body','recent-orders-body'].forEach(id=>document.getElementById(id).innerHTML=`<tr><td colspan="6"><div class="empty">⚠ ${e.message}</div></td></tr>`);
+  }
+}
+
+function renderOrders(orders, bodyId) {
+  const tbody = document.getElementById(bodyId);
+  if (!orders||!orders.length){tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No orders yet.</div></td></tr>`;return;}
+  tbody.innerHTML=orders.map(o=>`<tr><td><span class="badge badge-amber">#${o.id}</span></td><td>${o.customer_phone}</td><td>${o.product_name}</td><td>${o.quantity}</td><td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td><td>${o.created_at?fmtTime(o.created_at):'—'}</td></tr>`).join('');
+}
+
+// ── BUSINESS: PRODUCTS ────────────────────────────────────
+async function loadProducts() {
+  try {
+    const products = await apiFetch('/products');
+    document.getElementById('stat-products').textContent = products.length;
+    const tbody = document.getElementById('products-body');
+    if (!products.length){tbody.innerHTML=`<tr><td colspan="3"><div class="empty">No products.</div></td></tr>`;return;}
+    tbody.innerHTML=products.map(p=>`<tr><td>${p.name}</td><td><span class="badge badge-green">$${p.price.toFixed(2)}</span></td><td><button class="btn btn-ghost" onclick="deleteProduct(${p.id})">✕</button></td></tr>`).join('');
+  } catch(e){document.getElementById('products-body').innerHTML=`<tr><td colspan="3"><div class="empty">⚠ ${e.message}</div></td></tr>`;}
+}
+
+async function addProduct() {
+  const name=document.getElementById('product-name').value.trim();
+  const price=parseFloat(document.getElementById('product-price').value);
+  if (!name||isNaN(price)||price<=0){toast('Enter valid name and price',true);return;}
+  try{await apiFetch('/products',{method:'POST',body:JSON.stringify({name,price})});document.getElementById('product-name').value='';document.getElementById('product-price').value='';toast(`✅ ${name} added`);loadProducts();}
+  catch(e){toast('Failed',true);}
+}
+
+async function deleteProduct(id){
+  try{await apiFetch(`/products/${id}`,{method:'DELETE'});toast('Removed');loadProducts();}
+  catch(e){toast('Failed',true);}
+}
+
+// ── BUSINESS: CONVERSATIONS ───────────────────────────────
+async function loadConversations() {
+  try {
+    const convos = await apiFetch('/conversations');
+    document.getElementById('stat-customers').textContent = convos.length;
+    const list = document.getElementById('contact-list');
+    if (!convos.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
+    list.innerHTML=convos.map(c=>`<div class="contact-item ${c.phone===activePhone?'active':''}" onclick="openChat('${c.phone}',this)"><div class="contact-phone">${c.phone}</div><div class="contact-preview">${c.direction==='in'?'👤':'🤖'} ${escHtml(c.message)}</div><div class="contact-time">${c.created_at?fmtTime(c.created_at):''}</div></div>`).join('');
+  } catch(e){document.getElementById('contact-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
+}
+
+async function openChat(phone,el) {
+  activePhone=phone;
+  document.querySelectorAll('.contact-item').forEach(i=>i.classList.remove('active'));
+  if(el)el.classList.add('active');
+  const win=document.getElementById('chat-window');
+  win.innerHTML=`<div class="chat-header">Chat with <span>${phone}</span></div><div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>`;
+  try{
+    const msgs=await apiFetch(`/conversations/${phone}`);
+    const c=document.getElementById('chat-msgs');
+    if(!msgs.length){c.innerHTML='<div class="empty">No messages.</div>';return;}
+    c.innerHTML=msgs.map(m=>{const isBc=m.message.startsWith('[BROADCAST]');const cls=isBc?'msg-broadcast':`msg-${m.direction}`;const txt=isBc?'📢 '+escHtml(m.message.replace('[BROADCAST] ','')):escHtml(m.message);return`<div class="msg ${cls}">${txt}<div class="msg-time">${m.created_at?fmtTime(m.created_at):''}</div></div>`;}).join('');
+    c.scrollTop=c.scrollHeight;
+  } catch(e){document.getElementById('chat-msgs').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
+}
+
+// ── BUSINESS: BROADCAST ───────────────────────────────────
+async function loadCustomers(){
+  try{
+    const data=await apiFetch('/customers');
+    customerPhones=data.phones||[];
+    document.getElementById('recipient-count').textContent=customerPhones.length?`Will send to ${customerPhones.length} customer${customerPhones.length>1?'s':''}`:'No customers yet';
+    const el=document.getElementById('recipient-list');
+    el.innerHTML=customerPhones.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;">${customerPhones.map(p=>`<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${p}</span>`).join('')}</div>`:'<div class="empty">No customers yet.</div>';
+  } catch(e){document.getElementById('recipient-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
+}
+
+function updatePreview(){const msg=document.getElementById('broadcast-msg').value;document.getElementById('preview-box').innerHTML=msg?escHtml(msg):'<span style="color:var(--text-dim);font-style:italic;">Message preview...</span>';document.getElementById('char-count').textContent=`${msg.length} / 1024`;}
+function setTpl(t){document.getElementById('broadcast-msg').value=t;updatePreview();}
+
+async function sendBroadcast(){
+  const msg=document.getElementById('broadcast-msg').value.trim();
+  if(!msg){toast('Write a message first',true);return;}
+  if(customerPhones.length===0){toast('No customers to send to',true);return;}
+  if(!confirm(`Send to ${customerPhones.length} customer(s)?`))return;
+  const btn=document.getElementById('send-btn');
+  const result=document.getElementById('broadcast-result');
+  btn.disabled=true;result.style.display='none';
+  try{
+    const data=await apiFetch('/broadcast',{method:'POST',body:JSON.stringify({message:msg})});
+    result.style.display='block';
+    if(data.failed===0){result.className='broadcast-result success';result.textContent=`✅ Sent to ${data.sent} customer${data.sent>1?'s':''}!`;toast(`📢 Broadcast sent to ${data.sent}!`);document.getElementById('broadcast-msg').value='';updatePreview();}
+    else{result.className='broadcast-result error';result.textContent=`Sent: ${data.sent} | Failed: ${data.failed}`;}
+  } catch(e){result.style.display='block';result.className='broadcast-result error';result.textContent=`❌ ${e.message}`;}
+  btn.disabled=false;
+}
+
+// ── UTILS ─────────────────────────────────────────────────
+function fmtTime(iso){try{return new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '';}}
+function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+// ── STATUS ────────────────────────────────────────────────
+async function checkStatus(){
+  try{const r=await fetch(`${API}/`);document.getElementById('api-status-text').textContent=r.ok?'API Online':'API Error';}
+  catch{document.getElementById('api-status-text').textContent='API Offline';}
+}
+
+// ── INIT ──────────────────────────────────────────────────
+function init(){
+  buildSidebar();
+  checkStatus();
+  if(userRole==='superadmin'){loadAdminData();}
+  else{loadOrders();loadProducts();loadConversations();}
+}
+
+if(token&&userRole){document.getElementById('login-screen').style.display='none';init();}
+</script>
+</body>
+</html>
