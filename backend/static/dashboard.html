@@ -12,19 +12,22 @@
 
   /* LOGIN */
   #login-screen{position:fixed;inset:0;z-index:100;background:var(--bg);display:flex;align-items:center;justify-content:center;}
-  .login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px 40px;width:400px;text-align:center;}
-  .login-logo{font-size:28px;font-weight:800;color:var(--green);margin-bottom:4px;}
-  .login-sub{font-size:11px;font-family:var(--mono);color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:36px;}
-  .login-box .form-group{text-align:left;margin-bottom:16px;}
-  .login-box label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;}
+  .login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:48px 40px;width:420px;}
+  .login-logo{font-size:28px;font-weight:800;color:var(--green);margin-bottom:4px;text-align:center;}
+  .login-sub{font-size:11px;font-family:var(--mono);color:var(--text-dim);letter-spacing:2px;text-transform:uppercase;margin-bottom:8px;text-align:center;}
+  .login-tabs{display:flex;gap:0;margin-bottom:28px;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .login-tab{flex:1;padding:10px;text-align:center;cursor:pointer;font-size:12px;font-weight:700;color:var(--text-dim);background:none;border:none;transition:all 0.15s;font-family:var(--sans);}
+  .login-tab.active{background:var(--green-glow);color:var(--green);}
+  .login-form{display:none;}
+  .login-form.active{display:block;}
+  .form-group{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
+  label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;}
   .login-box input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:border-color 0.15s;}
   .login-box input:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
-  .btn-login{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;margin-top:8px;transition:all 0.15s;}
+  .btn-login{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;margin-top:4px;transition:all 0.15s;}
   .btn-login:hover{background:var(--green-dim);}
-  .login-error{color:var(--red);font-size:12px;font-family:var(--mono);margin-top:12px;min-height:18px;}
-  .role-badge{display:inline-block;padding:3px 10px;border-radius:4px;font-size:10px;font-family:var(--mono);margin-bottom:20px;}
-  .role-super{background:rgba(167,139,250,0.15);color:var(--purple);border:1px solid rgba(167,139,250,0.3);}
-  .role-business{background:var(--green-glow);color:var(--green);border:1px solid var(--green-dim);}
+  .login-error{color:var(--red);font-size:12px;font-family:var(--mono);margin-top:10px;min-height:18px;text-align:center;}
+  .pw-hint{font-size:10px;font-family:var(--mono);color:var(--text-dim);margin-top:3px;}
 
   /* SIDEBAR */
   .sidebar{width:230px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:28px 0;position:fixed;top:0;left:0;bottom:0;}
@@ -43,7 +46,8 @@
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
   .sidebar-footer{padding:16px 24px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:6px;}
   .footer-user{font-size:11px;color:var(--text-dim);font-family:var(--mono);}
-  .btn-logout{background:transparent;border:1px solid rgba(239,68,68,0.3);color:var(--red);padding:8px 12px;border-radius:6px;font-family:var(--mono);font-size:11px;cursor:pointer;}
+  .api-indicator{display:flex;align-items:center;gap:6px;font-size:10px;font-family:var(--mono);color:var(--text-dim);}
+  .btn-logout{background:transparent;border:1px solid rgba(239,68,68,0.3);color:var(--red);padding:8px 12px;border-radius:6px;font-family:var(--mono);font-size:11px;cursor:pointer;transition:all 0.15s;}
   .btn-logout:hover{background:rgba(239,68,68,0.1);}
 
   /* MAIN */
@@ -52,7 +56,6 @@
   .page-title{font-size:26px;font-weight:800;letter-spacing:-0.5px;}
   .page-title span{color:var(--green);}
   .page-title span.purple{color:var(--purple);}
-  .api-badge{display:flex;align-items:center;gap:8px;font-size:12px;font-family:var(--mono);color:var(--text-dim);background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;}
   .spin{display:inline-block;width:10px;height:10px;border:2px solid var(--border);border-top-color:var(--green);border-radius:50%;animation:spin 0.6s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg)}}
 
@@ -89,9 +92,8 @@
   .badge-purple{background:rgba(167,139,250,0.1);color:var(--purple);border:1px solid rgba(167,139,250,0.3);}
 
   /* FORM */
-  .form-group{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
+  .form-group-inline{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
   .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;}
-  label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;}
   input,textarea,select{background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:border-color 0.15s;width:100%;}
   input:focus,textarea:focus,select:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
   textarea{resize:vertical;min-height:100px;line-height:1.6;}
@@ -101,7 +103,7 @@
   .btn-primary:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
   .btn-ghost{background:transparent;color:var(--red);border:1px solid rgba(239,68,68,0.3);padding:6px 10px;font-size:11px;}
   .btn-ghost:hover{background:rgba(239,68,68,0.1);}
-  .btn-purple{background:rgba(167,139,250,0.15);color:var(--purple);border:1px solid rgba(167,139,250,0.3);}
+  .btn-purple{background:rgba(167,139,250,0.15);color:var(--purple);border:1px solid rgba(167,139,250,0.3);padding:10px 20px;}
   .btn-purple:hover{background:rgba(167,139,250,0.25);}
   .empty{text-align:center;padding:40px;color:var(--text-dim);font-family:var(--mono);font-size:12px;}
 
@@ -136,12 +138,12 @@
   /* MODAL */
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:50;display:none;align-items:center;justify-content:center;}
   .modal-overlay.open{display:flex;}
-  .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:480px;max-width:90vw;}
+  .modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:32px;width:500px;max-width:90vw;}
   .modal-title{font-size:18px;font-weight:800;margin-bottom:24px;}
   .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:20px;}
 
   /* TOAST */
-  .toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--green-dim);border-left:3px solid var(--green);padding:14px 20px;border-radius:8px;font-size:13px;font-family:var(--mono);color:var(--green);transform:translateY(80px);opacity:0;transition:all 0.3s cubic-bezier(.34,1.56,.64,1);z-index:200;}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1px solid var(--green-dim);border-left:3px solid var(--green);padding:14px 20px;border-radius:8px;font-size:13px;font-family:var(--mono);color:var(--green);transform:translateY(80px);opacity:0;transition:all 0.3s cubic-bezier(.34,1.56,.64,1);z-index:200;max-width:360px;}
   .toast.show{transform:translateY(0);opacity:1;}
   .section{display:none;}
   .section.active{display:block;}
@@ -154,31 +156,70 @@
   <div class="login-box">
     <div class="login-logo">WaziBot</div>
     <div class="login-sub">SaaS Platform</div>
-    <div class="form-group">
-      <label>Username</label>
-      <input type="text" id="login-username" placeholder="admin or business username"/>
+
+    <div class="login-tabs">
+      <button class="login-tab active" onclick="switchTab('login')">Sign In</button>
+      <button class="login-tab" onclick="switchTab('register')">Register Business</button>
     </div>
-    <div class="form-group">
-      <label>Password</label>
-      <input type="password" id="login-password" placeholder="••••••••"
-             onkeydown="if(event.key==='Enter') doLogin()"/>
+
+    <!-- Sign In -->
+    <div class="login-form active" id="tab-login">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="login-username" placeholder="your username" autocomplete="username"/>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="login-password" placeholder="••••••••"
+               onkeydown="if(event.key==='Enter') doLogin()"/>
+      </div>
+      <button class="btn-login" onclick="doLogin()">Sign In →</button>
     </div>
-    <button class="btn-login" onclick="doLogin()">Sign In →</button>
+
+    <!-- Register -->
+    <div class="login-form" id="tab-register">
+      <div class="form-group">
+        <label>Business Name</label>
+        <input type="text" id="reg-bizname" placeholder="e.g. Mama's Kitchen"/>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Username</label>
+          <input type="text" id="reg-username" placeholder="mamaskitchen"/>
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="reg-password" placeholder="Min 8 chars, 1 upper, 1 number"/>
+          <div class="pw-hint">Min 8 chars • 1 uppercase • 1 number</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input type="password" id="reg-confirm" placeholder="Repeat password"
+               onkeydown="if(event.key==='Enter') doRegister()"/>
+      </div>
+      <div class="form-group">
+        <label>WhatsApp Phone Number ID <span style="color:var(--text-dim)">(optional — add later)</span></label>
+        <input type="text" id="reg-phoneid" placeholder="From Meta dashboard"/>
+      </div>
+      <button class="btn-login" onclick="doRegister()">Create Account →</button>
+    </div>
+
     <div class="login-error" id="login-error"></div>
   </div>
 </div>
 
-<!-- ADD BUSINESS MODAL -->
+<!-- ADD BUSINESS MODAL (superadmin) -->
 <div class="modal-overlay" id="add-business-modal">
   <div class="modal">
     <div class="modal-title">➕ Add New Business</div>
-    <div class="form-group"><label>Business Name</label><input type="text" id="b-name" placeholder="e.g. Mama's Kitchen"/></div>
+    <div class="form-group-inline"><label>Business Name</label><input type="text" id="b-name" placeholder="e.g. Mama's Kitchen"/></div>
     <div class="form-row">
-      <div class="form-group"><label>Username</label><input type="text" id="b-username" placeholder="mamaskitchen"/></div>
-      <div class="form-group"><label>Password</label><input type="text" id="b-password" placeholder="their login password"/></div>
+      <div class="form-group-inline"><label>Username</label><input type="text" id="b-username" placeholder="mamaskitchen"/></div>
+      <div class="form-group-inline"><label>Password</label><input type="text" id="b-password" placeholder="Temporary password"/></div>
     </div>
-    <div class="form-group"><label>WhatsApp Phone Number ID</label><input type="text" id="b-phone-id" placeholder="From Meta dashboard"/></div>
-    <div class="form-group"><label>WhatsApp Access Token</label><input type="text" id="b-token" placeholder="EAAn..."/></div>
+    <div class="form-group-inline"><label>WhatsApp Phone Number ID</label><input type="text" id="b-phone-id" placeholder="From Meta dashboard"/></div>
+    <div class="form-group-inline"><label>WhatsApp Access Token</label><input type="text" id="b-token" placeholder="EAAn..."/></div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="createBusiness()">Create Business</button>
@@ -193,12 +234,10 @@
     <div class="logo-sub" id="sidebar-role-label">Dashboard</div>
     <div class="logo-role" id="sidebar-role-badge"></div>
   </div>
-  <nav class="nav" id="sidebar-nav">
-    <!-- injected by JS based on role -->
-  </nav>
+  <nav class="nav" id="sidebar-nav"></nav>
   <div class="sidebar-footer">
     <div class="footer-user" id="footer-user"></div>
-    <div class="api-badge" style="margin:0;padding:6px 10px;font-size:10px;"><span class="spin"></span><span id="api-status-text" style="margin-left:4px;">Connecting...</span></div>
+    <div class="api-indicator"><span class="spin" id="api-spin"></span><span id="api-status-text">Connecting...</span></div>
     <button class="btn-logout" onclick="logout()">⏻ Sign Out</button>
   </div>
 </aside>
@@ -206,56 +245,41 @@
 <!-- MAIN -->
 <main class="main">
 
-  <!-- SUPERADMIN: OVERVIEW -->
+  <!-- SUPERADMIN OVERVIEW -->
   <div id="section-admin-overview" class="section">
-    <div class="topbar">
-      <div class="page-title">Platform <span class="purple">Overview</span></div>
-    </div>
+    <div class="topbar"><div class="page-title">Platform <span class="purple">Overview</span></div></div>
     <div class="stats-grid">
-      <div class="stat-card purple"><div class="stat-label">Businesses</div><div class="stat-value" id="sa-stat-businesses">—</div><div class="stat-sub">Registered clients</div></div>
-      <div class="stat-card purple"><div class="stat-label">Active</div><div class="stat-value" id="sa-stat-active">—</div><div class="stat-sub">Running bots</div></div>
-      <div class="stat-card purple"><div class="stat-label">Total Orders</div><div class="stat-value" id="sa-stat-orders">—</div><div class="stat-sub">Across all clients</div></div>
-      <div class="stat-card purple"><div class="stat-label">Revenue Processed</div><div class="stat-value" id="sa-stat-revenue">—</div><div class="stat-sub">All businesses</div></div>
+      <div class="stat-card purple"><div class="stat-label">Businesses</div><div class="stat-value" id="sa-businesses">—</div><div class="stat-sub">Registered</div></div>
+      <div class="stat-card purple"><div class="stat-label">Active</div><div class="stat-value" id="sa-active">—</div><div class="stat-sub">Running bots</div></div>
+      <div class="stat-card purple"><div class="stat-label">Total Orders</div><div class="stat-value" id="sa-orders">—</div><div class="stat-sub">All clients</div></div>
+      <div class="stat-card purple"><div class="stat-label">Revenue</div><div class="stat-value" id="sa-revenue">—</div><div class="stat-sub">Processed</div></div>
     </div>
     <div class="panel full">
-      <div class="panel-header">
-        <div class="panel-title">All Businesses</div>
-        <button class="panel-action" style="color:var(--purple);background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.3);" onclick="showSection('admin-businesses',null)">Manage →</button>
-      </div>
+      <div class="panel-header"><div class="panel-title">All Businesses</div><button class="panel-action" style="color:var(--purple);background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.3);" onclick="showSection('admin-businesses',null)">Manage →</button></div>
       <div class="panel-body">
-        <table>
-          <thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Created</th></tr></thead>
-          <tbody id="admin-businesses-overview"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody>
-        </table>
+        <table><thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Created</th></tr></thead>
+        <tbody id="sa-biz-overview"></tbody></table>
       </div>
     </div>
   </div>
 
-  <!-- SUPERADMIN: BUSINESSES -->
+  <!-- SUPERADMIN BUSINESSES -->
   <div id="section-admin-businesses" class="section">
-    <div class="topbar">
-      <div class="page-title">Manage <span class="purple">Businesses</span></div>
-      <button class="btn btn-purple" onclick="openModal()">➕ Add Business</button>
-    </div>
+    <div class="topbar"><div class="page-title">Manage <span class="purple">Businesses</span></div><button class="btn btn-purple" onclick="openModal()">➕ Add Business</button></div>
     <div class="panel full">
-      <div class="panel-header">
-        <div class="panel-title">All Clients</div>
-        <button class="panel-action" onclick="loadAdminBusinesses()">↻ Refresh</button>
-      </div>
+      <div class="panel-header"><div class="panel-title">All Clients</div><button class="panel-action" onclick="loadAdminData()">↻ Refresh</button></div>
       <div class="panel-body">
-        <table>
-          <thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Actions</th></tr></thead>
-          <tbody id="admin-businesses-table"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody>
-        </table>
+        <table><thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody id="sa-biz-table"></tbody></table>
       </div>
     </div>
   </div>
 
-  <!-- BUSINESS: OVERVIEW -->
+  <!-- BUSINESS OVERVIEW -->
   <div id="section-overview" class="section">
     <div class="topbar">
       <div class="page-title">Dashboard <span>Overview</span></div>
-      <div class="api-badge"><span class="spin"></span><span id="biz-name-header">Loading...</span></div>
+      <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;" id="biz-name-header">—</div>
     </div>
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
@@ -265,26 +289,20 @@
     </div>
     <div class="panel full">
       <div class="panel-header"><div class="panel-title">Recent Orders</div><button class="panel-action" onclick="showSection('orders',null)">View All →</button></div>
-      <div class="panel-body">
-        <table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Time</th></tr></thead>
-        <tbody id="recent-orders-body"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody></table>
-      </div>
+      <div class="panel-body"><table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Time</th></tr></thead><tbody id="recent-orders-body"></tbody></table></div>
     </div>
   </div>
 
-  <!-- BUSINESS: ORDERS -->
+  <!-- ORDERS -->
   <div id="section-orders" class="section">
     <div class="topbar"><div class="page-title">All <span>Orders</span></div></div>
     <div class="panel full">
       <div class="panel-header"><div class="panel-title">Order History</div><button class="panel-action" onclick="loadOrders()">↻ Refresh</button></div>
-      <div class="panel-body">
-        <table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Time</th></tr></thead>
-        <tbody id="orders-body"><tr><td colspan="6"><div class="empty">Loading...</div></td></tr></tbody></table>
-      </div>
+      <div class="panel-body"><table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Time</th></tr></thead><tbody id="orders-body"></tbody></table></div>
     </div>
   </div>
 
-  <!-- BUSINESS: PRODUCTS -->
+  <!-- PRODUCTS -->
   <div id="section-products" class="section">
     <div class="topbar"><div class="page-title">Manage <span>Products</span></div></div>
     <div class="panels">
@@ -292,44 +310,38 @@
         <div class="panel-header"><div class="panel-title">Add Product</div></div>
         <div class="panel-body">
           <div class="form-row">
-            <div class="form-group"><label>Name</label><input type="text" id="product-name" placeholder="e.g. Sadza"/></div>
-            <div class="form-group"><label>Price (USD)</label><input type="number" id="product-price" placeholder="2.50" step="0.01"/></div>
+            <div class="form-group-inline"><label>Name</label><input type="text" id="product-name" placeholder="e.g. Sadza"/></div>
+            <div class="form-group-inline"><label>Price (USD)</label><input type="number" id="product-price" placeholder="2.50" step="0.01"/></div>
           </div>
           <button class="btn btn-primary" onclick="addProduct()">+ Add to Menu</button>
         </div>
       </div>
       <div class="panel">
         <div class="panel-header"><div class="panel-title">Current Menu</div><button class="panel-action" onclick="loadProducts()">↻ Refresh</button></div>
-        <div class="panel-body">
-          <table><thead><tr><th>Product</th><th>Price</th><th>Action</th></tr></thead>
-          <tbody id="products-body"><tr><td colspan="3"><div class="empty">Loading...</div></td></tr></tbody></table>
-        </div>
+        <div class="panel-body"><table><thead><tr><th>Product</th><th>Price</th><th>Action</th></tr></thead><tbody id="products-body"></tbody></table></div>
       </div>
     </div>
   </div>
 
-  <!-- BUSINESS: CONVERSATIONS -->
+  <!-- CONVERSATIONS -->
   <div id="section-conversations" class="section">
     <div class="topbar"><div class="page-title">Customer <span>Conversations</span></div><button class="panel-action" onclick="loadConversations()">↻ Refresh</button></div>
     <div class="chat-layout">
       <div class="contact-list" id="contact-list"><div class="empty">Loading...</div></div>
-      <div class="chat-window" id="chat-window">
-        <div class="chat-header">Select a conversation</div>
-        <div class="chat-empty">👈 Pick a customer</div>
-      </div>
+      <div class="chat-window" id="chat-window"><div class="chat-header">Select a conversation</div><div class="chat-empty">👈 Pick a customer</div></div>
     </div>
   </div>
 
-  <!-- BUSINESS: BROADCAST -->
+  <!-- BROADCAST -->
   <div id="section-broadcast" class="section">
     <div class="topbar"><div class="page-title">📢 <span>Broadcast</span></div></div>
     <div class="broadcast-layout">
       <div class="panel">
         <div class="panel-header"><div class="panel-title">Compose</div></div>
         <div class="panel-body">
-          <div class="form-group">
+          <div class="form-group-inline">
             <label>Message</label>
-            <textarea id="broadcast-msg" placeholder="Type your broadcast message..." oninput="updatePreview()"></textarea>
+            <textarea id="broadcast-msg" placeholder="Type your message..." oninput="updatePreview()"></textarea>
             <div class="char-count" id="char-count">0 / 1024</div>
           </div>
           <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
@@ -357,19 +369,67 @@
     </div>
   </div>
 
+  <!-- BUSINESS: SETTINGS -->
+  <div id="section-settings" class="section">
+    <div class="topbar"><div class="page-title">Account <span>Settings</span></div></div>
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">WhatsApp Credentials</div></div>
+        <div class="panel-body">
+          <div class="form-group"><label>Phone Number ID</label><input type="text" id="set-phone-id" placeholder="From Meta dashboard"/></div>
+          <div class="form-group"><label>Access Token</label><input type="text" id="set-token" placeholder="EAAn..."/><div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-top:4px;">Update when your token expires</div></div>
+          <button class="btn btn-primary" onclick="saveSettings()">Save Credentials</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Webhook Setup</div></div>
+        <div class="panel-body" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
+          <div style="margin-bottom:12px;">Set these in your Meta WhatsApp dashboard:</div>
+          <div style="margin-bottom:8px;"><span style="color:var(--text-dim);">Callback URL:</span></div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--green);margin-bottom:12px;" id="webhook-url">https://your-ngrok-url/webhook</div>
+          <div style="margin-bottom:8px;"><span style="color:var(--text-dim);">Verify Token:</span></div>
+          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--green);">myverifytoken123</div>
+          <div style="margin-top:16px;color:var(--text-dim);">Subscribe to: <span style="color:var(--text);">messages</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </main>
 <div class="toast" id="toast"></div>
 
 <script>
+// ── CONFIG — all API routes updated to /api/* prefix ──────
 const API = 'http://127.0.0.1:8000';
-let token = localStorage.getItem('wazibot_token');
-let userRole = localStorage.getItem('wazibot_role');
-let userName = localStorage.getItem('wazibot_user');
-let bizName = localStorage.getItem('wazibot_biz');
+const ROUTES = {
+  login:         '/api/auth/login',
+  register:      '/api/auth/register',
+  refresh:       '/api/auth/refresh',
+  adminStats:    '/api/admin/stats',
+  adminBiz:      '/api/admin/businesses',
+  products:      '/api/products',
+  orders:        '/api/orders',
+  conversations: '/api/chat/conversations',
+  customers:     '/api/chat/customers',
+  broadcast:     '/api/chat/broadcast',
+};
+
+let token      = localStorage.getItem('wazi_token');
+let refreshTok = localStorage.getItem('wazi_refresh');
+let userRole   = localStorage.getItem('wazi_role');
+let userName   = localStorage.getItem('wazi_user');
+let bizName    = localStorage.getItem('wazi_biz');
 let activePhone = null;
 let customerPhones = [];
 
 // ── AUTH ──────────────────────────────────────────────────
+function switchTab(tab) {
+  document.querySelectorAll('.login-tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='login')||(i===1&&tab==='register')));
+  document.getElementById('tab-login').classList.toggle('active', tab==='login');
+  document.getElementById('tab-register').classList.toggle('active', tab==='register');
+  document.getElementById('login-error').textContent = '';
+}
+
 async function doLogin() {
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
@@ -377,37 +437,108 @@ async function doLogin() {
   errEl.textContent = '';
   if (!username || !password) { errEl.textContent = 'Enter credentials'; return; }
   try {
-    const res = await fetch(`${API}/auth/login`, {
+    const res = await fetch(API + ROUTES.login, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
     });
-    if (!res.ok) { errEl.textContent = 'Invalid username or password'; return; }
+    if (!res.ok) { const d=await res.json(); errEl.textContent = d.detail || 'Login failed'; return; }
     const data = await res.json();
-    token = data.access_token;
-    userRole = data.role;
-    userName = username;
-    bizName = data.business_name || '';
-    localStorage.setItem('wazibot_token', token);
-    localStorage.setItem('wazibot_role', userRole);
-    localStorage.setItem('wazibot_user', userName);
-    localStorage.setItem('wazibot_biz', bizName);
+    saveSession(data, username);
+    document.getElementById('login-screen').style.display = 'none';
+    init();
+  } catch(e) { errEl.textContent = 'Cannot reach server. Is backend running?'; }
+}
+
+async function doRegister() {
+  const errEl = document.getElementById('login-error');
+  errEl.textContent = '';
+  const payload = {
+    business_name:    document.getElementById('reg-bizname').value.trim(),
+    username:         document.getElementById('reg-username').value.trim(),
+    password:         document.getElementById('reg-password').value,
+    confirm_password: document.getElementById('reg-confirm').value,
+    whatsapp_phone_id: document.getElementById('reg-phoneid').value.trim() || null,
+  };
+  if (!payload.business_name || !payload.username || !payload.password) {
+    errEl.textContent = 'All fields are required'; return;
+  }
+  try {
+    const res = await fetch(API + ROUTES.register, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      const d = await res.json();
+      // Pydantic validation errors come as array
+      if (Array.isArray(d.detail)) {
+        errEl.textContent = d.detail.map(e => e.msg).join(' • ');
+      } else {
+        errEl.textContent = d.detail || 'Registration failed';
+      }
+      return;
+    }
+    const data = await res.json();
+    saveSession(data, payload.username);
     document.getElementById('login-screen').style.display = 'none';
     init();
   } catch(e) { errEl.textContent = 'Cannot reach server'; }
 }
 
+function saveSession(data, username) {
+  token      = data.access_token;
+  refreshTok = data.refresh_token;
+  userRole   = data.role;
+  userName   = username;
+  bizName    = data.business_name || '';
+  localStorage.setItem('wazi_token',   token);
+  localStorage.setItem('wazi_refresh', refreshTok);
+  localStorage.setItem('wazi_role',    userRole);
+  localStorage.setItem('wazi_user',    userName);
+  localStorage.setItem('wazi_biz',     bizName);
+}
+
+async function tryRefresh() {
+  if (!refreshTok) { logout(); return false; }
+  try {
+    const res = await fetch(API + ROUTES.refresh, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: refreshTok })
+    });
+    if (!res.ok) { logout(); return false; }
+    const data = await res.json();
+    saveSession(data, userName);
+    return true;
+  } catch { logout(); return false; }
+}
+
 function logout() {
-  ['wazibot_token','wazibot_role','wazibot_user','wazibot_biz'].forEach(k => localStorage.removeItem(k));
-  token = userRole = userName = bizName = null;
+  ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz'].forEach(k => localStorage.removeItem(k));
+  token = refreshTok = userRole = userName = bizName = null;
   document.getElementById('login-screen').style.display = 'flex';
+}
+
+// ── API ───────────────────────────────────────────────────
+async function apiFetch(path, opts={}, retry=true) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    ...opts
+  });
+  if (res.status === 401 && retry) {
+    const refreshed = await tryRefresh();
+    if (refreshed) return apiFetch(path, opts, false);
+    return null;
+  }
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
 }
 
 // ── SIDEBAR ───────────────────────────────────────────────
 function buildSidebar() {
-  const nav = document.getElementById('sidebar-nav');
   document.getElementById('footer-user').textContent = userName;
-
+  const nav = document.getElementById('sidebar-nav');
   if (userRole === 'superadmin') {
     document.getElementById('sidebar-role-label').textContent = 'Super Admin';
     document.getElementById('sidebar-role-badge').innerHTML = '<span class="badge badge-purple">SUPERADMIN</span>';
@@ -418,28 +549,28 @@ function buildSidebar() {
   } else {
     document.getElementById('sidebar-role-label').textContent = bizName || 'Business';
     document.getElementById('sidebar-role-badge').innerHTML = '<span class="badge badge-green">BUSINESS</span>';
+    if (bizName) document.getElementById('biz-name-header').textContent = '🟢 ' + bizName;
     nav.innerHTML = `
       <div class="nav-section">Dashboard</div>
       <button class="nav-item active" onclick="showSection('overview',this)"><span class="icon">📊</span> Overview <span class="status-dot"></span></button>
       <button class="nav-item" onclick="showSection('orders',this)"><span class="icon">🛒</span> Orders</button>
       <button class="nav-item" onclick="showSection('products',this)"><span class="icon">📦</span> Products</button>
       <button class="nav-item" onclick="showSection('conversations',this)"><span class="icon">💬</span> Conversations</button>
-      <button class="nav-item" onclick="showSection('broadcast',this)"><span class="icon">📢</span> Broadcast</button>`;
-    if (bizName) document.getElementById('biz-name-header').textContent = bizName;
+      <button class="nav-item" onclick="showSection('broadcast',this)"><span class="icon">📢</span> Broadcast</button>
+      <button class="nav-item" onclick="showSection('settings',this)"><span class="icon">⚙️</span> Settings</button>`;
   }
 }
 
-// ── NAV ───────────────────────────────────────────────────
 function showSection(name, btn) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('section-' + name).classList.add('active');
   if (btn) btn.classList.add('active');
-  if (name === 'admin-overview' || name === 'admin-businesses') loadAdminData();
-  if (name === 'orders') loadOrders();
-  if (name === 'products') loadProducts();
-  if (name === 'conversations') loadConversations();
-  if (name === 'broadcast') loadCustomers();
+  if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
+  if (name==='orders') loadOrders();
+  if (name==='products') loadProducts();
+  if (name==='conversations') loadConversations();
+  if (name==='broadcast') loadCustomers();
 }
 
 // ── TOAST ─────────────────────────────────────────────────
@@ -452,110 +583,101 @@ function toast(msg, isError=false) {
   setTimeout(() => t.classList.remove('show'), 3500);
 }
 
-// ── API ───────────────────────────────────────────────────
-async function apiFetch(path, opts={}) {
-  const res = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    ...opts
-  });
-  if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
-
 // ── SUPERADMIN ────────────────────────────────────────────
 async function loadAdminData() {
   try {
     const [stats, businesses] = await Promise.all([
-      apiFetch('/admin/stats'),
-      apiFetch('/admin/businesses')
+      apiFetch(ROUTES.adminStats),
+      apiFetch(ROUTES.adminBiz)
     ]);
-    document.getElementById('sa-stat-businesses').textContent = stats.businesses;
-    document.getElementById('sa-stat-active').textContent = stats.active_businesses;
-    document.getElementById('sa-stat-orders').textContent = stats.total_orders;
-    document.getElementById('sa-stat-revenue').textContent = '$' + stats.total_revenue.toFixed(2);
-    renderBusinessTable(businesses, 'admin-businesses-overview', false);
-    renderBusinessTable(businesses, 'admin-businesses-table', true);
-  } catch(e) { toast('Failed to load admin data: ' + e.message, true); }
+    if (!stats || !businesses) return;
+    document.getElementById('sa-businesses').textContent = stats.businesses;
+    document.getElementById('sa-active').textContent = stats.active_businesses;
+    document.getElementById('sa-orders').textContent = stats.total_orders;
+    document.getElementById('sa-revenue').textContent = '$' + (stats.total_revenue||0).toFixed(2);
+    renderBizTable(businesses, 'sa-biz-overview', false);
+    renderBizTable(businesses, 'sa-biz-table', true);
+  } catch(e) { toast('Failed to load admin data', true); }
 }
 
-function renderBusinessTable(businesses, bodyId, showActions) {
+function renderBizTable(businesses, bodyId, showActions) {
   const tbody = document.getElementById(bodyId);
   if (!businesses.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses yet.</div></td></tr>`; return; }
-  tbody.innerHTML = businesses.map(b => `
-    <tr>
-      <td><span class="badge badge-purple">#${b.id}</span></td>
-      <td><strong>${b.name}</strong></td>
-      <td><span class="badge badge-amber">${b.owner_username}</span></td>
-      <td style="color:var(--text-dim)">${b.whatsapp_phone_id || '—'}</td>
-      <td><span class="badge ${b.is_active?'badge-green':'badge-red'}">${b.is_active?'Active':'Suspended'}</span></td>
-      <td>${showActions ? `
-        <div style="display:flex;gap:6px;">
-          <button class="btn btn-ghost" style="color:var(--amber);border-color:rgba(245,158,11,0.3);" onclick="toggleBusiness(${b.id},${b.is_active})">${b.is_active?'Suspend':'Activate'}</button>
-          <button class="btn btn-ghost" onclick="deleteBusiness(${b.id})">✕ Delete</button>
-        </div>` : (b.created_at ? fmtTime(b.created_at) : '—')}</td>
-    </tr>`).join('');
+  tbody.innerHTML = businesses.map(b => `<tr>
+    <td><span class="badge badge-purple">#${b.id}</span></td>
+    <td><strong>${b.name}</strong></td>
+    <td><span class="badge badge-amber">${b.owner_username}</span></td>
+    <td style="color:var(--text-dim);font-size:11px">${b.whatsapp_phone_id||'—'}</td>
+    <td><span class="badge ${b.is_active?'badge-green':'badge-red'}">${b.is_active?'Active':'Suspended'}</span></td>
+    <td>${showActions?`<div style="display:flex;gap:6px;">
+      <button class="btn btn-ghost" style="color:var(--amber);border-color:rgba(245,158,11,0.3);" onclick="toggleBiz(${b.id},${b.is_active})">${b.is_active?'Suspend':'Activate'}</button>
+      <button class="btn btn-ghost" onclick="deleteBiz(${b.id})">✕ Delete</button>
+    </div>`:(b.created_at?fmtTime(b.created_at):'—')}</td>
+  </tr>`).join('');
 }
 
 function openModal() { document.getElementById('add-business-modal').classList.add('open'); }
 function closeModal() { document.getElementById('add-business-modal').classList.remove('open'); }
 
 async function createBusiness() {
-  const name = document.getElementById('b-name').value.trim();
-  const username = document.getElementById('b-username').value.trim();
-  const password = document.getElementById('b-password').value.trim();
-  const phoneId = document.getElementById('b-phone-id').value.trim();
-  const btoken = document.getElementById('b-token').value.trim();
-  if (!name || !username || !password) { toast('Name, username and password required', true); return; }
+  const name=document.getElementById('b-name').value.trim();
+  const username=document.getElementById('b-username').value.trim();
+  const password=document.getElementById('b-password').value.trim();
+  const phoneId=document.getElementById('b-phone-id').value.trim();
+  const btoken=document.getElementById('b-token').value.trim();
+  if (!name||!username||!password) { toast('Name, username and password required',true); return; }
   try {
-    await apiFetch('/admin/businesses', { method: 'POST', body: JSON.stringify({ name, owner_username: username, owner_password: password, whatsapp_phone_id: phoneId || null, whatsapp_token: btoken || null }) });
+    await apiFetch(ROUTES.adminBiz, {method:'POST', body:JSON.stringify({name, owner_username:username, owner_password:password, whatsapp_phone_id:phoneId||null, whatsapp_token:btoken||null})});
     toast(`✅ ${name} created`);
     closeModal();
-    ['b-name','b-username','b-password','b-phone-id','b-token'].forEach(id => document.getElementById(id).value='');
+    ['b-name','b-username','b-password','b-phone-id','b-token'].forEach(id=>document.getElementById(id).value='');
     loadAdminData();
-  } catch(e) { toast('Failed: ' + e.message, true); }
+  } catch(e) { toast('Failed: '+e.message, true); }
 }
 
-async function toggleBusiness(id, currentlyActive) {
-  try {
-    await apiFetch(`/admin/businesses/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: !currentlyActive }) });
-    toast(currentlyActive ? 'Business suspended' : 'Business activated');
-    loadAdminData();
-  } catch(e) { toast('Failed', true); }
+async function toggleBiz(id, active) {
+  try { await apiFetch(`${ROUTES.adminBiz}/${id}`, {method:'PATCH', body:JSON.stringify({is_active:!active})}); toast(active?'Suspended':'Activated'); loadAdminData(); }
+  catch(e) { toast('Failed',true); }
 }
 
-async function deleteBusiness(id) {
+async function deleteBiz(id) {
   if (!confirm('Delete this business and ALL their data?')) return;
-  try {
-    await apiFetch(`/admin/businesses/${id}`, { method: 'DELETE' });
-    toast('Business deleted');
-    loadAdminData();
-  } catch(e) { toast('Failed', true); }
+  try { await apiFetch(`${ROUTES.adminBiz}/${id}`, {method:'DELETE'}); toast('Deleted'); loadAdminData(); }
+  catch(e) { toast('Failed',true); }
 }
 
-// ── BUSINESS: ORDERS ──────────────────────────────────────
+// ── ORDERS ────────────────────────────────────────────────
 async function loadOrders() {
   try {
-    const orders = await apiFetch('/orders');
-    renderOrders(orders, 'orders-body');
-    renderOrders(orders.slice(0,5), 'recent-orders-body');
+    const orders = await apiFetch(ROUTES.orders);
+    if (!orders) return;
+    renderOrders(orders, 'orders-body', true);
+    renderOrders(orders.slice(0,5), 'recent-orders-body', false);
     document.getElementById('stat-orders').textContent = orders.length;
     document.getElementById('stat-revenue').textContent = '$' + orders.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
   } catch(e) {
-    ['orders-body','recent-orders-body'].forEach(id=>document.getElementById(id).innerHTML=`<tr><td colspan="6"><div class="empty">⚠ ${e.message}</div></td></tr>`);
+    ['orders-body','recent-orders-body'].forEach(id => document.getElementById(id).innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`);
   }
 }
 
-function renderOrders(orders, bodyId) {
+function renderOrders(orders, bodyId, showStatus) {
+  const cols = showStatus ? 7 : 6;
   const tbody = document.getElementById(bodyId);
-  if (!orders||!orders.length){tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No orders yet.</div></td></tr>`;return;}
-  tbody.innerHTML=orders.map(o=>`<tr><td><span class="badge badge-amber">#${o.id}</span></td><td>${o.customer_phone}</td><td>${o.product_name}</td><td>${o.quantity}</td><td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td><td>${o.created_at?fmtTime(o.created_at):'—'}</td></tr>`).join('');
+  if (!orders||!orders.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
+  tbody.innerHTML=orders.map(o=>`<tr>
+    <td><span class="badge badge-amber">#${o.id}</span></td>
+    <td>${o.customer_phone}</td><td>${o.product_name}</td><td>${o.quantity}</td>
+    <td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td>
+    ${showStatus?`<td><span class="badge ${o.status==='pending'?'badge-amber':'badge-green'}">${o.status}</span></td>`:''}
+    <td>${o.created_at?fmtTime(o.created_at):'—'}</td>
+  </tr>`).join('');
 }
 
-// ── BUSINESS: PRODUCTS ────────────────────────────────────
+// ── PRODUCTS ──────────────────────────────────────────────
 async function loadProducts() {
   try {
-    const products = await apiFetch('/products');
+    const products = await apiFetch(ROUTES.products);
+    if (!products) return;
     document.getElementById('stat-products').textContent = products.length;
     const tbody = document.getElementById('products-body');
     if (!products.length){tbody.innerHTML=`<tr><td colspan="3"><div class="empty">No products.</div></td></tr>`;return;}
@@ -567,45 +689,57 @@ async function addProduct() {
   const name=document.getElementById('product-name').value.trim();
   const price=parseFloat(document.getElementById('product-price').value);
   if (!name||isNaN(price)||price<=0){toast('Enter valid name and price',true);return;}
-  try{await apiFetch('/products',{method:'POST',body:JSON.stringify({name,price})});document.getElementById('product-name').value='';document.getElementById('product-price').value='';toast(`✅ ${name} added`);loadProducts();}
-  catch(e){toast('Failed',true);}
+  try{await apiFetch(ROUTES.products,{method:'POST',body:JSON.stringify({name,price})});document.getElementById('product-name').value='';document.getElementById('product-price').value='';toast(`✅ ${name} added`);loadProducts();}
+  catch(e){toast(e.message||'Failed',true);}
 }
 
 async function deleteProduct(id){
-  try{await apiFetch(`/products/${id}`,{method:'DELETE'});toast('Removed');loadProducts();}
+  try{await apiFetch(`${ROUTES.products}/${id}`,{method:'DELETE'});toast('Removed');loadProducts();}
   catch(e){toast('Failed',true);}
 }
 
-// ── BUSINESS: CONVERSATIONS ───────────────────────────────
+// ── CONVERSATIONS ─────────────────────────────────────────
 async function loadConversations() {
   try {
-    const convos = await apiFetch('/conversations');
+    const convos = await apiFetch(ROUTES.conversations);
+    if (!convos) return;
     document.getElementById('stat-customers').textContent = convos.length;
     const list = document.getElementById('contact-list');
     if (!convos.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
-    list.innerHTML=convos.map(c=>`<div class="contact-item ${c.phone===activePhone?'active':''}" onclick="openChat('${c.phone}',this)"><div class="contact-phone">${c.phone}</div><div class="contact-preview">${c.direction==='in'?'👤':'🤖'} ${escHtml(c.message)}</div><div class="contact-time">${c.created_at?fmtTime(c.created_at):''}</div></div>`).join('');
+    list.innerHTML=convos.map(c=>`<div class="contact-item ${c.phone===activePhone?'active':''}" onclick="openChat('${c.phone}',this)">
+      <div class="contact-phone">${c.phone}</div>
+      <div class="contact-preview">${c.direction==='in'?'👤':'🤖'} ${escHtml(c.message)}</div>
+      <div class="contact-time">${c.created_at?fmtTime(c.created_at):''}</div>
+    </div>`).join('');
   } catch(e){document.getElementById('contact-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
 }
 
-async function openChat(phone,el) {
+async function openChat(phone, el) {
   activePhone=phone;
   document.querySelectorAll('.contact-item').forEach(i=>i.classList.remove('active'));
   if(el)el.classList.add('active');
   const win=document.getElementById('chat-window');
   win.innerHTML=`<div class="chat-header">Chat with <span>${phone}</span></div><div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>`;
   try{
-    const msgs=await apiFetch(`/conversations/${phone}`);
+    const msgs=await apiFetch(`${ROUTES.conversations}/${phone}`);
+    if(!msgs)return;
     const c=document.getElementById('chat-msgs');
     if(!msgs.length){c.innerHTML='<div class="empty">No messages.</div>';return;}
-    c.innerHTML=msgs.map(m=>{const isBc=m.message.startsWith('[BROADCAST]');const cls=isBc?'msg-broadcast':`msg-${m.direction}`;const txt=isBc?'📢 '+escHtml(m.message.replace('[BROADCAST] ','')):escHtml(m.message);return`<div class="msg ${cls}">${txt}<div class="msg-time">${m.created_at?fmtTime(m.created_at):''}</div></div>`;}).join('');
+    c.innerHTML=msgs.map(m=>{
+      const isBc=m.message.startsWith('[BROADCAST]');
+      const cls=isBc?'msg-broadcast':`msg-${m.direction}`;
+      const txt=isBc?'📢 '+escHtml(m.message.replace('[BROADCAST] ','')):escHtml(m.message);
+      return`<div class="msg ${cls}">${txt}<div class="msg-time">${m.created_at?fmtTime(m.created_at):''}</div></div>`;
+    }).join('');
     c.scrollTop=c.scrollHeight;
   } catch(e){document.getElementById('chat-msgs').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
 }
 
-// ── BUSINESS: BROADCAST ───────────────────────────────────
+// ── BROADCAST ─────────────────────────────────────────────
 async function loadCustomers(){
   try{
-    const data=await apiFetch('/customers');
+    const data=await apiFetch(ROUTES.customers);
+    if(!data)return;
     customerPhones=data.phones||[];
     document.getElementById('recipient-count').textContent=customerPhones.length?`Will send to ${customerPhones.length} customer${customerPhones.length>1?'s':''}`:'No customers yet';
     const el=document.getElementById('recipient-list');
@@ -619,13 +753,14 @@ function setTpl(t){document.getElementById('broadcast-msg').value=t;updatePrevie
 async function sendBroadcast(){
   const msg=document.getElementById('broadcast-msg').value.trim();
   if(!msg){toast('Write a message first',true);return;}
-  if(customerPhones.length===0){toast('No customers to send to',true);return;}
+  if(!customerPhones.length){toast('No customers',true);return;}
   if(!confirm(`Send to ${customerPhones.length} customer(s)?`))return;
   const btn=document.getElementById('send-btn');
   const result=document.getElementById('broadcast-result');
   btn.disabled=true;result.style.display='none';
   try{
-    const data=await apiFetch('/broadcast',{method:'POST',body:JSON.stringify({message:msg})});
+    const data=await apiFetch(ROUTES.broadcast,{method:'POST',body:JSON.stringify({message:msg})});
+    if(!data){btn.disabled=false;return;}
     result.style.display='block';
     if(data.failed===0){result.className='broadcast-result success';result.textContent=`✅ Sent to ${data.sent} customer${data.sent>1?'s':''}!`;toast(`📢 Broadcast sent to ${data.sent}!`);document.getElementById('broadcast-msg').value='';updatePreview();}
     else{result.className='broadcast-result error';result.textContent=`Sent: ${data.sent} | Failed: ${data.failed}`;}
@@ -633,15 +768,39 @@ async function sendBroadcast(){
   btn.disabled=false;
 }
 
+// ── STATUS ────────────────────────────────────────────────
+async function checkStatus(){
+  const el=document.getElementById('api-status-text');
+  const spin=document.getElementById('api-spin');
+  try{
+    const r=await fetch(`${API}/`);
+    if(r.ok){el.textContent='API Online';spin.style.borderTopColor='var(--green)';}
+    else{el.textContent='API Error';spin.style.borderTopColor='var(--red)';}
+  } catch{el.textContent='API Offline';spin.style.borderTopColor='var(--red)';}
+}
+
+// ── SETTINGS ──────────────────────────────────────────────
+async function loadSettings() {
+  try {
+    const b = await apiFetch('/me');
+    if (b.whatsapp_phone_id) document.getElementById('set-phone-id').value = b.whatsapp_phone_id;
+  } catch(e) {}
+}
+
+async function saveSettings() {
+  const phoneId = document.getElementById('set-phone-id').value.trim();
+  const token2 = document.getElementById('set-token').value.trim();
+  if (!phoneId) { toast('Enter Phone Number ID', true); return; }
+  try {
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ whatsapp_phone_id: phoneId, whatsapp_token: token2 || undefined }) });
+    toast('✅ Credentials saved');
+    document.getElementById('set-token').value = '';
+  } catch(e) { toast('Failed: ' + e.message, true); }
+}
+
 // ── UTILS ─────────────────────────────────────────────────
 function fmtTime(iso){try{return new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '';}}
 function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-
-// ── STATUS ────────────────────────────────────────────────
-async function checkStatus(){
-  try{const r=await fetch(`${API}/`);document.getElementById('api-status-text').textContent=r.ok?'API Online':'API Error';}
-  catch{document.getElementById('api-status-text').textContent='API Offline';}
-}
 
 // ── INIT ──────────────────────────────────────────────────
 function init(){

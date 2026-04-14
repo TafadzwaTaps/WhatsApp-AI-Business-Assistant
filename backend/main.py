@@ -16,8 +16,7 @@ from ai import generate_reply
 import requests as http_requests
 from auth import (
     verify_password, create_access_token, get_current_user,
-    require_superadmin, get_business_id_from_token,
-    SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD
+    require_superadmin, SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD
 )
 
 app = FastAPI(title="WaziBot SaaS API")
@@ -36,7 +35,7 @@ def get_db():
     finally:
         db.close()
 
-# ─── SEND MESSAGE (uses per-business credentials) ────────
+# ─── SEND MESSAGE ────────────────────────────────────────
 def send_message(business: models.Business, to: str, message: str):
     if not business.whatsapp_token or not business.whatsapp_phone_id:
         print(f"⚠️ Business {business.name} has no WhatsApp credentials")
@@ -47,30 +46,85 @@ def send_message(business: models.Business, to: str, message: str):
     resp = http_requests.post(url, headers=headers, json=data)
     return resp.json()
 
-# ─── AUTH ────────────────────────────────────────────────
+# ─── PUBLIC: SELF-SIGNUP ─────────────────────────────────
+class SignupRequest(BaseModel):
+    business_name: str
+    username: str
+    password: str
+    whatsapp_phone_id: str = ""
+    whatsapp_token: str = ""
+
+@app.post("/auth/signup")
+def signup(data: SignupRequest, db: Session = Depends(get_db)):
+    # Validate inputs
+    if len(data.business_name.strip()) < 2:
+        raise HTTPException(status_code=400, detail="Business name too short")
+    if len(data.username.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if len(data.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    # Check username not taken
+    existing = crud.get_business_by_username(db, data.username.strip())
+    if existing:
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+    # Create business
+    from schemas import BusinessCreate
+    business = crud.create_business(db, BusinessCreate(
+        name=data.business_name.strip(),
+        owner_username=data.username.strip(),
+        owner_password=data.password,
+        whatsapp_phone_id=data.whatsapp_phone_id.strip() or None,
+        whatsapp_token=data.whatsapp_token.strip() or None,
+    ))
+
+    # Issue token immediately — no approval needed
+    token = create_access_token({
+        "sub": business.owner_username,
+        "role": "business",
+        "business_id": business.id
+    })
+
+    print(f"🆕 New signup: {business.name} (@{business.owner_username})")
+
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": "business",
+        "business_name": business.name,
+        "business_id": business.id,
+        "message": "Account created successfully"
+    }
+
+# ─── AUTH: LOGIN ─────────────────────────────────────────
 @app.post("/auth/login")
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    # Check superadmin first
     if form_data.username == SUPER_ADMIN_USERNAME:
         if not verify_password(form_data.password, SUPER_ADMIN_PASSWORD):
             raise HTTPException(status_code=401, detail="Invalid credentials")
         token = create_access_token({"sub": form_data.username, "role": "superadmin"})
         return {"access_token": token, "token_type": "bearer", "role": "superadmin"}
 
-    # Check business accounts
     business = crud.get_business_by_username(db, form_data.username)
     if not business or not verify_password(form_data.password, business.owner_password):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     if not business.is_active:
-        raise HTTPException(status_code=403, detail="Account suspended")
+        raise HTTPException(status_code=403, detail="Account suspended. Contact support.")
     token = create_access_token({
         "sub": form_data.username,
         "role": "business",
         "business_id": business.id
     })
-    return {"access_token": token, "token_type": "bearer", "role": "business", "business_name": business.name}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "role": "business",
+        "business_name": business.name,
+        "business_id": business.id
+    }
 
-# ─── WEBHOOK (public — Meta sends here) ─────────────────
+# ─── WEBHOOK ─────────────────────────────────────────────
 VERIFY_TOKEN = "myverifytoken123"
 
 @app.get("/webhook")
@@ -88,14 +142,12 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
         changes = entry["changes"][0]["value"]
         phone_number_id = changes["metadata"]["phone_number_id"]
         message_obj = changes["messages"][0]
-
         phone = message_obj["from"]
         text = message_obj["text"]["body"]
 
-        # Route to correct business
         business = crud.get_business_by_phone_id(db, phone_number_id)
-        if not business:
-            print(f"⚠️ No business found for phone_id: {phone_number_id}")
+        if not business or not business.is_active:
+            print(f"⚠️ No active business for phone_id: {phone_number_id}")
             return {"status": "ok"}
 
         crud.log_message(db, business.id, phone, "in", text)
@@ -117,7 +169,7 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
                 ))
                 reply = f"✅ Order placed: {product_name} x{qty}\nThank you for ordering from {business.name}!"
             except:
-                reply = "Invalid format. Use: order <product> <quantity>\nExample: order sadza 2"
+                reply = "Invalid format. Use: order <product> <quantity>"
         else:
             reply = generate_reply(text)
 
@@ -130,15 +182,14 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
 
     return {"status": "ok"}
 
-# ─── SUPERADMIN: MANAGE BUSINESSES ───────────────────────
+# ─── SUPERADMIN ───────────────────────────────────────────
 @app.get("/admin/businesses", response_model=List[BusinessOut])
 def list_businesses(db: Session = Depends(get_db), user=Depends(require_superadmin)):
     return crud.get_all_businesses(db)
 
 @app.post("/admin/businesses", response_model=BusinessOut)
 def create_business(data: BusinessCreate, db: Session = Depends(get_db), user=Depends(require_superadmin)):
-    existing = crud.get_business_by_username(db, data.owner_username)
-    if existing:
+    if crud.get_business_by_username(db, data.owner_username):
         raise HTTPException(status_code=400, detail="Username already taken")
     return crud.create_business(db, data)
 
@@ -146,34 +197,50 @@ def create_business(data: BusinessCreate, db: Session = Depends(get_db), user=De
 def update_business(business_id: int, data: BusinessUpdate, db: Session = Depends(get_db), user=Depends(require_superadmin)):
     b = crud.update_business(db, business_id, data)
     if not b:
-        raise HTTPException(status_code=404, detail="Business not found")
+        raise HTTPException(status_code=404, detail="Not found")
     return b
 
 @app.delete("/admin/businesses/{business_id}")
 def delete_business(business_id: int, db: Session = Depends(get_db), user=Depends(require_superadmin)):
     b = crud.delete_business(db, business_id)
     if not b:
-        raise HTTPException(status_code=404, detail="Business not found")
+        raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": business_id}
 
 @app.get("/admin/stats")
 def admin_stats(db: Session = Depends(get_db), user=Depends(require_superadmin)):
     businesses = crud.get_all_businesses(db)
-    total_orders = db.query(models.Order).count()
-    total_revenue = db.query(models.Order).all()
-    revenue = sum(o.total_price or 0 for o in total_revenue)
+    orders = db.query(models.Order).all()
     return {
         "businesses": len(businesses),
         "active_businesses": sum(1 for b in businesses if b.is_active),
-        "total_orders": total_orders,
-        "total_revenue": round(revenue, 2)
+        "total_orders": len(orders),
+        "total_revenue": round(sum(o.total_price or 0 for o in orders), 2)
     }
+
+# ─── BUSINESS: PROFILE ───────────────────────────────────
+@app.get("/me", response_model=BusinessOut)
+def get_me(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if user["role"] == "superadmin":
+        raise HTTPException(status_code=400, detail="Use admin routes")
+    b = crud.get_business_by_id(db, user["business_id"])
+    if not b:
+        raise HTTPException(status_code=404, detail="Not found")
+    return b
+
+@app.patch("/me")
+def update_me(data: BusinessUpdate, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    if user["role"] == "superadmin":
+        raise HTTPException(status_code=400, detail="Use admin routes")
+    # Don't allow business owners to change is_active
+    data.is_active = None
+    b = crud.update_business(db, user["business_id"], data)
+    return b
 
 # ─── BUSINESS: PRODUCTS ──────────────────────────────────
 @app.get("/products", response_model=List[ProductOut])
 def get_products(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    bid = user["business_id"]
-    return crud.get_products(db, bid)
+    return crud.get_products(db, user["business_id"])
 
 @app.post("/products", response_model=ProductOut)
 def create_product(product: ProductCreate, db: Session = Depends(get_db), user=Depends(get_current_user)):
