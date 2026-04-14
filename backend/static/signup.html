@@ -9,314 +9,220 @@
   :root{--bg:#0a0f0d;--surface:#111a15;--surface2:#172010;--border:#1f3025;--green:#22c55e;--green-dim:#16a34a;--green-glow:rgba(34,197,94,0.15);--red:#ef4444;--text:#e8f5e9;--text-dim:#6b8f71;--mono:'DM Mono',monospace;--sans:'Syne',sans-serif;}
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;}
-
-  /* LEFT PANEL */
-  .left{width:420px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:48px 40px;position:sticky;top:0;height:100vh;}
-  .logo{font-size:26px;font-weight:800;color:var(--green);margin-bottom:6px;}
-  .tagline{font-size:13px;color:var(--text-dim);font-family:var(--mono);margin-bottom:48px;}
-  .feature-list{display:flex;flex-direction:column;gap:20px;flex:1;}
+  .left{width:400px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:48px 40px;position:sticky;top:0;height:100vh;}
+  .logo{font-size:26px;font-weight:800;color:var(--green);margin-bottom:4px;}
+  .tagline{font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:48px;}
+  .feature-list{display:flex;flex-direction:column;gap:22px;flex:1;}
   .feature{display:flex;align-items:flex-start;gap:14px;}
-  .feature-icon{font-size:22px;width:36px;text-align:center;flex-shrink:0;margin-top:2px;}
-  .feature-title{font-size:14px;font-weight:700;margin-bottom:4px;}
+  .feature-icon{font-size:20px;width:32px;flex-shrink:0;margin-top:2px;}
+  .feature-title{font-size:14px;font-weight:700;margin-bottom:3px;}
   .feature-desc{font-size:12px;color:var(--text-dim);font-family:var(--mono);line-height:1.5;}
-  .left-footer{margin-top:auto;padding-top:32px;border-top:1px solid var(--border);}
-  .already-text{font-size:12px;font-family:var(--mono);color:var(--text-dim);}
-  .already-text a{color:var(--green);text-decoration:none;font-weight:600;}
-  .already-text a:hover{text-decoration:underline;}
-
-  /* RIGHT PANEL */
+  .left-footer{margin-top:auto;padding-top:24px;border-top:1px solid var(--border);font-size:12px;font-family:var(--mono);color:var(--text-dim);}
+  .left-footer a{color:var(--green);text-decoration:none;font-weight:600;}
   .right{flex:1;display:flex;align-items:center;justify-content:center;padding:48px 40px;}
-  .form-card{width:100%;max-width:480px;}
-  .form-title{font-size:28px;font-weight:800;margin-bottom:6px;}
-  .form-title span{color:var(--green);}
-  .form-sub{font-size:13px;color:var(--text-dim);font-family:var(--mono);margin-bottom:36px;}
-
-  /* STEPS */
-  .steps{display:flex;gap:0;margin-bottom:36px;border:1px solid var(--border);border-radius:10px;overflow:hidden;}
-  .step{flex:1;padding:10px;text-align:center;font-size:11px;font-family:var(--mono);color:var(--text-dim);cursor:pointer;transition:all 0.15s;border-right:1px solid var(--border);}
+  .form-card{width:100%;max-width:460px;}
+  .progress-bar{height:3px;background:var(--border);border-radius:2px;margin-bottom:28px;overflow:hidden;}
+  .progress-fill{height:100%;background:var(--green);border-radius:2px;transition:width 0.4s ease;}
+  .steps{display:flex;gap:0;margin-bottom:28px;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
+  .step{flex:1;padding:10px 6px;text-align:center;font-size:10px;font-family:var(--mono);color:var(--text-dim);border-right:1px solid var(--border);}
   .step:last-child{border-right:none;}
   .step.active{background:var(--green-glow);color:var(--green);}
-  .step.done{background:var(--surface2);color:var(--text-dim);}
-  .step-num{display:block;font-size:16px;font-weight:800;margin-bottom:2px;}
-
-  /* FORM */
+  .step.done{background:var(--surface2);}
+  .step-num{display:block;font-size:15px;font-weight:800;margin-bottom:1px;}
+  .form-title{font-size:24px;font-weight:800;margin-bottom:4px;}
+  .form-title span{color:var(--green);}
+  .form-sub{font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:28px;}
   .form-step{display:none;}
   .form-step.active{display:block;}
-  .form-group{display:flex;flex-direction:column;gap:6px;margin-bottom:18px;}
-  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;}
-  label{font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;}
-  input{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:all 0.15s;width:100%;}
+  .form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:16px;}
+  .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;}
+  label{font-size:10px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;}
+  input{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:all 0.15s;width:100%;}
   input:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
-  input.error{border-color:var(--red);}
-  .field-hint{font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:4px;line-height:1.4;}
-  .field-error{font-size:11px;font-family:var(--mono);color:var(--red);margin-top:4px;min-height:16px;}
-
-  /* BUTTONS */
-  .btn-next{width:100%;padding:14px;background:var(--green);color:#000;border:none;border-radius:10px;font-family:var(--sans);font-weight:800;font-size:15px;cursor:pointer;transition:all 0.15s;margin-top:8px;}
-  .btn-next:hover{background:var(--green-dim);transform:translateY(-1px);}
-  .btn-next:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
-  .btn-back{background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:10px 20px;border-radius:8px;font-family:var(--sans);font-size:13px;cursor:pointer;margin-right:8px;transition:all 0.15s;}
-  .btn-back:hover{border-color:var(--text-dim);color:var(--text);}
-  .btn-row{display:flex;align-items:center;gap:8px;margin-top:8px;}
-
-  /* SKIP HINT */
-  .skip-hint{text-align:center;margin-top:14px;font-size:12px;font-family:var(--mono);color:var(--text-dim);}
+  input.err{border-color:var(--red);}
+  .hint{font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:3px;}
+  .ferr{font-size:11px;font-family:var(--mono);color:var(--red);margin-top:3px;min-height:15px;}
+  .btn-next{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;transition:all 0.15s;margin-top:4px;}
+  .btn-next:hover{background:var(--green-dim);}
+  .btn-next:disabled{opacity:0.5;cursor:not-allowed;}
+  .btn-row{display:flex;gap:8px;margin-top:4px;}
+  .btn-back{background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:11px 18px;border-radius:8px;font-family:var(--sans);font-size:13px;cursor:pointer;}
+  .btn-back:hover{border-color:var(--text-dim);}
+  .skip-hint{text-align:center;margin-top:12px;font-size:12px;font-family:var(--mono);color:var(--text-dim);}
   .skip-link{color:var(--green);cursor:pointer;text-decoration:underline;}
-
-  /* SUCCESS */
-  .success-screen{display:none;text-align:center;padding:20px 0;}
-  .success-icon{font-size:64px;margin-bottom:16px;}
-  .success-title{font-size:26px;font-weight:800;margin-bottom:8px;}
+  .error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:11px 14px;font-family:var(--mono);font-size:12px;color:var(--red);margin-bottom:14px;display:none;}
+  .success-screen{display:none;text-align:center;}
+  .success-icon{font-size:56px;margin-bottom:12px;}
+  .success-title{font-size:24px;font-weight:800;margin-bottom:6px;}
   .success-title span{color:var(--green);}
-  .success-sub{font-size:13px;color:var(--text-dim);font-family:var(--mono);margin-bottom:32px;line-height:1.6;}
-  .success-creds{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:20px;margin-bottom:24px;text-align:left;}
-  .cred-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:13px;}
+  .success-sub{font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:24px;line-height:1.6;}
+  .creds-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px;text-align:left;}
+  .cred-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;}
   .cred-row:last-child{border-bottom:none;}
-  .cred-label{color:var(--text-dim);font-size:11px;text-transform:uppercase;letter-spacing:1px;}
+  .cred-label{color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;}
   .cred-value{color:var(--green);font-weight:600;}
-  .btn-go{width:100%;padding:14px;background:var(--green);color:#000;border:none;border-radius:10px;font-family:var(--sans);font-weight:800;font-size:15px;cursor:pointer;transition:all 0.15s;}
+  .btn-go{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;transition:all 0.15s;}
   .btn-go:hover{background:var(--green-dim);}
-
-  /* ERROR BANNER */
-  .error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:12px 16px;font-family:var(--mono);font-size:12px;color:var(--red);margin-bottom:16px;display:none;}
-
-  /* PROGRESS */
-  .progress-bar{height:3px;background:var(--border);border-radius:2px;margin-bottom:32px;overflow:hidden;}
-  .progress-fill{height:100%;background:var(--green);border-radius:2px;transition:width 0.3s ease;}
-
-  @media(max-width:768px){
-    body{flex-direction:column;}
-    .left{width:100%;min-height:auto;height:auto;position:static;padding:32px 24px;}
-    .feature-list{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
-    .right{padding:32px 24px;}
-    .form-row{grid-template-columns:1fr;}
-  }
+  @media(max-width:768px){body{flex-direction:column;}.left{width:100%;min-height:auto;height:auto;position:static;padding:28px 24px;}.feature-list{display:grid;grid-template-columns:1fr 1fr;gap:14px;}.right{padding:28px 24px;}.form-row{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
-
-<!-- LEFT -->
 <div class="left">
   <div class="logo">WaziBot</div>
-  <div class="tagline">WhatsApp automation for your business</div>
-
+  <div class="tagline">WhatsApp automation for Zimbabwe businesses</div>
   <div class="feature-list">
-    <div class="feature">
-      <div class="feature-icon">🤖</div>
-      <div>
-        <div class="feature-title">AI Auto-Replies</div>
-        <div class="feature-desc">Your bot answers customers 24/7 — menu, orders, questions. Never miss a sale.</div>
-      </div>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">📊</div>
-      <div>
-        <div class="feature-title">Live Dashboard</div>
-        <div class="feature-desc">See every order, customer, and conversation in real time from any browser.</div>
-      </div>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">📢</div>
-      <div>
-        <div class="feature-title">Broadcast Messages</div>
-        <div class="feature-desc">Send promotions to all your customers at once with one click.</div>
-      </div>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">💸</div>
-      <div>
-        <div class="feature-title">No Twilio Fees</div>
-        <div class="feature-desc">Uses official Meta WhatsApp API directly. No expensive per-message billing.</div>
-      </div>
-    </div>
-    <div class="feature">
-      <div class="feature-icon">⚡</div>
-      <div>
-        <div class="feature-title">Ready in 2 Minutes</div>
-        <div class="feature-desc">Sign up, connect your WhatsApp number, and your bot is live immediately.</div>
-      </div>
-    </div>
+    <div class="feature"><div class="feature-icon">🤖</div><div><div class="feature-title">AI Auto-Replies</div><div class="feature-desc">Bot answers customers 24/7 — menu, orders, questions. Never miss a sale.</div></div></div>
+    <div class="feature"><div class="feature-icon">📊</div><div><div class="feature-title">Live Dashboard</div><div class="feature-desc">See every order, customer, and chat in real time from any browser.</div></div></div>
+    <div class="feature"><div class="feature-icon">📢</div><div><div class="feature-title">Broadcast Messages</div><div class="feature-desc">Send promos to all customers at once with one click.</div></div></div>
+    <div class="feature"><div class="feature-icon">💸</div><div><div class="feature-title">No Twilio Fees</div><div class="feature-desc">Uses official Meta WhatsApp API directly. No per-message billing.</div></div></div>
+    <div class="feature"><div class="feature-icon">⚡</div><div><div class="feature-title">Ready in 2 Minutes</div><div class="feature-desc">Sign up, connect WhatsApp, and your bot is live immediately.</div></div></div>
   </div>
-
-  <div class="left-footer">
-    <div class="already-text">Already have an account? <a href="/static/dashboard.html">Sign in →</a></div>
-  </div>
+  <div class="left-footer">Already have an account? <a href="/static/dashboard.html">Sign in →</a></div>
 </div>
 
-<!-- RIGHT -->
 <div class="right">
   <div class="form-card">
-
-    <!-- PROGRESS -->
     <div class="progress-bar"><div class="progress-fill" id="progress" style="width:33%"></div></div>
-
-    <!-- STEPS INDICATOR -->
     <div class="steps">
-      <div class="step active" id="step-tab-1"><span class="step-num">1</span>Account</div>
-      <div class="step" id="step-tab-2"><span class="step-num">2</span>Business</div>
-      <div class="step" id="step-tab-3"><span class="step-num">3</span>WhatsApp</div>
+      <div class="step active" id="tab1"><span class="step-num">1</span>Account</div>
+      <div class="step" id="tab2"><span class="step-num">2</span>Business</div>
+      <div class="step" id="tab3"><span class="step-num">3</span>WhatsApp</div>
     </div>
+    <div class="form-title" id="ftitle">Create your <span>account</span></div>
+    <div class="form-sub" id="fsub">Free to start. No credit card needed.</div>
+    <div class="error-banner" id="err-banner"></div>
 
-    <div class="form-title">Create your <span>account</span></div>
-    <div class="form-sub">Free to start. No credit card needed.</div>
-
-    <div class="error-banner" id="error-banner"></div>
-
-    <!-- STEP 1: ACCOUNT -->
-    <div class="form-step active" id="form-step-1">
+    <!-- STEP 1 -->
+    <div class="form-step active" id="step1">
       <div class="form-row">
         <div class="form-group">
           <label>Username</label>
-          <input type="text" id="s-username" placeholder="mamaskitchen" autocomplete="username"/>
-          <div class="field-hint">Used to log in. No spaces.</div>
-          <div class="field-error" id="err-username"></div>
+          <input type="text" id="s-user" placeholder="mamaskitchen" autocomplete="username"/>
+          <div class="hint">Letters, numbers, - and _ only</div>
+          <div class="ferr" id="ferr-user"></div>
         </div>
         <div class="form-group">
           <label>Password</label>
-          <input type="password" id="s-password" placeholder="Min 6 characters" autocomplete="new-password"/>
-          <div class="field-error" id="err-password"></div>
+          <input type="password" id="s-pass" placeholder="Min 6 chars" autocomplete="new-password"/>
+          <div class="ferr" id="ferr-pass"></div>
         </div>
       </div>
       <div class="form-group">
         <label>Confirm Password</label>
-        <input type="password" id="s-password2" placeholder="Repeat your password"
-               onkeydown="if(event.key==='Enter') nextStep(2)"/>
-        <div class="field-error" id="err-password2"></div>
+        <input type="password" id="s-pass2" placeholder="Repeat password"
+               onkeydown="if(event.key==='Enter')next(2)"/>
+        <div class="ferr" id="ferr-pass2"></div>
       </div>
-      <button class="btn-next" onclick="nextStep(2)">Continue →</button>
+      <button class="btn-next" onclick="next(2)">Continue →</button>
     </div>
 
-    <!-- STEP 2: BUSINESS -->
-    <div class="form-step" id="form-step-2">
+    <!-- STEP 2 -->
+    <div class="form-step" id="step2">
       <div class="form-group">
         <label>Business Name</label>
-        <input type="text" id="s-bizname" placeholder="e.g. Mama's Kitchen, City Boutique"/>
-        <div class="field-hint">This appears in your bot's replies to customers.</div>
-        <div class="field-error" id="err-bizname"></div>
+        <input type="text" id="s-biz" placeholder="e.g. Mama's Kitchen"
+               onkeydown="if(event.key==='Enter')next(3)"/>
+        <div class="hint">Customers will see this name in bot replies</div>
+        <div class="ferr" id="ferr-biz"></div>
       </div>
       <div class="btn-row">
-        <button class="btn-back" onclick="goStep(1)">← Back</button>
-        <button class="btn-next" style="flex:1" onclick="nextStep(3)">Continue →</button>
+        <button class="btn-back" onclick="goTo(1)">← Back</button>
+        <button class="btn-next" style="flex:1" onclick="next(3)">Continue →</button>
       </div>
     </div>
 
-    <!-- STEP 3: WHATSAPP -->
-    <div class="form-step" id="form-step-3">
+    <!-- STEP 3 -->
+    <div class="form-step" id="step3">
       <div class="form-group">
         <label>WhatsApp Phone Number ID</label>
-        <input type="text" id="s-phone-id" placeholder="e.g. 1088821460973757"/>
-        <div class="field-hint">Found in Meta → WhatsApp → API Setup → Phone Number ID</div>
-        <div class="field-error" id="err-phone-id"></div>
+        <input type="text" id="s-pid" placeholder="e.g. 1088821460973757"/>
+        <div class="hint">Meta → WhatsApp → API Setup → Phone Number ID</div>
+        <div class="ferr" id="ferr-pid"></div>
       </div>
       <div class="form-group">
         <label>WhatsApp Access Token</label>
-        <input type="text" id="s-token" placeholder="EAAn..."/>
-        <div class="field-hint">Found in Meta → WhatsApp → API Setup → Access Token</div>
-        <div class="field-error" id="err-token"></div>
+        <input type="text" id="s-tok" placeholder="EAAn..."/>
+        <div class="hint">Meta → WhatsApp → API Setup → Access Token</div>
+        <div class="ferr" id="ferr-tok"></div>
       </div>
-      <div class="skip-hint">Don't have these yet? <span class="skip-link" onclick="skipWhatsApp()">Skip for now →</span></div>
-      <div class="btn-row" style="margin-top:16px;">
-        <button class="btn-back" onclick="goStep(2)">← Back</button>
-        <button class="btn-next" style="flex:1" id="submit-btn" onclick="submitSignup()">🚀 Create My Account</button>
+      <div class="skip-hint">No WhatsApp yet? <span class="skip-link" onclick="submit(true)">Skip for now →</span></div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn-back" onclick="goTo(2)">← Back</button>
+        <button class="btn-next" style="flex:1" id="submit-btn" onclick="submit(false)">🚀 Create Account</button>
       </div>
     </div>
 
     <!-- SUCCESS -->
-    <div class="success-screen" id="success-screen">
+    <div class="success-screen" id="success">
       <div class="success-icon">🎉</div>
       <div class="success-title">You're <span>live!</span></div>
-      <div class="success-sub" id="success-msg">Your account has been created.</div>
-      <div class="success-creds" id="success-creds"></div>
-      <button class="btn-go" onclick="goToDashboard()">Open My Dashboard →</button>
+      <div class="success-sub" id="success-msg">Your account is ready.</div>
+      <div class="creds-box" id="success-creds"></div>
+      <button class="btn-go" onclick="window.location.href='/static/dashboard.html'">Open My Dashboard →</button>
     </div>
-
   </div>
 </div>
 
 <script>
 const API = 'http://127.0.0.1:8000';
-let currentStep = 1;
-let signupToken = null;
-let signupBizName = null;
+const TITLES = ['Create your <span>account</span>', 'Your <span>business</span>', 'Connect <span>WhatsApp</span>'];
+const SUBS = ['Free to start. No credit card needed.', 'Customers will see this name.', 'You can add these later in Settings.'];
 
-// ── STEP NAVIGATION ───────────────────────────────────────
-function goStep(n) {
-  document.querySelectorAll('.form-step').forEach(s => s.classList.remove('active'));
-  document.getElementById(`form-step-${n}`).classList.add('active');
-  for (let i = 1; i <= 3; i++) {
-    const tab = document.getElementById(`step-tab-${i}`);
-    tab.classList.remove('active', 'done');
-    if (i < n) tab.classList.add('done');
-    if (i === n) tab.classList.add('active');
+function goTo(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById(`step${i}`).classList.toggle('active', i===n);
+    const tab = document.getElementById(`tab${i}`);
+    tab.className = 'step' + (i===n?' active':i<n?' done':'');
+  });
+  document.getElementById('progress').style.width = `${Math.round(n/3*100)}%`;
+  document.getElementById('ftitle').innerHTML = TITLES[n-1];
+  document.getElementById('fsub').textContent = SUBS[n-1];
+  document.getElementById('err-banner').style.display = 'none';
+}
+
+function clearErr() {
+  document.querySelectorAll('.ferr').forEach(e=>e.textContent='');
+  document.querySelectorAll('input').forEach(i=>i.classList.remove('err'));
+  document.getElementById('err-banner').style.display='none';
+}
+
+function fieldErr(inputId, errId, msg) {
+  document.getElementById(inputId).classList.add('err');
+  document.getElementById(errId).textContent = msg;
+}
+
+function next(to) {
+  clearErr();
+  if (to===2) {
+    const u = document.getElementById('s-user').value.trim();
+    const p = document.getElementById('s-pass').value;
+    const p2 = document.getElementById('s-pass2').value;
+    let ok = true;
+    if (u.length < 3) { fieldErr('s-user','ferr-user','At least 3 characters'); ok=false; }
+    else if (/\s/.test(u)) { fieldErr('s-user','ferr-user','No spaces allowed'); ok=false; }
+    if (p.length < 6) { fieldErr('s-pass','ferr-pass','At least 6 characters'); ok=false; }
+    if (p !== p2) { fieldErr('s-pass2','ferr-pass2','Passwords do not match'); ok=false; }
+    if (!ok) return;
   }
-  document.getElementById('progress').style.width = `${Math.round((n / 3) * 100)}%`;
-  document.getElementById('error-banner').style.display = 'none';
-  currentStep = n;
-  // Update title
-  const titles = ['Create your <span>account</span>', 'Tell us about your <span>business</span>', 'Connect <span>WhatsApp</span>'];
-  document.querySelector('.form-title').innerHTML = titles[n - 1];
-  const subs = ['Free to start. No credit card needed.', 'Your customers will see this name.', 'You can add these later in Settings.'];
-  document.querySelector('.form-sub').textContent = subs[n - 1];
+  if (to===3) {
+    const b = document.getElementById('s-biz').value.trim();
+    if (b.length < 2) { fieldErr('s-biz','ferr-biz','Enter your business name'); return; }
+  }
+  goTo(to);
 }
 
-function nextStep(to) {
-  clearErrors();
-  if (to === 2 && !validateStep1()) return;
-  if (to === 3 && !validateStep2()) return;
-  goStep(to);
-}
-
-// ── VALIDATION ────────────────────────────────────────────
-function clearErrors() {
-  document.querySelectorAll('.field-error').forEach(e => e.textContent = '');
-  document.querySelectorAll('input').forEach(i => i.classList.remove('error'));
-  document.getElementById('error-banner').style.display = 'none';
-}
-
-function setError(fieldId, errId, msg) {
-  const input = document.getElementById(fieldId);
-  const err = document.getElementById(errId);
-  if (input) input.classList.add('error');
-  if (err) err.textContent = msg;
-}
-
-function validateStep1() {
-  const username = document.getElementById('s-username').value.trim();
-  const password = document.getElementById('s-password').value;
-  const password2 = document.getElementById('s-password2').value;
-  let ok = true;
-  if (username.length < 3) { setError('s-username', 'err-username', 'At least 3 characters'); ok = false; }
-  if (/\s/.test(username)) { setError('s-username', 'err-username', 'No spaces allowed'); ok = false; }
-  if (password.length < 6) { setError('s-password', 'err-password', 'At least 6 characters'); ok = false; }
-  if (password !== password2) { setError('s-password2', 'err-password2', 'Passwords do not match'); ok = false; }
-  return ok;
-}
-
-function validateStep2() {
-  const biz = document.getElementById('s-bizname').value.trim();
-  if (biz.length < 2) { setError('s-bizname', 'err-bizname', 'Enter your business name'); return false; }
-  return true;
-}
-
-function skipWhatsApp() {
-  document.getElementById('s-phone-id').value = '';
-  document.getElementById('s-token').value = '';
-  submitSignup();
-}
-
-// ── SUBMIT ────────────────────────────────────────────────
-async function submitSignup() {
-  clearErrors();
+async function submit(skip) {
+  clearErr();
   const btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  btn.textContent = 'Creating account...';
+  btn.textContent = 'Creating...';
 
   const payload = {
-    business_name: document.getElementById('s-bizname').value.trim(),
-    username: document.getElementById('s-username').value.trim(),
-    password: document.getElementById('s-password').value,
-    whatsapp_phone_id: document.getElementById('s-phone-id').value.trim(),
-    whatsapp_token: document.getElementById('s-token').value.trim(),
+    business_name: document.getElementById('s-biz').value.trim(),
+    username: document.getElementById('s-user').value.trim().toLowerCase(),
+    password: document.getElementById('s-pass').value,
+    whatsapp_phone_id: skip ? '' : document.getElementById('s-pid').value.trim(),
+    whatsapp_token: skip ? '' : document.getElementById('s-tok').value.trim(),
   };
 
   try {
@@ -325,19 +231,19 @@ async function submitSignup() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
     const data = await res.json();
 
     if (!res.ok) {
-      showBanner(data.detail || 'Signup failed');
+      // Handle pydantic validation errors
+      let msg = data.detail;
+      if (Array.isArray(msg)) msg = msg.map(e=>e.msg).join(', ');
+      showBanner(msg || 'Signup failed');
       btn.disabled = false;
-      btn.textContent = '🚀 Create My Account';
+      btn.textContent = '🚀 Create Account';
       return;
     }
 
-    // Save token
-    signupToken = data.access_token;
-    signupBizName = data.business_name;
+    // Save session
     localStorage.setItem('wazibot_token', data.access_token);
     localStorage.setItem('wazibot_role', data.role);
     localStorage.setItem('wazibot_user', payload.username);
@@ -348,38 +254,33 @@ async function submitSignup() {
   } catch(e) {
     showBanner('Cannot reach server. Is the backend running?');
     btn.disabled = false;
-    btn.textContent = '🚀 Create My Account';
+    btn.textContent = '🚀 Create Account';
   }
 }
 
 function showBanner(msg) {
-  const b = document.getElementById('error-banner');
+  const b = document.getElementById('err-banner');
   b.textContent = '⚠ ' + msg;
   b.style.display = 'block';
 }
 
 function showSuccess(payload, data) {
-  document.querySelectorAll('.form-step').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.steps, .progress-bar, .form-title, .form-sub, .error-banner').forEach(el => el.style.display = 'none');
-  const screen = document.getElementById('success-screen');
-  screen.style.display = 'block';
+  document.querySelectorAll('.form-step,.steps,.progress-bar').forEach(el=>el.style.display='none');
+  document.getElementById('ftitle').style.display='none';
+  document.getElementById('fsub').style.display='none';
+  document.getElementById('err-banner').style.display='none';
+  document.getElementById('success').style.display='block';
 
-  const hasWhatsApp = payload.whatsapp_phone_id && payload.whatsapp_token;
-
-  document.getElementById('success-msg').innerHTML = hasWhatsApp
-    ? `<strong>${data.business_name}</strong> is ready. Your WhatsApp bot is live!`
-    : `<strong>${data.business_name}</strong> is ready. Add your WhatsApp credentials in Settings to activate your bot.`;
+  const hasWA = payload.whatsapp_phone_id && payload.whatsapp_token;
+  document.getElementById('success-msg').innerHTML = hasWA
+    ? `<strong>${data.business_name}</strong> is ready. Your bot is live!`
+    : `<strong>${data.business_name}</strong> is ready. Add WhatsApp credentials in ⚙️ Settings to activate your bot.`;
 
   document.getElementById('success-creds').innerHTML = `
     <div class="cred-row"><span class="cred-label">Business</span><span class="cred-value">${data.business_name}</span></div>
     <div class="cred-row"><span class="cred-label">Username</span><span class="cred-value">${payload.username}</span></div>
     <div class="cred-row"><span class="cred-label">Status</span><span class="cred-value">✅ Active</span></div>
-    ${hasWhatsApp ? `<div class="cred-row"><span class="cred-label">WhatsApp</span><span class="cred-value">🟢 Connected</span></div>` : `<div class="cred-row"><span class="cred-label">WhatsApp</span><span class="cred-value">⚙️ Setup needed</span></div>`}
-  `;
-}
-
-function goToDashboard() {
-  window.location.href = '/static/dashboard.html';
+    <div class="cred-row"><span class="cred-label">WhatsApp</span><span class="cred-value">${hasWA?'🟢 Connected':'⚙️ Setup needed'}</span></div>`;
 }
 </script>
 </body>

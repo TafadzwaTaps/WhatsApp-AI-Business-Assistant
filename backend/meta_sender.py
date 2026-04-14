@@ -1,22 +1,23 @@
+# meta_sender.py
+# NOTE: This file is kept for backwards compatibility only.
+# In the multi-tenant system, WhatsApp messages are sent directly
+# via send_message() in main.py using per-business credentials.
+# Do NOT put credentials here anymore.
+
 import requests
 
-TOKEN = "EAAnCPODMFHgBRFKYjzy3TAqpZABcM3ZAmZBmRKgqYfmjE7wS9DYH93mdZB7HRZCZBpV7HETpTG4TXzTW6LFcBrAAonq86cp4lV4e3ZCkkWhZAO3jXfwUx2EwahwLSPZBGsSm5ALsUEnTFf72JIic5ZBI2ZAIFh4lb2GH6koS5LUPbxEScfqqpA4WgJOP3dEZAbZB6HWsr9ZAVxwcIJP48pCvIITsGhBIzcbHJinoZCaS74p134aDqqwn89k2SsRcD8RdMWyPlYBAUJtNZA7SWMbRrbZBWwxBHYwZDZD"
-PHONE_NUMBER_ID = "1088821460973757"
-
-def send_whatsapp_message(to, message):
-    url = f"https://graph.facebook.com/v18.0/{PHONE_NUMBER_ID}/messages"
-
+def send_whatsapp_message(phone_number_id: str, token: str, to: str, message: str):
+    """Send a WhatsApp message using explicit credentials (no hardcoded tokens)."""
+    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
     headers = {
-        "Authorization": f"Bearer {TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
-
     data = {
         "messaging_product": "whatsapp",
         "to": to,
         "type": "text",
         "text": {"body": message}
     }
-
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(url, headers=headers, json=data, timeout=10)
     return response.json()

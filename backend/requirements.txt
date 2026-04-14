@@ -1,5 +1,8 @@
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 pydantic
-pythondotenv
+python-dotenv
+python-jose[cryptography]
+requests
+aiofiles
