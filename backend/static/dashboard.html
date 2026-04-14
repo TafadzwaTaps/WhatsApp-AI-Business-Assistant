@@ -402,16 +402,16 @@
 // ── CONFIG — all API routes updated to /api/* prefix ──────
 const API = 'http://127.0.0.1:8000';
 const ROUTES = {
-  login:         '/api/auth/login',
-  register:      '/api/auth/register',
-  refresh:       '/api/auth/refresh',
-  adminStats:    '/api/admin/stats',
-  adminBiz:      '/api/admin/businesses',
-  products:      '/api/products',
-  orders:        '/api/orders',
-  conversations: '/api/chat/conversations',
-  customers:     '/api/chat/customers',
-  broadcast:     '/api/chat/broadcast',
+  login:         '/auth/login',
+  register:      '/auth/register',
+  refresh:       '/auth/refresh',
+  adminStats:    '/admin/stats',
+  adminBiz:      '/admin/businesses',
+  products:      '/products',
+  orders:        '/orders',
+  conversations: '/chat/conversations',
+  customers:     '/chat/customers',
+  broadcast:     '/chat/broadcast',
 };
 
 let token      = localStorage.getItem('wazi_token');

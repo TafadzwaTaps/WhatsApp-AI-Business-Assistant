@@ -1,3 +1,11 @@
+"""
+Run this ONCE to migrate your existing app.db to multi-tenant schema.
+It will:
+ 1. Add the businesses table
+ 2. Add business_id columns to products, orders, chat_messages
+ 3. Create a default business for your existing data
+ 4. Assign all existing data to that business
+"""
 import sqlite3
 
 conn = sqlite3.connect("app.db")
