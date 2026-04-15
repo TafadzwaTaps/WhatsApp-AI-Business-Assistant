@@ -56,3 +56,13 @@ class ChatMessage(Base):
     created_at = Column(DateTime, server_default=func.now())
 
     business = relationship("Business", back_populates="messages")
+
+# ADD THIS
+
+class WhatsAppCredential(Base):
+    __tablename__ = "whatsapp_credentials"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True)
+    phone_number_id = Column(String, unique=True, index=True)
+    access_token = Column(String)

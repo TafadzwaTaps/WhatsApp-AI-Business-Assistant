@@ -67,3 +67,10 @@ class ChatMessageOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+# ADD
+
+class WhatsAppCredentialCreate(BaseModel):
+    user_id: int
+    phone_number_id: str
+    access_token: str

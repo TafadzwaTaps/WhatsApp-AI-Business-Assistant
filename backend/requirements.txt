@@ -4,5 +4,6 @@ sqlalchemy
 pydantic
 python-dotenv
 python-jose[cryptography]
+cryptography
 requests
 aiofiles
