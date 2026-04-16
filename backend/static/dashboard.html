@@ -233,11 +233,13 @@
     <div class="logo-name">WaziBot</div>
     <div class="logo-sub" id="sidebar-role-label">Dashboard</div>
     <div class="logo-role" id="sidebar-role-badge"></div>
+    
   </div>
   <nav class="nav" id="sidebar-nav"></nav>
   <div class="sidebar-footer">
     <div class="footer-user" id="footer-user"></div>
     <div class="api-indicator"><span class="spin" id="api-spin"></span><span id="api-status-text">Connecting...</span></div>
+    <button onclick="copy('12345')">Copy</button>
     <button class="btn-logout" onclick="logout()">⏻ Sign Out</button>
   </div>
 </aside>
@@ -512,6 +514,7 @@ async function tryRefresh() {
     return true;
   } catch { logout(); return false; }
 }
+
 
 function logout() {
   ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz'].forEach(k => localStorage.removeItem(k));
@@ -799,7 +802,13 @@ async function saveSettings() {
 
 // ── UTILS ─────────────────────────────────────────────────
 function fmtTime(iso){try{return new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '';}}
-function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function escHtml(s){
+  return String(s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
 
 // ── INIT ──────────────────────────────────────────────────
 function init(){
@@ -810,6 +819,68 @@ function init(){
 }
 
 if(token&&userRole){document.getElementById('login-screen').style.display='none';init();}
+
+
+// 🔒 SAFE API WRAPPER UPGRADE
+const originalApiFetch = apiFetch;
+
+apiFetch = async function(path, opts = {}, retry = true) {
+  try {
+    const res = await fetch(API + path, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      ...opts
+    });
+
+    if (res.status === 401 && retry) {
+      const refreshed = await tryRefresh();
+      if (refreshed) return apiFetch(path, opts, false);
+      return null;
+    }
+
+    if (!res.ok) {
+      let msg = "Request failed";
+      try {
+        const err = await res.json();
+        msg = err.detail || msg;
+      } catch {}
+      throw new Error(msg);
+    }
+
+    return res.json();
+
+  } catch (err) {
+    console.error("API ERROR:", err);
+    toast("⚠️ " + err.message, true);
+    throw err;
+  }
+};
+
+function copy(text) {
+  navigator.clipboard.writeText(text);
+  toast("Copied to clipboard ✅");
+}
+
+// 🔄 AUTO REFRESH EVERY 15s
+setInterval(() => {
+  if (!token) return;
+
+  if (userRole === 'superadmin') {
+    loadAdminData();
+  } else {
+    loadOrders();
+  }
+
+  checkStatus();
+}, 15000);
+
+function setLoading(el, state=true) {
+  if (!el) return;
+  el.style.opacity = state ? "0.5" : "1";
+  el.style.pointerEvents = state ? "none" : "auto";
+}
 </script>
 </body>
 </html>
