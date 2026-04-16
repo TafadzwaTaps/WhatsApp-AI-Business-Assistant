@@ -6,7 +6,6 @@ from crypto import encrypt_token, decrypt_token, is_encrypted
 
 # ── Business ──────────────────────────────────────────────
 def create_business(db: Session, data):
-    # Encrypt token before storing
     raw_token = data.whatsapp_token or ""
     stored_token = encrypt_token(raw_token) if raw_token else None
 
@@ -46,14 +45,12 @@ def get_business_by_id(db: Session, business_id: int):
 
 
 def get_decrypted_token(business: models.Business) -> str:
-    """Get the plaintext WhatsApp token for a business."""
+    """Return the plaintext WhatsApp token, handling both encrypted and legacy plain values."""
     if not business.whatsapp_token:
         return ""
-    # Handle both encrypted and legacy plaintext tokens
     if is_encrypted(business.whatsapp_token):
         return decrypt_token(business.whatsapp_token)
-    # Plaintext token (e.g. from migrate.py) — return as-is
-    return business.whatsapp_token
+    return business.whatsapp_token   # legacy plaintext
 
 
 def update_business(db: Session, business_id: int, data):
@@ -61,7 +58,6 @@ def update_business(db: Session, business_id: int, data):
     if not b:
         return None
     update_dict = data.dict(exclude_none=True)
-    # Encrypt token if it's being updated
     if "whatsapp_token" in update_dict and update_dict["whatsapp_token"]:
         raw = update_dict["whatsapp_token"]
         if not is_encrypted(raw):
@@ -103,7 +99,7 @@ def get_products(db: Session, business_id: int):
 def get_product_price(db: Session, business_id: int, name: str) -> float:
     p = db.query(models.Product).filter(
         models.Product.business_id == business_id,
-        models.Product.name.ilike(name)  # case-insensitive match
+        models.Product.name.ilike(name)
     ).first()
     return p.price if p else 0.0
 
@@ -141,7 +137,7 @@ def get_orders(db: Session, business_id: int):
     ).order_by(models.Order.id.desc()).all()
 
 
-# ── Chat ──────────────────────────────────────────────────
+# ── ChatMessage (legacy — keeps dashboard working) ────────
 def log_message(db: Session, business_id: int, phone: str, direction: str, message: str):
     m = models.ChatMessage(
         business_id=business_id,
@@ -193,3 +189,99 @@ def get_all_customer_phones(db: Session, business_id: int):
         .all()
     )
     return [r[0] for r in rows]
+
+
+# ── Customer (CRM) ────────────────────────────────────────
+def get_or_create_customer(db: Session, phone: str, business_id: int) -> models.Customer:
+    """Return existing customer record or create one. Safe to call on every message."""
+    customer = (
+        db.query(models.Customer)
+        .filter(
+            models.Customer.phone == phone,
+            models.Customer.business_id == business_id,
+        )
+        .first()
+    )
+    if customer:
+        return customer
+    customer = models.Customer(phone=phone, business_id=business_id)
+    db.add(customer)
+    db.commit()
+    db.refresh(customer)
+    return customer
+
+
+def get_customers_for_business(db: Session, business_id: int):
+    return (
+        db.query(models.Customer)
+        .filter(models.Customer.business_id == business_id)
+        .order_by(models.Customer.created_at.desc())
+        .all()
+    )
+
+
+# ── Message (CRM) ─────────────────────────────────────────
+def create_message(
+    db: Session,
+    customer_id: int,
+    business_id: int,
+    text: str,
+    direction: str,   # "incoming" or "outgoing"
+) -> models.Message:
+    """Save one message to the CRM messages table."""
+    msg = models.Message(
+        customer_id=customer_id,
+        business_id=business_id,
+        text=text,
+        direction=direction,
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    return msg
+
+
+def get_messages_by_customer(db: Session, customer_id: int):
+    """Full chat history for a customer, oldest first (chat order)."""
+    return (
+        db.query(models.Message)
+        .filter(models.Message.customer_id == customer_id)
+        .order_by(models.Message.created_at.asc())
+        .all()
+    )
+
+
+def get_chat_conversations(db: Session, business_id: int):
+    """
+    Inbox view: one row per customer with their last message.
+    Returns a list of dicts ready to serialise as JSON.
+    """
+    subq = (
+        db.query(
+            models.Message.customer_id,
+            func.max(models.Message.id).label("max_id"),
+        )
+        .filter(models.Message.business_id == business_id)
+        .group_by(models.Message.customer_id)
+        .subquery()
+    )
+
+    rows = (
+        db.query(models.Customer, models.Message)
+        .join(subq, models.Customer.id == subq.c.customer_id)
+        .join(models.Message, models.Message.id == subq.c.max_id)
+        .order_by(models.Message.id.desc())
+        .all()
+    )
+
+    return [
+        {
+            "customer_id": customer.id,
+            "phone": customer.phone,
+            "customer_since": customer.created_at,
+            "last_message": last_msg.text,
+            "last_direction": last_msg.direction,
+            "last_message_at": last_msg.created_at,
+        }
+        for customer, last_msg in rows
+    ]

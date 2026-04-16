@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
+
 
 class Business(Base):
     __tablename__ = "businesses"
@@ -10,14 +11,15 @@ class Business(Base):
     name = Column(String, nullable=False)
     owner_username = Column(String, unique=True, nullable=False)
     owner_password = Column(String, nullable=False)
-    whatsapp_phone_id = Column(String, unique=True, nullable=True)  # Meta Phone Number ID
-    whatsapp_token = Column(String, nullable=True)                  # Meta Access Token
+    whatsapp_phone_id = Column(String, unique=True, nullable=True)
+    whatsapp_token = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, server_default=func.now())
 
     products = relationship("Product", back_populates="business", cascade="all, delete")
     orders = relationship("Order", back_populates="business", cascade="all, delete")
     messages = relationship("ChatMessage", back_populates="business", cascade="all, delete")
+    customers = relationship("Customer", back_populates="business", cascade="all, delete")
 
 
 class Product(Base):
@@ -57,12 +59,33 @@ class ChatMessage(Base):
 
     business = relationship("Business", back_populates="messages")
 
-# ADD THIS
 
-class WhatsAppCredential(Base):
-    __tablename__ = "whatsapp_credentials"
+# ── Customer: one record per unique WhatsApp number per business ──
+class Customer(Base):
+    __tablename__ = "customers"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, index=True)
-    phone_number_id = Column(String, unique=True, index=True)
-    access_token = Column(String)
+    phone = Column(String, nullable=False)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    business = relationship("Business", back_populates="customers")
+    customer_messages = relationship("Message", back_populates="customer", cascade="all, delete")
+
+    __table_args__ = (
+        UniqueConstraint("phone", "business_id", name="uq_customer_phone_business"),
+    )
+
+
+# ── Message: every individual message, incoming or outgoing ──
+class Message(Base):
+    __tablename__ = "messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
+    business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
+    text = Column(String, nullable=False)
+    direction = Column(String, nullable=False)   # "incoming" or "outgoing"
+    created_at = Column(DateTime, server_default=func.now())
+
+    customer = relationship("Customer", back_populates="customer_messages")

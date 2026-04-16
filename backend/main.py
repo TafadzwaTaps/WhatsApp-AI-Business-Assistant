@@ -47,17 +47,12 @@ def get_db():
         db.close()
 
 
-# ─── WHATSAPP SENDER ────────────────────────────────────
+# ─── WHATSAPP SENDER ─────────────────────────────────────
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
-    """
-    Send a WhatsApp message using explicit credentials.
-    This is the ONLY place we send messages — no hardcoded tokens.
-    """
     if not phone_number_id or not token:
         print("⚠️  send_whatsapp: missing phone_number_id or token")
         return {"error": "missing credentials"}
 
-    # Strip 'whatsapp:' prefix if present (Twilio legacy)
     to = to.replace("whatsapp:", "")
 
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
@@ -75,21 +70,18 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> di
     try:
         resp = http_requests.post(url, headers=headers, json=payload, timeout=10)
         result = resp.json()
-
         if resp.status_code != 200:
             print(f"⚠️  WhatsApp API error {resp.status_code}: {result}")
         else:
             msg_id = result.get("messages", [{}])[0].get("id", "unknown")
             print(f"📤 Sent to {to} — msg_id: {msg_id}")
-
         return result
-
     except Exception as e:
         print(f"⚠️  WhatsApp send exception: {e}")
         return {"error": str(e)}
 
 
-# ─── SIGNUP ─────────────────────────────────────────────
+# ─── SIGNUP ──────────────────────────────────────────────
 class SignupRequest(BaseModel):
     business_name: str
     username: str
@@ -124,7 +116,6 @@ class SignupRequest(BaseModel):
 def signup(data: SignupRequest, db: Session = Depends(get_db)):
     if data.username == SUPER_ADMIN_USERNAME.lower():
         raise HTTPException(status_code=400, detail="Username not available")
-
     if crud.get_business_by_username(db, data.username):
         raise HTTPException(status_code=400, detail="Username already taken")
 
@@ -143,7 +134,6 @@ def signup(data: SignupRequest, db: Session = Depends(get_db)):
     })
 
     print(f"🆕 New signup: {business.name} (@{business.owner_username})")
-
     return {
         "access_token": token,
         "token_type": "bearer",
@@ -153,7 +143,7 @@ def signup(data: SignupRequest, db: Session = Depends(get_db)):
     }
 
 
-# ─── LOGIN ───────────────────────────────────────────────
+# ─── LOGIN ────────────────────────────────────────────────
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -189,7 +179,7 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     }
 
 
-# ─── WEBHOOK ────────────────────────────────────────────
+# ─── WEBHOOK ─────────────────────────────────────────────
 @app.get("/webhook")
 async def verify_webhook(request: Request):
     params = request.query_params
@@ -205,13 +195,13 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
     try:
         changes = data["entry"][0]["changes"][0]["value"]
 
-        # Ignore delivery receipts / status updates — not messages
+        # Ignore delivery receipts / status updates
         if "messages" not in changes:
             return {"status": "ok"}
 
         msg_obj = changes["messages"][0]
 
-        # Only handle text messages for now
+        # Only handle text messages
         if msg_obj.get("type") != "text":
             return {"status": "ok"}
 
@@ -221,27 +211,31 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
 
         print(f"📥 Incoming | phone_id={phone_number_id} | from={customer_phone} | text={text!r}")
 
-        # ── Find the business this message belongs to ──
+        # Find the business
         business = crud.get_business_by_phone_id(db, phone_number_id)
         if not business:
             print(f"⚠️  No business found for phone_number_id={phone_number_id}")
-            print(f"⚠️  Make sure you saved the correct Phone Number ID in Settings")
             return {"status": "ok"}
 
         if not business.is_active:
             print(f"⚠️  Business '{business.name}' is suspended")
             return {"status": "ok"}
 
-        # ── Get decrypted token for this business ──
+        # Get decrypted token
         token = crud.get_decrypted_token(business)
         if not token:
-            print(f"⚠️  Business '{business.name}' has no WhatsApp token — reply will not be sent")
-            print(f"⚠️  Go to Settings in the dashboard and save your Access Token")
+            print(f"⚠️  Business '{business.name}' has no WhatsApp token")
 
-        # ── Log the incoming message ──
+        # Track customer in CRM
+        customer = crud.get_or_create_customer(db, customer_phone, business.id)
+
+        # Log to legacy chat_messages (keeps dashboard working)
         crud.log_message(db, business.id, customer_phone, "in", text)
 
-        # ── Generate reply ──
+        # Log to new messages table (CRM inbox)
+        crud.create_message(db, customer.id, business.id, text, "incoming")
+
+        # Generate reply
         products = crud.get_products(db, business.id)
 
         if "menu" in text.lower():
@@ -268,7 +262,6 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
                     qty = int(parts[2])
                     if qty <= 0:
                         raise ValueError("Quantity must be positive")
-
                     crud.create_order(db, business.id, OrderCreate(
                         customer_phone=customer_phone,
                         product_name=product_name,
@@ -290,9 +283,11 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
                 products=products,
             )
 
-        # ── Send reply ──
+        # Log reply
         crud.log_message(db, business.id, customer_phone, "out", reply)
+        crud.create_message(db, customer.id, business.id, reply, "outgoing")
 
+        # Send
         if token:
             send_whatsapp(phone_number_id, token, customer_phone, reply)
         else:
@@ -301,39 +296,28 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
         print(f"✅ [{business.name}] {customer_phone}: {text!r} → replied")
 
     except KeyError as e:
-        print(f"⚠️  Webhook KeyError (unexpected payload structure): {e}")
-        print(f"    Raw data: {data}")
+        print(f"⚠️  Webhook KeyError: {e} | data: {data}")
     except Exception as e:
         print(f"⚠️  Webhook error: {type(e).__name__}: {e}")
 
-    # Always return 200 — Meta will retry if we return anything else
     return {"status": "ok"}
 
 
-# ─── SUPERADMIN ──────────────────────────────────────────
+# ─── SUPERADMIN ───────────────────────────────────────────
 @app.get("/admin/businesses", response_model=List[BusinessOut])
 def list_businesses(db: Session = Depends(get_db), user=Depends(require_superadmin)):
     return crud.get_all_businesses(db)
 
 
 @app.post("/admin/businesses", response_model=BusinessOut)
-def admin_create_business(
-    data: BusinessCreate,
-    db: Session = Depends(get_db),
-    user=Depends(require_superadmin),
-):
+def admin_create_business(data: BusinessCreate, db: Session = Depends(get_db), user=Depends(require_superadmin)):
     if crud.get_business_by_username(db, data.owner_username):
         raise HTTPException(status_code=400, detail="Username already taken")
     return crud.create_business(db, data)
 
 
 @app.patch("/admin/businesses/{business_id}", response_model=BusinessOut)
-def admin_update_business(
-    business_id: int,
-    data: BusinessUpdate,
-    db: Session = Depends(get_db),
-    user=Depends(require_superadmin),
-):
+def admin_update_business(business_id: int, data: BusinessUpdate, db: Session = Depends(get_db), user=Depends(require_superadmin)):
     b = crud.update_business(db, business_id, data)
     if not b:
         raise HTTPException(status_code=404, detail="Business not found")
@@ -341,11 +325,7 @@ def admin_update_business(
 
 
 @app.delete("/admin/businesses/{business_id}")
-def admin_delete_business(
-    business_id: int,
-    db: Session = Depends(get_db),
-    user=Depends(require_superadmin),
-):
+def admin_delete_business(business_id: int, db: Session = Depends(get_db), user=Depends(require_superadmin)):
     b = crud.delete_business(db, business_id)
     if not b:
         raise HTTPException(status_code=404, detail="Business not found")
@@ -374,12 +354,7 @@ def get_me(db: Session = Depends(get_db), user=Depends(require_business)):
 
 
 @app.patch("/me", response_model=BusinessOut)
-def update_me(
-    data: BusinessUpdate,
-    db: Session = Depends(get_db),
-    user=Depends(require_business),
-):
-    # Business owners cannot change their own active status
+def update_me(data: BusinessUpdate, db: Session = Depends(get_db), user=Depends(require_business)):
     data_dict = data.dict(exclude_none=True)
     data_dict.pop("is_active", None)
     b = crud.update_business(db, user["business_id"], BusinessUpdate(**data_dict))
@@ -387,19 +362,13 @@ def update_me(
 
 
 @app.get("/me/test-whatsapp")
-def test_whatsapp_connection(
-    db: Session = Depends(get_db),
-    user=Depends(require_business),
-):
-    """Test if the saved WhatsApp credentials are valid."""
+def test_whatsapp_connection(db: Session = Depends(get_db), user=Depends(require_business)):
     b = crud.get_business_by_id(db, user["business_id"])
     if not b or not b.whatsapp_phone_id:
         return {"ok": False, "reason": "No Phone Number ID saved"}
-
     token = crud.get_decrypted_token(b)
     if not token:
         return {"ok": False, "reason": "No access token saved"}
-
     try:
         resp = http_requests.get(
             f"https://graph.facebook.com/v18.0/{b.whatsapp_phone_id}",
@@ -408,9 +377,8 @@ def test_whatsapp_connection(
         )
         if resp.status_code == 200:
             return {"ok": True, "reason": "Connected"}
-        else:
-            err = resp.json().get("error", {}).get("message", "Unknown error")
-            return {"ok": False, "reason": err}
+        err = resp.json().get("error", {}).get("message", "Unknown error")
+        return {"ok": False, "reason": err}
     except Exception as e:
         return {"ok": False, "reason": str(e)}
 
@@ -422,20 +390,12 @@ def get_products(db: Session = Depends(get_db), user=Depends(get_current_user)):
 
 
 @app.post("/products", response_model=ProductOut)
-def create_product(
-    product: ProductCreate,
-    db: Session = Depends(get_db),
-    user=Depends(require_business),
-):
+def create_product(product: ProductCreate, db: Session = Depends(get_db), user=Depends(require_business)):
     return crud.create_product(db, user["business_id"], product)
 
 
 @app.delete("/products/{product_id}")
-def delete_product(
-    product_id: int,
-    db: Session = Depends(get_db),
-    user=Depends(require_business),
-):
+def delete_product(product_id: int, db: Session = Depends(get_db), user=Depends(require_business)):
     p = crud.delete_product(db, product_id, user["business_id"])
     if not p:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -448,18 +408,14 @@ def get_orders(db: Session = Depends(get_db), user=Depends(require_business)):
     return crud.get_orders(db, user["business_id"])
 
 
-# ─── CONVERSATIONS ───────────────────────────────────────
+# ─── CONVERSATIONS (legacy dashboard) ────────────────────
 @app.get("/conversations", response_model=List[ChatMessageOut])
 def get_conversations(db: Session = Depends(get_db), user=Depends(require_business)):
     return crud.get_conversations(db, user["business_id"])
 
 
 @app.get("/conversations/{phone}", response_model=List[ChatMessageOut])
-def get_chat(
-    phone: str,
-    db: Session = Depends(get_db),
-    user=Depends(require_business),
-):
+def get_chat(phone: str, db: Session = Depends(get_db), user=Depends(require_business)):
     return crud.get_messages_for_phone(db, user["business_id"], phone)
 
 
@@ -478,11 +434,7 @@ class BroadcastRequest(BaseModel):
 
 
 @app.post("/broadcast")
-def broadcast(
-    body: BroadcastRequest,
-    db: Session = Depends(get_db),
-    user=Depends(require_business),
-):
+def broadcast(body: BroadcastRequest, db: Session = Depends(get_db), user=Depends(require_business)):
     bid = user["business_id"]
     business = crud.get_business_by_id(db, bid)
     token = crud.get_decrypted_token(business)
@@ -502,18 +454,47 @@ def broadcast(
             failed_numbers.append(phone)
             print(f"⚠️  Broadcast failed for {phone}: {e}")
 
-    return {
-        "sent": sent,
-        "failed": failed,
-        "total": len(phones),
-        "failed_numbers": failed_numbers,
-    }
+    return {"sent": sent, "failed": failed, "total": len(phones), "failed_numbers": failed_numbers}
 
 
 @app.get("/customers")
 def get_customers(db: Session = Depends(get_db), user=Depends(require_business)):
     phones = crud.get_all_customer_phones(db, user["business_id"])
     return {"phones": phones, "total": len(phones)}
+
+
+# ─── CHAT INBOX (CRM) ────────────────────────────────────
+@app.get("/chat/customers")
+def chat_customers(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """List all tracked customers for this business."""
+    customers = crud.get_customers_for_business(db, user["business_id"])
+    return [
+        {"id": c.id, "phone": c.phone, "customer_since": c.created_at}
+        for c in customers
+    ]
+
+
+@app.get("/chat/conversations")
+def chat_conversations(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Inbox view: one row per customer with their last message preview."""
+    return crud.get_chat_conversations(db, user["business_id"])
+
+
+@app.get("/chat/messages/{customer_id}")
+def chat_messages(customer_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Full message history for one customer (oldest first)."""
+    customer = db.query(models.Customer).filter(
+        models.Customer.id == customer_id,
+        models.Customer.business_id == user["business_id"],
+    ).first()
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    msgs = crud.get_messages_by_customer(db, customer_id)
+    return [
+        {"id": m.id, "text": m.text, "direction": m.direction, "created_at": m.created_at}
+        for m in msgs
+    ]
 
 
 # ─── STATIC + ROOT ───────────────────────────────────────
