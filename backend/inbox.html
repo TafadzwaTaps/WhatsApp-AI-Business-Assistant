@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>WaziBot — Inbox</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:#0a0f0d; --surface:#111a15; --surface2:#172010; --border:#1f3025;
+  --green:#22c55e; --green-dim:#16a34a; --green-glow:rgba(34,197,94,0.15);
+  --amber:#f59e0b; --red:#ef4444; --blue:#38bdf8;
+  --text:#e8f5e9; --text-dim:#6b8f71;
+  --mono:'DM Mono',monospace; --sans:'Syne',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
+
+/* ── TOP BAR ── */
+.topbar{height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0;}
+.topbar-logo{font-size:18px;font-weight:800;color:var(--green);}
+.topbar-title{font-size:13px;color:var(--text-dim);font-family:var(--mono);}
+.ws-indicator{display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-left:auto;}
+.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);}
+.ws-dot.live{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite;}
+.ws-dot.dead{background:var(--red);}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+.btn-back{font-family:var(--mono);font-size:12px;color:var(--text-dim);background:transparent;border:1px solid var(--border);padding:5px 12px;border-radius:6px;cursor:pointer;text-decoration:none;}
+.btn-back:hover{color:var(--text);border-color:var(--text-dim);}
+
+/* ── MAIN LAYOUT ── */
+.inbox{display:flex;flex:1;overflow:hidden;}
+
+/* ── SIDEBAR ── */
+.sidebar{width:300px;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;}
+.sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);}
+.search-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;}
+.search-input:focus{border-color:var(--green);}
+.filter-row{display:flex;gap:6px;margin-top:10px;}
+.filter-btn{flex:1;padding:5px;border-radius:6px;font-family:var(--mono);font-size:10px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;transition:all 0.15s;}
+.filter-btn.active{background:var(--green-glow);color:var(--green);border-color:var(--green-dim);}
+.contact-list{overflow-y:auto;flex:1;}
+.contact-item{padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;display:flex;gap:12px;align-items:flex-start;}
+.contact-item:hover{background:var(--surface2);}
+.contact-item.active{background:var(--green-glow);border-left:3px solid var(--green);}
+.contact-avatar{width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
+.contact-info{flex:1;min-width:0;}
+.contact-phone{font-size:13px;font-weight:700;font-family:var(--mono);}
+.contact-preview{font-size:11px;color:var(--text-dim);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
+.contact-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
+.contact-time{font-size:10px;color:var(--text-dim);font-family:var(--mono);}
+.unread-badge{background:var(--green);color:#000;font-size:10px;font-weight:800;font-family:var(--mono);padding:2px 6px;border-radius:10px;min-width:18px;text-align:center;}
+.skeleton{background:var(--surface2);border-radius:4px;animation:shimmer 1.5s infinite;}
+@keyframes shimmer{0%,100%{opacity:0.6}50%{opacity:1}}
+
+/* ── CHAT PANEL ── */
+.chat-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+.chat-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;}
+.chat-avatar{width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;}
+.chat-phone{font-size:14px;font-weight:700;font-family:var(--mono);}
+.chat-status{font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-top:1px;}
+.chat-actions{margin-left:auto;display:flex;gap:8px;}
+.icon-btn{background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--mono);}
+.icon-btn:hover{border-color:var(--text-dim);color:var(--text);}
+.chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px;}
+.chat-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:12px;flex-direction:column;gap:8px;}
+.chat-empty .icon{font-size:40px;}
+
+/* ── MESSAGE BUBBLES ── */
+.msg{display:flex;flex-direction:column;max-width:72%;}
+.msg.incoming{align-self:flex-start;}
+.msg.outgoing{align-self:flex-end;}
+.bubble{padding:10px 14px;border-radius:12px;font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}
+.msg.incoming .bubble{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px;}
+.msg.outgoing .bubble{background:var(--green-glow);border:1px solid var(--green-dim);color:var(--green);border-bottom-right-radius:4px;}
+.msg-meta{display:flex;align-items:center;gap:6px;margin-top:3px;}
+.msg.outgoing .msg-meta{justify-content:flex-end;}
+.msg-time{font-size:10px;color:var(--text-dim);font-family:var(--mono);}
+.msg-status{font-size:10px;color:var(--text-dim);}
+.msg-status.sent::after{content:"✓";}
+.msg-status.delivered::after{content:"✓✓";}
+.msg-status.read::after{content:"✓✓";color:var(--blue);}
+.typing-indicator{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);border-radius:12px;border-bottom-left-radius:4px;padding:10px 14px;display:none;}
+.typing-indicator.visible{display:flex;gap:4px;align-items:center;}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--text-dim);animation:typingBounce 1.2s infinite;}
+.typing-dot:nth-child(2){animation-delay:0.2s;}
+.typing-dot:nth-child(3){animation-delay:0.4s;}
+@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-4px)}}
+
+/* ── SEND BOX ── */
+.send-box{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:flex-end;flex-shrink:0;}
+.send-input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;resize:none;outline:none;max-height:120px;min-height:42px;line-height:1.5;transition:border-color 0.15s;}
+.send-input:focus{border-color:var(--green);}
+.send-btn{background:var(--green);color:#000;border:none;border-radius:10px;width:42px;height:42px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;flex-shrink:0;}
+.send-btn:hover{background:var(--green-dim);}
+.send-btn:disabled{opacity:0.4;cursor:not-allowed;}
+
+/* ── NO SELECTION STATE ── */
+.no-selection{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:13px;flex-direction:column;gap:12px;}
+.no-selection .icon{font-size:48px;}
+
+/* ── LOAD MORE ── */
+.load-more-btn{align-self:center;background:transparent;border:1px solid var(--border);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:6px 16px;border-radius:6px;cursor:pointer;margin-bottom:8px;}
+.load-more-btn:hover{border-color:var(--green);color:var(--green);}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-logo">WaziBot</span>
+  <span class="topbar-title">Inbox</span>
+  <div class="ws-indicator">
+    <div class="ws-dot" id="ws-dot"></div>
+    <span id="ws-label">Connecting...</span>
+  </div>
+  <a href="/static/dashboard.html" class="btn-back">← Dashboard</a>
+</div>
+
+<div class="inbox">
+
+  <!-- SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <input class="search-input" id="search-input" placeholder="Search by phone..." oninput="filterContacts(this.value)"/>
+      <div class="filter-row">
+        <button class="filter-btn active" id="filter-all" onclick="setFilter('all')">All</button>
+        <button class="filter-btn" id="filter-unread" onclick="setFilter('unread')">Unread</button>
+        <button class="filter-btn" id="filter-recent" onclick="setFilter('recent')">Recent</button>
+      </div>
+    </div>
+    <div class="contact-list" id="contact-list">
+      <!-- Skeleton placeholders while loading -->
+      <div style="padding:12px 16px;display:flex;gap:12px" id="skeleton">
+        <div class="skeleton" style="width:36px;height:36px;border-radius:50%;"></div>
+        <div style="flex:1">
+          <div class="skeleton" style="height:13px;width:120px;margin-bottom:6px;"></div>
+          <div class="skeleton" style="height:11px;width:180px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CHAT PANEL -->
+  <div class="chat-panel" id="chat-panel">
+    <div class="no-selection" id="no-selection">
+      <div class="icon">💬</div>
+      Select a conversation to start chatting
+    </div>
+
+    <div id="active-chat" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+      <div class="chat-header">
+        <div class="chat-avatar">👤</div>
+        <div>
+          <div class="chat-phone" id="chat-phone">—</div>
+          <div class="chat-status" id="chat-status">—</div>
+        </div>
+        <div class="chat-actions">
+          <button class="icon-btn" onclick="markRead()" title="Mark as read">✓ Read</button>
+          <button class="icon-btn" onclick="loadMessages(currentCustomerId, true)" title="Refresh">↻</button>
+        </div>
+      </div>
+
+      <div class="chat-messages" id="chat-messages">
+        <button class="load-more-btn" id="load-more-btn" onclick="loadMoreMessages()" style="display:none">
+          Load earlier messages
+        </button>
+      </div>
+
+      <div class="typing-indicator" id="typing-indicator">
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+        <div class="typing-dot"></div>
+      </div>
+
+      <div class="send-box">
+        <textarea
+          class="send-input"
+          id="send-input"
+          placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
+          rows="1"
+          onkeydown="handleSendKey(event)"
+          oninput="autoResize(this)"
+        ></textarea>
+        <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send">➤</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const API = 'http://127.0.0.1:8000';
+const token = localStorage.getItem('wazibot_token');
+const bizId = parseInt(localStorage.getItem('wazibot_biz_id') || '0');
+
+if (!token) { window.location.href = '/static/dashboard.html'; }
+
+let allConversations = [];
+let currentCustomerId = null;
+let currentPhone = null;
+let msgOffset = 0;
+let msgLimit = 50;
+let hasMoreMessages = false;
+let wsConn = null;
+let activeFilter = 'all';
+
+// ── API HELPERS ──────────────────────────────────────────
+async function apiFetch(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+    ...opts,
+  });
+  if (res.status === 401) { window.location.href = '/static/dashboard.html'; throw new Error('Unauthorized'); }
+  if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'API error'); }
+  return res.json();
+}
+
+// ── WEBSOCKET ────────────────────────────────────────────
+function connectWS() {
+  if (!bizId) return;
+  const wsUrl = `ws://127.0.0.1:8000/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
+  wsConn = new WebSocket(wsUrl);
+
+  wsConn.onopen = () => {
+    document.getElementById('ws-dot').className = 'ws-dot live';
+    document.getElementById('ws-label').textContent = 'Live';
+    // Heartbeat every 25s
+    setInterval(() => { if (wsConn.readyState === 1) wsConn.send(JSON.stringify({type:'ping'})); }, 25000);
+  };
+
+  wsConn.onclose = () => {
+    document.getElementById('ws-dot').className = 'ws-dot dead';
+    document.getElementById('ws-label').textContent = 'Reconnecting...';
+    setTimeout(connectWS, 3000);
+  };
+
+  wsConn.onmessage = (event) => {
+    const payload = JSON.parse(event.data);
+    if (payload.type === 'pong') return;
+
+    if (payload.event === 'new_message') {
+      const { customer_id, phone, message } = payload;
+
+      // If this conversation is open, append the bubble
+      if (customer_id === currentCustomerId) {
+        appendBubble(message);
+        scrollToBottom();
+        if (message.direction === 'incoming') markRead();
+      }
+
+      // Refresh sidebar to update last message + unread count
+      loadConversations(false);
+    }
+  };
+
+  wsConn.onerror = () => wsConn.close();
+}
+
+// ── CONVERSATIONS SIDEBAR ────────────────────────────────
+async function loadConversations(showSkeleton = true) {
+  try {
+    const unread = activeFilter === 'unread';
+    const data = await apiFetch(`/chat/conversations?unread_only=${unread}`);
+    allConversations = data;
+    renderContacts(allConversations);
+    document.getElementById('skeleton').style.display = 'none';
+  } catch (e) {
+    document.getElementById('contact-list').innerHTML =
+      `<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${e.message}</div>`;
+  }
+}
+
+function renderContacts(convos) {
+  const search = document.getElementById('search-input').value.trim().toLowerCase();
+  const list = document.getElementById('contact-list');
+
+  let filtered = convos;
+  if (search) filtered = convos.filter(c => c.phone.includes(search));
+  if (activeFilter === 'recent') filtered = filtered.slice(0, 20);
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--text-dim)">No conversations</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(c => `
+    <div class="contact-item ${c.customer_id === currentCustomerId ? 'active' : ''}"
+         onclick="openChat(${c.customer_id}, '${escHtml(c.phone)}', '${escHtml(c.last_seen || '')}')">
+      <div class="contact-avatar">👤</div>
+      <div class="contact-info">
+        <div class="contact-phone">${escHtml(c.phone)}</div>
+        <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(safeText(c.last_message))}</div>
+      </div>
+      <div class="contact-meta">
+        <div class="contact-time">${formatTime(c.last_message_at)}</div>
+        ${c.unread_count > 0 ? `<div class="unread-badge">${c.unread_count}</div>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+function filterContacts(val) { renderContacts(allConversations); }
+
+function setFilter(f) {
+  activeFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('filter-' + f).classList.add('active');
+  loadConversations();
+}
+
+// ── OPEN CHAT ────────────────────────────────────────────
+async function openChat(customerId, phone, lastSeen) {
+  currentCustomerId = customerId;
+  currentPhone = phone;
+  msgOffset = 0;
+
+  document.getElementById('no-selection').style.display = 'none';
+  const ac = document.getElementById('active-chat');
+  ac.style.display = 'flex';
+  ac.style.flexDirection = 'column';
+  ac.style.overflow = 'hidden';
+  ac.style.flex = '1';
+
+  document.getElementById('chat-phone').textContent = phone;
+  document.getElementById('chat-status').textContent = lastSeen
+    ? `Last seen ${formatTime(lastSeen)}`
+    : 'Customer';
+
+  document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
+  event.currentTarget.classList.add('active');
+
+  document.getElementById('chat-messages').innerHTML =
+    '<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:11px;color:var(--text-dim)">Loading...</div>';
+  document.getElementById('load-more-btn').style.display = 'none';
+
+  await loadMessages(customerId, true);
+  await markRead();
+}
+
+async function loadMessages(customerId, reset = false) {
+  if (reset) msgOffset = 0;
+  try {
+    const data = await apiFetch(`/chat/messages/${customerId}?limit=${msgLimit}&offset=${msgOffset}`);
+    const msgs = data.messages || [];
+
+    const container = document.getElementById('chat-messages');
+
+    if (reset) {
+      container.innerHTML = '';
+      const lmBtn = document.getElementById('load-more-btn');
+      lmBtn.style.display = 'none';
+      container.appendChild(lmBtn);
+    }
+
+    if (msgs.length === 0 && reset) {
+      container.innerHTML = '<div style="text-align:center;padding:40px;font-family:var(--mono);font-size:12px;color:var(--text-dim)">No messages yet</div>';
+      return;
+    }
+
+    // Prepend older messages (load more scenario)
+    const frag = document.createDocumentFragment();
+    msgs.forEach(m => frag.appendChild(createBubble(m)));
+
+    if (reset) {
+      container.appendChild(frag);
+    } else {
+      const firstChild = container.children[1]; // after load-more btn
+      container.insertBefore(frag, firstChild || null);
+    }
+
+    // Show load-more if there might be earlier messages
+    hasMoreMessages = msgs.length === msgLimit;
+    document.getElementById('load-more-btn').style.display = hasMoreMessages ? 'block' : 'none';
+
+    if (reset) scrollToBottom();
+
+  } catch (e) {
+    document.getElementById('chat-messages').innerHTML =
+      `<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${e.message}</div>`;
+  }
+}
+
+async function loadMoreMessages() {
+  msgOffset += msgLimit;
+  await loadMessages(currentCustomerId, false);
+}
+
+// ── BUBBLES ──────────────────────────────────────────────
+function createBubble(msg) {
+  const text = safeText(msg.text);
+  const dir = (msg.direction || '').startsWith('in') ? 'incoming' : 'outgoing';
+  const div = document.createElement('div');
+  div.className = `msg ${dir}`;
+  div.dataset.msgId = msg.id;
+  div.innerHTML = `
+    <div class="bubble">${escHtml(text)}</div>
+    <div class="msg-meta">
+      <span class="msg-time">${formatTime(msg.created_at)}</span>
+      ${dir === 'outgoing' ? `<span class="msg-status ${msg.status || 'sent'}"></span>` : ''}
+    </div>
+  `;
+  return div;
+}
+
+function appendBubble(msg) {
+  const container = document.getElementById('chat-messages');
+  container.appendChild(createBubble(msg));
+}
+
+// ── SEND MESSAGE ─────────────────────────────────────────
+async function sendMessage() {
+  if (!currentCustomerId) return;
+  const input = document.getElementById('send-input');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  input.style.height = 'auto';
+  document.getElementById('send-btn').disabled = true;
+
+  // Show typing indicator briefly
+  showTyping(1200);
+
+  try {
+    // NOTE: Direct send via bot is currently handled by WhatsApp webhook.
+    // This sends via your business token directly.
+    const biz = await apiFetch('/me');
+    const testConn = await apiFetch('/me/test-whatsapp');
+
+    if (!testConn.ok) {
+      showToast('⚠ WhatsApp not connected', true);
+      document.getElementById('send-btn').disabled = false;
+      return;
+    }
+
+    // Call a simple send endpoint — we POST to a helper route
+    const res = await apiFetch('/chat/send', {
+      method: 'POST',
+      body: JSON.stringify({ customer_id: currentCustomerId, text }),
+    });
+
+    // Optimistically render the message
+    appendBubble({ id: res.message_id, text, direction: 'outgoing', status: 'sent', created_at: new Date().toISOString() });
+    scrollToBottom();
+
+  } catch (e) {
+    showToast('Send failed: ' + e.message, true);
+  }
+
+  document.getElementById('send-btn').disabled = false;
+}
+
+function handleSendKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+// ── READ TRACKING ─────────────────────────────────────────
+async function markRead() {
+  if (!currentCustomerId) return;
+  try {
+    await apiFetch(`/chat/read/${currentCustomerId}`, { method: 'POST' });
+    // Update sidebar unread badge
+    const conv = allConversations.find(c => c.customer_id === currentCustomerId);
+    if (conv) { conv.unread_count = 0; renderContacts(allConversations); }
+  } catch (_) {}
+}
+
+// ── TYPING INDICATOR ──────────────────────────────────────
+function showTyping(ms) {
+  const el = document.getElementById('typing-indicator');
+  el.classList.add('visible');
+  scrollToBottom();
+  setTimeout(() => el.classList.remove('visible'), ms);
+}
+
+// ── UTILS ─────────────────────────────────────────────────
+function scrollToBottom() {
+  const c = document.getElementById('chat-messages');
+  requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; });
+}
+
+function safeText(val) {
+  if (val === null || val === undefined) return '';
+  return String(val);
+}
+
+function escHtml(s) {
+  return safeText(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function formatTime(iso) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const diff = now - d;
+    if (diff < 60000) return 'just now';
+    if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
+    if (diff < 86400000) return d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
+    return d.toLocaleDateString('en-GB', {day:'2-digit',month:'short'});
+  } catch { return ''; }
+}
+
+let toastTimer;
+function showToast(msg, isError=false) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--surface);border:1px solid var(--green-dim);border-left:3px solid var(--green);padding:12px 18px;border-radius:8px;font-family:var(--mono);font-size:12px;color:var(--green);z-index:999;transition:opacity 0.3s;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.borderLeftColor = isError ? 'var(--red)' : 'var(--green)';
+  t.style.color = isError ? 'var(--red)' : 'var(--green)';
+  t.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+}
+
+// ── INIT ──────────────────────────────────────────────────
+connectWS();
+loadConversations();
+setInterval(() => loadConversations(false), 30000);  // Fallback poll every 30s
+</script>
+</body>
+</html>

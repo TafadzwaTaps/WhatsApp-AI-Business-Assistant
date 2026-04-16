@@ -1,8 +1,10 @@
 import os
+import json
 import requests as http_requests
-from typing import List
+from typing import List, Optional
+from datetime import datetime
 
-from fastapi import FastAPI, Request, Depends, HTTPException, status
+from fastapi import FastAPI, Request, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
@@ -47,6 +49,38 @@ def get_db():
         db.close()
 
 
+# ─── WEBSOCKET CONNECTION MANAGER ────────────────────────
+class ConnectionManager:
+    """Manages active WebSocket connections per business."""
+
+    def __init__(self):
+        # business_id -> list of WebSocket connections
+        self._connections: dict[int, list[WebSocket]] = {}
+
+    async def connect(self, websocket: WebSocket, business_id: int):
+        await websocket.accept()
+        self._connections.setdefault(business_id, []).append(websocket)
+
+    def disconnect(self, websocket: WebSocket, business_id: int):
+        conns = self._connections.get(business_id, [])
+        if websocket in conns:
+            conns.remove(websocket)
+
+    async def broadcast(self, business_id: int, payload: dict):
+        """Push a JSON payload to all dashboard tabs for this business."""
+        dead = []
+        for ws in self._connections.get(business_id, []):
+            try:
+                await ws.send_text(json.dumps(payload, default=str))
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws, business_id)
+
+
+manager = ConnectionManager()
+
+
 # ─── WHATSAPP SENDER ─────────────────────────────────────
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
     if not phone_number_id or not token:
@@ -54,12 +88,8 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> di
         return {"error": "missing credentials"}
 
     to = to.replace("whatsapp:", "")
-
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -126,13 +156,11 @@ def signup(data: SignupRequest, db: Session = Depends(get_db)):
         whatsapp_phone_id=data.whatsapp_phone_id.strip() or None,
         whatsapp_token=data.whatsapp_token.strip() or None,
     ))
-
     token = create_access_token({
         "sub": business.owner_username,
         "role": "business",
         "business_id": business.id,
     })
-
     print(f"🆕 New signup: {business.name} (@{business.owner_username})")
     return {
         "access_token": token,
@@ -195,13 +223,10 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
     try:
         changes = data["entry"][0]["changes"][0]["value"]
 
-        # Ignore delivery receipts / status updates
         if "messages" not in changes:
             return {"status": "ok"}
 
         msg_obj = changes["messages"][0]
-
-        # Only handle text messages
         if msg_obj.get("type") != "text":
             return {"status": "ok"}
 
@@ -211,43 +236,45 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
 
         print(f"📥 Incoming | phone_id={phone_number_id} | from={customer_phone} | text={text!r}")
 
-        # Find the business
         business = crud.get_business_by_phone_id(db, phone_number_id)
-        if not business:
-            print(f"⚠️  No business found for phone_number_id={phone_number_id}")
+        if not business or not business.is_active:
             return {"status": "ok"}
 
-        if not business.is_active:
-            print(f"⚠️  Business '{business.name}' is suspended")
-            return {"status": "ok"}
-
-        # Get decrypted token
         token = crud.get_decrypted_token(business)
-        if not token:
-            print(f"⚠️  Business '{business.name}' has no WhatsApp token")
 
-        # Track customer in CRM
+        # Track customer + update last_seen
         customer = crud.get_or_create_customer(db, customer_phone, business.id)
 
-        # Log to legacy chat_messages (keeps dashboard working)
+        # Log to legacy table (keeps existing dashboard working)
         crud.log_message(db, business.id, customer_phone, "in", text)
 
-        # Log to new messages table (CRM inbox)
-        crud.create_message(db, customer.id, business.id, text, "incoming")
+        # Save to CRM messages table (unread, incoming)
+        in_msg = crud.create_message(db, customer.id, business.id, text, "incoming")
+
+        # Push to any open WebSocket connections for this business
+        await manager.broadcast(business.id, {
+            "event": "new_message",
+            "customer_id": customer.id,
+            "phone": customer_phone,
+            "message": {
+                "id": in_msg.id,
+                "text": in_msg.text,
+                "direction": in_msg.direction,
+                "status": in_msg.status,
+                "is_read": in_msg.is_read,
+                "created_at": in_msg.created_at.isoformat() if in_msg.created_at else None,
+            },
+        })
 
         # Generate reply
         products = crud.get_products(db, business.id)
 
         if "menu" in text.lower():
             if products:
-                lines = "\n".join(
-                    [f"{i+1}. {p.name} - ${p.price}" for i, p in enumerate(products)]
-                )
+                lines = "\n".join([f"{i+1}. {p.name} - ${p.price}" for i, p in enumerate(products)])
                 reply = (
-                    f"📋 *{business.name} Menu*\n\n"
-                    f"{lines}\n\n"
-                    f"To order, type:\n*order <item> <quantity>*\n"
-                    f"Example: order sadza 2"
+                    f"📋 *{business.name} Menu*\n\n{lines}\n\n"
+                    f"To order, type:\n*order <item> <quantity>*\nExample: order sadza 2"
                 )
             else:
                 reply = f"Hi! {business.name}'s menu is being updated. Check back soon! 🙏"
@@ -268,26 +295,33 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
                         quantity=qty,
                     ))
                     reply = (
-                        f"✅ *Order confirmed!*\n\n"
-                        f"{product_name.capitalize()} × {qty}\n\n"
-                        f"Thank you for ordering from {business.name}! "
-                        f"We'll be in touch shortly. 🙏"
+                        f"✅ *Order confirmed!*\n\n{product_name.capitalize()} × {qty}\n\n"
+                        f"Thank you for ordering from {business.name}! We'll be in touch shortly. 🙏"
                     )
                 except ValueError:
                     reply = "❌ Invalid quantity. Use a whole number.\nExample: order sadza 2"
-
         else:
-            reply = generate_reply(
-                message=text,
-                business_name=business.name,
-                products=products,
-            )
+            reply = generate_reply(message=text, business_name=business.name, products=products)
 
         # Log reply
         crud.log_message(db, business.id, customer_phone, "out", reply)
-        crud.create_message(db, customer.id, business.id, reply, "outgoing")
+        out_msg = crud.create_message(db, customer.id, business.id, reply, "outgoing")
 
-        # Send
+        # Push reply to WebSocket too
+        await manager.broadcast(business.id, {
+            "event": "new_message",
+            "customer_id": customer.id,
+            "phone": customer_phone,
+            "message": {
+                "id": out_msg.id,
+                "text": out_msg.text,
+                "direction": out_msg.direction,
+                "status": out_msg.status,
+                "is_read": out_msg.is_read,
+                "created_at": out_msg.created_at.isoformat() if out_msg.created_at else None,
+            },
+        })
+
         if token:
             send_whatsapp(phone_number_id, token, customer_phone, reply)
         else:
@@ -301,6 +335,36 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
         print(f"⚠️  Webhook error: {type(e).__name__}: {e}")
 
     return {"status": "ok"}
+
+
+# ─── WEBSOCKET: REAL-TIME INBOX ───────────────────────────
+@app.websocket("/ws/chat/{business_id}")
+async def websocket_chat(websocket: WebSocket, business_id: int):
+    """
+    Dashboard connects here. Receives push events when new WhatsApp
+    messages arrive. Token passed as query param: ?token=<jwt>
+    """
+    token_param = websocket.query_params.get("token", "")
+    try:
+        from auth import decode_token
+        payload = decode_token(token_param)
+        if payload.get("business_id") != business_id and payload.get("role") != "superadmin":
+            await websocket.close(code=4001)
+            return
+    except Exception:
+        await websocket.close(code=4001)
+        return
+
+    await manager.connect(websocket, business_id)
+    try:
+        while True:
+            # Keep alive — client can send {"type":"ping"}
+            data = await websocket.receive_text()
+            msg = json.loads(data) if data else {}
+            if msg.get("type") == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, business_id)
 
 
 # ─── SUPERADMIN ───────────────────────────────────────────
@@ -408,7 +472,7 @@ def get_orders(db: Session = Depends(get_db), user=Depends(require_business)):
     return crud.get_orders(db, user["business_id"])
 
 
-# ─── CONVERSATIONS (legacy dashboard) ────────────────────
+# ─── LEGACY CONVERSATIONS (existing dashboard) ───────────
 @app.get("/conversations", response_model=List[ChatMessageOut])
 def get_conversations(db: Session = Depends(get_db), user=Depends(require_business)):
     return crud.get_conversations(db, user["business_id"])
@@ -452,8 +516,6 @@ def broadcast(body: BroadcastRequest, db: Session = Depends(get_db), user=Depend
         except Exception as e:
             failed += 1
             failed_numbers.append(phone)
-            print(f"⚠️  Broadcast failed for {phone}: {e}")
-
     return {"sent": sent, "failed": failed, "total": len(phones), "failed_numbers": failed_numbers}
 
 
@@ -464,38 +526,179 @@ def get_customers(db: Session = Depends(get_db), user=Depends(require_business))
 
 
 # ─── CHAT INBOX (CRM) ────────────────────────────────────
+
 @app.get("/chat/customers")
-def chat_customers(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """List all tracked customers for this business."""
-    customers = crud.get_customers_for_business(db, user["business_id"])
+def chat_customers(
+    search: Optional[str] = Query(None, description="Filter by phone number"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """All customers for this business, optionally filtered by phone."""
+    customers = crud.get_customers_for_business(db, user["business_id"], search=search)
     return [
-        {"id": c.id, "phone": c.phone, "customer_since": c.created_at}
+        {
+            "id": c.id,
+            "phone": c.phone,
+            "customer_since": c.created_at.isoformat() if c.created_at else None,
+            "last_seen": c.last_seen.isoformat() if c.last_seen else None,
+            "unread_count": c.unread_count or 0,
+        }
         for c in customers
     ]
 
 
 @app.get("/chat/conversations")
-def chat_conversations(db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """Inbox view: one row per customer with their last message preview."""
-    return crud.get_chat_conversations(db, user["business_id"])
+def chat_conversations(
+    unread_only: bool = Query(False, description="Only show customers with unread messages"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Inbox view: one row per customer with last message preview.
+    Returns consistent schema with `text` field (not `message`).
+    """
+    return crud.get_chat_conversations(
+        db, user["business_id"], filter_unread=unread_only
+    )
 
 
-@app.get("/chat/messages/{customer_id}")
-def chat_messages(customer_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    """Full message history for one customer (oldest first)."""
+@app.get("/chat/conversations/{phone}")
+def chat_by_phone(phone: str, db: Session = Depends(get_db), user=Depends(get_current_user)):
     customer = db.query(models.Customer).filter(
-        models.Customer.id == customer_id,
-        models.Customer.business_id == user["business_id"],
+        models.Customer.phone == phone,
+        models.Customer.business_id == user["business_id"]
     ).first()
-    if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
 
-    msgs = crud.get_messages_by_customer(db, customer_id)
+    if not customer:
+        return []
+
+    msgs = crud.get_messages_by_customer(db, customer.id)
+
     return [
-        {"id": m.id, "text": m.text, "direction": m.direction, "created_at": m.created_at}
+        {
+            "id": m.id,
+            "message": m.text,
+            "direction": m.direction,
+            "created_at": m.created_at
+        }
         for m in msgs
     ]
 
+@app.get("/chat/messages/{customer_id}")
+def chat_messages(
+    customer_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """
+    Full message history for one customer.
+    Paginated. Returns consistent schema with `text` field.
+    """
+    customer = crud.get_customer_by_id(db, customer_id, user["business_id"])
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    msgs = crud.get_messages_by_customer(db, customer_id, limit=limit, offset=offset)
+    return {
+        "customer_id": customer_id,
+        "phone": customer.phone,
+        "total_fetched": len(msgs),
+        "limit": limit,
+        "offset": offset,
+        "messages": [
+            {
+                "id": m.id,
+                "text": m.text or "",          # never None — fixes .startsWith crash
+                "direction": m.direction or "",
+                "is_read": bool(m.is_read),
+                "status": m.status or "sent",
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in msgs
+        ],
+    }
+
+
+@app.post("/chat/read/{customer_id}")
+def mark_read(
+    customer_id: int,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user),
+):
+    """Mark all incoming messages for a customer as read. Resets unread badge."""
+    customer = crud.get_customer_by_id(db, customer_id, user["business_id"])
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    crud.mark_messages_read(db, customer_id, user["business_id"])
+    return {"ok": True, "customer_id": customer_id}
+
+
+
+# ─── CHAT: SEND FROM DASHBOARD ───────────────────────────
+class ChatSendRequest(BaseModel):
+    customer_id: int
+    text: str
+
+    @validator("text")
+    def text_valid(cls, v):
+        v = v.strip()
+        if not v:
+            raise ValueError("Message cannot be empty")
+        if len(v) > 4096:
+            raise ValueError("Message too long")
+        return v
+
+
+@app.post("/chat/send")
+async def chat_send(
+    body: ChatSendRequest,
+    db: Session = Depends(get_db),
+    user=Depends(require_business),
+):
+    """Send a message from the dashboard to a customer via WhatsApp."""
+    bid = user["business_id"]
+    customer = crud.get_customer_by_id(db, body.customer_id, bid)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+
+    business = crud.get_business_by_id(db, bid)
+    token = crud.get_decrypted_token(business)
+
+    # Log to legacy table
+    crud.log_message(db, bid, customer.phone, "out", body.text)
+
+    # Save to CRM messages
+    msg = crud.create_message(db, customer.id, bid, body.text, "outgoing")
+
+    # Send via WhatsApp
+    result = {}
+    if token and business.whatsapp_phone_id:
+        result = send_whatsapp(business.whatsapp_phone_id, token, customer.phone, body.text)
+    else:
+        print(f"⚠️  chat_send: no credentials for business {business.name}")
+
+    # Push to WebSocket
+    await manager.broadcast(bid, {
+        "event": "new_message",
+        "customer_id": customer.id,
+        "phone": customer.phone,
+        "message": {
+            "id": msg.id,
+            "text": msg.text,
+            "direction": msg.direction,
+            "status": msg.status,
+            "is_read": msg.is_read,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        },
+    })
+
+    return {
+        "ok": True,
+        "message_id": msg.id,
+        "whatsapp_result": result,
+    }
 
 # ─── STATIC + ROOT ───────────────────────────────────────
 Base.metadata.create_all(bind=engine)

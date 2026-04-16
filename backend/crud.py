@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func, distinct
 import models
@@ -8,7 +9,6 @@ from crypto import encrypt_token, decrypt_token, is_encrypted
 def create_business(db: Session, data):
     raw_token = data.whatsapp_token or ""
     stored_token = encrypt_token(raw_token) if raw_token else None
-
     b = models.Business(
         name=data.name,
         owner_username=data.owner_username,
@@ -23,15 +23,11 @@ def create_business(db: Session, data):
 
 
 def get_business_by_username(db: Session, username: str):
-    return db.query(models.Business).filter(
-        models.Business.owner_username == username
-    ).first()
+    return db.query(models.Business).filter(models.Business.owner_username == username).first()
 
 
 def get_business_by_phone_id(db: Session, phone_id: str):
-    return db.query(models.Business).filter(
-        models.Business.whatsapp_phone_id == phone_id
-    ).first()
+    return db.query(models.Business).filter(models.Business.whatsapp_phone_id == phone_id).first()
 
 
 def get_all_businesses(db: Session):
@@ -39,18 +35,15 @@ def get_all_businesses(db: Session):
 
 
 def get_business_by_id(db: Session, business_id: int):
-    return db.query(models.Business).filter(
-        models.Business.id == business_id
-    ).first()
+    return db.query(models.Business).filter(models.Business.id == business_id).first()
 
 
 def get_decrypted_token(business: models.Business) -> str:
-    """Return the plaintext WhatsApp token, handling both encrypted and legacy plain values."""
     if not business.whatsapp_token:
         return ""
     if is_encrypted(business.whatsapp_token):
         return decrypt_token(business.whatsapp_token)
-    return business.whatsapp_token   # legacy plaintext
+    return business.whatsapp_token
 
 
 def update_business(db: Session, business_id: int, data):
@@ -79,11 +72,7 @@ def delete_business(db: Session, business_id: int):
 
 # ── Products ──────────────────────────────────────────────
 def create_product(db: Session, business_id: int, product):
-    p = models.Product(
-        business_id=business_id,
-        name=product.name,
-        price=product.price
-    )
+    p = models.Product(business_id=business_id, name=product.name, price=product.price)
     db.add(p)
     db.commit()
     db.refresh(p)
@@ -91,9 +80,7 @@ def create_product(db: Session, business_id: int, product):
 
 
 def get_products(db: Session, business_id: int):
-    return db.query(models.Product).filter(
-        models.Product.business_id == business_id
-    ).all()
+    return db.query(models.Product).filter(models.Product.business_id == business_id).all()
 
 
 def get_product_price(db: Session, business_id: int, name: str) -> float:
@@ -137,24 +124,16 @@ def get_orders(db: Session, business_id: int):
     ).order_by(models.Order.id.desc()).all()
 
 
-# ── ChatMessage (legacy — keeps dashboard working) ────────
+# ── ChatMessage (legacy — keeps existing dashboard working) ──
 def log_message(db: Session, business_id: int, phone: str, direction: str, message: str):
-    m = models.ChatMessage(
-        business_id=business_id,
-        phone=phone,
-        direction=direction,
-        message=message
-    )
+    m = models.ChatMessage(business_id=business_id, phone=phone, direction=direction, message=message)
     db.add(m)
     db.commit()
 
 
 def get_conversations(db: Session, business_id: int):
     subq = (
-        db.query(
-            models.ChatMessage.phone,
-            func.max(models.ChatMessage.id).label("max_id")
-        )
+        db.query(models.ChatMessage.phone, func.max(models.ChatMessage.id).label("max_id"))
         .filter(models.ChatMessage.business_id == business_id)
         .group_by(models.ChatMessage.phone)
         .subquery()
@@ -170,10 +149,7 @@ def get_conversations(db: Session, business_id: int):
 def get_messages_for_phone(db: Session, business_id: int, phone: str):
     return (
         db.query(models.ChatMessage)
-        .filter(
-            models.ChatMessage.business_id == business_id,
-            models.ChatMessage.phone == phone
-        )
+        .filter(models.ChatMessage.business_id == business_id, models.ChatMessage.phone == phone)
         .order_by(models.ChatMessage.created_at.asc())
         .all()
     )
@@ -182,10 +158,7 @@ def get_messages_for_phone(db: Session, business_id: int, phone: str):
 def get_all_customer_phones(db: Session, business_id: int):
     rows = (
         db.query(distinct(models.ChatMessage.phone))
-        .filter(
-            models.ChatMessage.business_id == business_id,
-            models.ChatMessage.direction == "in"
-        )
+        .filter(models.ChatMessage.business_id == business_id, models.ChatMessage.direction == "in")
         .all()
     )
     return [r[0] for r in rows]
@@ -193,31 +166,34 @@ def get_all_customer_phones(db: Session, business_id: int):
 
 # ── Customer (CRM) ────────────────────────────────────────
 def get_or_create_customer(db: Session, phone: str, business_id: int) -> models.Customer:
-    """Return existing customer record or create one. Safe to call on every message."""
-    customer = (
-        db.query(models.Customer)
-        .filter(
-            models.Customer.phone == phone,
-            models.Customer.business_id == business_id,
-        )
-        .first()
-    )
+    customer = db.query(models.Customer).filter(
+        models.Customer.phone == phone,
+        models.Customer.business_id == business_id,
+    ).first()
     if customer:
+        # Update last_seen on every contact
+        customer.last_seen = datetime.utcnow()
+        db.commit()
         return customer
-    customer = models.Customer(phone=phone, business_id=business_id)
+    customer = models.Customer(phone=phone, business_id=business_id, last_seen=datetime.utcnow())
     db.add(customer)
     db.commit()
     db.refresh(customer)
     return customer
 
 
-def get_customers_for_business(db: Session, business_id: int):
-    return (
-        db.query(models.Customer)
-        .filter(models.Customer.business_id == business_id)
-        .order_by(models.Customer.created_at.desc())
-        .all()
-    )
+def get_customers_for_business(db: Session, business_id: int, search: str = None):
+    q = db.query(models.Customer).filter(models.Customer.business_id == business_id)
+    if search:
+        q = q.filter(models.Customer.phone.contains(search))
+    return q.order_by(models.Customer.last_seen.desc()).all()
+
+
+def get_customer_by_id(db: Session, customer_id: int, business_id: int):
+    return db.query(models.Customer).filter(
+        models.Customer.id == customer_id,
+        models.Customer.business_id == business_id,
+    ).first()
 
 
 # ── Message (CRM) ─────────────────────────────────────────
@@ -226,35 +202,70 @@ def create_message(
     customer_id: int,
     business_id: int,
     text: str,
-    direction: str,   # "incoming" or "outgoing"
+    direction: str,
 ) -> models.Message:
-    """Save one message to the CRM messages table."""
+    """
+    Save a message. Incoming messages are unread by default.
+    Also increments customer.unread_count for incoming.
+    """
+    is_read = direction == "outgoing"   # outgoing = already "read" by agent
     msg = models.Message(
         customer_id=customer_id,
         business_id=business_id,
         text=text,
         direction=direction,
+        is_read=is_read,
+        status="sent",
     )
     db.add(msg)
+
+    # Bump unread count for incoming messages
+    if direction == "incoming":
+        customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+        if customer:
+            customer.unread_count = (customer.unread_count or 0) + 1
+
     db.commit()
     db.refresh(msg)
     return msg
 
 
-def get_messages_by_customer(db: Session, customer_id: int):
-    """Full chat history for a customer, oldest first (chat order)."""
+def get_messages_by_customer(
+    db: Session,
+    customer_id: int,
+    limit: int = 50,
+    offset: int = 0,
+):
     return (
         db.query(models.Message)
         .filter(models.Message.customer_id == customer_id)
         .order_by(models.Message.created_at.asc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 
 
-def get_chat_conversations(db: Session, business_id: int):
+def mark_messages_read(db: Session, customer_id: int, business_id: int):
+    """Mark all incoming messages for a customer as read, reset unread count."""
+    db.query(models.Message).filter(
+        models.Message.customer_id == customer_id,
+        models.Message.business_id == business_id,
+        models.Message.direction == "incoming",
+        models.Message.is_read == False,
+    ).update({"is_read": True, "status": "read"})
+
+    customer = db.query(models.Customer).filter(models.Customer.id == customer_id).first()
+    if customer:
+        customer.unread_count = 0
+
+    db.commit()
+
+
+def get_chat_conversations(db: Session, business_id: int, filter_unread: bool = False):
     """
-    Inbox view: one row per customer with their last message.
-    Returns a list of dicts ready to serialise as JSON.
+    Inbox: one row per customer, last message, unread count.
+    Optimised single query — no N+1.
     """
     subq = (
         db.query(
@@ -266,22 +277,29 @@ def get_chat_conversations(db: Session, business_id: int):
         .subquery()
     )
 
-    rows = (
+    q = (
         db.query(models.Customer, models.Message)
         .join(subq, models.Customer.id == subq.c.customer_id)
         .join(models.Message, models.Message.id == subq.c.max_id)
-        .order_by(models.Message.id.desc())
-        .all()
+        .filter(models.Customer.business_id == business_id)
     )
+
+    if filter_unread:
+        q = q.filter(models.Customer.unread_count > 0)
+
+    rows = q.order_by(models.Message.id.desc()).all()
 
     return [
         {
             "customer_id": customer.id,
             "phone": customer.phone,
-            "customer_since": customer.created_at,
-            "last_message": last_msg.text,
-            "last_direction": last_msg.direction,
-            "last_message_at": last_msg.created_at,
+            "customer_since": customer.created_at.isoformat() if customer.created_at else None,
+            "last_seen": customer.last_seen.isoformat() if customer.last_seen else None,
+            "unread_count": customer.unread_count or 0,
+            "last_message": last_msg.text or "",
+            "last_direction": last_msg.direction or "",
+            "last_message_at": last_msg.created_at.isoformat() if last_msg.created_at else None,
+            "last_status": last_msg.status or "sent",
         }
         for customer, last_msg in rows
     ]
