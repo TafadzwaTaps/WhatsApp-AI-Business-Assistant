@@ -190,8 +190,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);height:100vh
 
 <script>
 const API = 'http://127.0.0.1:8000';
-const token = localStorage.getItem('wazibot_token');
-const bizId = parseInt(localStorage.getItem('wazibot_biz_id') || '0');
+// Support both key names (dashboard saves as wazi_token / wazi_business_id)
+const token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token');
+const bizId = parseInt(
+  localStorage.getItem('wazi_business_id') ||
+  localStorage.getItem('wazibot_biz_id') || '0'
+);
 
 if (!token) { window.location.href = '/static/dashboard.html'; }
 
@@ -418,31 +422,20 @@ async function sendMessage() {
   input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
 
-  // Show typing indicator briefly
-  showTyping(1200);
+  // Optimistically render message immediately for snappy UX
+  appendBubble({ id: null, text, direction: 'outgoing', status: 'sent', created_at: new Date().toISOString() });
+  scrollToBottom();
+  showTyping(800);
 
   try {
-    // NOTE: Direct send via bot is currently handled by WhatsApp webhook.
-    // This sends via your business token directly.
-    const biz = await apiFetch('/me');
-    const testConn = await apiFetch('/me/test-whatsapp');
-
-    if (!testConn.ok) {
-      showToast('⚠ WhatsApp not connected', true);
-      document.getElementById('send-btn').disabled = false;
-      return;
-    }
-
-    // Call a simple send endpoint — we POST to a helper route
     const res = await apiFetch('/chat/send', {
       method: 'POST',
       body: JSON.stringify({ customer_id: currentCustomerId, text }),
     });
-
-    // Optimistically render the message
-    appendBubble({ id: res.message_id, text, direction: 'outgoing', status: 'sent', created_at: new Date().toISOString() });
-    scrollToBottom();
-
+    // Message already rendered — nothing more to do
+    if (!res.ok && res.whatsapp_result && res.whatsapp_result.error) {
+      showToast('⚠ Saved but WhatsApp delivery may have failed', true);
+    }
   } catch (e) {
     showToast('Send failed: ' + e.message, true);
   }
@@ -499,16 +492,17 @@ function escHtml(s) {
 }
 
 function formatTime(iso) {
-  if (!iso) return '';
+  if (!iso) return '—';
   try {
     const d = new Date(iso);
+    if (isNaN(d.getTime())) return '—';
     const now = new Date();
     const diff = now - d;
     if (diff < 60000) return 'just now';
     if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
     if (diff < 86400000) return d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
     return d.toLocaleDateString('en-GB', {day:'2-digit',month:'short'});
-  } catch { return ''; }
+  } catch { return '—'; }
 }
 
 let toastTimer;

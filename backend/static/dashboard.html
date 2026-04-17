@@ -147,6 +147,12 @@
   .toast.show{transform:translateY(0);opacity:1;}
   .section{display:none;}
   .section.active{display:block;}
+
+  /* LIGHT MODE */
+  body.light{--bg:#f4f7f5;--surface:#ffffff;--surface2:#eef3f0;--border:#d0ddd4;--text:#1a2e1f;--text-dim:#5a7060;}
+  body.light .sidebar{box-shadow:2px 0 8px rgba(0,0,0,0.05);}
+  body.light input,body.light textarea,body.light select{background:#f9fafb;border-color:#d0ddd4;color:#1a2e1f;}
+  body.light .login-box input{background:#f9fafb;color:#1a2e1f;}
 </style>
 </head>
 <body>
@@ -394,6 +400,35 @@
           <div style="margin-top:16px;color:var(--text-dim);">Subscribe to: <span style="color:var(--text);">messages</span></div>
         </div>
       </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Business Name</div></div>
+        <div class="panel-body">
+          <div class="form-group"><label>Display Name</label><input type="text" id="set-biz-name" placeholder="Your business name"/></div>
+          <button class="btn btn-primary" onclick="saveBusinessName()">Update Name</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Appearance</div></div>
+        <div class="panel-body">
+          <div class="form-group">
+            <label>Theme</label>
+            <div style="display:flex;gap:10px;margin-top:4px;">
+              <button class="btn btn-ghost" id="theme-dark-btn" style="color:var(--green);border-color:var(--green-dim);" onclick="setTheme('dark')">🌙 Dark</button>
+              <button class="btn btn-ghost" id="theme-light-btn" onclick="setTheme('light')">☀️ Light</button>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:14px;">
+            <label>Font</label>
+            <select id="font-select" onchange="applyFont(this.value)" style="margin-top:4px;">
+              <option value="'Syne',sans-serif">Syne (Default)</option>
+              <option value="Arial,sans-serif">Arial</option>
+              <option value="'Segoe UI',sans-serif">Segoe UI</option>
+              <option value="'Roboto',sans-serif">Roboto</option>
+              <option value="Georgia,serif">Georgia</option>
+            </select>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -404,15 +439,15 @@
 const API = 'http://127.0.0.1:8000';
 const ROUTES = {
   login:         '/auth/login',
-  register:      '/auth/register',
+  register:      '/auth/signup',
   refresh:       '/auth/refresh',
   adminStats:    '/admin/stats',
   adminBiz:      '/admin/businesses',
   products:      '/products',
   orders:        '/orders',
   conversations: '/chat/conversations',
-  customers:     '/chat/customers',
-  broadcast:     '/chat/broadcast',
+  customers:     '/customers',
+  broadcast:     '/broadcast',
 };
 
 let token      = localStorage.getItem('wazi_token');
@@ -493,11 +528,13 @@ function saveSession(data, username) {
   userRole   = data.role;
   userName   = username;
   bizName    = data.business_name || '';
-  localStorage.setItem('wazi_token',   token);
-  localStorage.setItem('wazi_refresh', refreshTok);
-  localStorage.setItem('wazi_role',    userRole);
-  localStorage.setItem('wazi_user',    userName);
-  localStorage.setItem('wazi_biz',     bizName);
+  localStorage.setItem('wazi_token',       token);
+  localStorage.setItem('wazi_refresh',     refreshTok);
+  localStorage.setItem('wazi_role',        userRole);
+  localStorage.setItem('wazi_user',        userName);
+  localStorage.setItem('wazi_biz',         bizName);
+  // Store business_id for inbox.html
+  if (data.business_id) localStorage.setItem('wazi_business_id', data.business_id);
 }
 
 async function tryRefresh() {
@@ -517,7 +554,7 @@ async function tryRefresh() {
 
 
 function logout() {
-  ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz'].forEach(k => localStorage.removeItem(k));
+  ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id'].forEach(k => localStorage.removeItem(k));
   token = refreshTok = userRole = userName = bizName = null;
   document.getElementById('login-screen').style.display = 'flex';
 }
@@ -558,6 +595,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showSection('orders',this)"><span class="icon">🛒</span> Orders</button>
       <button class="nav-item" onclick="showSection('products',this)"><span class="icon">📦</span> Products</button>
       <button class="nav-item" onclick="showSection('conversations',this)"><span class="icon">💬</span> Conversations</button>
+      <button class="nav-item" onclick="window.open('/static/inbox.html','_blank')"><span class="icon">📥</span> Live Inbox</button>
       <button class="nav-item" onclick="showSection('broadcast',this)"><span class="icon">📢</span> Broadcast</button>
       <button class="nav-item" onclick="showSection('settings',this)"><span class="icon">⚙️</span> Settings</button>`;
   }
@@ -573,6 +611,7 @@ function showSection(name, btn) {
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
   if (name==='broadcast') loadCustomers();
+  if (name==='settings') loadSettings();
 }
 
 // ── TOAST ─────────────────────────────────────────────────
@@ -666,13 +705,16 @@ function renderOrders(orders, bodyId, showStatus) {
   const cols = showStatus ? 7 : 6;
   const tbody = document.getElementById(bodyId);
   if (!orders||!orders.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
-  tbody.innerHTML=orders.map(o=>`<tr>
-    <td><span class="badge badge-amber">#${o.id}</span></td>
-    <td>${o.customer_phone}</td><td>${o.product_name}</td><td>${o.quantity}</td>
+  tbody.innerHTML=orders.map(o=>{
+    const status = o.status || 'pending';
+    return `<tr>
+    <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
+    <td>${o.customer_phone||'—'}</td><td>${o.product_name||'—'}</td><td>${o.quantity||0}</td>
     <td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td>
-    ${showStatus?`<td><span class="badge ${o.status==='pending'?'badge-amber':'badge-green'}">${o.status}</span></td>`:''}
-    <td>${o.created_at?fmtTime(o.created_at):'—'}</td>
-  </tr>`).join('');
+    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${status}</span></td>`:''}
+    <td>${fmtTime(o.created_at)}</td>
+  </tr>`;
+  }).join('');
 }
 
 // ── PRODUCTS ──────────────────────────────────────────────
@@ -705,14 +747,24 @@ async function loadConversations() {
   try {
     const convos = await apiFetch(ROUTES.conversations);
     if (!convos) return;
-    document.getElementById('stat-customers').textContent = convos.length;
+    // Normalize: handle wrapped response
+    const list_data = Array.isArray(convos) ? convos : (convos.data || []);
+    document.getElementById('stat-customers').textContent = list_data.length;
     const list = document.getElementById('contact-list');
-    if (!convos.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
-    list.innerHTML=convos.map(c=>`<div class="contact-item ${c.phone===activePhone?'active':''}" onclick="openChat('${c.phone}',this)">
-      <div class="contact-phone">${c.phone}</div>
-      <div class="contact-preview">${c.direction==='in'?'👤':'🤖'} ${escHtml(c.message)}</div>
-      <div class="contact-time">${c.created_at?fmtTime(c.created_at):''}</div>
-    </div>`).join('');
+    if (!list_data.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
+    list.innerHTML=list_data.map(c=>{
+      // /chat/conversations returns: customer_id, phone, last_message, last_direction, last_message_at, unread_count
+      const phone = c.phone || c.customer_phone || '—';
+      const lastMsg = c.last_message || c.message || '';
+      const lastDir = c.last_direction || c.direction || '';
+      const lastAt = c.last_message_at || c.created_at || null;
+      const unread = c.unread_count || 0;
+      return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${phone}',this)">
+      <div class="contact-phone">${phone}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
+      <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(lastMsg)}</div>
+      <div class="contact-time">${fmtTime(lastAt)}</div>
+    </div>`;
+    }).join('');
   } catch(e){document.getElementById('contact-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
 }
 
@@ -725,13 +777,19 @@ async function openChat(phone, el) {
   try{
     const msgs=await apiFetch(`${ROUTES.conversations}/${phone}`);
     if(!msgs)return;
+    // Normalize: handle wrapped response
+    const msg_list = Array.isArray(msgs) ? msgs : (msgs.messages || []);
     const c=document.getElementById('chat-msgs');
-    if(!msgs.length){c.innerHTML='<div class="empty">No messages.</div>';return;}
-    c.innerHTML=msgs.map(m=>{
-      const isBc=m.message.startsWith('[BROADCAST]');
-      const cls=isBc?'msg-broadcast':`msg-${m.direction}`;
-      const txt=isBc?'📢 '+escHtml(m.message.replace('[BROADCAST] ','')):escHtml(m.message);
-      return`<div class="msg ${cls}">${txt}<div class="msg-time">${m.created_at?fmtTime(m.created_at):''}</div></div>`;
+    if(!msg_list.length){c.innerHTML='<div class="empty">No messages.</div>';return;}
+    c.innerHTML=msg_list.map(m=>{
+      // Fields: message or text, direction
+      const text = m.message || m.text || '';
+      const dir = m.direction || '';
+      const isBc = text.startsWith('[BROADCAST]');
+      const isOut = dir==='outgoing'||dir==='out';
+      const cls=isBc?'msg-broadcast':`msg-${isOut?'out':'in'}`;
+      const txt=isBc?'📢 '+escHtml(text.replace('[BROADCAST] ','')):escHtml(text);
+      return`<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at)}</div></div>`;
     }).join('');
     c.scrollTop=c.scrollHeight;
   } catch(e){document.getElementById('chat-msgs').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
@@ -742,7 +800,8 @@ async function loadCustomers(){
   try{
     const data=await apiFetch(ROUTES.customers);
     if(!data)return;
-    customerPhones=data.phones||[];
+    // /customers returns {phones: [...], total: N}
+    customerPhones = (data.phones || data || []).filter(Boolean);
     document.getElementById('recipient-count').textContent=customerPhones.length?`Will send to ${customerPhones.length} customer${customerPhones.length>1?'s':''}`:'No customers yet';
     const el=document.getElementById('recipient-list');
     el.innerHTML=customerPhones.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;">${customerPhones.map(p=>`<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${p}</span>`).join('')}</div>`:'<div class="empty">No customers yet.</div>';
@@ -785,8 +844,15 @@ async function checkStatus(){
 async function loadSettings() {
   try {
     const b = await apiFetch('/me');
-    if (b.whatsapp_phone_id) document.getElementById('set-phone-id').value = b.whatsapp_phone_id;
+    if (b && b.whatsapp_phone_id) document.getElementById('set-phone-id').value = b.whatsapp_phone_id;
+    if (b && b.name) document.getElementById('set-biz-name').value = b.name;
   } catch(e) {}
+  // Restore appearance preferences
+  const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
+  const savedFont = localStorage.getItem('wazi_font') || "'Syne',sans-serif";
+  setTheme(savedTheme, true);
+  const fontSel = document.getElementById('font-select');
+  if (fontSel) { fontSel.value = savedFont; applyFont(savedFont, true); }
 }
 
 async function saveSettings() {
@@ -800,8 +866,41 @@ async function saveSettings() {
   } catch(e) { toast('Failed: ' + e.message, true); }
 }
 
+async function saveBusinessName() {
+  const name = (document.getElementById('set-biz-name').value || '').trim();
+  if (!name) { toast('Enter a business name', true); return; }
+  try {
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ name }) });
+    bizName = name;
+    localStorage.setItem('wazi_biz', bizName);
+    document.getElementById('sidebar-role-label').textContent = bizName;
+    const hdr = document.getElementById('biz-name-header');
+    if (hdr) hdr.textContent = '🟢 ' + bizName;
+    toast('✅ Business name updated');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+}
+
+function setTheme(theme, silent=false) {
+  if (theme === 'light') {
+    document.body.classList.add('light');
+  } else {
+    document.body.classList.remove('light');
+  }
+  localStorage.setItem('wazi_theme', theme);
+  const db = document.getElementById('theme-dark-btn');
+  const lb = document.getElementById('theme-light-btn');
+  if (db) { db.style.color = theme==='dark' ? 'var(--green)' : ''; db.style.borderColor = theme==='dark' ? 'var(--green-dim)' : ''; }
+  if (lb) { lb.style.color = theme==='light' ? 'var(--green)' : ''; lb.style.borderColor = theme==='light' ? 'var(--green-dim)' : ''; }
+  if (!silent) toast(theme === 'light' ? '☀️ Light mode' : '🌙 Dark mode');
+}
+
+function applyFont(font, silent=false) {
+  document.body.style.fontFamily = font;
+  localStorage.setItem('wazi_font', font);
+}
+
 // ── UTILS ─────────────────────────────────────────────────
-function fmtTime(iso){try{return new Date(iso).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '';}}
+function fmtTime(iso){if(!iso)return '—';try{const d=new Date(iso);if(isNaN(d.getTime()))return '—';return d.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '—';}}
 function escHtml(s){
   return String(s)
     .replace(/&/g,'&amp;')
@@ -812,6 +911,12 @@ function escHtml(s){
 
 // ── INIT ──────────────────────────────────────────────────
 function init(){
+  // Restore appearance preferences immediately
+  const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
+  const savedFont = localStorage.getItem('wazi_font');
+  setTheme(savedTheme, true);
+  if (savedFont) document.body.style.fontFamily = savedFont;
+
   buildSidebar();
   checkStatus();
   if(userRole==='superadmin'){loadAdminData();}

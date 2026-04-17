@@ -42,6 +42,7 @@ class Order(Base):
     product_name = Column(String)
     quantity = Column(Integer)
     total_price = Column(Float)
+    status = Column(String, default="pending")
     created_at = Column(DateTime, server_default=func.now())
 
     business = relationship("Business", back_populates="orders")

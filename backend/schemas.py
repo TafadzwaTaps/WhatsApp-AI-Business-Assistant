@@ -52,6 +52,7 @@ class OrderOut(BaseModel):
     product_name: str
     quantity: int
     total_price: float
+    status: Optional[str] = "pending"
     created_at: Optional[datetime] = None
 
     class Config:
