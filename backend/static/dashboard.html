@@ -721,7 +721,7 @@ function renderBizTable(businesses, bodyId, showActions) {
     <td>${showActions?`<div style="display:flex;gap:6px;">
       <button class="btn btn-ghost" style="color:var(--amber);border-color:rgba(245,158,11,0.3);" onclick="toggleBiz(${b.id},${b.is_active})">${b.is_active?'Suspend':'Activate'}</button>
       <button class="btn btn-ghost" onclick="deleteBiz(${b.id})">✕ Delete</button>
-    </div>`:fmtTime(b.created_at)}</td>
+    </div>`:fmtTime(b.created_at || b.createdAt || b.timestamp)}</td>
   </tr>`).join('');
 }
 
@@ -784,6 +784,7 @@ function renderOrders(orders, bodyId, showStatus) {
   if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
   tbody.innerHTML=rows.map(o=>{
     const status = o.status || 'pending';
+    console.log("ORDER DATA:", o);
     return `<tr>
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
     <td>${escHtml(o.customer_phone||'—')}</td>
@@ -791,9 +792,10 @@ function renderOrders(orders, bodyId, showStatus) {
     <td>${o.quantity||0}</td>
     <td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td>
     ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml(status)}</span></td>`:''}
-    <td>${fmtTime(o.created_at)}</td>
+    <td>${fmtTime(o.created_at || o.createdAt || o.timestamp)}</td>
   </tr>`;
   }).join('');
+  
 }
 
 // ── PRODUCTS ──────────────────────────────────────────────
@@ -952,7 +954,7 @@ async function loadConversations() {
       const phone = c.phone || c.customer_phone || '—';
       const lastMsg = c.last_message || c.message || '';
       const lastDir = c.last_direction || c.direction || '';
-      const lastAt = c.last_message_at || c.created_at || null;
+      const lastAt = c.last_message_at || c.created_at || c.timestamp || null;
       const unread = c.unread_count || 0;
       return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${phone}',this)">
       <div class="contact-phone">${phone}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
@@ -1010,7 +1012,7 @@ async function loadChatMessages(phone) {
       const isOut = dir === 'outgoing' || dir === 'out';
       const cls   = isBc ? 'msg-broadcast' : `msg-${isOut ? 'out' : 'in'}`;
       const txt   = isBc ? '📢 ' + escHtml(text.replace('[BROADCAST] ', '')) : escHtml(text);
-      return `<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at)}</div></div>`;
+      return `<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(o.created_at || o.createdAt || o.timestamp)}</div></div>`;
     }).join('');
     msgsEl.scrollTop = msgsEl.scrollHeight;
   } catch(e) {
