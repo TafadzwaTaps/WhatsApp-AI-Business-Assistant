@@ -463,7 +463,7 @@ function switchTab(tab) {
   document.querySelectorAll('.login-tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='login')||(i===1&&tab==='register')));
   document.getElementById('tab-login').classList.toggle('active', tab==='login');
   document.getElementById('tab-register').classList.toggle('active', tab==='register');
-  document.getElementById('login-error').textContent = '';
+  const _lerr=document.getElementById('login-error'); if(_lerr) _lerr.textContent='';
 }
 
 async function doLogin() {
@@ -481,7 +481,7 @@ async function doLogin() {
     if (!res.ok) { const d=await res.json(); errEl.textContent = d.detail || 'Login failed'; return; }
     const data = await res.json();
     saveSession(data, username);
-    document.getElementById('login-screen').style.display = 'none';
+    const _ls=document.getElementById('login-screen'); if(_ls) _ls.style.display='none';
     init();
   } catch(e) { errEl.textContent = 'Cannot reach server. Is backend running?'; }
 }
@@ -517,7 +517,7 @@ async function doRegister() {
     }
     const data = await res.json();
     saveSession(data, payload.username);
-    document.getElementById('login-screen').style.display = 'none';
+    const _ls2=document.getElementById('login-screen'); if(_ls2) _ls2.style.display='none';
     init();
   } catch(e) { errEl.textContent = 'Cannot reach server'; }
 }
@@ -556,39 +556,48 @@ async function tryRefresh() {
 function logout() {
   ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id'].forEach(k => localStorage.removeItem(k));
   token = refreshTok = userRole = userName = bizName = null;
-  document.getElementById('login-screen').style.display = 'flex';
+  const _ls3=document.getElementById('login-screen'); if(_ls3) _ls3.style.display='flex';
 }
 
 // ── API ───────────────────────────────────────────────────
 async function apiFetch(path, opts={}, retry=true) {
-  const res = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    ...opts
-  });
-  if (res.status === 401 && retry) {
-    const refreshed = await tryRefresh();
-    if (refreshed) return apiFetch(path, opts, false);
-    return null;
+  try {
+    const res = await fetch(API + path, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      ...opts
+    });
+    if (res.status === 401 && retry) {
+      const refreshed = await tryRefresh();
+      if (refreshed) return apiFetch(path, opts, false);
+      return null;
+    }
+    if (!res.ok) {
+      let msg = res.statusText || 'Request failed';
+      try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    return res.json();
+  } catch (err) {
+    if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
+    throw err;
   }
-  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
-  return res.json();
 }
 
 // ── SIDEBAR ───────────────────────────────────────────────
 function buildSidebar() {
-  document.getElementById('footer-user').textContent = userName;
+  const _fu=document.getElementById('footer-user'); if(_fu) _fu.textContent=userName||'';
   const nav = document.getElementById('sidebar-nav');
   if (userRole === 'superadmin') {
-    document.getElementById('sidebar-role-label').textContent = 'Super Admin';
-    document.getElementById('sidebar-role-badge').innerHTML = '<span class="badge badge-purple">SUPERADMIN</span>';
+    const _rl=document.getElementById('sidebar-role-label'); if(_rl) _rl.textContent='Super Admin';
+    const _rb=document.getElementById('sidebar-role-badge'); if(_rb) _rb.innerHTML='<span class="badge badge-purple">SUPERADMIN</span>';
     nav.innerHTML = `
       <div class="nav-section">Platform</div>
       <button class="nav-item admin-item active" onclick="showSection('admin-overview',this)"><span class="icon">🌐</span> Overview <span class="status-dot"></span></button>
       <button class="nav-item admin-item" onclick="showSection('admin-businesses',this)"><span class="icon">🏢</span> Businesses</button>`;
   } else {
-    document.getElementById('sidebar-role-label').textContent = bizName || 'Business';
-    document.getElementById('sidebar-role-badge').innerHTML = '<span class="badge badge-green">BUSINESS</span>';
-    if (bizName) document.getElementById('biz-name-header').textContent = '🟢 ' + bizName;
+    const _rl2=document.getElementById('sidebar-role-label'); if(_rl2) _rl2.textContent=bizName||'Business';
+    const _rb2=document.getElementById('sidebar-role-badge'); if(_rb2) _rb2.innerHTML='<span class="badge badge-green">BUSINESS</span>';
+    if(bizName){const _bnh=document.getElementById('biz-name-header');if(_bnh)_bnh.textContent='🟢 '+bizName;}
     nav.innerHTML = `
       <div class="nav-section">Dashboard</div>
       <button class="nav-item active" onclick="showSection('overview',this)"><span class="icon">📊</span> Overview <span class="status-dot"></span></button>
@@ -632,28 +641,32 @@ async function loadAdminData() {
       apiFetch(ROUTES.adminBiz)
     ]);
     if (!stats || !businesses) return;
-    document.getElementById('sa-businesses').textContent = stats.businesses;
-    document.getElementById('sa-active').textContent = stats.active_businesses;
-    document.getElementById('sa-orders').textContent = stats.total_orders;
-    document.getElementById('sa-revenue').textContent = '$' + (stats.total_revenue||0).toFixed(2);
-    renderBizTable(businesses, 'sa-biz-overview', false);
-    renderBizTable(businesses, 'sa-biz-table', true);
-  } catch(e) { toast('Failed to load admin data', true); }
+    const _s = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=val; };
+    _s('sa-businesses', stats.businesses ?? '—');
+    _s('sa-active', stats.active_businesses ?? '—');
+    _s('sa-orders', stats.total_orders ?? '—');
+    _s('sa-revenue', '$' + (stats.total_revenue||0).toFixed(2));
+    const bizList = Array.isArray(businesses) ? businesses : [];
+    renderBizTable(bizList, 'sa-biz-overview', false);
+    renderBizTable(bizList, 'sa-biz-table', true);
+  } catch(e) { toast('Failed to load admin data: ' + e.message, true); }
 }
 
 function renderBizTable(businesses, bodyId, showActions) {
   const tbody = document.getElementById(bodyId);
-  if (!businesses.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses yet.</div></td></tr>`; return; }
-  tbody.innerHTML = businesses.map(b => `<tr>
+  if (!tbody) return;
+  const biz = Array.isArray(businesses) ? businesses : [];
+  if (!biz.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses yet.</div></td></tr>`; return; }
+  tbody.innerHTML = biz.map(b => `<tr>
     <td><span class="badge badge-purple">#${b.id}</span></td>
-    <td><strong>${b.name}</strong></td>
-    <td><span class="badge badge-amber">${b.owner_username}</span></td>
-    <td style="color:var(--text-dim);font-size:11px">${b.whatsapp_phone_id||'—'}</td>
+    <td><strong>${escHtml(b.name||'—')}</strong></td>
+    <td><span class="badge badge-amber">${escHtml(b.owner_username||'—')}</span></td>
+    <td style="color:var(--text-dim);font-size:11px">${escHtml(b.whatsapp_phone_id||'—')}</td>
     <td><span class="badge ${b.is_active?'badge-green':'badge-red'}">${b.is_active?'Active':'Suspended'}</span></td>
     <td>${showActions?`<div style="display:flex;gap:6px;">
       <button class="btn btn-ghost" style="color:var(--amber);border-color:rgba(245,158,11,0.3);" onclick="toggleBiz(${b.id},${b.is_active})">${b.is_active?'Suspend':'Activate'}</button>
       <button class="btn btn-ghost" onclick="deleteBiz(${b.id})">✕ Delete</button>
-    </div>`:(b.created_at?fmtTime(b.created_at):'—')}</td>
+    </div>`:fmtTime(b.created_at)}</td>
   </tr>`).join('');
 }
 
@@ -671,7 +684,7 @@ async function createBusiness() {
     await apiFetch(ROUTES.adminBiz, {method:'POST', body:JSON.stringify({name, owner_username:username, owner_password:password, whatsapp_phone_id:phoneId||null, whatsapp_token:btoken||null})});
     toast(`✅ ${name} created`);
     closeModal();
-    ['b-name','b-username','b-password','b-phone-id','b-token'].forEach(id=>document.getElementById(id).value='');
+    ['b-name','b-username','b-password','b-phone-id','b-token'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     loadAdminData();
   } catch(e) { toast('Failed: '+e.message, true); }
 }
@@ -690,28 +703,39 @@ async function deleteBiz(id) {
 // ── ORDERS ────────────────────────────────────────────────
 async function loadOrders() {
   try {
-    const orders = await apiFetch(ROUTES.orders);
-    if (!orders) return;
+    const raw = await apiFetch(ROUTES.orders);
+    if (!raw) return;
+    // Normalize: backend returns array directly
+    const orders = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
     renderOrders(orders, 'orders-body', true);
     renderOrders(orders.slice(0,5), 'recent-orders-body', false);
-    document.getElementById('stat-orders').textContent = orders.length;
-    document.getElementById('stat-revenue').textContent = '$' + orders.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
+    const statO = document.getElementById('stat-orders');
+    const statR = document.getElementById('stat-revenue');
+    if (statO) statO.textContent = orders.length;
+    if (statR) statR.textContent = '$' + orders.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
   } catch(e) {
-    ['orders-body','recent-orders-body'].forEach(id => document.getElementById(id).innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`);
+    ['orders-body','recent-orders-body'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    });
   }
 }
 
 function renderOrders(orders, bodyId, showStatus) {
   const cols = showStatus ? 7 : 6;
   const tbody = document.getElementById(bodyId);
-  if (!orders||!orders.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
-  tbody.innerHTML=orders.map(o=>{
+  if (!tbody) return;
+  const rows = Array.isArray(orders) ? orders : [];
+  if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
+  tbody.innerHTML=rows.map(o=>{
     const status = o.status || 'pending';
     return `<tr>
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
-    <td>${o.customer_phone||'—'}</td><td>${o.product_name||'—'}</td><td>${o.quantity||0}</td>
+    <td>${escHtml(o.customer_phone||'—')}</td>
+    <td>${escHtml(o.product_name||'—')}</td>
+    <td>${o.quantity||0}</td>
     <td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td>
-    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${status}</span></td>`:''}
+    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml(status)}</span></td>`:''}
     <td>${fmtTime(o.created_at)}</td>
   </tr>`;
   }).join('');
@@ -720,20 +744,26 @@ function renderOrders(orders, bodyId, showStatus) {
 // ── PRODUCTS ──────────────────────────────────────────────
 async function loadProducts() {
   try {
-    const products = await apiFetch(ROUTES.products);
-    if (!products) return;
-    document.getElementById('stat-products').textContent = products.length;
+    const raw = await apiFetch(ROUTES.products);
+    if (!raw) return;
+    const products = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
+    const statP = document.getElementById('stat-products');
+    if (statP) statP.textContent = products.length;
     const tbody = document.getElementById('products-body');
+    if (!tbody) return;
     if (!products.length){tbody.innerHTML=`<tr><td colspan="3"><div class="empty">No products.</div></td></tr>`;return;}
-    tbody.innerHTML=products.map(p=>`<tr><td>${p.name}</td><td><span class="badge badge-green">$${p.price.toFixed(2)}</span></td><td><button class="btn btn-ghost" onclick="deleteProduct(${p.id})">✕</button></td></tr>`).join('');
-  } catch(e){document.getElementById('products-body').innerHTML=`<tr><td colspan="3"><div class="empty">⚠ ${e.message}</div></td></tr>`;}
+    tbody.innerHTML=products.map(p=>`<tr><td>${escHtml(p.name||'—')}</td><td><span class="badge badge-green">$${(p.price||0).toFixed(2)}</span></td><td><button class="btn btn-ghost" onclick="deleteProduct(${p.id})">✕</button></td></tr>`).join('');
+  } catch(e){
+    const tbody = document.getElementById('products-body');
+    if (tbody) tbody.innerHTML=`<tr><td colspan="3"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+  }
 }
 
 async function addProduct() {
   const name=document.getElementById('product-name').value.trim();
   const price=parseFloat(document.getElementById('product-price').value);
   if (!name||isNaN(price)||price<=0){toast('Enter valid name and price',true);return;}
-  try{await apiFetch(ROUTES.products,{method:'POST',body:JSON.stringify({name,price})});document.getElementById('product-name').value='';document.getElementById('product-price').value='';toast(`✅ ${name} added`);loadProducts();}
+  try{await apiFetch(ROUTES.products,{method:'POST',body:JSON.stringify({name,price})});const _pn=document.getElementById('product-name'),_pp=document.getElementById('product-price');if(_pn)_pn.value='';if(_pp)_pp.value='';toast(`✅ ${name} added`);loadProducts();}
   catch(e){toast(e.message||'Failed',true);}
 }
 
@@ -749,7 +779,7 @@ async function loadConversations() {
     if (!convos) return;
     // Normalize: handle wrapped response
     const list_data = Array.isArray(convos) ? convos : (convos.data || []);
-    document.getElementById('stat-customers').textContent = list_data.length;
+    const _sc=document.getElementById('stat-customers'); if(_sc) _sc.textContent=list_data.length;
     const list = document.getElementById('contact-list');
     if (!list_data.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
     list.innerHTML=list_data.map(c=>{
@@ -765,7 +795,7 @@ async function loadConversations() {
       <div class="contact-time">${fmtTime(lastAt)}</div>
     </div>`;
     }).join('');
-  } catch(e){document.getElementById('contact-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
+  } catch(e){ const _cl=document.getElementById('contact-list'); if(_cl) _cl.innerHTML=`<div class="empty">⚠ ${e.message}</div>`; }
 }
 
 async function openChat(phone, el) {
@@ -792,7 +822,7 @@ async function openChat(phone, el) {
       return`<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at)}</div></div>`;
     }).join('');
     c.scrollTop=c.scrollHeight;
-  } catch(e){document.getElementById('chat-msgs').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
+  } catch(e){ const _cm=document.getElementById('chat-msgs'); if(_cm) _cm.innerHTML=`<div class="empty">⚠ ${e.message}</div>`; }
 }
 
 // ── BROADCAST ─────────────────────────────────────────────
@@ -801,32 +831,57 @@ async function loadCustomers(){
     const data=await apiFetch(ROUTES.customers);
     if(!data)return;
     // /customers returns {phones: [...], total: N}
-    customerPhones = (data.phones || data || []).filter(Boolean);
-    document.getElementById('recipient-count').textContent=customerPhones.length?`Will send to ${customerPhones.length} customer${customerPhones.length>1?'s':''}`:'No customers yet';
-    const el=document.getElementById('recipient-list');
-    el.innerHTML=customerPhones.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;">${customerPhones.map(p=>`<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${p}</span>`).join('')}</div>`:'<div class="empty">No customers yet.</div>';
-  } catch(e){document.getElementById('recipient-list').innerHTML=`<div class="empty">⚠ ${e.message}</div>`;}
+    customerPhones = Array.isArray(data.phones) ? data.phones.filter(Boolean)
+      : Array.isArray(data) ? data.filter(Boolean) : [];
+    const _rc=document.getElementById('recipient-count');
+    if(_rc) _rc.textContent=customerPhones.length?`Will send to ${customerPhones.length} customer${customerPhones.length>1?'s':''}`:'No customers yet';
+    const _rl=document.getElementById('recipient-list');
+    if(_rl) _rl.innerHTML=customerPhones.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;">${customerPhones.map(p=>`<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${escHtml(p)}</span>`).join('')}</div>`:'<div class="empty">No customers yet.</div>';
+  } catch(e){ const _rle=document.getElementById('recipient-list'); if(_rle) _rle.innerHTML=`<div class="empty">⚠ ${e.message}</div>`; }
 }
 
-function updatePreview(){const msg=document.getElementById('broadcast-msg').value;document.getElementById('preview-box').innerHTML=msg?escHtml(msg):'<span style="color:var(--text-dim);font-style:italic;">Message preview...</span>';document.getElementById('char-count').textContent=`${msg.length} / 1024`;}
-function setTpl(t){document.getElementById('broadcast-msg').value=t;updatePreview();}
+function updatePreview(){
+  const _bm=document.getElementById('broadcast-msg');
+  const _pv=document.getElementById('preview-box');
+  const _cc=document.getElementById('char-count');
+  const msg=_bm?_bm.value:'';
+  if(_pv) _pv.innerHTML=msg?escHtml(msg):'<span style="color:var(--text-dim);font-style:italic;">Message preview...</span>';
+  if(_cc) _cc.textContent=`${msg.length} / 1024`;
+}
+function setTpl(t){const _bm=document.getElementById('broadcast-msg');if(_bm)_bm.value=t;updatePreview();}
 
 async function sendBroadcast(){
-  const msg=document.getElementById('broadcast-msg').value.trim();
+  const _bm=document.getElementById('broadcast-msg');
+  const msg=(_bm?_bm.value:'').trim();
   if(!msg){toast('Write a message first',true);return;}
-  if(!customerPhones.length){toast('No customers',true);return;}
+  if(!customerPhones.length){toast('No customers to send to',true);return;}
   if(!confirm(`Send to ${customerPhones.length} customer(s)?`))return;
   const btn=document.getElementById('send-btn');
   const result=document.getElementById('broadcast-result');
-  btn.disabled=true;result.style.display='none';
+  if(btn) btn.disabled=true;
+  if(result) result.style.display='none';
   try{
     const data=await apiFetch(ROUTES.broadcast,{method:'POST',body:JSON.stringify({message:msg})});
-    if(!data){btn.disabled=false;return;}
-    result.style.display='block';
-    if(data.failed===0){result.className='broadcast-result success';result.textContent=`✅ Sent to ${data.sent} customer${data.sent>1?'s':''}!`;toast(`📢 Broadcast sent to ${data.sent}!`);document.getElementById('broadcast-msg').value='';updatePreview();}
-    else{result.className='broadcast-result error';result.textContent=`Sent: ${data.sent} | Failed: ${data.failed}`;}
-  } catch(e){result.style.display='block';result.className='broadcast-result error';result.textContent=`❌ ${e.message}`;}
-  btn.disabled=false;
+    if(!data) return;
+    if(result){
+      result.style.display='block';
+      if(data.failed===0){
+        result.className='broadcast-result success';
+        result.textContent=`✅ Sent to ${data.sent} customer${data.sent>1?'s':''}!`;
+        toast(`📢 Broadcast sent to ${data.sent}!`);
+        if(_bm) _bm.value='';
+        updatePreview();
+      } else {
+        result.className='broadcast-result error';
+        result.textContent=`Sent: ${data.sent} | Failed: ${data.failed}`;
+      }
+    }
+  } catch(e){
+    if(result){result.style.display='block';result.className='broadcast-result error';result.textContent=`❌ ${e.message}`;}
+    toast(e.message,true);
+  } finally {
+    if(btn) btn.disabled=false;
+  }
 }
 
 // ── STATUS ────────────────────────────────────────────────
@@ -835,17 +890,17 @@ async function checkStatus(){
   const spin=document.getElementById('api-spin');
   try{
     const r=await fetch(`${API}/`);
-    if(r.ok){el.textContent='API Online';spin.style.borderTopColor='var(--green)';}
-    else{el.textContent='API Error';spin.style.borderTopColor='var(--red)';}
-  } catch{el.textContent='API Offline';spin.style.borderTopColor='var(--red)';}
+    if(r.ok){if(el)el.textContent='API Online';if(spin)spin.style.borderTopColor='var(--green)';}
+    else{if(el)el.textContent='API Error';if(spin)spin.style.borderTopColor='var(--red)';}
+  } catch{if(el)el.textContent='API Offline';if(spin)spin.style.borderTopColor='var(--red)';}
 }
 
 // ── SETTINGS ──────────────────────────────────────────────
 async function loadSettings() {
   try {
     const b = await apiFetch('/me');
-    if (b && b.whatsapp_phone_id) document.getElementById('set-phone-id').value = b.whatsapp_phone_id;
-    if (b && b.name) document.getElementById('set-biz-name').value = b.name;
+    if(b&&b.whatsapp_phone_id){const _spi=document.getElementById('set-phone-id');if(_spi)_spi.value=b.whatsapp_phone_id;}
+    if(b&&b.name){const _sbn=document.getElementById('set-biz-name');if(_sbn)_sbn.value=b.name;}
   } catch(e) {}
   // Restore appearance preferences
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
@@ -862,7 +917,7 @@ async function saveSettings() {
   try {
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ whatsapp_phone_id: phoneId, whatsapp_token: token2 || undefined }) });
     toast('✅ Credentials saved');
-    document.getElementById('set-token').value = '';
+    const _stok=document.getElementById('set-token'); if(_stok) _stok.value='';
   } catch(e) { toast('Failed: ' + e.message, true); }
 }
 
@@ -873,7 +928,7 @@ async function saveBusinessName() {
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ name }) });
     bizName = name;
     localStorage.setItem('wazi_biz', bizName);
-    document.getElementById('sidebar-role-label').textContent = bizName;
+    const _srl=document.getElementById('sidebar-role-label'); if(_srl) _srl.textContent=bizName;
     const hdr = document.getElementById('biz-name-header');
     if (hdr) hdr.textContent = '🟢 ' + bizName;
     toast('✅ Business name updated');
@@ -900,7 +955,14 @@ function applyFont(font, silent=false) {
 }
 
 // ── UTILS ─────────────────────────────────────────────────
-function fmtTime(iso){if(!iso)return '—';try{const d=new Date(iso);if(isNaN(d.getTime()))return '—';return d.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});}catch{return '—';}}
+function fmtTime(iso){
+  if(!iso) return '—';
+  try {
+    const d = new Date(iso);
+    if(isNaN(d.getTime())) return '—';
+    return d.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  } catch { return '—'; }
+}
 function escHtml(s){
   return String(s)
     .replace(/&/g,'&amp;')
@@ -923,45 +985,9 @@ function init(){
   else{loadOrders();loadProducts();loadConversations();}
 }
 
-if(token&&userRole){document.getElementById('login-screen').style.display='none';init();}
+if(token&&userRole){const _ls4=document.getElementById('login-screen');if(_ls4)_ls4.style.display='none';init();}
 
 
-// 🔒 SAFE API WRAPPER UPGRADE
-const originalApiFetch = apiFetch;
-
-apiFetch = async function(path, opts = {}, retry = true) {
-  try {
-    const res = await fetch(API + path, {
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      ...opts
-    });
-
-    if (res.status === 401 && retry) {
-      const refreshed = await tryRefresh();
-      if (refreshed) return apiFetch(path, opts, false);
-      return null;
-    }
-
-    if (!res.ok) {
-      let msg = "Request failed";
-      try {
-        const err = await res.json();
-        msg = err.detail || msg;
-      } catch {}
-      throw new Error(msg);
-    }
-
-    return res.json();
-
-  } catch (err) {
-    console.error("API ERROR:", err);
-    toast("⚠️ " + err.message, true);
-    throw err;
-  }
-};
 
 function copy(text) {
   navigator.clipboard.writeText(text);
@@ -971,14 +997,12 @@ function copy(text) {
 // 🔄 AUTO REFRESH EVERY 15s
 setInterval(() => {
   if (!token) return;
-
   if (userRole === 'superadmin') {
-    loadAdminData();
+    loadAdminData().catch(()=>{});
   } else {
-    loadOrders();
+    loadOrders().catch(()=>{});
   }
-
-  checkStatus();
+  checkStatus().catch(()=>{});
 }, 15000);
 
 function setLoading(el, state=true) {

@@ -210,13 +210,23 @@ let activeFilter = 'all';
 
 // ── API HELPERS ──────────────────────────────────────────
 async function apiFetch(path, opts = {}) {
-  const res = await fetch(API + path, {
-    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-    ...opts,
-  });
-  if (res.status === 401) { window.location.href = '/static/dashboard.html'; throw new Error('Unauthorized'); }
-  if (!res.ok) { const e = await res.json(); throw new Error(e.detail || 'API error'); }
-  return res.json();
+  try {
+    const res = await fetch(API + path, {
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      ...opts,
+    });
+    if (res.status === 401) { window.location.href = '/static/dashboard.html'; throw new Error('Unauthorized'); }
+    if (!res.ok) {
+      let msg = res.statusText || 'API error';
+      try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    return res.json();
+  } catch(err) {
+    if (err.message === 'Unauthorized') throw err;
+    if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
+    throw err;
+  }
 }
 
 // ── WEBSOCKET ────────────────────────────────────────────
@@ -226,34 +236,38 @@ function connectWS() {
   wsConn = new WebSocket(wsUrl);
 
   wsConn.onopen = () => {
-    document.getElementById('ws-dot').className = 'ws-dot live';
-    document.getElementById('ws-label').textContent = 'Live';
+    const _wsd=document.getElementById('ws-dot'); if(_wsd) _wsd.className='ws-dot live';
+    const _wsl=document.getElementById('ws-label'); if(_wsl) _wsl.textContent='Live';
     // Heartbeat every 25s
     setInterval(() => { if (wsConn.readyState === 1) wsConn.send(JSON.stringify({type:'ping'})); }, 25000);
   };
 
   wsConn.onclose = () => {
-    document.getElementById('ws-dot').className = 'ws-dot dead';
-    document.getElementById('ws-label').textContent = 'Reconnecting...';
+    const _wsd2=document.getElementById('ws-dot'); if(_wsd2) _wsd2.className='ws-dot dead';
+    const _wsl2=document.getElementById('ws-label'); if(_wsl2) _wsl2.textContent='Reconnecting...';
     setTimeout(connectWS, 3000);
   };
 
   wsConn.onmessage = (event) => {
-    const payload = JSON.parse(event.data);
-    if (payload.type === 'pong') return;
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload.type === 'pong') return;
 
-    if (payload.event === 'new_message') {
-      const { customer_id, phone, message } = payload;
+      if (payload.event === 'new_message') {
+        const { customer_id, phone, message } = payload;
 
-      // If this conversation is open, append the bubble
-      if (customer_id === currentCustomerId) {
-        appendBubble(message);
-        scrollToBottom();
-        if (message.direction === 'incoming') markRead();
+        // If this conversation is open, append the bubble
+        if (customer_id === currentCustomerId && message) {
+          appendBubble(message);
+          scrollToBottom();
+          if (message.direction === 'incoming') markRead().catch(() => {});
+        }
+
+        // Refresh sidebar to update last message + unread count
+        loadConversations(false).catch(() => {});
       }
-
-      // Refresh sidebar to update last message + unread count
-      loadConversations(false);
+    } catch (err) {
+      console.warn('WS message parse error:', err);
     }
   };
 
@@ -264,22 +278,30 @@ function connectWS() {
 async function loadConversations(showSkeleton = true) {
   try {
     const unread = activeFilter === 'unread';
-    const data = await apiFetch(`/chat/conversations?unread_only=${unread}`);
-    allConversations = data;
+    const raw = await apiFetch(`/chat/conversations?unread_only=${unread}`);
+    // Always normalise to array — backend may return array or wrapped object
+    allConversations = Array.isArray(raw) ? raw
+      : (raw && Array.isArray(raw.data)) ? raw.data : [];
     renderContacts(allConversations);
-    document.getElementById('skeleton').style.display = 'none';
+    const skelEl = document.getElementById('skeleton');
+    if (skelEl) skelEl.style.display = 'none';
   } catch (e) {
-    document.getElementById('contact-list').innerHTML =
+    const listEl = document.getElementById('contact-list');
+    if (listEl) listEl.innerHTML =
       `<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${e.message}</div>`;
   }
 }
 
 function renderContacts(convos) {
-  const search = document.getElementById('search-input').value.trim().toLowerCase();
+  const searchEl = document.getElementById('search-input');
   const list = document.getElementById('contact-list');
+  if (!list) return;
 
-  let filtered = convos;
-  if (search) filtered = convos.filter(c => c.phone.includes(search));
+  const search = (searchEl ? searchEl.value.trim().toLowerCase() : '');
+  const safeConvos = Array.isArray(convos) ? convos : [];
+
+  let filtered = safeConvos;
+  if (search) filtered = safeConvos.filter(c => (c.phone || '').includes(search));
   if (activeFilter === 'recent') filtered = filtered.slice(0, 20);
 
   if (!filtered.length) {
@@ -289,15 +311,15 @@ function renderContacts(convos) {
 
   list.innerHTML = filtered.map(c => `
     <div class="contact-item ${c.customer_id === currentCustomerId ? 'active' : ''}"
-         onclick="openChat(${c.customer_id}, '${escHtml(c.phone)}', '${escHtml(c.last_seen || '')}')">
+         onclick="openChat(${c.customer_id}, '${escHtml(c.phone || '')}', '${escHtml(c.last_seen || '')}')">
       <div class="contact-avatar">👤</div>
       <div class="contact-info">
-        <div class="contact-phone">${escHtml(c.phone)}</div>
+        <div class="contact-phone">${escHtml(c.phone || '—')}</div>
         <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(safeText(c.last_message))}</div>
       </div>
       <div class="contact-meta">
         <div class="contact-time">${formatTime(c.last_message_at)}</div>
-        ${c.unread_count > 0 ? `<div class="unread-badge">${c.unread_count}</div>` : ''}
+        ${(c.unread_count || 0) > 0 ? `<div class="unread-badge">${c.unread_count}</div>` : ''}
       </div>
     </div>
   `).join('');
@@ -308,34 +330,54 @@ function filterContacts(val) { renderContacts(allConversations); }
 function setFilter(f) {
   activeFilter = f;
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  document.getElementById('filter-' + f).classList.add('active');
-  loadConversations();
+  const _fb=document.getElementById('filter-' + f); if(_fb) _fb.classList.add('active');
+  loadConversations().catch(()=>{});
 }
 
 // ── OPEN CHAT ────────────────────────────────────────────
 async function openChat(customerId, phone, lastSeen) {
+  // Guard: validate inputs
+  if (!customerId || !phone) return;
+
   currentCustomerId = customerId;
   currentPhone = phone;
   msgOffset = 0;
 
-  document.getElementById('no-selection').style.display = 'none';
+  // Safe DOM access — never crash if element is missing
+  const noSel = document.getElementById('no-selection');
+  if (noSel) noSel.style.display = 'none';
+
   const ac = document.getElementById('active-chat');
+  if (!ac) return; // can't proceed without the chat panel
   ac.style.display = 'flex';
   ac.style.flexDirection = 'column';
   ac.style.overflow = 'hidden';
   ac.style.flex = '1';
 
-  document.getElementById('chat-phone').textContent = phone;
-  document.getElementById('chat-status').textContent = lastSeen
-    ? `Last seen ${formatTime(lastSeen)}`
-    : 'Customer';
+  const phoneEl = document.getElementById('chat-phone');
+  if (phoneEl) phoneEl.textContent = phone;
 
+  const statusEl = document.getElementById('chat-status');
+  if (statusEl) statusEl.textContent = lastSeen ? `Last seen ${formatTime(lastSeen)}` : 'Customer';
+
+  // Highlight active contact — safe iteration
   document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
-  event.currentTarget.classList.add('active');
+  // Find by data attribute instead of relying on event.currentTarget (which can be stale)
+  const items = document.querySelectorAll('.contact-item');
+  items.forEach(el => {
+    if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`openChat(${customerId},`)) {
+      el.classList.add('active');
+    }
+  });
 
-  document.getElementById('chat-messages').innerHTML =
-    '<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:11px;color:var(--text-dim)">Loading...</div>';
-  document.getElementById('load-more-btn').style.display = 'none';
+  const msgContainer = document.getElementById('chat-messages');
+  if (msgContainer) {
+    msgContainer.innerHTML =
+      '<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:11px;color:var(--text-dim)">Loading...</div>';
+  }
+
+  const lmBtn = document.getElementById('load-more-btn');
+  if (lmBtn) lmBtn.style.display = 'none';
 
   await loadMessages(customerId, true);
   await markRead();
@@ -345,15 +387,21 @@ async function loadMessages(customerId, reset = false) {
   if (reset) msgOffset = 0;
   try {
     const data = await apiFetch(`/chat/messages/${customerId}?limit=${msgLimit}&offset=${msgOffset}`);
-    const msgs = data.messages || [];
+    const msgs = (data && Array.isArray(data.messages)) ? data.messages : [];
 
     const container = document.getElementById('chat-messages');
+    if (!container) return; // panel may have been closed
+
+    const lmBtn = document.getElementById('load-more-btn');
 
     if (reset) {
+      // Clear content but preserve the load-more button by detaching it first
+      if (lmBtn && lmBtn.parentNode === container) container.removeChild(lmBtn);
       container.innerHTML = '';
-      const lmBtn = document.getElementById('load-more-btn');
-      lmBtn.style.display = 'none';
-      container.appendChild(lmBtn);
+      if (lmBtn) {
+        lmBtn.style.display = 'none';
+        container.appendChild(lmBtn);
+      }
     }
 
     if (msgs.length === 0 && reset) {
@@ -361,30 +409,33 @@ async function loadMessages(customerId, reset = false) {
       return;
     }
 
-    // Prepend older messages (load more scenario)
+    // Build fragment of bubbles
     const frag = document.createDocumentFragment();
     msgs.forEach(m => frag.appendChild(createBubble(m)));
 
     if (reset) {
       container.appendChild(frag);
     } else {
-      const firstChild = container.children[1]; // after load-more btn
-      container.insertBefore(frag, firstChild || null);
+      // Prepend older messages after the load-more button
+      const anchor = lmBtn && lmBtn.nextSibling ? lmBtn.nextSibling : (container.children[1] || null);
+      container.insertBefore(frag, anchor);
     }
 
-    // Show load-more if there might be earlier messages
+    // Show/hide load-more
     hasMoreMessages = msgs.length === msgLimit;
-    document.getElementById('load-more-btn').style.display = hasMoreMessages ? 'block' : 'none';
+    if (lmBtn) lmBtn.style.display = hasMoreMessages ? 'block' : 'none';
 
     if (reset) scrollToBottom();
 
   } catch (e) {
-    document.getElementById('chat-messages').innerHTML =
+    const container = document.getElementById('chat-messages');
+    if (container) container.innerHTML =
       `<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${e.message}</div>`;
   }
 }
 
 async function loadMoreMessages() {
+  if (!currentCustomerId) return;
   msgOffset += msgLimit;
   await loadMessages(currentCustomerId, false);
 }
@@ -408,6 +459,7 @@ function createBubble(msg) {
 
 function appendBubble(msg) {
   const container = document.getElementById('chat-messages');
+  if (!container) return;
   container.appendChild(createBubble(msg));
 }
 
@@ -415,14 +467,17 @@ function appendBubble(msg) {
 async function sendMessage() {
   if (!currentCustomerId) return;
   const input = document.getElementById('send-input');
+  const sendBtn = document.getElementById('send-btn');
+  if (!input || !sendBtn) return;
+
   const text = input.value.trim();
   if (!text) return;
 
   input.value = '';
   input.style.height = 'auto';
-  document.getElementById('send-btn').disabled = true;
+  sendBtn.disabled = true;
 
-  // Optimistically render message immediately for snappy UX
+  // Optimistically render the message for snappy UX
   appendBubble({ id: null, text, direction: 'outgoing', status: 'sent', created_at: new Date().toISOString() });
   scrollToBottom();
   showTyping(800);
@@ -432,25 +487,27 @@ async function sendMessage() {
       method: 'POST',
       body: JSON.stringify({ customer_id: currentCustomerId, text }),
     });
-    // Message already rendered — nothing more to do
-    if (!res.ok && res.whatsapp_result && res.whatsapp_result.error) {
+    // Soft warning if WhatsApp delivery failed but message was saved
+    if (res && res.whatsapp_result && res.whatsapp_result.error) {
       showToast('⚠ Saved but WhatsApp delivery may have failed', true);
     }
   } catch (e) {
     showToast('Send failed: ' + e.message, true);
+  } finally {
+    if (sendBtn) sendBtn.disabled = false;
   }
-
-  document.getElementById('send-btn').disabled = false;
 }
 
 function handleSendKey(e) {
+  if (!e) return;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
-    sendMessage();
+    sendMessage().catch(()=>{});
   }
 }
 
 function autoResize(el) {
+  if (!el) return;
   el.style.height = 'auto';
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
@@ -460,24 +517,29 @@ async function markRead() {
   if (!currentCustomerId) return;
   try {
     await apiFetch(`/chat/read/${currentCustomerId}`, { method: 'POST' });
-    // Update sidebar unread badge
+    // Update sidebar unread badge safely
     const conv = allConversations.find(c => c.customer_id === currentCustomerId);
-    if (conv) { conv.unread_count = 0; renderContacts(allConversations); }
-  } catch (_) {}
+    if (conv) {
+      conv.unread_count = 0;
+      renderContacts(allConversations);
+    }
+  } catch (_) { /* silent — read tracking is non-critical */ }
 }
 
 // ── TYPING INDICATOR ──────────────────────────────────────
 function showTyping(ms) {
   const el = document.getElementById('typing-indicator');
+  if (!el) return;
   el.classList.add('visible');
   scrollToBottom();
-  setTimeout(() => el.classList.remove('visible'), ms);
+  setTimeout(() => { if(el) el.classList.remove('visible'); }, ms);
 }
 
 // ── UTILS ─────────────────────────────────────────────────
 function scrollToBottom() {
   const c = document.getElementById('chat-messages');
-  requestAnimationFrame(() => { c.scrollTop = c.scrollHeight; });
+  if (!c) return;
+  requestAnimationFrame(() => { if(c) c.scrollTop = c.scrollHeight; });
 }
 
 function safeText(val) {
@@ -498,10 +560,11 @@ function formatTime(iso) {
     if (isNaN(d.getTime())) return '—';
     const now = new Date();
     const diff = now - d;
+    if (diff < 0) return d.toLocaleString();           // future timestamp — just show it
     if (diff < 60000) return 'just now';
-    if (diff < 3600000) return Math.floor(diff/60000) + 'm ago';
-    if (diff < 86400000) return d.toLocaleTimeString('en-GB', {hour:'2-digit',minute:'2-digit'});
-    return d.toLocaleDateString('en-GB', {day:'2-digit',month:'short'});
+    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+    if (diff < 86400000) return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   } catch { return '—'; }
 }
 
@@ -523,9 +586,9 @@ function showToast(msg, isError=false) {
 }
 
 // ── INIT ──────────────────────────────────────────────────
-connectWS();
-loadConversations();
-setInterval(() => loadConversations(false), 30000);  // Fallback poll every 30s
+try { connectWS(); } catch (e) { console.warn('WS init failed:', e); }
+loadConversations(true).catch(e => console.warn('Initial load failed:', e));
+setInterval(() => loadConversations(false).catch(() => {}), 30000);  // Fallback poll every 30s
 </script>
 </body>
 </html>
