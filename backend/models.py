@@ -29,6 +29,7 @@ class Product(Base):
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
     name = Column(String)
     price = Column(Float)
+    image_url = Column(String, nullable=True)   # optional product image URL
 
     business = relationship("Business", back_populates="products")
 

@@ -556,11 +556,15 @@ function escHtml(s) {
 function formatTime(iso) {
   if (!iso) return '—';
   try {
-    const d = new Date(iso);
+    // Normalise SQLite space-separator: "2024-01-15 10:30:00" → "2024-01-15T10:30:00Z"
+    let s = String(iso).trim();
+    s = s.replace(' ', 'T');
+    if (!/[Z+][0-9]*$/.test(s.slice(10))) s += 'Z';
+    const d = new Date(s);
     if (isNaN(d.getTime())) return '—';
     const now = new Date();
     const diff = now - d;
-    if (diff < 0) return d.toLocaleString();           // future timestamp — just show it
+    if (diff < 0) return d.toLocaleString();
     if (diff < 60000) return 'just now';
     if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
     if (diff < 86400000) return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });

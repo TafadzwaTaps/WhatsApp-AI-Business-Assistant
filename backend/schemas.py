@@ -31,11 +31,13 @@ class BusinessUpdate(BaseModel):
 class ProductCreate(BaseModel):
     name: str
     price: float
+    image_url: Optional[str] = None   # optional URL or base64 data URI
 
 class ProductOut(BaseModel):
     id: int
     name: str
     price: float
+    image_url: Optional[str] = None
 
     class Config:
         from_attributes = True

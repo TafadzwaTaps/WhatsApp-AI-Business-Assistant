@@ -72,7 +72,12 @@ def delete_business(db: Session, business_id: int):
 
 # ── Products ──────────────────────────────────────────────
 def create_product(db: Session, business_id: int, product):
-    p = models.Product(business_id=business_id, name=product.name, price=product.price)
+    p = models.Product(
+        business_id=business_id,
+        name=product.name,
+        price=product.price,
+        image_url=getattr(product, 'image_url', None),
+    )
     db.add(p)
     db.commit()
     db.refresh(p)

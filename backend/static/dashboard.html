@@ -125,7 +125,7 @@
   .contact-preview{font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .contact-time{font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:2px;}
   .chat-window{display:flex;flex-direction:column;}
-  .chat-header{padding:16px 20px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:13px;color:var(--text-dim);}
+  .chat-header{padding:12px 20px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:13px;color:var(--text-dim);display:flex;align-items:center;gap:6px;}
   .chat-header span{color:var(--green);font-weight:600;}
   .chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px;}
   .msg{max-width:72%;padding:10px 14px;border-radius:12px;font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre-wrap;}
@@ -134,6 +134,12 @@
   .msg-broadcast{background:rgba(167,139,250,0.1);border:1px solid rgba(167,139,250,0.3);color:var(--purple);align-self:flex-end;border-bottom-right-radius:4px;}
   .msg-time{font-size:10px;color:var(--text-dim);margin-top:4px;}
   .chat-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:12px;}
+  .chat-reply-bar{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--border);background:var(--surface);flex-shrink:0;}
+  .chat-reply-input{flex:1;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 13px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;resize:none;min-height:38px;max-height:100px;line-height:1.5;transition:border-color 0.15s;}
+  .chat-reply-input:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
+  .chat-reply-btn{background:var(--green);color:#000;border:none;border-radius:8px;padding:9px 18px;font-family:var(--sans);font-weight:700;font-size:12px;cursor:pointer;transition:all 0.15s;white-space:nowrap;}
+  .chat-reply-btn:hover{background:var(--green-dim);}
+  .chat-reply-btn:disabled{opacity:0.45;cursor:not-allowed;}
 
   /* MODAL */
   .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:50;display:none;align-items:center;justify-content:center;}
@@ -147,6 +153,25 @@
   .toast.show{transform:translateY(0);opacity:1;}
   .section{display:none;}
   .section.active{display:block;}
+
+  /* PRODUCT IMAGES */
+  .product-thumb{width:40px;height:40px;border-radius:6px;object-fit:cover;border:1px solid var(--border);background:var(--surface2);display:block;}
+  .product-thumb-placeholder{width:40px;height:40px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:18px;color:var(--text-dim);}
+  .img-upload-area{border:2px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:all 0.2s;position:relative;background:var(--bg);}
+  .img-upload-area:hover,.img-upload-area.drag{border-color:var(--green);background:var(--green-glow);}
+  .img-upload-area input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+  .img-preview{width:100%;max-height:160px;object-fit:cover;border-radius:8px;margin-top:8px;display:none;}
+  .img-preview.show{display:block;}
+  .img-clear{font-size:11px;font-family:var(--mono);color:var(--red);background:none;border:none;cursor:pointer;margin-top:4px;padding:0;}
+  /* PRODUCT CARDS (menu grid view) */
+  .product-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;}
+  .product-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;transition:transform 0.15s,border-color 0.15s;}
+  .product-card:hover{transform:translateY(-2px);border-color:var(--green-dim);}
+  .product-card-img{width:100%;height:120px;object-fit:cover;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:36px;}
+  .product-card-img img{width:100%;height:100%;object-fit:cover;}
+  .product-card-body{padding:12px;}
+  .product-card-name{font-size:13px;font-weight:700;margin-bottom:4px;}
+  .product-card-price{font-size:12px;font-family:var(--mono);color:var(--green);}
 
   /* LIGHT MODE */
   body.light{--bg:#f4f7f5;--surface:#ffffff;--surface2:#eef3f0;--border:#d0ddd4;--text:#1a2e1f;--text-dim:#5a7060;}
@@ -321,22 +346,52 @@
             <div class="form-group-inline"><label>Name</label><input type="text" id="product-name" placeholder="e.g. Sadza"/></div>
             <div class="form-group-inline"><label>Price (USD)</label><input type="number" id="product-price" placeholder="2.50" step="0.01"/></div>
           </div>
+          <div class="form-group-inline" style="margin-bottom:14px;">
+            <label>Product Image <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <div class="img-upload-area" id="img-upload-area"
+                 ondragover="event.preventDefault();this.classList.add('drag')"
+                 ondragleave="this.classList.remove('drag')"
+                 ondrop="handleImgDrop(event)">
+              <input type="file" id="product-img-file" accept="image/*" onchange="handleImgSelect(event)"/>
+              <div style="font-size:24px;margin-bottom:4px;">🖼️</div>
+              <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Click or drag an image here</div>
+              <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);margin-top:2px)">JPG, PNG, WebP · max 2MB</div>
+            </div>
+            <img id="img-preview" class="img-preview" alt="preview"/>
+            <button class="img-clear" id="img-clear-btn" onclick="clearProductImg()" style="display:none;">✕ Remove image</button>
+          </div>
           <button class="btn btn-primary" onclick="addProduct()">+ Add to Menu</button>
         </div>
       </div>
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">Current Menu</div><button class="panel-action" onclick="loadProducts()">↻ Refresh</button></div>
-        <div class="panel-body"><table><thead><tr><th>Product</th><th>Price</th><th>Action</th></tr></thead><tbody id="products-body"></tbody></table></div>
+        <div class="panel-header">
+          <div class="panel-title">Current Menu</div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="panel-action" id="view-table-btn" onclick="setProductView('table')" style="opacity:1;">≡ List</button>
+            <button class="panel-action" id="view-grid-btn" onclick="setProductView('grid')" style="opacity:0.5;">⊞ Grid</button>
+            <button class="panel-action" onclick="loadProducts()">↻</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table id="products-table"><thead><tr><th></th><th>Product</th><th>Price</th><th>Action</th></tr></thead><tbody id="products-body"></tbody></table>
+          <div id="products-grid" class="product-grid" style="display:none;"></div>
+        </div>
       </div>
     </div>
   </div>
 
   <!-- CONVERSATIONS -->
   <div id="section-conversations" class="section">
-    <div class="topbar"><div class="page-title">Customer <span>Conversations</span></div><button class="panel-action" onclick="loadConversations()">↻ Refresh</button></div>
+    <div class="topbar">
+      <div class="page-title">Customer <span>Conversations</span></div>
+      <button class="panel-action" onclick="loadConversations()">↻ Refresh</button>
+    </div>
     <div class="chat-layout">
       <div class="contact-list" id="contact-list"><div class="empty">Loading...</div></div>
-      <div class="chat-window" id="chat-window"><div class="chat-header">Select a conversation</div><div class="chat-empty">👈 Pick a customer</div></div>
+      <div class="chat-window" id="chat-window">
+        <div class="chat-header">Select a conversation</div>
+        <div class="chat-empty">👈 Pick a customer to start chatting</div>
+      </div>
     </div>
   </div>
 
@@ -742,6 +797,21 @@ function renderOrders(orders, bodyId, showStatus) {
 }
 
 // ── PRODUCTS ──────────────────────────────────────────────
+let _productView = 'table';   // 'table' | 'grid'
+let _pendingImgDataUrl = null; // base64 data URI for the pending new product
+
+function setProductView(mode) {
+  _productView = mode;
+  const tableEl = document.getElementById('products-table');
+  const gridEl  = document.getElementById('products-grid');
+  const tbBtn   = document.getElementById('view-table-btn');
+  const gbBtn   = document.getElementById('view-grid-btn');
+  if (tableEl) tableEl.style.display = mode === 'table' ? '' : 'none';
+  if (gridEl)  gridEl.style.display  = mode === 'grid'  ? '' : 'none';
+  if (tbBtn) tbBtn.style.opacity = mode === 'table' ? '1' : '0.5';
+  if (gbBtn) gbBtn.style.opacity = mode === 'grid'  ? '1' : '0.5';
+}
+
 async function loadProducts() {
   try {
     const raw = await apiFetch(ROUTES.products);
@@ -749,27 +819,122 @@ async function loadProducts() {
     const products = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
     const statP = document.getElementById('stat-products');
     if (statP) statP.textContent = products.length;
+
+    // ── TABLE VIEW ──────────────────────────────────────────
     const tbody = document.getElementById('products-body');
-    if (!tbody) return;
-    if (!products.length){tbody.innerHTML=`<tr><td colspan="3"><div class="empty">No products.</div></td></tr>`;return;}
-    tbody.innerHTML=products.map(p=>`<tr><td>${escHtml(p.name||'—')}</td><td><span class="badge badge-green">$${(p.price||0).toFixed(2)}</span></td><td><button class="btn btn-ghost" onclick="deleteProduct(${p.id})">✕</button></td></tr>`).join('');
-  } catch(e){
+    if (tbody) {
+      if (!products.length) {
+        tbody.innerHTML=`<tr><td colspan="4"><div class="empty">No products yet. Add your first item above!</div></td></tr>`;
+      } else {
+        tbody.innerHTML = products.map(p => {
+          const thumb = p.image_url
+            ? `<img class="product-thumb" src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.style.display='none';this.nextSibling.style.display='flex'">`
+              + `<div class="product-thumb-placeholder" style="display:none">📦</div>`
+            : `<div class="product-thumb-placeholder">📦</div>`;
+          return `<tr>
+            <td style="width:52px">${thumb}</td>
+            <td><strong>${escHtml(p.name||'—')}</strong></td>
+            <td><span class="badge badge-green">$${(p.price||0).toFixed(2)}</span></td>
+            <td><button class="btn btn-ghost" onclick="deleteProduct(${p.id})">✕</button></td>
+          </tr>`;
+        }).join('');
+      }
+    }
+
+    // ── GRID VIEW ───────────────────────────────────────────
+    const grid = document.getElementById('products-grid');
+    if (grid) {
+      if (!products.length) {
+        grid.innerHTML = '<div class="empty" style="grid-column:1/-1">No products yet.</div>';
+      } else {
+        grid.innerHTML = products.map(p => `
+          <div class="product-card">
+            <div class="product-card-img">
+              ${p.image_url
+                ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.parentNode.textContent='📦'">`
+                : '📦'}
+            </div>
+            <div class="product-card-body">
+              <div class="product-card-name">${escHtml(p.name||'—')}</div>
+              <div class="product-card-price">$${(p.price||0).toFixed(2)}</div>
+              <button class="btn btn-ghost" style="margin-top:8px;width:100%;font-size:11px;" onclick="deleteProduct(${p.id})">✕ Remove</button>
+            </div>
+          </div>`).join('');
+      }
+    }
+  } catch(e) {
     const tbody = document.getElementById('products-body');
-    if (tbody) tbody.innerHTML=`<tr><td colspan="3"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    if (tbody) tbody.innerHTML=`<tr><td colspan="4"><div class="empty">⚠ ${e.message}</div></td></tr>`;
   }
 }
 
-async function addProduct() {
-  const name=document.getElementById('product-name').value.trim();
-  const price=parseFloat(document.getElementById('product-price').value);
-  if (!name||isNaN(price)||price<=0){toast('Enter valid name and price',true);return;}
-  try{await apiFetch(ROUTES.products,{method:'POST',body:JSON.stringify({name,price})});const _pn=document.getElementById('product-name'),_pp=document.getElementById('product-price');if(_pn)_pn.value='';if(_pp)_pp.value='';toast(`✅ ${name} added`);loadProducts();}
-  catch(e){toast(e.message||'Failed',true);}
+// ── IMAGE UPLOAD HELPERS ──────────────────────────────────
+function handleImgSelect(event) {
+  const file = event.target.files && event.target.files[0];
+  _loadImageFile(file);
 }
 
-async function deleteProduct(id){
-  try{await apiFetch(`${ROUTES.products}/${id}`,{method:'DELETE'});toast('Removed');loadProducts();}
-  catch(e){toast('Failed',true);}
+function handleImgDrop(event) {
+  event.preventDefault();
+  const area = document.getElementById('img-upload-area');
+  if (area) area.classList.remove('drag');
+  const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+  _loadImageFile(file);
+}
+
+function _loadImageFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { toast('Please select an image file', true); return; }
+  if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2MB', true); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    _pendingImgDataUrl = e.target.result;
+    const preview = document.getElementById('img-preview');
+    const clearBtn = document.getElementById('img-clear-btn');
+    const area = document.getElementById('img-upload-area');
+    if (preview) { preview.src = _pendingImgDataUrl; preview.classList.add('show'); }
+    if (clearBtn) clearBtn.style.display = 'inline';
+    if (area) area.style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearProductImg() {
+  _pendingImgDataUrl = null;
+  const preview = document.getElementById('img-preview');
+  const clearBtn = document.getElementById('img-clear-btn');
+  const area = document.getElementById('img-upload-area');
+  const fileInput = document.getElementById('product-img-file');
+  if (preview) { preview.src = ''; preview.classList.remove('show'); }
+  if (clearBtn) clearBtn.style.display = 'none';
+  if (area) area.style.display = '';
+  if (fileInput) fileInput.value = '';
+}
+
+async function addProduct() {
+  const nameEl  = document.getElementById('product-name');
+  const priceEl = document.getElementById('product-price');
+  const name  = nameEl  ? nameEl.value.trim()  : '';
+  const price = priceEl ? parseFloat(priceEl.value) : NaN;
+  if (!name || isNaN(price) || price <= 0) { toast('Enter a valid name and price', true); return; }
+  try {
+    const payload = { name, price };
+    if (_pendingImgDataUrl) payload.image_url = _pendingImgDataUrl;
+    await apiFetch(ROUTES.products, { method: 'POST', body: JSON.stringify(payload) });
+    if (nameEl)  nameEl.value  = '';
+    if (priceEl) priceEl.value = '';
+    clearProductImg();
+    toast(`✅ ${name} added`);
+    loadProducts();
+  } catch(e) { toast(e.message || 'Failed to add product', true); }
+}
+
+async function deleteProduct(id) {
+  try {
+    await apiFetch(`${ROUTES.products}/${id}`, { method: 'DELETE' });
+    toast('Product removed');
+    loadProducts();
+  } catch(e) { toast('Failed to remove product', true); }
 }
 
 // ── CONVERSATIONS ─────────────────────────────────────────
@@ -799,30 +964,110 @@ async function loadConversations() {
 }
 
 async function openChat(phone, el) {
-  activePhone=phone;
-  document.querySelectorAll('.contact-item').forEach(i=>i.classList.remove('active'));
-  if(el)el.classList.add('active');
-  const win=document.getElementById('chat-window');
-  win.innerHTML=`<div class="chat-header">Chat with <span>${phone}</span></div><div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>`;
-  try{
-    const msgs=await apiFetch(`${ROUTES.conversations}/${phone}`);
-    if(!msgs)return;
-    // Normalize: handle wrapped response
-    const msg_list = Array.isArray(msgs) ? msgs : (msgs.messages || []);
-    const c=document.getElementById('chat-msgs');
-    if(!msg_list.length){c.innerHTML='<div class="empty">No messages.</div>';return;}
-    c.innerHTML=msg_list.map(m=>{
-      // Fields: message or text, direction
-      const text = m.message || m.text || '';
-      const dir = m.direction || '';
-      const isBc = text.startsWith('[BROADCAST]');
-      const isOut = dir==='outgoing'||dir==='out';
-      const cls=isBc?'msg-broadcast':`msg-${isOut?'out':'in'}`;
-      const txt=isBc?'📢 '+escHtml(text.replace('[BROADCAST] ','')):escHtml(text);
-      return`<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at)}</div></div>`;
+  if (!phone) return;
+  activePhone = phone;
+  document.querySelectorAll('.contact-item').forEach(i => i.classList.remove('active'));
+  if (el) el.classList.add('active');
+
+  const win = document.getElementById('chat-window');
+  if (!win) return;
+
+  // Inject messages area + inline reply bar
+  win.innerHTML = `
+    <div class="chat-header" style="display:flex;align-items:center;">
+      Chat with <span style="margin-left:6px;">${escHtml(phone)}</span>
+      <button class="panel-action" style="margin-left:auto;font-size:11px;" onclick="openChat('${escHtml(phone).replace(/'/g,"\\'")}',null)">↻</button>
+    </div>
+    <div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>
+    <div class="chat-reply-bar" id="chat-reply-bar">
+      <textarea
+        class="chat-reply-input"
+        id="chat-reply-input"
+        placeholder="Type a reply… (Enter to send, Shift+Enter for new line)"
+        rows="1"
+        onkeydown="handleDashboardSendKey(event)"
+        oninput="autoResizeDashboard(this)"
+      ></textarea>
+      <button class="chat-reply-btn" id="chat-reply-btn" onclick="sendFromDashboard().catch(()=>{})">Send ➤</button>
+    </div>`;
+
+  win.dataset.activePhone = phone;
+  await loadChatMessages(phone);
+}
+
+async function loadChatMessages(phone) {
+  const msgsEl = document.getElementById('chat-msgs');
+  if (!msgsEl) return;
+  try {
+    const raw = await apiFetch(`${ROUTES.conversations}/${encodeURIComponent(phone)}`);
+    if (!raw) return;
+    const msg_list = Array.isArray(raw) ? raw : (Array.isArray(raw.messages) ? raw.messages : []);
+    if (!msg_list.length) { msgsEl.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
+    msgsEl.innerHTML = msg_list.map(m => {
+      const text  = m.message || m.text || '';
+      const dir   = m.direction || '';
+      const isBc  = text.startsWith('[BROADCAST]');
+      const isOut = dir === 'outgoing' || dir === 'out';
+      const cls   = isBc ? 'msg-broadcast' : `msg-${isOut ? 'out' : 'in'}`;
+      const txt   = isBc ? '📢 ' + escHtml(text.replace('[BROADCAST] ', '')) : escHtml(text);
+      return `<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at)}</div></div>`;
     }).join('');
-    c.scrollTop=c.scrollHeight;
-  } catch(e){ const _cm=document.getElementById('chat-msgs'); if(_cm) _cm.innerHTML=`<div class="empty">⚠ ${e.message}</div>`; }
+    msgsEl.scrollTop = msgsEl.scrollHeight;
+  } catch(e) {
+    const el = document.getElementById('chat-msgs');
+    if (el) el.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
+  }
+}
+
+async function sendFromDashboard() {
+  const win   = document.getElementById('chat-window');
+  const input = document.getElementById('chat-reply-input');
+  const btn   = document.getElementById('chat-reply-btn');
+  if (!win || !input || !btn) return;
+
+  const phone = win.dataset.activePhone;
+  const text  = input.value.trim();
+  if (!phone || !text) return;
+
+  btn.disabled = true;
+  input.value  = '';
+  autoResizeDashboard(input);
+
+  try {
+    // Look up the CRM customer_id by phone number
+    const crmList = await apiFetch('/chat/customers');
+    const customers = Array.isArray(crmList) ? crmList : [];
+    const customer  = customers.find(cu => cu.phone === phone);
+    if (!customer) { toast('Customer not found — have they messaged you first?', true); return; }
+
+    await apiFetch('/chat/send', {
+      method: 'POST',
+      body: JSON.stringify({ customer_id: customer.id, text }),
+    });
+
+    toast('✅ Sent');
+    await loadChatMessages(phone);
+  } catch(e) {
+    toast('Send failed: ' + e.message, true);
+    // Restore text so user can retry
+    if (input) input.value = text;
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function handleDashboardSendKey(e) {
+  if (!e) return;
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendFromDashboard().catch(() => {});
+  }
+}
+
+function autoResizeDashboard(el) {
+  if (!el) return;
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 100) + 'px';
 }
 
 // ── BROADCAST ─────────────────────────────────────────────
@@ -958,9 +1203,17 @@ function applyFont(font, silent=false) {
 function fmtTime(iso){
   if(!iso) return '—';
   try {
-    const d = new Date(iso);
+    // Normalise: replace space separator with T, append Z if no tz info
+    // so "2024-01-15 10:30:00" (SQLite) parses correctly in all browsers
+    let s = String(iso).trim();
+    s = s.replace(' ', 'T');
+    if(!/[Z+\-]\d*$/.test(s.slice(10))) s += 'Z';
+    const d = new Date(s);
     if(isNaN(d.getTime())) return '—';
-    return d.toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    const now = new Date();
+    const diff = now - d;
+    if(diff < 60000 && diff >= 0) return 'just now';
+    return d.toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});
   } catch { return '—'; }
 }
 function escHtml(s){
