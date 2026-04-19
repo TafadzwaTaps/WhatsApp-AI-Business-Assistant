@@ -1,3 +1,4 @@
+from datetime import datetime
 from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -14,7 +15,10 @@ class Business(Base):
     whatsapp_phone_id = Column(String, unique=True, nullable=True)
     whatsapp_token = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, server_default=func.now())
+    # FIX: default= fires at the ORM/Python level, so SQLAlchemy always sets
+    # created_at before the INSERT — server_default alone is not reliable when
+    # the column was added to an existing SQLite table without a DDL default.
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     products = relationship("Product", back_populates="business", cascade="all, delete")
     orders = relationship("Order", back_populates="business", cascade="all, delete")
@@ -44,7 +48,8 @@ class Order(Base):
     quantity = Column(Integer)
     total_price = Column(Float)
     status = Column(String, default="pending")
-    created_at = Column(DateTime, server_default=func.now())
+    # FIX: same as Business.created_at above
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     business = relationship("Business", back_populates="orders")
 
@@ -58,7 +63,8 @@ class ChatMessage(Base):
     phone = Column(String, index=True)
     direction = Column(String)   # "in" or "out"
     message = Column(String)
-    created_at = Column(DateTime, server_default=func.now())
+    # FIX: same as Business.created_at above
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     business = relationship("Business", back_populates="messages")
 
@@ -69,7 +75,8 @@ class Customer(Base):
     id = Column(Integer, primary_key=True, index=True)
     phone = Column(String, nullable=False)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
-    created_at = Column(DateTime, server_default=func.now())
+    # FIX: same as Business.created_at above
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
     last_seen = Column(DateTime, nullable=True)
     unread_count = Column(Integer, default=0)
 
@@ -92,7 +99,8 @@ class Message(Base):
     direction = Column(String, nullable=False)   # "incoming" or "outgoing"
     is_read = Column(Boolean, default=False)
     status = Column(String, default="sent")       # sent | delivered | read
-    created_at = Column(DateTime, server_default=func.now())
+    # FIX: same as Business.created_at above
+    created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     customer = relationship("Customer", back_populates="customer_messages")
 

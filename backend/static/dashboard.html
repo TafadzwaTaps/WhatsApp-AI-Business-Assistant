@@ -784,7 +784,7 @@ function renderOrders(orders, bodyId, showStatus) {
   if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
   tbody.innerHTML=rows.map(o=>{
     const status = o.status || 'pending';
-    console.log("ORDER DATA:", o);
+
     return `<tr>
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
     <td>${escHtml(o.customer_phone||'—')}</td>
