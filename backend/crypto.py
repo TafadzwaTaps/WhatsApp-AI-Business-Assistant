@@ -1,48 +1,64 @@
 """
 Token encryption using Fernet symmetric encryption.
-Tokens are encrypted before storing in DB and decrypted on read.
-
-Setup:
-1. pip install cryptography
-2. Generate a key: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-3. Add FERNET_KEY=<that key> to your .env file
+Safe for production (Render, Railway, etc.)
 """
+
 import os
+import base64
 from cryptography.fernet import Fernet, InvalidToken
 from dotenv import load_dotenv
 
 load_dotenv()
 
-_raw_key = os.getenv("FERNET_KEY", "")
+def get_fernet():
+    raw_key = os.getenv("FERNET_KEY", "").strip()
 
-# If no key is set, generate one for this session and warn loudly
-if not _raw_key:
-    _raw_key = Fernet.generate_key().decode()
-    print("⚠️  WARNING: FERNET_KEY not set in .env — using a temporary key.")
-    print(f"⚠️  Tokens encrypted this session CANNOT be decrypted after restart.")
-    print(f"⚠️  Add this to your .env: FERNET_KEY={_raw_key}")
+    if not raw_key:
+        raise RuntimeError("❌ FERNET_KEY is missing. Set it in environment variables.")
 
-_fernet = Fernet(_raw_key.encode() if isinstance(_raw_key, str) else _raw_key)
+    try:
+        # Ensure it's valid base64
+        base64.urlsafe_b64decode(raw_key)
+
+        # Ensure correct length (32 bytes after decoding)
+        decoded = base64.urlsafe_b64decode(raw_key)
+        if len(decoded) != 32:
+            raise ValueError("Invalid key length")
+
+    except Exception as e:
+        raise RuntimeError(
+            f"❌ Invalid FERNET_KEY format.\n"
+            f"Must be 32 url-safe base64 bytes.\n"
+            f"Generate one with:\n"
+            f"python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"\n"
+        ) from e
+
+    return Fernet(raw_key.encode())
+
+
+# Initialize once
+_fernet = get_fernet()
 
 
 def encrypt_token(plaintext: str) -> str:
-    """Encrypt a WhatsApp access token before storing in DB."""
     if not plaintext:
         return ""
     return _fernet.encrypt(plaintext.encode()).decode()
 
 
 def decrypt_token(ciphertext: str) -> str:
-    """Decrypt a WhatsApp access token retrieved from DB."""
     if not ciphertext:
         return ""
+
     try:
         return _fernet.decrypt(ciphertext.encode()).decode()
-    except (InvalidToken, Exception) as e:
-        print(f"⚠️  Token decryption failed: {e}")
+    except InvalidToken:
+        print("⚠️ Invalid token or wrong key used")
+        return ""
+    except Exception as e:
+        print(f"⚠️ Decryption error: {e}")
         return ""
 
 
 def is_encrypted(value: str) -> bool:
-    """Check if a string looks like a Fernet token (starts with gAAA)."""
     return value.startswith("gAAA") if value else False
