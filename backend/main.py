@@ -1,5 +1,6 @@
 import os
 import json
+from fastapi.responses import FileResponse
 import requests as http_requests
 from typing import List, Optional
 from datetime import datetime
@@ -29,6 +30,13 @@ from auth import (
 
 load_dotenv()
 
+
+STATIC_DIR = "./static"
+FRONTEND_HTML = "index.html"
+os.makedirs(STATIC_DIR, exist_ok=True)
+
+
+
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "myverifytoken123")
 
 app = FastAPI(title="WaziBot SaaS API", docs_url=None, redoc_url=None)
@@ -39,6 +47,22 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+
+@app.get("/inbox")
+def home():
+    return FileResponse("static/inbox.html")
+@app.get("/signup")
+def signup_page():
+    return FileResponse("static/signup.html")
+
+@app.get("/")
+def dashboard_page():
+    return FileResponse("static/dashboard.html")
 
 
 def get_db():
@@ -700,9 +724,7 @@ async def chat_send(
         "whatsapp_result": result,
     }
 
-# ─── STATIC + ROOT ───────────────────────────────────────
-Base.metadata.create_all(bind=engine)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 
 @app.get("/")
