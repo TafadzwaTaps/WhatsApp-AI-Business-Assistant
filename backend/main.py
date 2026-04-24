@@ -49,20 +49,25 @@ app.add_middleware(
 )
 
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
 
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+def dashboard():
+    return FileResponse(os.path.join(STATIC_DIR, "dashboard.html"))
 
 
 @app.get("/inbox")
-def home():
-    return FileResponse("static/inbox.html")
-@app.get("/signup")
-def signup_page():
-    return FileResponse("static/signup.html")
+def inbox():
+    return FileResponse(os.path.join(STATIC_DIR, "inbox.html"))
 
-@app.get("/")
-def dashboard_page():
-    return FileResponse("static/dashboard.html")
+
+@app.get("/signup")
+def signup():
+    return FileResponse(os.path.join(STATIC_DIR, "signup.html"))
 
 
 def get_db():
@@ -724,9 +729,3 @@ async def chat_send(
         "whatsapp_result": result,
     }
 
-
-
-
-@app.get("/")
-def root():
-    return {"message": "WaziBot SaaS 🚀"}
