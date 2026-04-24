@@ -232,7 +232,7 @@ async function apiFetch(path, opts = {}) {
 // ── WEBSOCKET ────────────────────────────────────────────
 function connectWS() {
   if (!bizId) return;
-  const wsUrl = `ws://127.0.0.1:8000/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
+  const wsUrl = `ws://https://wazibot-api-assistant.onrender.com/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
   wsConn = new WebSocket(wsUrl);
 
   wsConn.onopen = () => {
