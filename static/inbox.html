@@ -1,177 +1,157 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>WaziBot — Inbox</title>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-<style>
-:root {
-  --bg:#0a0f0d; --surface:#111a15; --surface2:#172010; --border:#1f3025;
-  --green:#22c55e; --green-dim:#16a34a; --green-glow:rgba(34,197,94,0.15);
-  --amber:#f59e0b; --red:#ef4444; --blue:#38bdf8;
-  --text:#e8f5e9; --text-dim:#6b8f71;
-  --mono:'DM Mono',monospace; --sans:'Syne',sans-serif;
-}
-*{box-sizing:border-box;margin:0;padding:0;}
-body{background:var(--bg);color:var(--text);font-family:var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden;}
-
-/* ── TOP BAR ── */
-.topbar{height:52px;background:var(--surface);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:16px;flex-shrink:0;}
-.topbar-logo{font-size:18px;font-weight:800;color:var(--green);}
-.topbar-title{font-size:13px;color:var(--text-dim);font-family:var(--mono);}
-.ws-indicator{display:flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-left:auto;}
-.ws-dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);}
-.ws-dot.live{background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2s infinite;}
-.ws-dot.dead{background:var(--red);}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
-.btn-back{font-family:var(--mono);font-size:12px;color:var(--text-dim);background:transparent;border:1px solid var(--border);padding:5px 12px;border-radius:6px;cursor:pointer;text-decoration:none;}
-.btn-back:hover{color:var(--text);border-color:var(--text-dim);}
-
-/* ── MAIN LAYOUT ── */
-.inbox{display:flex;flex:1;overflow:hidden;}
-
-/* ── SIDEBAR ── */
-.sidebar{width:300px;border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;}
-.sidebar-header{padding:14px 16px;border-bottom:1px solid var(--border);}
-.search-input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;}
-.search-input:focus{border-color:var(--green);}
-.filter-row{display:flex;gap:6px;margin-top:10px;}
-.filter-btn{flex:1;padding:5px;border-radius:6px;font-family:var(--mono);font-size:10px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;transition:all 0.15s;}
-.filter-btn.active{background:var(--green-glow);color:var(--green);border-color:var(--green-dim);}
-.contact-list{overflow-y:auto;flex:1;}
-.contact-item{padding:12px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.15s;display:flex;gap:12px;align-items:flex-start;}
-.contact-item:hover{background:var(--surface2);}
-.contact-item.active{background:var(--green-glow);border-left:3px solid var(--green);}
-.contact-avatar{width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;}
-.contact-info{flex:1;min-width:0;}
-.contact-phone{font-size:13px;font-weight:700;font-family:var(--mono);}
-.contact-preview{font-size:11px;color:var(--text-dim);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px;}
-.contact-meta{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;}
-.contact-time{font-size:10px;color:var(--text-dim);font-family:var(--mono);}
-.unread-badge{background:var(--green);color:#000;font-size:10px;font-weight:800;font-family:var(--mono);padding:2px 6px;border-radius:10px;min-width:18px;text-align:center;}
-.skeleton{background:var(--surface2);border-radius:4px;animation:shimmer 1.5s infinite;}
-@keyframes shimmer{0%,100%{opacity:0.6}50%{opacity:1}}
-
-/* ── CHAT PANEL ── */
-.chat-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;}
-.chat-header{padding:14px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0;}
-.chat-avatar{width:36px;height:36px;border-radius:50%;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:16px;}
-.chat-phone{font-size:14px;font-weight:700;font-family:var(--mono);}
-.chat-status{font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-top:1px;}
-.chat-actions{margin-left:auto;display:flex;gap:8px;}
-.icon-btn{background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px;font-family:var(--mono);}
-.icon-btn:hover{border-color:var(--text-dim);color:var(--text);}
-.chat-messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:8px;}
-.chat-empty{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:12px;flex-direction:column;gap:8px;}
-.chat-empty .icon{font-size:40px;}
-
-/* ── MESSAGE BUBBLES ── */
-.msg{display:flex;flex-direction:column;max-width:72%;}
-.msg.incoming{align-self:flex-start;}
-.msg.outgoing{align-self:flex-end;}
-.bubble{padding:10px 14px;border-radius:12px;font-family:var(--mono);font-size:12px;line-height:1.5;white-space:pre-wrap;word-break:break-word;}
-.msg.incoming .bubble{background:var(--surface2);border:1px solid var(--border);border-bottom-left-radius:4px;}
-.msg.outgoing .bubble{background:var(--green-glow);border:1px solid var(--green-dim);color:var(--green);border-bottom-right-radius:4px;}
-.msg-meta{display:flex;align-items:center;gap:6px;margin-top:3px;}
-.msg.outgoing .msg-meta{justify-content:flex-end;}
-.msg-time{font-size:10px;color:var(--text-dim);font-family:var(--mono);}
-.msg-status{font-size:10px;color:var(--text-dim);}
-.msg-status.sent::after{content:"✓";}
-.msg-status.delivered::after{content:"✓✓";}
-.msg-status.read::after{content:"✓✓";color:var(--blue);}
-.typing-indicator{align-self:flex-start;background:var(--surface2);border:1px solid var(--border);border-radius:12px;border-bottom-left-radius:4px;padding:10px 14px;display:none;}
-.typing-indicator.visible{display:flex;gap:4px;align-items:center;}
-.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--text-dim);animation:typingBounce 1.2s infinite;}
-.typing-dot:nth-child(2){animation-delay:0.2s;}
-.typing-dot:nth-child(3){animation-delay:0.4s;}
-@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-4px)}}
-
-/* ── SEND BOX ── */
-.send-box{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:flex-end;flex-shrink:0;}
-.send-input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:10px 14px;color:var(--text);font-family:var(--mono);font-size:13px;resize:none;outline:none;max-height:120px;min-height:42px;line-height:1.5;transition:border-color 0.15s;}
-.send-input:focus{border-color:var(--green);}
-.send-btn{background:var(--green);color:#000;border:none;border-radius:10px;width:42px;height:42px;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s;flex-shrink:0;}
-.send-btn:hover{background:var(--green-dim);}
-.send-btn:disabled{opacity:0.4;cursor:not-allowed;}
-
-/* ── NO SELECTION STATE ── */
-.no-selection{flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-dim);font-family:var(--mono);font-size:13px;flex-direction:column;gap:12px;}
-.no-selection .icon{font-size:48px;}
-
-/* ── LOAD MORE ── */
-.load-more-btn{align-self:center;background:transparent;border:1px solid var(--border);color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:6px 16px;border-radius:6px;cursor:pointer;margin-bottom:8px;}
-.load-more-btn:hover{border-color:var(--green);color:var(--green);}
-</style>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>WaziBot — Inbox</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap"
+    rel="stylesheet"/>
+  <link rel="stylesheet" href="/static/inbox.css"/>
 </head>
 <body>
 
-<div class="topbar">
-  <span class="topbar-logo">WaziBot</span>
-  <span class="topbar-title">Inbox</span>
-  <div class="ws-indicator">
-    <div class="ws-dot" id="ws-dot"></div>
-    <span id="ws-label">Connecting...</span>
-  </div>
-  <a href="/static/dashboard.html" class="btn-back">← Dashboard</a>
-</div>
+<!-- ══ MOBILE SIDEBAR OVERLAY ════════════════════════════ -->
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
 
+<!-- ══ TOP BAR ═══════════════════════════════════════════ -->
+<header class="topbar">
+
+  <div class="topbar-left">
+    <!-- Hamburger (mobile only) -->
+    <button class="hamburger" id="hamburger" aria-label="Open contacts">☰</button>
+
+    <a href="/" class="topbar-logo">WaziBot</a>
+    <div class="topbar-divider"></div>
+    <span class="topbar-title">Inbox</span>
+  </div>
+
+  <div class="topbar-center"></div>
+
+  <div class="topbar-right">
+    <!-- WebSocket status -->
+    <div class="ws-indicator" title="Live connection status">
+      <div class="ws-dot" id="ws-dot"></div>
+      <span id="ws-label">Connecting…</span>
+    </div>
+
+    <!-- Theme toggle -->
+    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle light/dark mode">☀️</button>
+
+    <!-- Back to dashboard -->
+    <a href="/dashboard" class="btn-back">← Dashboard</a>
+  </div>
+
+</header>
+
+<!-- ══ MAIN LAYOUT ════════════════════════════════════════ -->
 <div class="inbox">
 
-  <!-- SIDEBAR -->
-  <div class="sidebar">
+  <!-- ── SIDEBAR ──────────────────────────────────────── -->
+  <aside class="sidebar" id="sidebar">
+
     <div class="sidebar-header">
-      <input class="search-input" id="search-input" placeholder="Search by phone..." oninput="filterContacts(this.value)"/>
+      <!-- Search -->
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input
+          class="search-input"
+          id="search-input"
+          type="search"
+          placeholder="Search by phone…"
+          oninput="filterContacts(this.value)"
+          autocomplete="off"
+        />
+      </div>
+
+      <!-- Filters -->
       <div class="filter-row">
-        <button class="filter-btn active" id="filter-all" onclick="setFilter('all')">All</button>
-        <button class="filter-btn" id="filter-unread" onclick="setFilter('unread')">Unread</button>
-        <button class="filter-btn" id="filter-recent" onclick="setFilter('recent')">Recent</button>
+        <button class="filter-btn active" id="filter-all"    onclick="setFilter('all')">All</button>
+        <button class="filter-btn"        id="filter-unread" onclick="setFilter('unread')">Unread</button>
+        <button class="filter-btn"        id="filter-recent" onclick="setFilter('recent')">Recent</button>
       </div>
     </div>
+
+    <!-- Contact list (rendered by JS) -->
     <div class="contact-list" id="contact-list">
-      <!-- Skeleton placeholders while loading -->
-      <div style="padding:12px 16px;display:flex;gap:12px" id="skeleton">
-        <div class="skeleton" style="width:36px;height:36px;border-radius:50%;"></div>
-        <div style="flex:1">
-          <div class="skeleton" style="height:13px;width:120px;margin-bottom:6px;"></div>
-          <div class="skeleton" style="height:11px;width:180px;"></div>
+      <!-- Skeletons shown while loading -->
+      <div class="skeleton-list" id="skeleton">
+        <div class="skeleton-item">
+          <div class="skeleton skeleton-avatar"></div>
+          <div class="skeleton-lines">
+            <div class="skeleton skeleton-line-a"></div>
+            <div class="skeleton skeleton-line-b"></div>
+          </div>
+        </div>
+        <div class="skeleton-item">
+          <div class="skeleton skeleton-avatar"></div>
+          <div class="skeleton-lines">
+            <div class="skeleton skeleton-line-a" style="width:45%"></div>
+            <div class="skeleton skeleton-line-b" style="width:70%"></div>
+          </div>
+        </div>
+        <div class="skeleton-item">
+          <div class="skeleton skeleton-avatar"></div>
+          <div class="skeleton-lines">
+            <div class="skeleton skeleton-line-a" style="width:60%"></div>
+            <div class="skeleton skeleton-line-b"></div>
+          </div>
         </div>
       </div>
     </div>
-  </div>
 
-  <!-- CHAT PANEL -->
-  <div class="chat-panel" id="chat-panel">
+  </aside>
+
+  <!-- ── CHAT PANEL ─────────────────────────────────── -->
+  <main class="chat-panel" id="chat-panel">
+
+    <!-- No-conversation selected state -->
     <div class="no-selection" id="no-selection">
-      <div class="icon">💬</div>
-      Select a conversation to start chatting
+      <div class="ns-icon">💬</div>
+      <div class="ns-title">Select a conversation</div>
+      <div class="ns-sub">Choose a customer from the list to start chatting</div>
     </div>
 
-    <div id="active-chat" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
+    <!-- Active conversation (hidden until a chat is opened) -->
+    <div id="active-chat" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+
+      <!-- Chat header -->
       <div class="chat-header">
-        <div class="chat-avatar">👤</div>
-        <div>
+        <!-- Back arrow on mobile -->
+        <button class="chat-header-back" onclick="goBackToList()" aria-label="Back to contacts">←</button>
+
+        <div class="chat-avatar" aria-hidden="true">👤</div>
+
+        <div class="chat-info">
           <div class="chat-phone" id="chat-phone">—</div>
           <div class="chat-status" id="chat-status">—</div>
         </div>
+
         <div class="chat-actions">
-          <button class="icon-btn" onclick="markRead()" title="Mark as read">✓ Read</button>
-          <button class="icon-btn" onclick="loadMessages(currentCustomerId, true)" title="Refresh">↻</button>
+          <button class="icon-btn" onclick="markRead()"                               title="Mark as read">✓ Read</button>
+          <button class="icon-btn" onclick="loadMessages(currentCustomerId, true)"    title="Refresh">↻</button>
         </div>
       </div>
 
+      <!-- Messages -->
       <div class="chat-messages" id="chat-messages">
-        <button class="load-more-btn" id="load-more-btn" onclick="loadMoreMessages()" style="display:none">
+        <button
+          class="load-more-btn"
+          id="load-more-btn"
+          onclick="loadMoreMessages()"
+          style="display:none">
           Load earlier messages
         </button>
       </div>
 
-      <div class="typing-indicator" id="typing-indicator">
+      <!-- Typing indicator -->
+      <div class="typing-indicator" id="typing-indicator" aria-live="polite">
         <div class="typing-dot"></div>
         <div class="typing-dot"></div>
         <div class="typing-dot"></div>
       </div>
 
+      <!-- Send box (sticky bottom) -->
       <div class="send-box">
         <textarea
           class="send-input"
@@ -180,419 +160,30 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);height:100vh
           rows="1"
           onkeydown="handleSendKey(event)"
           oninput="autoResize(this)"
+          aria-label="Message input"
         ></textarea>
-        <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send">➤</button>
+        <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send message" aria-label="Send">
+          ➤
+        </button>
       </div>
-    </div>
-  </div>
 
-</div>
+    </div><!-- /active-chat -->
 
+  </main><!-- /chat-panel -->
+
+</div><!-- /inbox -->
+
+<!-- ══ TOAST (created dynamically by JS) ════════════════ -->
+
+<script src="/static/inbox.js"></script>
+
+<!-- Mobile back-to-list helper (inline, tiny) -->
 <script>
-const API = 'https://wazibot-api-assistant.onrender.com';
-// Support both key names (dashboard saves as wazi_token / wazi_business_id)
-const token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token');
-const bizId = parseInt(
-  localStorage.getItem('wazi_business_id') ||
-  localStorage.getItem('wazibot_biz_id') || '0'
-);
-
-if (!token) { window.location.href = '/static/dashboard.html'; }
-
-let allConversations = [];
-let currentCustomerId = null;
-let currentPhone = null;
-let msgOffset = 0;
-let msgLimit = 50;
-let hasMoreMessages = false;
-let wsConn = null;
-let activeFilter = 'all';
-
-// ── API HELPERS ──────────────────────────────────────────
-async function apiFetch(path, opts = {}) {
-  try {
-    const res = await fetch(API + path, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      ...opts,
-    });
-    if (res.status === 401) { window.location.href = '/static/dashboard.html'; throw new Error('Unauthorized'); }
-    if (!res.ok) {
-      let msg = res.statusText || 'API error';
-      try { const e = await res.json(); msg = e.detail || msg; } catch {}
-      throw new Error(msg);
-    }
-    return res.json();
-  } catch(err) {
-    if (err.message === 'Unauthorized') throw err;
-    if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
-    throw err;
+  function goBackToList() {
+    // On mobile, open the sidebar to show the contacts list
+    if (typeof openSidebar === 'function') openSidebar();
   }
-}
-
-// ── WEBSOCKET ────────────────────────────────────────────
-function connectWS() {
-  if (!bizId) return;
-  const wsUrl = `ws://https://wazibot-api-assistant.onrender.com/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
-  wsConn = new WebSocket(wsUrl);
-
-  wsConn.onopen = () => {
-    const _wsd=document.getElementById('ws-dot'); if(_wsd) _wsd.className='ws-dot live';
-    const _wsl=document.getElementById('ws-label'); if(_wsl) _wsl.textContent='Live';
-    // Heartbeat every 25s
-    setInterval(() => { if (wsConn.readyState === 1) wsConn.send(JSON.stringify({type:'ping'})); }, 25000);
-  };
-
-  wsConn.onclose = () => {
-    const _wsd2=document.getElementById('ws-dot'); if(_wsd2) _wsd2.className='ws-dot dead';
-    const _wsl2=document.getElementById('ws-label'); if(_wsl2) _wsl2.textContent='Reconnecting...';
-    setTimeout(connectWS, 3000);
-  };
-
-  wsConn.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      if (payload.type === 'pong') return;
-
-      if (payload.event === 'new_message') {
-        const { customer_id, phone, message } = payload;
-
-        // If this conversation is open, append the bubble
-        if (customer_id === currentCustomerId && message) {
-          appendBubble(message);
-          scrollToBottom();
-          if (message.direction === 'incoming') markRead().catch(() => {});
-        }
-
-        // Refresh sidebar to update last message + unread count
-        loadConversations(false).catch(() => {});
-      }
-    } catch (err) {
-      console.warn('WS message parse error:', err);
-    }
-  };
-
-  wsConn.onerror = () => wsConn.close();
-}
-
-// ── CONVERSATIONS SIDEBAR ────────────────────────────────
-async function loadConversations(showSkeleton = true) {
-  try {
-    const unread = activeFilter === 'unread';
-    const raw = await apiFetch(`/chat/conversations?unread_only=${unread}`);
-    // Always normalise to array — backend may return array or wrapped object
-    allConversations = Array.isArray(raw) ? raw
-      : (raw && Array.isArray(raw.data)) ? raw.data : [];
-    renderContacts(allConversations);
-    const skelEl = document.getElementById('skeleton');
-    if (skelEl) skelEl.style.display = 'none';
-  } catch (e) {
-    const listEl = document.getElementById('contact-list');
-    if (listEl) listEl.innerHTML =
-      `<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${e.message}</div>`;
-  }
-}
-
-function renderContacts(convos) {
-  const searchEl = document.getElementById('search-input');
-  const list = document.getElementById('contact-list');
-  if (!list) return;
-
-  const search = (searchEl ? searchEl.value.trim().toLowerCase() : '');
-  const safeConvos = Array.isArray(convos) ? convos : [];
-
-  let filtered = safeConvos;
-  if (search) filtered = safeConvos.filter(c => (c.phone || '').includes(search));
-  if (activeFilter === 'recent') filtered = filtered.slice(0, 20);
-
-  if (!filtered.length) {
-    list.innerHTML = '<div style="padding:20px;text-align:center;font-family:var(--mono);font-size:12px;color:var(--text-dim)">No conversations</div>';
-    return;
-  }
-
-  list.innerHTML = filtered.map(c => `
-    <div class="contact-item ${c.customer_id === currentCustomerId ? 'active' : ''}"
-         onclick="openChat(${c.customer_id}, '${escHtml(c.phone || '')}', '${escHtml(c.last_seen || '')}')">
-      <div class="contact-avatar">👤</div>
-      <div class="contact-info">
-        <div class="contact-phone">${escHtml(c.phone || '—')}</div>
-        <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(safeText(c.last_message))}</div>
-      </div>
-      <div class="contact-meta">
-        <div class="contact-time">${formatTime(c.last_message_at)}</div>
-        ${(c.unread_count || 0) > 0 ? `<div class="unread-badge">${c.unread_count}</div>` : ''}
-      </div>
-    </div>
-  `).join('');
-}
-
-function filterContacts(val) { renderContacts(allConversations); }
-
-function setFilter(f) {
-  activeFilter = f;
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  const _fb=document.getElementById('filter-' + f); if(_fb) _fb.classList.add('active');
-  loadConversations().catch(()=>{});
-}
-
-// ── OPEN CHAT ────────────────────────────────────────────
-async function openChat(customerId, phone, lastSeen) {
-  // Guard: validate inputs
-  if (!customerId || !phone) return;
-
-  currentCustomerId = customerId;
-  currentPhone = phone;
-  msgOffset = 0;
-
-  // Safe DOM access — never crash if element is missing
-  const noSel = document.getElementById('no-selection');
-  if (noSel) noSel.style.display = 'none';
-
-  const ac = document.getElementById('active-chat');
-  if (!ac) return; // can't proceed without the chat panel
-  ac.style.display = 'flex';
-  ac.style.flexDirection = 'column';
-  ac.style.overflow = 'hidden';
-  ac.style.flex = '1';
-
-  const phoneEl = document.getElementById('chat-phone');
-  if (phoneEl) phoneEl.textContent = phone;
-
-  const statusEl = document.getElementById('chat-status');
-  if (statusEl) statusEl.textContent = lastSeen ? `Last seen ${formatTime(lastSeen)}` : 'Customer';
-
-  // Highlight active contact — safe iteration
-  document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
-  // Find by data attribute instead of relying on event.currentTarget (which can be stale)
-  const items = document.querySelectorAll('.contact-item');
-  items.forEach(el => {
-    if (el.getAttribute('onclick') && el.getAttribute('onclick').includes(`openChat(${customerId},`)) {
-      el.classList.add('active');
-    }
-  });
-
-  const msgContainer = document.getElementById('chat-messages');
-  if (msgContainer) {
-    msgContainer.innerHTML =
-      '<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:11px;color:var(--text-dim)">Loading...</div>';
-  }
-
-  const lmBtn = document.getElementById('load-more-btn');
-  if (lmBtn) lmBtn.style.display = 'none';
-
-  await loadMessages(customerId, true);
-  await markRead();
-}
-
-async function loadMessages(customerId, reset = false) {
-  if (reset) msgOffset = 0;
-  try {
-    const data = await apiFetch(`/chat/messages/${customerId}?limit=${msgLimit}&offset=${msgOffset}`);
-    const msgs = (data && Array.isArray(data.messages)) ? data.messages : [];
-
-    const container = document.getElementById('chat-messages');
-    if (!container) return; // panel may have been closed
-
-    const lmBtn = document.getElementById('load-more-btn');
-
-    if (reset) {
-      // Clear content but preserve the load-more button by detaching it first
-      if (lmBtn && lmBtn.parentNode === container) container.removeChild(lmBtn);
-      container.innerHTML = '';
-      if (lmBtn) {
-        lmBtn.style.display = 'none';
-        container.appendChild(lmBtn);
-      }
-    }
-
-    if (msgs.length === 0 && reset) {
-      container.innerHTML = '<div style="text-align:center;padding:40px;font-family:var(--mono);font-size:12px;color:var(--text-dim)">No messages yet</div>';
-      return;
-    }
-
-    // Build fragment of bubbles
-    const frag = document.createDocumentFragment();
-    msgs.forEach(m => frag.appendChild(createBubble(m)));
-
-    if (reset) {
-      container.appendChild(frag);
-    } else {
-      // Prepend older messages after the load-more button
-      const anchor = lmBtn && lmBtn.nextSibling ? lmBtn.nextSibling : (container.children[1] || null);
-      container.insertBefore(frag, anchor);
-    }
-
-    // Show/hide load-more
-    hasMoreMessages = msgs.length === msgLimit;
-    if (lmBtn) lmBtn.style.display = hasMoreMessages ? 'block' : 'none';
-
-    if (reset) scrollToBottom();
-
-  } catch (e) {
-    const container = document.getElementById('chat-messages');
-    if (container) container.innerHTML =
-      `<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${e.message}</div>`;
-  }
-}
-
-async function loadMoreMessages() {
-  if (!currentCustomerId) return;
-  msgOffset += msgLimit;
-  await loadMessages(currentCustomerId, false);
-}
-
-// ── BUBBLES ──────────────────────────────────────────────
-function createBubble(msg) {
-  const text = safeText(msg.text);
-  const dir = (msg.direction || '').startsWith('in') ? 'incoming' : 'outgoing';
-  const div = document.createElement('div');
-  div.className = `msg ${dir}`;
-  div.dataset.msgId = msg.id;
-  div.innerHTML = `
-    <div class="bubble">${escHtml(text)}</div>
-    <div class="msg-meta">
-      <span class="msg-time">${formatTime(msg.created_at)}</span>
-      ${dir === 'outgoing' ? `<span class="msg-status ${msg.status || 'sent'}"></span>` : ''}
-    </div>
-  `;
-  return div;
-}
-
-function appendBubble(msg) {
-  const container = document.getElementById('chat-messages');
-  if (!container) return;
-  container.appendChild(createBubble(msg));
-}
-
-// ── SEND MESSAGE ─────────────────────────────────────────
-async function sendMessage() {
-  if (!currentCustomerId) return;
-  const input = document.getElementById('send-input');
-  const sendBtn = document.getElementById('send-btn');
-  if (!input || !sendBtn) return;
-
-  const text = input.value.trim();
-  if (!text) return;
-
-  input.value = '';
-  input.style.height = 'auto';
-  sendBtn.disabled = true;
-
-  // Optimistically render the message for snappy UX
-  appendBubble({ id: null, text, direction: 'outgoing', status: 'sent', created_at: new Date().toISOString() });
-  scrollToBottom();
-  showTyping(800);
-
-  try {
-    const res = await apiFetch('/chat/send', {
-      method: 'POST',
-      body: JSON.stringify({ customer_id: currentCustomerId, text }),
-    });
-    // Soft warning if WhatsApp delivery failed but message was saved
-    if (res && res.whatsapp_result && res.whatsapp_result.error) {
-      showToast('⚠ Saved but WhatsApp delivery may have failed', true);
-    }
-  } catch (e) {
-    showToast('Send failed: ' + e.message, true);
-  } finally {
-    if (sendBtn) sendBtn.disabled = false;
-  }
-}
-
-function handleSendKey(e) {
-  if (!e) return;
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage().catch(()=>{});
-  }
-}
-
-function autoResize(el) {
-  if (!el) return;
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
-
-// ── READ TRACKING ─────────────────────────────────────────
-async function markRead() {
-  if (!currentCustomerId) return;
-  try {
-    await apiFetch(`/chat/read/${currentCustomerId}`, { method: 'POST' });
-    // Update sidebar unread badge safely
-    const conv = allConversations.find(c => c.customer_id === currentCustomerId);
-    if (conv) {
-      conv.unread_count = 0;
-      renderContacts(allConversations);
-    }
-  } catch (_) { /* silent — read tracking is non-critical */ }
-}
-
-// ── TYPING INDICATOR ──────────────────────────────────────
-function showTyping(ms) {
-  const el = document.getElementById('typing-indicator');
-  if (!el) return;
-  el.classList.add('visible');
-  scrollToBottom();
-  setTimeout(() => { if(el) el.classList.remove('visible'); }, ms);
-}
-
-// ── UTILS ─────────────────────────────────────────────────
-function scrollToBottom() {
-  const c = document.getElementById('chat-messages');
-  if (!c) return;
-  requestAnimationFrame(() => { if(c) c.scrollTop = c.scrollHeight; });
-}
-
-function safeText(val) {
-  if (val === null || val === undefined) return '';
-  return String(val);
-}
-
-function escHtml(s) {
-  return safeText(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
-
-function formatTime(iso) {
-  if (!iso) return '—';
-  try {
-    // Normalise SQLite space-separator: "2024-01-15 10:30:00" → "2024-01-15T10:30:00Z"
-    let s = String(iso).trim();
-    s = s.replace(' ', 'T');
-    if (!/[Z+][0-9]*$/.test(s.slice(10))) s += 'Z';
-    const d = new Date(s);
-    if (isNaN(d.getTime())) return '—';
-    const now = new Date();
-    const diff = now - d;
-    if (diff < 0) return d.toLocaleString();
-    if (diff < 60000) return 'just now';
-    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-    if (diff < 86400000) return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
-  } catch { return '—'; }
-}
-
-let toastTimer;
-function showToast(msg, isError=false) {
-  let t = document.getElementById('toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'toast';
-    t.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--surface);border:1px solid var(--green-dim);border-left:3px solid var(--green);padding:12px 18px;border-radius:8px;font-family:var(--mono);font-size:12px;color:var(--green);z-index:999;transition:opacity 0.3s;';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.style.borderLeftColor = isError ? 'var(--red)' : 'var(--green)';
-  t.style.color = isError ? 'var(--red)' : 'var(--green)';
-  t.style.opacity = '1';
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 3000);
-}
-
-// ── INIT ──────────────────────────────────────────────────
-try { connectWS(); } catch (e) { console.warn('WS init failed:', e); }
-loadConversations(true).catch(e => console.warn('Initial load failed:', e));
-setInterval(() => loadConversations(false).catch(() => {}), 30000);  // Fallback poll every 30s
 </script>
+
 </body>
 </html>
