@@ -31,13 +31,12 @@ from auth import (
 load_dotenv()
 
 
-STATIC_DIR = "./static"
-FRONTEND_HTML = "index.html"
-os.makedirs(STATIC_DIR, exist_ok=True)
-
-
-
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "myverifytoken123")
+
+# Static dir lives next to main.py (i.e. ./static/)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+os.makedirs(STATIC_DIR, exist_ok=True)
 
 app = FastAPI(title="WaziBot SaaS API", docs_url=None, redoc_url=None)
 
@@ -48,15 +47,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
-
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.get("/")
+def landing():
+    """Public landing/marketing page."""
+    return FileResponse(os.path.join(STATIC_DIR, "landing.html"))
+
+
+@app.get("/dashboard")
 def dashboard():
+    """Main app dashboard (login-gated client-side)."""
     return FileResponse(os.path.join(STATIC_DIR, "dashboard.html"))
 
 
@@ -66,7 +68,7 @@ def inbox():
 
 
 @app.get("/signup")
-def signup():
+def signup_page():
     return FileResponse(os.path.join(STATIC_DIR, "signup.html"))
 
 

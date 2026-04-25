@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>WaziBot SaaS</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="dashboard.css"/>
+<link rel="stylesheet" href="/static/dashboard.css"/>
 </head>
 <body>
 
@@ -32,6 +32,9 @@
                onkeydown="if(event.key==='Enter') doLogin()"/>
       </div>
       <button class="btn-login" onclick="doLogin()">Sign In →</button>
+      <div style="text-align:center;margin-top:16px;font-size:12px;font-family:var(--mono);color:var(--text-dim);">
+        Don't have an account? <a href="/signup" style="color:var(--green);font-weight:700;text-decoration:none;">Create one free →</a>
+      </div>
     </div>
 
     <!-- Register -->
@@ -320,6 +323,6 @@
 </main>
 <div class="toast" id="toast"></div>
 
-<script src="dashboard.js"></script>
+<script src="/static/dashboard.js"></script>
 </body>
 </html>

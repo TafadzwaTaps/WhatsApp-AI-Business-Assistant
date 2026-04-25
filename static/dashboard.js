@@ -59,6 +59,11 @@ async function doLogin() {
     const data = await res.json();
     saveSession(data, username);
     const _ls=document.getElementById('login-screen'); if(_ls) _ls.style.display='none';
+    // If we're on the landing page or signup, redirect to dashboard
+    if (window.location.pathname !== '/dashboard') {
+      window.location.href = '/dashboard';
+      return;
+    }
     init();
   } catch(e) { errEl.textContent = 'Cannot reach server. Is backend running?'; }
 }
@@ -744,7 +749,11 @@ function init(){
   else{loadOrders();loadProducts();loadConversations();}
 }
 
-if(token&&userRole){const _ls4=document.getElementById('login-screen');if(_ls4)_ls4.style.display='none';init();}
+if(token&&userRole){
+  const _ls4=document.getElementById('login-screen');
+  if(_ls4) _ls4.style.display='none';
+  init();
+}
 
 function copy(text) {
   navigator.clipboard.writeText(text);

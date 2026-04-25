@@ -77,7 +77,7 @@
     <div class="feature"><div class="feature-icon">💸</div><div><div class="feature-title">No Twilio Fees</div><div class="feature-desc">Uses official Meta WhatsApp API directly. No per-message billing.</div></div></div>
     <div class="feature"><div class="feature-icon">⚡</div><div><div class="feature-title">Ready in 2 Minutes</div><div class="feature-desc">Sign up, connect WhatsApp, and your bot is live immediately.</div></div></div>
   </div>
-  <div class="left-footer">Already have an account? <a href="/static/dashboard.html">Sign in →</a></div>
+  <div class="left-footer">Already have an account? <a href="/">Sign in →</a></div>
 </div>
 
 <div class="right">
@@ -158,7 +158,7 @@
       <div class="success-title">You're <span>live!</span></div>
       <div class="success-sub" id="success-msg">Your account is ready.</div>
       <div class="creds-box" id="success-creds"></div>
-      <button class="btn-go" onclick="window.location.href='/static/dashboard.html'">Open My Dashboard →</button>
+      <button class="btn-go" onclick="window.location.href='/'">Open My Dashboard →</button>
     </div>
   </div>
 </div>
@@ -244,10 +244,12 @@ async function submit(skip) {
     }
 
     // Save session
-    localStorage.setItem('wazibot_token', data.access_token);
-    localStorage.setItem('wazibot_role', data.role);
-    localStorage.setItem('wazibot_user', payload.username);
-    localStorage.setItem('wazibot_biz', data.business_name);
+    localStorage.setItem('wazi_token', data.access_token);
+    localStorage.setItem('wazi_refresh', data.refresh_token || '');
+    localStorage.setItem('wazi_role', data.role);
+    localStorage.setItem('wazi_user', payload.username);
+    localStorage.setItem('wazi_biz', data.business_name);
+    if (data.business_id) localStorage.setItem('wazi_business_id', data.business_id);
 
     showSuccess(payload, data);
 
