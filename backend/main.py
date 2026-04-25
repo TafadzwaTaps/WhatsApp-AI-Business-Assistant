@@ -35,7 +35,8 @@ VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "myverifytoken123")
 
 # Static dir lives next to main.py (i.e. ./static/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATIC_DIR = os.path.join(BASE_DIR, "static")
+STATIC_DIR = os.path.join(BASE_DIR, "..", "static")
+STATIC_DIR = os.path.abspath(STATIC_DIR)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 app = FastAPI(title="WaziBot SaaS API", docs_url=None, redoc_url=None)
