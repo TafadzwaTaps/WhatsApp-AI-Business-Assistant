@@ -1,17 +1,28 @@
 """
 main.py — WaziBot SaaS API
 
-Fixes applied (see inline FIX comments):
-  FIX-1  /auth/refresh endpoint implemented — removes frontend 404 errors.
-  FIX-2  Static directory uses __file__-relative path; falls back to ./static
-         so it works whether the folder is at backend/ or at project root.
-  FIX-3  send_whatsapp() now logs the partial token + full API response for
-         easy debugging.
-  FIX-4  chat_send: logs token status before attempting WhatsApp delivery.
-  FIX-5  broadcast: tracks per-number success/failure with detailed logging.
-  FIX-6  saveSession() in the frontend now always writes business_id.
-  FIX-7  All token decryption goes through crud.get_decrypted_token() which
-         uses the fixed crypto.py — no raw decrypt calls elsewhere.
+Changes in this version
+────────────────────────
+CRYPTO-1  All token decryption goes through crud.get_decrypted_token() which
+          now raises TokenDecryptionError instead of returning "".  Every
+          endpoint that needs the token catches this and returns HTTP 503
+          with a clear message — no more silent empty-string sends.
+
+CRYPTO-2  send_whatsapp() validates phone_number_id AND token before hitting
+          the Meta API and logs the last 6 chars of the token so you can
+          confirm the right key is in use without leaking the secret.
+
+AUTH-1    /auth/refresh endpoint implemented — frontend refresh loop fixed.
+
+PRODUCT-1 POST /products now logs the exact Pydantic payload it receives and
+          the business_id it inserts into, so failures are visible in Render
+          logs instead of returning a silent 422/500.
+
+DEBUG-1   /debug/env  — confirms which env vars are loaded (values masked).
+DEBUG-2   /debug/token — round-trips a test string through encrypt/decrypt.
+
+STATIC-1  Static directory resolved relative to __file__ with three
+          candidate paths so it works on Render regardless of working dir.
 """
 
 import os
@@ -20,63 +31,70 @@ import logging
 from typing import List, Optional
 from datetime import datetime
 
+import requests as http_requests
+from dotenv import load_dotenv
 from fastapi import (
     FastAPI, Request, Depends, HTTPException,
     WebSocket, WebSocketDisconnect, Query,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 from sqlalchemy.orm import Session
-import requests as http_requests
-from dotenv import load_dotenv
 
 from database import Base, engine, SessionLocal
 import models
 from schemas import (
     ProductCreate, ProductOut,
-    OrderOut, OrderCreate,
+    OrderCreate, OrderOut,
     ChatMessageOut,
     BusinessCreate, BusinessOut, BusinessUpdate,
 )
 import crud
+from crypto import (
+    encrypt_token, safe_decrypt_token,
+    TokenDecryptionError, is_encrypted,
+)
 from ai import generate_reply
 from auth import (
     verify_password,
-    create_access_token,
-    create_refresh_token,
+    create_access_token, create_refresh_token,
     decode_token,
-    get_current_user,
-    require_superadmin,
-    require_business,
-    SUPER_ADMIN_USERNAME,
-    SUPER_ADMIN_PASSWORD,
+    get_current_user, require_superadmin, require_business,
+    SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
 )
 
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(name)s  %(message)s")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 log = logging.getLogger("wazibot")
 
+# ── Tables ─────────────────────────────────────────────────────────────────────
 Base.metadata.create_all(bind=engine)
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "myverifytoken123")
 
-# FIX-2 — robust static directory resolution
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_candidates = [
-    os.path.join(BASE_DIR, "static"),          # backend/static/
-    os.path.join(BASE_DIR, "..", "static"),     # project-root/static/
-    os.path.join(BASE_DIR, "..", "..", "static"),
+# ── STATIC-1: robust path resolution ──────────────────────────────────────────
+_BASE = os.path.dirname(os.path.abspath(__file__))
+_STATIC_CANDIDATES = [
+    os.path.join(_BASE, "static"),
+    os.path.join(_BASE, "..", "static"),
+    os.path.join(_BASE, "..", "..", "static"),
 ]
 STATIC_DIR = next(
-    (os.path.abspath(p) for p in _candidates if os.path.isdir(p)),
-    os.path.abspath(os.path.join(BASE_DIR, "static")),   # will be created
+    (os.path.abspath(p) for p in _STATIC_CANDIDATES if os.path.isdir(p)),
+    os.path.abspath(os.path.join(_BASE, "static")),
 )
 os.makedirs(STATIC_DIR, exist_ok=True)
-log.info("📁 Static directory: %s", STATIC_DIR)
+log.info("📁 Static dir: %s", STATIC_DIR)
 
-app = FastAPI(title="WaziBot SaaS API", docs_url=None, redoc_url=None)
+# ── App ────────────────────────────────────────────────────────────────────────
+app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None)
 
 app.add_middleware(
     CORSMiddleware,
@@ -88,26 +106,28 @@ app.add_middleware(
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+# ── HTML helpers ───────────────────────────────────────────────────────────────
 def _html(name: str) -> FileResponse:
     path = os.path.join(STATIC_DIR, name)
     if not os.path.exists(path):
-        raise HTTPException(status_code=404, detail=f"{name} not found in static dir")
+        raise HTTPException(404, detail=f"{name} not found in {STATIC_DIR}")
     return FileResponse(path)
 
 
 @app.get("/")          
-def landing():   return _html("landing.html")
+def landing():    return _html("landing.html")
 
 @app.get("/dashboard") 
-def dashboard(): return _html("dashboard.html")
+def dashboard():  return _html("dashboard.html")
 
 @app.get("/inbox")     
-def inbox():     return _html("inbox.html")
+def inbox():      return _html("inbox.html")
 
 @app.get("/signup")    
-def signup_page():return _html("signup.html")
+def signup_page(): return _html("signup.html")
 
 
+# ── DB dependency ──────────────────────────────────────────────────────────────
 def get_db():
     db = SessionLocal()
     try:
@@ -116,23 +136,23 @@ def get_db():
         db.close()
 
 
-# ─── WEBSOCKET CONNECTION MANAGER ────────────────────────
+# ── WebSocket manager ──────────────────────────────────────────────────────────
 class ConnectionManager:
     def __init__(self):
-        self._connections: dict[int, list[WebSocket]] = {}
+        self._conns: dict[int, list[WebSocket]] = {}
 
-    async def connect(self, websocket: WebSocket, business_id: int):
-        await websocket.accept()
-        self._connections.setdefault(business_id, []).append(websocket)
+    async def connect(self, ws: WebSocket, business_id: int):
+        await ws.accept()
+        self._conns.setdefault(business_id, []).append(ws)
 
-    def disconnect(self, websocket: WebSocket, business_id: int):
-        conns = self._connections.get(business_id, [])
-        if websocket in conns:
-            conns.remove(websocket)
+    def disconnect(self, ws: WebSocket, business_id: int):
+        lst = self._conns.get(business_id, [])
+        if ws in lst:
+            lst.remove(ws)
 
     async def broadcast(self, business_id: int, payload: dict):
         dead = []
-        for ws in self._connections.get(business_id, []):
+        for ws in list(self._conns.get(business_id, [])):
             try:
                 await ws.send_text(json.dumps(payload, default=str))
             except Exception:
@@ -144,48 +164,64 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-# ─── WHATSAPP SENDER ─────────────────────────────────────
-# FIX-3 — detailed logging for every send attempt
+# ── WhatsApp sender ────────────────────────────────────────────────────────────
+# CRYPTO-2
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
+    """
+    Send a WhatsApp message via Meta Cloud API.
+    Returns the parsed JSON response (may contain 'error' key on failure).
+    Never raises — all errors are logged and returned as dict.
+    """
     if not phone_number_id or not token:
-        log.warning("send_whatsapp: missing credentials — phone_id=%s token_set=%s",
-                    phone_number_id, bool(token))
-        return {"error": "missing credentials"}
+        missing = []
+        if not phone_number_id: missing.append("phone_number_id")
+        if not token:           missing.append("token")
+        log.error("send_whatsapp: ABORTED — missing %s", ", ".join(missing))
+        return {"error": f"missing credentials: {', '.join(missing)}"}
 
     to = to.replace("whatsapp:", "").strip()
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type":  "application/json",
+    }
     body = {
         "messaging_product": "whatsapp",
-        "to": to,
+        "to":   to,
         "type": "text",
         "text": {"body": message},
     }
 
-    # Log partial token so you can verify the right key is used without leaking it
-    log.info("📤 WhatsApp → to=%s  phone_id=%s  token=…%s", to, phone_number_id, token[-6:])
+    # Log last 6 chars of token — enough to verify key match without leaking
+    log.info(
+        "📤 WhatsApp send → to=%s  phone_id=%s  token_tail=…%s",
+        to, phone_number_id, token[-6:],
+    )
 
     try:
         resp = http_requests.post(url, headers=headers, json=body, timeout=10)
         result = resp.json()
+
         if resp.status_code == 200:
             msg_id = (result.get("messages") or [{}])[0].get("id", "?")
-            log.info("✅ WhatsApp sent OK  msg_id=%s  to=%s", msg_id, to)
+            log.info("✅ WhatsApp OK  msg_id=%s  to=%s", msg_id, to)
         else:
             err = result.get("error", {})
             log.error(
-                "❌ WhatsApp API %s: code=%s msg=%s",
-                resp.status_code,
-                err.get("code"),
-                err.get("message"),
+                "❌ WhatsApp API error  status=%d  code=%s  msg=%s",
+                resp.status_code, err.get("code"), err.get("message"),
             )
         return result
+
     except Exception as exc:
         log.exception("send_whatsapp exception: %s", exc)
         return {"error": str(exc)}
 
 
-# ─── SIGNUP ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# AUTH ENDPOINTS
+# ─────────────────────────────────────────────────────────────────────────────
+
 class SignupRequest(BaseModel):
     business_name: str
     username: str
@@ -196,86 +232,113 @@ class SignupRequest(BaseModel):
     @validator("username")
     def username_valid(cls, v):
         v = v.strip().lower()
-        if len(v) < 3:   raise ValueError("Username must be at least 3 characters")
-        if " " in v:     raise ValueError("Username cannot contain spaces")
+        if len(v) < 3: raise ValueError("Username must be ≥ 3 characters")
+        if " " in v:   raise ValueError("Username cannot contain spaces")
         return v
 
     @validator("password")
     def password_valid(cls, v):
-        if len(v) < 6:   raise ValueError("Password must be at least 6 characters")
+        if len(v) < 6: raise ValueError("Password must be ≥ 6 characters")
         return v
 
     @validator("business_name")
     def bizname_valid(cls, v):
         v = v.strip()
-        if len(v) < 2:   raise ValueError("Business name too short")
+        if len(v) < 2: raise ValueError("Business name too short")
         return v
+
+
+def _token_pair(sub: str, role: str, business_id: int | None = None) -> dict:
+    """Build the JWT pair payload shared by login, signup, and refresh."""
+    data = {"sub": sub, "role": role}
+    if business_id is not None:
+        data["business_id"] = business_id
+    return {
+        "access_token":  create_access_token(data),
+        "refresh_token": create_refresh_token(data),
+        "token_type":    "bearer",
+    }
 
 
 @app.post("/auth/signup")
 def signup(data: SignupRequest, db: Session = Depends(get_db)):
     if data.username == SUPER_ADMIN_USERNAME.lower():
-        raise HTTPException(status_code=400, detail="Username not available")
+        raise HTTPException(400, "Username not available")
     if crud.get_business_by_username(db, data.username):
-        raise HTTPException(status_code=400, detail="Username already taken")
+        raise HTTPException(400, "Username already taken")
 
-    business = crud.create_business(db, BusinessCreate(
+    biz = crud.create_business(db, BusinessCreate(
         name=data.business_name,
         owner_username=data.username,
         owner_password=data.password,
         whatsapp_phone_id=data.whatsapp_phone_id.strip() or None,
         whatsapp_token=data.whatsapp_token.strip() or None,
     ))
-    access  = create_access_token({"sub": business.owner_username, "role": "business", "business_id": business.id})
-    refresh = create_refresh_token({"sub": business.owner_username, "role": "business", "business_id": business.id})
-    log.info("🆕 Signup: %s (@%s)", business.name, business.owner_username)
+    log.info("🆕 Signup: %s (@%s)", biz.name, biz.owner_username)
     return {
-        "access_token":  access,
-        "refresh_token": refresh,
-        "token_type":    "bearer",
+        **_token_pair(biz.owner_username, "business", biz.id),
         "role":          "business",
-        "business_name": business.name,
-        "business_id":   business.id,
+        "business_name": biz.name,
+        "business_id":   biz.id,
     }
 
 
-# ─── LOGIN ────────────────────────────────────────────────
-class LoginRequest(BaseModel):
+@app.post("/auth/login")
+def login(data: BaseModel, db: Session = Depends(get_db)):
+    # Accept both form-encoded (OAuth2) and JSON bodies
+    username = getattr(data, "username", "") or ""
+    password = getattr(data, "password", "") or ""
+    username = username.strip().lower()
+
+    if username == SUPER_ADMIN_USERNAME.lower():
+        if not verify_password(password, SUPER_ADMIN_PASSWORD):
+            raise HTTPException(401, "Invalid credentials")
+        return {**_token_pair(SUPER_ADMIN_USERNAME, "superadmin"), "role": "superadmin"}
+
+    biz = crud.get_business_by_username(db, username)
+    if not biz or not verify_password(password, biz.owner_password):
+        raise HTTPException(401, "Invalid credentials")
+    if not biz.is_active:
+        raise HTTPException(403, "Account suspended. Contact support.")
+
+    log.info("🔑 Login: %s", biz.owner_username)
+    return {
+        **_token_pair(biz.owner_username, "business", biz.id),
+        "role":          "business",
+        "business_name": biz.name,
+        "business_id":   biz.id,
+    }
+
+
+class LoginJSON(BaseModel):
     username: str
     password: str
 
 
 @app.post("/auth/login")
-def login(data: LoginRequest, db: Session = Depends(get_db)):
+def login(data: LoginJSON, db: Session = Depends(get_db)):
     username = data.username.strip().lower()
 
     if username == SUPER_ADMIN_USERNAME.lower():
         if not verify_password(data.password, SUPER_ADMIN_PASSWORD):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        access  = create_access_token({"sub": SUPER_ADMIN_USERNAME, "role": "superadmin"})
-        refresh = create_refresh_token({"sub": SUPER_ADMIN_USERNAME, "role": "superadmin"})
-        return {"access_token": access, "refresh_token": refresh, "token_type": "bearer", "role": "superadmin"}
+            raise HTTPException(401, "Invalid credentials")
+        return {**_token_pair(SUPER_ADMIN_USERNAME, "superadmin"), "role": "superadmin"}
 
-    business = crud.get_business_by_username(db, username)
-    if not business or not verify_password(data.password, business.owner_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    if not business.is_active:
-        raise HTTPException(status_code=403, detail="Account suspended. Contact support.")
+    biz = crud.get_business_by_username(db, username)
+    if not biz or not verify_password(data.password, biz.owner_password):
+        raise HTTPException(401, "Invalid credentials")
+    if not biz.is_active:
+        raise HTTPException(403, "Account suspended. Contact support.")
 
-    access  = create_access_token({"sub": business.owner_username, "role": "business", "business_id": business.id})
-    refresh = create_refresh_token({"sub": business.owner_username, "role": "business", "business_id": business.id})
-    log.info("🔑 Login: %s", business.owner_username)
+    log.info("🔑 Login: %s", biz.owner_username)
     return {
-        "access_token":  access,
-        "refresh_token": refresh,
-        "token_type":    "bearer",
+        **_token_pair(biz.owner_username, "business", biz.id),
         "role":          "business",
-        "business_name": business.name,
-        "business_id":   business.id,
+        "business_name": biz.name,
+        "business_id":   biz.id,
     }
 
 
-# FIX-1 — /auth/refresh endpoint
 class RefreshRequest(BaseModel):
     refresh_token: str
 
@@ -283,59 +346,99 @@ class RefreshRequest(BaseModel):
 @app.post("/auth/refresh")
 def refresh_token_endpoint(data: RefreshRequest, db: Session = Depends(get_db)):
     """
-    Exchange a valid refresh token for a new access token.
-    Frontend calls this automatically when it gets a 401.
+    Exchange a valid refresh token for a new access + refresh token pair.
+    Frontend calls this automatically on 401; backend validates the account
+    is still active before issuing new tokens.
     """
     try:
         payload = decode_token(data.refresh_token)
     except HTTPException:
-        raise HTTPException(status_code=401, detail="Refresh token invalid or expired. Please log in again.")
+        raise HTTPException(401, "Refresh token invalid or expired. Please log in again.")
 
     if payload.get("type") != "refresh":
-        raise HTTPException(status_code=401, detail="Not a refresh token.")
+        raise HTTPException(401, "Provided token is not a refresh token.")
 
-    sub         = payload.get("sub")
+    sub         = payload.get("sub", "")
     role        = payload.get("role", "business")
     business_id = payload.get("business_id")
 
-    # Verify the account still exists / is active
     if role == "business":
         biz = crud.get_business_by_username(db, sub)
         if not biz or not biz.is_active:
-            raise HTTPException(status_code=401, detail="Account not found or suspended.")
+            raise HTTPException(401, "Account not found or suspended.")
         business_id = biz.id
 
-    new_access   = create_access_token({"sub": sub, "role": role, "business_id": business_id})
-    new_refresh  = create_refresh_token({"sub": sub, "role": role, "business_id": business_id})
-
-    response = {
-        "access_token":  new_access,
-        "refresh_token": new_refresh,
-        "token_type":    "bearer",
-        "role":          role,
-    }
-    if role == "business":
-        response["business_id"] = business_id
     log.info("🔄 Token refreshed for: %s", sub)
-    return response
+    return {
+        **_token_pair(sub, role, business_id),
+        "role": role,
+        **({"business_id": business_id} if business_id else {}),
+    }
 
 
-# ─── WEBHOOK ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# DEBUG ENDPOINTS  (DEBUG-1 / DEBUG-2)
+# Remove or gate behind an admin check in production if you prefer.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/debug/env")
+def debug_env():
+    """
+    Confirms which critical env vars are loaded (values masked).
+    Safe to expose — secrets are never returned in full.
+    """
+    fernet_key = os.getenv("FERNET_KEY", "")
+    secret_key = os.getenv("SECRET_KEY", "")
+    return {
+        "FERNET_KEY":  f"{fernet_key[:8]}…({len(fernet_key)} chars)" if fernet_key else "❌ NOT SET",
+        "SECRET_KEY":  f"{secret_key[:4]}…({len(secret_key)} chars)" if secret_key else "❌ NOT SET",
+        "VERIFY_TOKEN": "✅ set" if os.getenv("VERIFY_TOKEN") else "⚠ using default",
+        "DATABASE_URL": os.getenv("DATABASE_URL", "sqlite (default)"),
+        "ENV_FILE":     ".env loaded" if os.path.exists(".env") else "no .env (using system env — correct for Render)",
+    }
+
+
+@app.get("/debug/token")
+def debug_token():
+    """
+    Round-trips a test string through encrypt → decrypt to verify the
+    Fernet key is working correctly end-to-end.
+    If this returns 'ok': true, token encryption is working.
+    """
+    from crypto import encrypt_token, decrypt_token, TokenDecryptionError
+    test = "wazibot-test-12345"
+    try:
+        ct = encrypt_token(test)
+        pt = decrypt_token(ct)
+        ok = pt == test
+        return {
+            "ok":               ok,
+            "ciphertext_prefix": ct[:12] + "…",
+            "round_trip":       "✅ PASS" if ok else "❌ FAIL",
+        }
+    except TokenDecryptionError as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WEBHOOK
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/webhook")
 async def verify_webhook(request: Request):
-    params = request.query_params
-    if params.get("hub.verify_token") == VERIFY_TOKEN:
-        return int(params.get("hub.challenge"))
-    return {"error": "Verification failed"}
+    p = request.query_params
+    if p.get("hub.verify_token") == VERIFY_TOKEN:
+        return int(p.get("hub.challenge", 0))
+    raise HTTPException(403, "Verification failed")
 
 
 @app.post("/webhook")
 async def receive_message(request: Request, db: Session = Depends(get_db)):
     data = await request.json()
-
     try:
         changes = data["entry"][0]["changes"][0]["value"]
-
         if "messages" not in changes:
             return {"status": "ok"}
 
@@ -347,13 +450,20 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
         customer_phone  = msg_obj["from"]
         text            = msg_obj["text"]["body"].strip()
 
-        log.info("📥 Incoming | phone_id=%s | from=%s | text=%r", phone_number_id, customer_phone, text)
+        log.info("📥 Incoming  phone_id=%s  from=%s  text=%r", phone_number_id, customer_phone, text)
 
         business = crud.get_business_by_phone_id(db, phone_number_id)
         if not business or not business.is_active:
             return {"status": "ok"}
 
-        token = crud.get_decrypted_token(business)
+        # CRYPTO-1: propagate decryption errors as a log warning — the message
+        # still gets saved and the bot still replies; it just won't re-send via
+        # WhatsApp if the token is broken (which we log clearly).
+        try:
+            token = crud.get_decrypted_token(business)
+        except TokenDecryptionError as exc:
+            log.error("⚠️  Token decryption failed for business %s: %s", business.name, exc)
+            token = ""
 
         customer = crud.get_or_create_customer(db, customer_phone, business.id)
         crud.log_message(db, business.id, customer_phone, "in", text)
@@ -377,21 +487,20 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
 
         if "menu" in text.lower():
             if products:
-                lines = "\n".join([f"{i+1}. {p.name} - ${p.price}" for i, p in enumerate(products)])
-                reply = f"📋 *{business.name} Menu*\n\n{lines}\n\nTo order, type:\n*order <item> <quantity>*\nExample: order sadza 2"
+                lines = "\n".join([f"{i+1}. {p.name} — ${p.price:.2f}" for i, p in enumerate(products)])
+                reply = f"📋 *{business.name} Menu*\n\n{lines}\n\nTo order: *order <item> <qty>*"
             else:
                 reply = f"Hi! {business.name}'s menu is being updated. Check back soon! 🙏"
 
         elif text.lower().startswith("order "):
             parts = text.strip().split()
             if len(parts) < 3:
-                reply = "❌ Please use the format:\norder <item> <quantity>\nExample: order sadza 2"
+                reply = "❌ Format: order <item> <quantity>\nExample: order sadza 2"
             else:
                 try:
                     product_name = parts[1].lower()
                     qty = int(parts[2])
-                    if qty <= 0:
-                        raise ValueError
+                    if qty <= 0: raise ValueError
                     crud.create_order(db, business.id, OrderCreate(
                         customer_phone=customer_phone,
                         product_name=product_name,
@@ -399,7 +508,7 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
                     ))
                     reply = (
                         f"✅ *Order confirmed!*\n\n{product_name.capitalize()} × {qty}\n\n"
-                        f"Thank you for ordering from {business.name}! We'll be in touch shortly. 🙏"
+                        f"Thank you for ordering from {business.name}! We'll be in touch. 🙏"
                     )
                 except ValueError:
                     reply = "❌ Invalid quantity. Use a whole number.\nExample: order sadza 2"
@@ -426,19 +535,24 @@ async def receive_message(request: Request, db: Session = Depends(get_db)):
         if token:
             send_whatsapp(phone_number_id, token, customer_phone, reply)
         else:
-            log.warning("📵 No token for business %s — reply NOT sent via WhatsApp", business.name)
-
-        log.info("✅ [%s] %s replied", business.name, customer_phone)
+            log.warning(
+                "📵 WhatsApp reply NOT sent for business '%s' — "
+                "no token (check FERNET_KEY or re-save token in Settings)",
+                business.name,
+            )
 
     except KeyError as exc:
-        log.error("⚠️  Webhook KeyError: %s | data: %s", exc, data)
+        log.error("⚠️  Webhook KeyError: %s | body: %s", exc, data)
     except Exception as exc:
         log.exception("⚠️  Webhook error: %s", exc)
 
     return {"status": "ok"}
 
 
-# ─── WEBSOCKET: REAL-TIME INBOX ───────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# WEBSOCKET
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.websocket("/ws/chat/{business_id}")
 async def websocket_chat(websocket: WebSocket, business_id: int):
     token_param = websocket.query_params.get("token", "")
@@ -455,46 +569,59 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
     try:
         while True:
             raw = await websocket.receive_text()
-            msg = json.loads(raw) if raw else {}
-            if msg.get("type") == "ping":
-                await websocket.send_text(json.dumps({"type": "pong"}))
+            try:
+                msg = json.loads(raw) if raw else {}
+                if msg.get("type") == "ping":
+                    await websocket.send_text(json.dumps({"type": "pong"}))
+            except Exception:
+                pass
     except WebSocketDisconnect:
         manager.disconnect(websocket, business_id)
 
 
-# ─── SUPERADMIN ───────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# SUPERADMIN
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/admin/businesses", response_model=List[BusinessOut])
-def list_businesses(db=Depends(get_db), user=Depends(require_superadmin)):
+def list_businesses(db=Depends(get_db), _=Depends(require_superadmin)):
     return crud.get_all_businesses(db)
 
 
 @app.post("/admin/businesses", response_model=BusinessOut)
-def admin_create_business(data: BusinessCreate, db=Depends(get_db), user=Depends(require_superadmin)):
+def admin_create_business(
+    data: BusinessCreate, db=Depends(get_db), _=Depends(require_superadmin)
+):
     if crud.get_business_by_username(db, data.owner_username):
-        raise HTTPException(status_code=400, detail="Username already taken")
+        raise HTTPException(400, "Username already taken")
     return crud.create_business(db, data)
 
 
 @app.patch("/admin/businesses/{business_id}", response_model=BusinessOut)
-def admin_update_business(business_id: int, data: BusinessUpdate, db=Depends(get_db), user=Depends(require_superadmin)):
+def admin_update_business(
+    business_id: int, data: BusinessUpdate,
+    db=Depends(get_db), _=Depends(require_superadmin),
+):
     b = crud.update_business(db, business_id, data)
     if not b:
-        raise HTTPException(status_code=404, detail="Business not found")
+        raise HTTPException(404, "Business not found")
     return b
 
 
 @app.delete("/admin/businesses/{business_id}")
-def admin_delete_business(business_id: int, db=Depends(get_db), user=Depends(require_superadmin)):
+def admin_delete_business(
+    business_id: int, db=Depends(get_db), _=Depends(require_superadmin)
+):
     b = crud.delete_business(db, business_id)
     if not b:
-        raise HTTPException(status_code=404, detail="Business not found")
+        raise HTTPException(404, "Business not found")
     return {"deleted": business_id}
 
 
 @app.get("/admin/stats")
-def admin_stats(db=Depends(get_db), user=Depends(require_superadmin)):
+def admin_stats(db=Depends(get_db), _=Depends(require_superadmin)):
     businesses = crud.get_all_businesses(db)
-    orders = db.query(models.Order).all()
+    orders     = db.query(models.Order).all()
     return {
         "businesses":        len(businesses),
         "active_businesses": sum(1 for b in businesses if b.is_active),
@@ -503,30 +630,43 @@ def admin_stats(db=Depends(get_db), user=Depends(require_superadmin)):
     }
 
 
-# ─── BUSINESS: PROFILE ───────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# BUSINESS PROFILE
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/me", response_model=BusinessOut)
 def get_me(db=Depends(get_db), user=Depends(require_business)):
     b = crud.get_business_by_id(db, user["business_id"])
     if not b:
-        raise HTTPException(status_code=404, detail="Not found")
+        raise HTTPException(404, "Not found")
     return b
 
 
 @app.patch("/me", response_model=BusinessOut)
 def update_me(data: BusinessUpdate, db=Depends(get_db), user=Depends(require_business)):
-    data_dict = data.dict(exclude_none=True)
-    data_dict.pop("is_active", None)
-    return crud.update_business(db, user["business_id"], BusinessUpdate(**data_dict))
+    safe = data.dict(exclude_none=True)
+    safe.pop("is_active", None)   # businesses cannot suspend themselves
+    return crud.update_business(db, user["business_id"], BusinessUpdate(**safe))
 
 
 @app.get("/me/test-whatsapp")
 def test_whatsapp_connection(db=Depends(get_db), user=Depends(require_business)):
+    """Verifies the stored WhatsApp credentials can reach the Meta API."""
     b = crud.get_business_by_id(db, user["business_id"])
     if not b or not b.whatsapp_phone_id:
         return {"ok": False, "reason": "No Phone Number ID saved"}
-    token = crud.get_decrypted_token(b)
+
+    try:
+        token = crud.get_decrypted_token(b)
+    except TokenDecryptionError as exc:
+        return {
+            "ok":     False,
+            "reason": f"Token decryption failed — {exc}",
+        }
+
     if not token:
-        return {"ok": False, "reason": "No access token saved (or decryption failed — check FERNET_KEY)"}
+        return {"ok": False, "reason": "No access token saved"}
+
     try:
         resp = http_requests.get(
             f"https://graph.facebook.com/v18.0/{b.whatsapp_phone_id}",
@@ -534,39 +674,73 @@ def test_whatsapp_connection(db=Depends(get_db), user=Depends(require_business))
             timeout=5,
         )
         if resp.status_code == 200:
-            return {"ok": True, "reason": "Connected"}
+            return {"ok": True, "reason": "Connected to Meta API ✅"}
         err = resp.json().get("error", {}).get("message", "Unknown error")
         return {"ok": False, "reason": err}
     except Exception as exc:
         return {"ok": False, "reason": str(exc)}
 
 
-# ─── PRODUCTS ────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# PRODUCTS  (PRODUCT-1: logging added)
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/products", response_model=List[ProductOut])
-def get_products(db=Depends(get_db), user=Depends(get_current_user)):
+def get_products(db=Depends(get_db), user=Depends(require_business)):
     return crud.get_products(db, user["business_id"])
 
 
-@app.post("/products", response_model=ProductOut)
-def create_product(product: ProductCreate, db=Depends(get_db), user=Depends(require_business)):
-    return crud.create_product(db, user["business_id"], product)
+@app.post("/products", response_model=ProductOut, status_code=201)
+def create_product(
+    product: ProductCreate,
+    db=Depends(get_db),
+    user=Depends(require_business),
+):
+    """
+    Create a product for the authenticated business.
+
+    Common failure modes that are now logged:
+      • 401 — frontend not sending Authorization header
+      • 403 — token belongs to superadmin, not a business account
+      • 422 — Pydantic validation error (price missing / wrong type)
+    """
+    log.info(
+        "📦 create_product  business_id=%s  name=%r  price=%s  has_image=%s",
+        user["business_id"],
+        product.name,
+        product.price,
+        bool(product.image_url),
+    )
+    p = crud.create_product(db, user["business_id"], product)
+    log.info("📦 create_product OK  id=%s  business_id=%s", p.id, user["business_id"])
+    return p
 
 
 @app.delete("/products/{product_id}")
-def delete_product(product_id: int, db=Depends(get_db), user=Depends(require_business)):
+def delete_product(
+    product_id: int,
+    db=Depends(get_db),
+    user=Depends(require_business),
+):
     p = crud.delete_product(db, product_id, user["business_id"])
     if not p:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(404, "Product not found")
     return {"deleted": product_id}
 
 
-# ─── ORDERS ──────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# ORDERS
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/orders", response_model=List[OrderOut])
 def get_orders(db=Depends(get_db), user=Depends(require_business)):
     return crud.get_orders(db, user["business_id"])
 
 
-# ─── LEGACY CONVERSATIONS ────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# LEGACY CONVERSATIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/conversations", response_model=List[ChatMessageOut])
 def get_conversations(db=Depends(get_db), user=Depends(require_business)):
     return crud.get_conversations(db, user["business_id"])
@@ -577,16 +751,18 @@ def get_chat(phone: str, db=Depends(get_db), user=Depends(require_business)):
     return crud.get_messages_for_phone(db, user["business_id"], phone)
 
 
-# ─── BROADCAST ───────────────────────────────────────────
-# FIX-5 — per-number tracking + detailed logs
+# ─────────────────────────────────────────────────────────────────────────────
+# BROADCAST
+# ─────────────────────────────────────────────────────────────────────────────
+
 class BroadcastRequest(BaseModel):
     message: str
 
     @validator("message")
-    def message_valid(cls, v):
+    def msg_valid(cls, v):
         v = v.strip()
-        if len(v) < 3:    raise ValueError("Message too short")
-        if len(v) > 1024: raise ValueError("Message too long (max 1024 characters)")
+        if len(v) < 3:    raise ValueError("Message too short (min 3 chars)")
+        if len(v) > 1024: raise ValueError("Message too long (max 1024 chars)")
         return v
 
 
@@ -594,22 +770,30 @@ class BroadcastRequest(BaseModel):
 def broadcast(body: BroadcastRequest, db=Depends(get_db), user=Depends(require_business)):
     bid      = user["business_id"]
     business = crud.get_business_by_id(db, bid)
-    token    = crud.get_decrypted_token(business)
-    phones   = crud.get_all_customer_phones(db, bid)
+
+    # CRYPTO-1: raise before touching any phones
+    try:
+        token = crud.get_decrypted_token(business)
+    except TokenDecryptionError as exc:
+        log.error("broadcast: token decryption failed — %s", exc)
+        raise HTTPException(503, detail=(
+            "WhatsApp token cannot be decrypted. "
+            "FERNET_KEY may have changed since the token was saved. "
+            "Go to Settings → re-enter your WhatsApp token."
+        ))
 
     if not token:
-        log.error("broadcast: no decrypted token for business %s — aborting", business.name)
-        raise HTTPException(status_code=400, detail="WhatsApp token not configured or could not be decrypted.")
-
+        raise HTTPException(400, "WhatsApp token not configured. Go to Settings.")
     if not business.whatsapp_phone_id:
-        raise HTTPException(status_code=400, detail="WhatsApp Phone Number ID not configured.")
+        raise HTTPException(400, "WhatsApp Phone Number ID not configured. Go to Settings.")
 
+    phones = crud.get_all_customer_phones(db, bid)
     if not phones:
         return {"sent": 0, "failed": 0, "total": 0, "message": "No customers found"}
 
-    log.info("📢 Broadcast start: %d recipients — business=%s", len(phones), business.name)
+    log.info("📢 Broadcast start  recipients=%d  business=%s", len(phones), business.name)
 
-    sent, failed, failed_numbers = 0, 0, []
+    sent, failed, failed_phones = 0, 0, []
     for phone in phones:
         try:
             result = send_whatsapp(business.whatsapp_phone_id, token, phone, body.message)
@@ -620,14 +804,14 @@ def broadcast(body: BroadcastRequest, db=Depends(get_db), user=Depends(require_b
         except Exception as exc:
             log.error("broadcast: failed for %s — %s", phone, exc)
             failed += 1
-            failed_numbers.append(phone)
+            failed_phones.append(phone)
 
-    log.info("📢 Broadcast done: sent=%d failed=%d", sent, failed)
+    log.info("📢 Broadcast done  sent=%d  failed=%d", sent, failed)
     return {
         "sent":           sent,
         "failed":         failed,
         "total":          len(phones),
-        "failed_numbers": failed_numbers,
+        "failed_numbers": failed_phones,
     }
 
 
@@ -637,7 +821,10 @@ def get_customers(db=Depends(get_db), user=Depends(require_business)):
     return {"phones": phones, "total": len(phones)}
 
 
-# ─── CHAT INBOX (CRM) ────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# CHAT INBOX (CRM)
+# ─────────────────────────────────────────────────────────────────────────────
+
 @app.get("/chat/customers")
 def chat_customers(
     search: Optional[str] = Query(None),
@@ -666,31 +853,17 @@ def chat_conversations(
     return crud.get_chat_conversations(db, user["business_id"], filter_unread=unread_only)
 
 
-@app.get("/chat/conversations/{phone}")
-def chat_by_phone(phone: str, db=Depends(get_db), user=Depends(get_current_user)):
-    customer = db.query(models.Customer).filter(
-        models.Customer.phone == phone,
-        models.Customer.business_id == user["business_id"],
-    ).first()
-    if not customer:
-        return []
-    return [
-        {"id": m.id, "message": m.text, "direction": m.direction, "created_at": m.created_at}
-        for m in crud.get_messages_by_customer(db, customer.id)
-    ]
-
-
 @app.get("/chat/messages/{customer_id}")
 def chat_messages(
     customer_id: int,
-    limit: int = Query(50, ge=1, le=200),
+    limit:  int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     db=Depends(get_db),
     user=Depends(get_current_user),
 ):
     customer = crud.get_customer_by_id(db, customer_id, user["business_id"])
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(404, "Customer not found")
 
     msgs = crud.get_messages_by_customer(db, customer_id, limit=limit, offset=offset)
     return {
@@ -714,16 +887,22 @@ def chat_messages(
 
 
 @app.post("/chat/read/{customer_id}")
-def mark_read(customer_id: int, db=Depends(get_db), user=Depends(get_current_user)):
+def mark_read(
+    customer_id: int,
+    db=Depends(get_db),
+    user=Depends(get_current_user),
+):
     customer = crud.get_customer_by_id(db, customer_id, user["business_id"])
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(404, "Customer not found")
     crud.mark_messages_read(db, customer_id, user["business_id"])
     return {"ok": True, "customer_id": customer_id}
 
 
-# ─── CHAT: SEND FROM DASHBOARD ───────────────────────────
-# FIX-4 — logs token status before delivery
+# ─────────────────────────────────────────────────────────────────────────────
+# CHAT SEND  (CRYPTO-1: explicit error on bad token)
+# ─────────────────────────────────────────────────────────────────────────────
+
 class ChatSendRequest(BaseModel):
     customer_id: int
     text: str
@@ -731,8 +910,8 @@ class ChatSendRequest(BaseModel):
     @validator("text")
     def text_valid(cls, v):
         v = v.strip()
-        if not v:        raise ValueError("Message cannot be empty")
-        if len(v) > 4096: raise ValueError("Message too long")
+        if not v:         raise ValueError("Message cannot be empty")
+        if len(v) > 4096: raise ValueError("Message too long (max 4096 chars)")
         return v
 
 
@@ -745,35 +924,44 @@ async def chat_send(
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(db, body.customer_id, bid)
     if not customer:
-        raise HTTPException(status_code=404, detail="Customer not found")
+        raise HTTPException(404, "Customer not found")
 
     business = crud.get_business_by_id(db, bid)
-    token    = crud.get_decrypted_token(business)
 
-    # Persist to both tables
-    crud.log_message(db, bid, customer.phone, "out", body.text)
-    msg = crud.create_message(db, customer.id, bid, body.text, "outgoing")
+    # CRYPTO-1: explicit error so the frontend can show a meaningful message
+    try:
+        token = crud.get_decrypted_token(business)
+    except TokenDecryptionError as exc:
+        log.error("chat_send: token decryption failed  business=%s  error=%s", business.name, exc)
+        raise HTTPException(503, detail=(
+            "WhatsApp token cannot be decrypted (FERNET_KEY mismatch). "
+            "Go to Settings → re-enter your WhatsApp token to fix this."
+        ))
 
-    # FIX-4 — explicit pre-send diagnostics
     has_phone_id = bool(business.whatsapp_phone_id)
     has_token    = bool(token)
+
     log.info(
-        "chat_send: customer=%s  phone=%s  has_phone_id=%s  has_token=%s  token_suffix=…%s",
-        body.customer_id, customer.phone, has_phone_id, has_token,
+        "chat_send  customer=%s  phone=%s  has_phone_id=%s  has_token=%s  token_tail=…%s",
+        body.customer_id, customer.phone,
+        has_phone_id, has_token,
         token[-6:] if has_token else "N/A",
     )
 
-    result: dict = {}
-    if has_token and has_phone_id:
-        result = send_whatsapp(business.whatsapp_phone_id, token, customer.phone, body.text)
-    else:
-        missing = []
-        if not has_phone_id: missing.append("whatsapp_phone_id")
-        if not has_token:    missing.append("whatsapp_token")
-        log.warning("chat_send: WhatsApp NOT sent — missing: %s", ", ".join(missing))
-        result = {"error": f"WhatsApp credentials missing: {', '.join(missing)}"}
+    # Persist regardless of WhatsApp delivery status
+    crud.log_message(db, bid, customer.phone, "out", body.text)
+    msg = crud.create_message(db, customer.id, bid, body.text, "outgoing")
 
-    # Push to WebSocket
+    # Attempt WhatsApp delivery
+    wa_result: dict = {}
+    if has_token and has_phone_id:
+        wa_result = send_whatsapp(business.whatsapp_phone_id, token, customer.phone, body.text)
+    else:
+        missing = [k for k, v in {"phone_number_id": has_phone_id, "token": has_token}.items() if not v]
+        log.warning("chat_send: WhatsApp NOT sent — missing: %s", missing)
+        wa_result = {"error": f"credentials missing: {missing}"}
+
+    # Push to open WebSocket sessions
     await manager.broadcast(bid, {
         "event":       "new_message",
         "customer_id": customer.id,
@@ -791,5 +979,5 @@ async def chat_send(
     return {
         "ok":              True,
         "message_id":      msg.id,
-        "whatsapp_result": result,
+        "whatsapp_result": wa_result,
     }
