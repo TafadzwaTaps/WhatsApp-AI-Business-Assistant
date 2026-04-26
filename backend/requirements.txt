@@ -1,10 +1,9 @@
 fastapi
 uvicorn[standard]
-sqlalchemy
+supabase
 pydantic
 python-dotenv
 python-jose[cryptography]
 cryptography
 requests
 aiofiles
-supabase
