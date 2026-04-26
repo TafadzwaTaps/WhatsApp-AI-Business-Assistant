@@ -267,11 +267,22 @@ def signup(data: SignupRequest, db: Session = Depends(get_db)):
     if crud.get_business_by_username(db, data.username):
         raise HTTPException(400, "Username already taken")
 
+    # FIX: check for duplicate phone_id BEFORE the INSERT so we return a
+    # clean 400 instead of letting Postgres/SQLite raise a UNIQUE constraint
+    # IntegrityError that becomes an unhandled 500.
+    phone_id = data.whatsapp_phone_id.strip() or None
+    if phone_id and crud.get_business_by_phone_id(db, phone_id):
+        raise HTTPException(
+            400,
+            "That WhatsApp Phone Number ID is already registered to another account. "
+            "Check the number in your Meta Developer Portal."
+        )
+
     biz = crud.create_business(db, BusinessCreate(
         name=data.business_name,
         owner_username=data.username,
         owner_password=data.password,
-        whatsapp_phone_id=data.whatsapp_phone_id.strip() or None,
+        whatsapp_phone_id=phone_id,   # already stripped + validated above
         whatsapp_token=data.whatsapp_token.strip() or None,
     ))
     log.info("🆕 Signup: %s (@%s)", biz.name, biz.owner_username)
@@ -594,6 +605,9 @@ def admin_create_business(
 ):
     if crud.get_business_by_username(db, data.owner_username):
         raise HTTPException(400, "Username already taken")
+    # FIX: same duplicate phone_id guard as in /auth/signup
+    if data.whatsapp_phone_id and crud.get_business_by_phone_id(db, data.whatsapp_phone_id):
+        raise HTTPException(400, "WhatsApp Phone Number ID already registered.")
     return crud.create_business(db, data)
 
 
