@@ -203,12 +203,13 @@ def signup(data: SignupRequest):
         raise HTTPException(400, "Username already taken")
 
     phone_id = data.whatsapp_phone_id.strip() or None
-    if phone_id and crud.get_business_by_phone_id(phone_id):
+    
+    existing = crud.get_business_by_phone_id(phone_id)
+    if existing and existing["owner_username"] != data.username:
         raise HTTPException(
-            400,
-            "That WhatsApp Phone Number ID is already registered. "
-            "Check your Meta Developer Portal or update your existing account in Settings."
-        )
+        400,
+        "That WhatsApp Phone Number ID is already used by another account."
+    )
 
     # Use a simple namespace so crud.create_business(data) works unchanged
     class _Payload:

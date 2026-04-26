@@ -28,7 +28,7 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     # ── Local dev: SQLite ────────────────────────────────────────────────────

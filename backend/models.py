@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, UniqueConstraint, Index, Numeric
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -12,12 +12,12 @@ class Business(Base):
     name = Column(String, nullable=False)
     owner_username = Column(String, unique=True, nullable=False)
     owner_password = Column(String, nullable=False)
-    whatsapp_phone_id = Column(String, unique=True, nullable=True)
+
+    # ✅ FIXED: removed unique
+    whatsapp_phone_id = Column(String, nullable=True)
     whatsapp_token = Column(String, nullable=True)
+
     is_active = Column(Boolean, default=True)
-    # FIX: default= fires at the ORM/Python level, so SQLAlchemy always sets
-    # created_at before the INSERT — server_default alone is not reliable when
-    # the column was added to an existing SQLite table without a DDL default.
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     products = relationship("Product", back_populates="business", cascade="all, delete")
@@ -31,11 +31,19 @@ class Product(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
-    name = Column(String)
-    price = Column(Float)
-    image_url = Column(String, nullable=True)   # optional product image URL
+
+    name = Column(String, nullable=False)
+
+    # ✅ FIXED: use Numeric instead of Float
+    price = Column(Numeric(10, 2), nullable=False)
+
+    image_url = Column(String, nullable=True)
 
     business = relationship("Business", back_populates="products")
+
+    __table_args__ = (
+        Index("ix_product_business", "business_id"),
+    )
 
 
 class Order(Base):
@@ -43,27 +51,39 @@ class Order(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
-    customer_phone = Column(String)
-    product_name = Column(String)
-    quantity = Column(Integer)
-    total_price = Column(Float)
+
+    customer_phone = Column(String, nullable=False)
+    product_name = Column(String, nullable=False)
+    quantity = Column(Integer, nullable=False)
+
+    # ✅ FIXED: use Numeric
+    total_price = Column(Numeric(10, 2), nullable=False)
+
     status = Column(String, default="pending")
-    # FIX: same as Business.created_at above
+
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     business = relationship("Business", back_populates="orders")
 
+    __table_args__ = (
+        Index("ix_order_business", "business_id"),
+    )
+
 
 class ChatMessage(Base):
-    """Legacy table — keeps existing dashboard working. Do not remove."""
+    """Legacy table — keep for compatibility"""
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
+
     phone = Column(String, index=True)
-    direction = Column(String)   # "in" or "out"
-    message = Column(String)
-    # FIX: same as Business.created_at above
+
+    # ✅ FIXED: standardized values
+    direction = Column(String)  # incoming | outgoing
+
+    message = Column(String, nullable=False)
+
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     business = relationship("Business", back_populates="messages")
@@ -75,7 +95,7 @@ class Customer(Base):
     id = Column(Integer, primary_key=True, index=True)
     phone = Column(String, nullable=False)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
-    # FIX: same as Business.created_at above
+
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
     last_seen = Column(DateTime, nullable=True)
     unread_count = Column(Integer, default=0)
@@ -95,14 +115,19 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=False)
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
+
     text = Column(String, nullable=False)
-    direction = Column(String, nullable=False)   # "incoming" or "outgoing"
+
+    # ✅ FIXED: consistent naming
+    direction = Column(String, nullable=False)  # incoming | outgoing
+
     is_read = Column(Boolean, default=False)
-    status = Column(String, default="sent")       # sent | delivered | read
-    # FIX: same as Business.created_at above
+    status = Column(String, default="sent")  # sent | delivered | read
+
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     customer = relationship("Customer", back_populates="customer_messages")
+    business = relationship("Business")  # ✅ FIXED
 
     __table_args__ = (
         Index("ix_message_customer_created", "customer_id", "created_at"),
