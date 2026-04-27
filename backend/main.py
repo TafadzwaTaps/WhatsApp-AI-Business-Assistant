@@ -124,33 +124,45 @@ manager = ConnectionManager()
 # ── WhatsApp sender ────────────────────────────────────────────────────────────
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
     if not phone_number_id or not token:
-        missing = [k for k, v in {"phone_number_id": phone_number_id, "token": token}.items() if not v]
-        log.error("send_whatsapp: ABORTED — missing %s", missing)
-        return {"error": f"missing credentials: {missing}"}
+        return {"error": "Missing WhatsApp credentials"}
 
     to = to.replace("whatsapp:", "").strip()
+
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
     body = {
         "messaging_product": "whatsapp",
-        "to":   to,
+        "to": to,
         "type": "text",
         "text": {"body": message},
     }
-    log.info("📤 WhatsApp → to=%s  phone_id=%s  token_tail=…%s", to, phone_number_id, token[-6:])
+
     try:
         resp = http_requests.post(url, headers=headers, json=body, timeout=10)
         result = resp.json()
-        if resp.status_code == 200:
-            msg_id = (result.get("messages") or [{}])[0].get("id", "?")
-            log.info("✅ WhatsApp OK  msg_id=%s  to=%s", msg_id, to)
-        else:
-            err = result.get("error", {})
-            log.error("❌ WhatsApp API %d  code=%s  msg=%s", resp.status_code, err.get("code"), err.get("message"))
-        return result
-    except Exception as exc:
-        log.exception("send_whatsapp exception: %s", exc)
-        return {"error": str(exc)}
+
+        if resp.status_code != 200:
+            error = result.get("error", {})
+            return {
+                "error": True,
+                "status": resp.status_code,
+                "code": error.get("code"),
+                "message": error.get("message"),
+                "details": result
+            }
+
+        return {
+            "success": True,
+            "message_id": result.get("messages", [{}])[0].get("id")
+        }
+
+    except Exception as e:
+        return {"error": True, "exception": str(e)}
 
 
 # ── JWT token pair helper ──────────────────────────────────────────────────────
@@ -791,6 +803,7 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     wa_result: dict = {}
     if has_token and has_phone_id:
         wa_result = send_whatsapp(business["whatsapp_phone_id"], token, customer["phone"], body.text)
+        log.info(f"WhatsApp result: {wa_result}")
     else:
         missing = [k for k, v in {"phone_number_id": has_phone_id, "token": has_token}.items() if not v]
         log.warning("chat_send: WhatsApp NOT sent — missing: %s", missing)
