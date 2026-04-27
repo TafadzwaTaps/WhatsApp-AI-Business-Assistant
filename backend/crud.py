@@ -306,37 +306,71 @@ def get_all_customer_phones(business_id: int) -> list[str]:
 
 def get_or_create_customer(phone: str, business_id: int) -> dict:
     """
-    Upsert a customer row using Supabase's on_conflict parameter.
-    Updates last_seen on every call.
+    Upsert a customer row, always returning the full row dict.
+
+    Strategy:
+      1. Try INSERT … ON CONFLICT DO UPDATE via upsert (updates last_seen).
+      2. If upsert returns no data (can happen in some supabase-py versions
+         when no columns changed), fall back to a plain SELECT.
+      3. If SELECT also returns nothing, create a fresh row with INSERT.
+    Never raises — always returns a valid customer dict.
     """
     now = _now()
-    res = (
-        supabase.table("customers")
-        .upsert(
-            {
-                "phone":        phone,
-                "business_id":  business_id,
-                "last_seen":    now,
-            },
-            on_conflict="phone,business_id",   # matches the UNIQUE constraint
-        )
-        .execute()
-    )
-    customer = _one("customers", res)
 
-    # Upsert doesn't increment unread_count — we handle that in create_message.
-    # But we need the full row (including id) for the caller.
-    if not customer:
-        # Fallback: fetch the existing row
-        customer = (
+    # Step 1: upsert
+    try:
+        res = (
+            supabase.table("customers")
+            .upsert(
+                {
+                    "phone":        phone,
+                    "business_id":  business_id,
+                    "last_seen":    now,
+                },
+                on_conflict="phone,business_id",
+            )
+            .execute()
+        )
+        customer = _one("customers", res)
+        if customer:
+            log.debug("get_or_create_customer: upsert returned row  id=%s", customer["id"])
+            return customer
+    except Exception as exc:
+        log.warning("get_or_create_customer: upsert failed (%s) — trying select", exc)
+
+    # Step 2: fetch existing row
+    try:
+        res2 = (
             supabase.table("customers")
             .select("*")
             .eq("phone", phone)
             .eq("business_id", business_id)
             .limit(1)
             .execute()
-            .data[0]
         )
+        if res2.data:
+            customer = res2.data[0]
+            # Touch last_seen
+            supabase.table("customers").update({"last_seen": now}).eq("id", customer["id"]).execute()
+            log.debug("get_or_create_customer: found via select  id=%s", customer["id"])
+            return customer
+    except Exception as exc:
+        log.warning("get_or_create_customer: select failed (%s) — trying insert", exc)
+
+    # Step 3: fresh insert (first contact from this number)
+    res3 = (
+        supabase.table("customers")
+        .insert({
+            "phone":        phone,
+            "business_id":  business_id,
+            "last_seen":    now,
+            "unread_count": 0,
+            "created_at":   now,
+        })
+        .execute()
+    )
+    customer = _one("customers", res3)
+    log.info("get_or_create_customer: inserted new customer  id=%s  phone=%s", customer["id"], phone)
     return customer
 
 

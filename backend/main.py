@@ -124,45 +124,33 @@ manager = ConnectionManager()
 # ── WhatsApp sender ────────────────────────────────────────────────────────────
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
     if not phone_number_id or not token:
-        return {"error": "Missing WhatsApp credentials"}
+        missing = [k for k, v in {"phone_number_id": phone_number_id, "token": token}.items() if not v]
+        log.error("send_whatsapp: ABORTED — missing %s", missing)
+        return {"error": f"missing credentials: {missing}"}
 
     to = to.replace("whatsapp:", "").strip()
-
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body = {
         "messaging_product": "whatsapp",
-        "to": to,
+        "to":   to,
         "type": "text",
         "text": {"body": message},
     }
-
+    log.info("📤 WhatsApp → to=%s  phone_id=%s  token_tail=…%s", to, phone_number_id, token[-6:])
     try:
         resp = http_requests.post(url, headers=headers, json=body, timeout=10)
         result = resp.json()
-
-        if resp.status_code != 200:
-            error = result.get("error", {})
-            return {
-                "error": True,
-                "status": resp.status_code,
-                "code": error.get("code"),
-                "message": error.get("message"),
-                "details": result
-            }
-
-        return {
-            "success": True,
-            "message_id": result.get("messages", [{}])[0].get("id")
-        }
-
-    except Exception as e:
-        return {"error": True, "exception": str(e)}
+        if resp.status_code == 200:
+            msg_id = (result.get("messages") or [{}])[0].get("id", "?")
+            log.info("✅ WhatsApp OK  msg_id=%s  to=%s", msg_id, to)
+        else:
+            err = result.get("error", {})
+            log.error("❌ WhatsApp API %d  code=%s  msg=%s", resp.status_code, err.get("code"), err.get("message"))
+        return result
+    except Exception as exc:
+        log.exception("send_whatsapp exception: %s", exc)
+        return {"error": str(exc)}
 
 
 # ── JWT token pair helper ──────────────────────────────────────────────────────
@@ -215,13 +203,12 @@ def signup(data: SignupRequest):
         raise HTTPException(400, "Username already taken")
 
     phone_id = data.whatsapp_phone_id.strip() or None
-    
-    existing = crud.get_business_by_phone_id(phone_id)
-    if existing and existing["owner_username"] != data.username:
+    if phone_id and crud.get_business_by_phone_id(phone_id):
         raise HTTPException(
-        400,
-        "That WhatsApp Phone Number ID is already used by another account."
-    )
+            400,
+            "That WhatsApp Phone Number ID is already registered. "
+            "Check your Meta Developer Portal or update your existing account in Settings."
+        )
 
     # Use a simple namespace so crud.create_business(data) works unchanged
     class _Payload:
@@ -334,120 +321,323 @@ def debug_token():
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
 
 
+@app.get("/debug/webhook")
+def debug_webhook(user=Depends(require_business)):
+    """
+    Diagnostic endpoint — checks every step the webhook relies on:
+      1. Business record found by phone_number_id
+      2. Token can be decrypted
+      3. Products exist in DB
+      4. WhatsApp API reachable with current token
+    Hit this URL in a browser after logging in to see exactly what's broken.
+    """
+    bid      = user["business_id"]
+    business = crud.get_business_by_id(bid)
+    if not business:
+        return {"ok": False, "step": 1, "error": "Business not found"}
+
+    steps = {
+        "business_id":        bid,
+        "business_name":      business.get("name"),
+        "whatsapp_phone_id":  business.get("whatsapp_phone_id"),
+        "has_phone_id":       bool(business.get("whatsapp_phone_id")),
+        "has_token_stored":   bool(business.get("whatsapp_token")),
+    }
+
+    # Step: decrypt token
+    token = ""
+    try:
+        token = crud.get_decrypted_token(business)
+        steps["token_decrypts"] = bool(token)
+        steps["token_tail"]     = "…" + token[-6:] if token else "empty"
+    except Exception as exc:
+        steps["token_decrypts"] = False
+        steps["token_error"]    = str(exc)
+
+    # Step: products
+    try:
+        products = crud.get_products(bid)
+        steps["products_count"] = len(products)
+        steps["products"]       = [{"name": p["name"], "price": p["price"]} for p in products]
+    except Exception as exc:
+        steps["products_count"] = 0
+        steps["products_error"] = str(exc)
+
+    # Step: WhatsApp API ping
+    if token and business.get("whatsapp_phone_id"):
+        try:
+            resp = http_requests.get(
+                f"https://graph.facebook.com/v18.0/{business['whatsapp_phone_id']}",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=5,
+            )
+            steps["whatsapp_api_status"] = resp.status_code
+            steps["whatsapp_api_ok"]     = resp.status_code == 200
+            if resp.status_code != 200:
+                steps["whatsapp_api_error"] = resp.json().get("error", {}).get("message")
+        except Exception as exc:
+            steps["whatsapp_api_ok"]    = False
+            steps["whatsapp_api_error"] = str(exc)
+    else:
+        steps["whatsapp_api_ok"] = False
+        steps["whatsapp_api_skip"] = "missing phone_id or token"
+
+    # Overall health
+    all_ok = (
+        steps["has_phone_id"]
+        and steps.get("token_decrypts")
+        and steps.get("products_count", 0) > 0
+        and steps.get("whatsapp_api_ok")
+    )
+    steps["overall"] = "✅ ALL GOOD — webhook should work" if all_ok else "❌ FIX ISSUES ABOVE"
+    return steps
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # WEBHOOK
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/webhook")
 async def verify_webhook(request: Request):
+    """
+    Meta webhook verification.
+    MUST return the challenge as plain text (not JSON).
+    Returning an int or JSON object causes Meta to reject the verification
+    and stop sending all incoming messages to this endpoint.
+    """
+    from fastapi.responses import PlainTextResponse
     p = request.query_params
-    if p.get("hub.verify_token") == VERIFY_TOKEN:
-        return int(p.get("hub.challenge", 0))
-    raise HTTPException(403, "Verification failed")
+    mode      = p.get("hub.mode", "")
+    token     = p.get("hub.verify_token", "")
+    challenge = p.get("hub.challenge", "")
+    log.info("🔔 Webhook verify  mode=%r  token_match=%s  challenge=%r",
+             mode, token == VERIFY_TOKEN, challenge)
+    if mode == "subscribe" and token == VERIFY_TOKEN:
+        return PlainTextResponse(content=challenge, status_code=200)
+    raise HTTPException(403, "Webhook verification failed — token mismatch")
 
 
 @app.post("/webhook")
 async def receive_message(request: Request):
+    """
+    WhatsApp Cloud API webhook.
+
+    Every step is logged individually so Render logs show exactly where
+    a failure occurs rather than silently returning {"status": "ok"}.
+    """
     data = await request.json()
+
+    # ── STEP 1: Parse Meta payload ────────────────────────────────────────
     try:
-        changes = data["entry"][0]["changes"][0]["value"]
-        if "messages" not in changes:
+        entry   = data.get("entry", [])
+        if not entry:
+            log.debug("Webhook: no entry — likely a status update, ignoring")
             return {"status": "ok"}
 
-        msg_obj = changes["messages"][0]
-        if msg_obj.get("type") != "text":
+        changes = entry[0].get("changes", [])
+        if not changes:
             return {"status": "ok"}
 
-        phone_number_id = changes["metadata"]["phone_number_id"]
-        customer_phone  = msg_obj["from"]
-        text            = msg_obj["text"]["body"].strip()
-        log.info("📥 Incoming  phone_id=%s  from=%s  text=%r", phone_number_id, customer_phone, text)
+        value = changes[0].get("value", {})
 
+        # Status updates (delivered / read receipts) — ignore silently
+        if "statuses" in value and "messages" not in value:
+            return {"status": "ok"}
+
+        if "messages" not in value:
+            log.debug("Webhook: no messages key in value — ignoring  value_keys=%s", list(value.keys()))
+            return {"status": "ok"}
+
+        msg_obj = value["messages"][0]
+        msg_type = msg_obj.get("type", "")
+
+        # Log non-text types so we know they arrived but were skipped
+        if msg_type != "text":
+            log.info("Webhook: skipping non-text message  type=%s", msg_type)
+            return {"status": "ok"}
+
+        metadata        = value.get("metadata", {})
+        phone_number_id = metadata.get("phone_number_id", "")
+        customer_phone  = msg_obj.get("from", "")
+        text            = msg_obj.get("text", {}).get("body", "").strip()
+
+        if not phone_number_id or not customer_phone or not text:
+            log.warning("Webhook: missing required fields  phone_id=%r  from=%r  text=%r",
+                        phone_number_id, customer_phone, text)
+            return {"status": "ok"}
+
+        log.info("📥 STEP 1 OK — Incoming  phone_id=%s  from=%s  text=%r",
+                 phone_number_id, customer_phone, text)
+
+    except Exception as exc:
+        log.error("📥 STEP 1 FAIL — Could not parse webhook payload: %s | body: %s", exc, data)
+        return {"status": "ok"}
+
+    # ── STEP 2: Find business ─────────────────────────────────────────────
+    try:
         business = crud.get_business_by_phone_id(phone_number_id)
-        if not business or not business.get("is_active", True):
+        if not business:
+            log.error("📋 STEP 2 FAIL — No business found for phone_number_id=%s  "
+                      "Check that this Phone Number ID is saved in Settings.", phone_number_id)
             return {"status": "ok"}
+        if not business.get("is_active", True):
+            log.warning("📋 STEP 2 — Business suspended  id=%s  name=%s", business["id"], business["name"])
+            return {"status": "ok"}
+        log.info("📋 STEP 2 OK — Business found  id=%s  name=%s", business["id"], business["name"])
+    except Exception as exc:
+        log.exception("📋 STEP 2 FAIL — business lookup error: %s", exc)
+        return {"status": "ok"}
 
-        try:
-            token = crud.get_decrypted_token(business)
-        except TokenDecryptionError as exc:
-            log.error("⚠️  Token decryption failed for business %s: %s", business["name"], exc)
-            token = ""
+    # ── STEP 3: Decrypt token ─────────────────────────────────────────────
+    token = ""
+    try:
+        token = crud.get_decrypted_token(business)
+        if token:
+            log.info("🔑 STEP 3 OK — Token decrypted  tail=…%s", token[-6:])
+        else:
+            log.warning("🔑 STEP 3 — No token configured for business %s  "
+                        "Messages will be saved but NOT sent via WhatsApp", business["name"])
+    except TokenDecryptionError as exc:
+        log.error("🔑 STEP 3 FAIL — Token decryption error for %s: %s  "
+                  "Re-enter WhatsApp token in Settings.", business["name"], exc)
 
+    # ── STEP 4: Get or create customer ────────────────────────────────────
+    try:
         customer = crud.get_or_create_customer(customer_phone, business["id"])
+        log.info("👤 STEP 4 OK — Customer  id=%s  phone=%s", customer["id"], customer["phone"])
+    except Exception as exc:
+        log.exception("👤 STEP 4 FAIL — customer upsert error: %s", exc)
+        return {"status": "ok"}
+
+    # ── STEP 5: Save incoming message ────────────────────────────────────
+    try:
         crud.log_message(business["id"], customer_phone, "in", text)
         in_msg = crud.create_message(customer["id"], business["id"], text, "incoming")
+        log.info("💾 STEP 5 OK — Incoming message saved  id=%s", in_msg["id"] if in_msg else "?")
+    except Exception as exc:
+        log.exception("💾 STEP 5 FAIL — could not save incoming message: %s", exc)
+        # Non-fatal — still attempt to reply
 
+    try:
         await manager.broadcast(business["id"], {
-            "event":       "new_message",
-            "customer_id": customer["id"],
-            "phone":       customer_phone,
-            "message":     in_msg,
+            "event": "new_message", "customer_id": customer["id"],
+            "phone": customer_phone, "message": in_msg if "in_msg" in dir() else {},
         })
+    except Exception:
+        pass  # WebSocket broadcast failure must never block the reply
 
+    # ── STEP 6: Fetch products + generate reply ────────────────────────────
+    try:
         products = crud.get_products(business["id"])
+        log.info("📦 STEP 6 — Products fetched  count=%d  business_id=%s",
+                 len(products), business["id"])
 
-        if "menu" in text.lower():
+        text_lower = text.lower().strip()
+
+        if "menu" in text_lower:
             if products:
-                lines = "\n".join([f"{i+1}. {p['name']} — ${float(p['price']):.2f}" for i, p in enumerate(products)])
-                reply = f"📋 *{business['name']} Menu*\n\n{lines}\n\nTo order: *order <item> <qty>*"
+                lines = "\n".join(
+                    [f"{i+1}. {p['name']} — ${float(p['price']):.2f}"
+                     for i, p in enumerate(products)]
+                )
+                reply = (
+                    f"📋 *{business['name']} Menu*\n\n"
+                    f"{lines}\n\n"
+                    f"To order, type:\n*order <item> <quantity>*\n"
+                    f"Example: _order {products[0]['name']} 1_"
+                )
+                log.info("📋 STEP 6 — Menu reply built  products=%d", len(products))
             else:
-                reply = f"Hi! {business['name']}'s menu is being updated. Check back soon! 🙏"
+                reply = (
+                    f"Hi! 👋 {business['name']}'s menu is being updated. "
+                    f"Check back very soon! 🙏"
+                )
+                log.warning("📋 STEP 6 — Menu requested but NO products in DB for business_id=%s",
+                            business["id"])
 
-        elif text.lower().startswith("order "):
+        elif text_lower.startswith("order "):
             parts = text.strip().split()
             if len(parts) < 3:
                 reply = "❌ Format: order <item> <quantity>\nExample: order sadza 2"
             else:
                 try:
-                    product_name = parts[1].lower()
-                    qty = int(parts[2])
-                    if qty <= 0: raise ValueError
+                    p_name = parts[1].lower()
+                    qty    = int(parts[2])
+                    if qty <= 0:
+                        raise ValueError("qty must be positive")
 
-                    class _Order:
-                        customer_phone = customer_phone
-                        product_name   = product_name
-                        quantity       = qty
+                    # Use a plain dict passed into crud.create_order via a simple namespace
+                    class _OrderPayload:
+                        pass
+                    op = _OrderPayload()
+                    op.customer_phone = customer_phone
+                    op.product_name   = p_name
+                    op.quantity       = qty
 
-                    crud.create_order(business["id"], _Order())
+                    crud.create_order(business["id"], op)
+                    log.info("🛒 STEP 6 — Order created  product=%s  qty=%d", p_name, qty)
                     reply = (
-                        f"✅ *Order confirmed!*\n\n{product_name.capitalize()} × {qty}\n\n"
-                        f"Thank you for ordering from {business['name']}! We'll be in touch. 🙏"
+                        f"✅ *Order confirmed!*\n\n"
+                        f"{p_name.capitalize()} × {qty}\n\n"
+                        f"Thank you for ordering from *{business['name']}*! "
+                        f"We\'ll be in touch shortly. 🙏"
                     )
                 except ValueError:
-                    reply = "❌ Invalid quantity. Use a whole number.\nExample: order sadza 2"
+                    reply = "❌ Invalid quantity. Please use a whole number.\nExample: order sadza 2"
+
         else:
-            # Pass product dicts — ai.py accesses .name and .price via attribute;
-            # we adapt with a simple wrapper
-            class _P:
-                def __init__(self, d):
-                    self.name  = d["name"]
-                    self.price = d["price"]
+            class _ProductProxy:
+                def __init__(self, d: dict):
+                    self.name  = d.get("name", "")
+                    self.price = d.get("price", 0)
 
             reply = generate_reply(
                 message=text,
                 business_name=business["name"],
-                products=[_P(p) for p in products],
+                products=[_ProductProxy(p) for p in products],
             )
+            log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
 
+    except Exception as exc:
+        log.exception("📦 STEP 6 FAIL — reply generation error: %s", exc)
+        reply = (
+            f"Hi! 👋 Thanks for contacting *{business['name']}*. "
+            f"We received your message and will get back to you shortly."
+        )
+
+    # ── STEP 7: Save outgoing message ─────────────────────────────────────
+    try:
         crud.log_message(business["id"], customer_phone, "out", reply)
         out_msg = crud.create_message(customer["id"], business["id"], reply, "outgoing")
-
-        await manager.broadcast(business["id"], {
-            "event":       "new_message",
-            "customer_id": customer["id"],
-            "phone":       customer_phone,
-            "message":     out_msg,
-        })
-
-        if token:
-            send_whatsapp(phone_number_id, token, customer_phone, reply)
-        else:
-            log.warning("📵 WhatsApp NOT sent — no token for '%s'", business["name"])
-
-    except KeyError as exc:
-        log.error("⚠️  Webhook KeyError: %s | body: %s", exc, data)
+        log.info("💾 STEP 7 OK — Outgoing message saved  id=%s", out_msg["id"] if out_msg else "?")
     except Exception as exc:
-        log.exception("⚠️  Webhook error: %s", exc)
+        log.exception("💾 STEP 7 FAIL — could not save outgoing message: %s", exc)
+
+    try:
+        await manager.broadcast(business["id"], {
+            "event": "new_message", "customer_id": customer["id"],
+            "phone": customer_phone, "message": out_msg if "out_msg" in dir() else {},
+        })
+    except Exception:
+        pass
+
+    # ── STEP 8: Send via WhatsApp API ─────────────────────────────────────
+    if token:
+        log.info("📤 STEP 8 — Sending via WhatsApp  to=%s  phone_id=%s  reply_len=%d",
+                 customer_phone, phone_number_id, len(reply))
+        result = send_whatsapp(phone_number_id, token, customer_phone, reply)
+        if "error" in result:
+            log.error("📤 STEP 8 FAIL — WhatsApp API error: %s", result["error"])
+        else:
+            log.info("📤 STEP 8 OK — WhatsApp delivered  msg_id=%s",
+                     (result.get("messages") or [{}])[0].get("id", "?"))
+    else:
+        log.error(
+            "📤 STEP 8 FAIL — No WhatsApp token for business '%s' (id=%s). "
+            "Message was SAVED to DB but NOT delivered. "
+            "Fix: go to Settings → enter WhatsApp Access Token.",
+            business["name"], business["id"]
+        )
 
     return {"status": "ok"}
 
@@ -803,7 +993,6 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     wa_result: dict = {}
     if has_token and has_phone_id:
         wa_result = send_whatsapp(business["whatsapp_phone_id"], token, customer["phone"], body.text)
-        log.info(f"WhatsApp result: {wa_result}")
     else:
         missing = [k for k, v in {"phone_number_id": has_phone_id, "token": has_token}.items() if not v]
         log.warning("chat_send: WhatsApp NOT sent — missing: %s", missing)
