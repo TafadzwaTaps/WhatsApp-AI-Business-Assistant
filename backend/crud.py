@@ -580,3 +580,94 @@ def get_admin_stats() -> dict:
         "total_orders":      len(orders),
         "total_revenue":     round(sum(float(o.get("total_price") or 0) for o in orders), 2),
     }
+
+# ── CARTS (AI ORDER MEMORY) ────────────────────────────────────────────────
+
+def get_cart(phone: str, business_id: int) -> dict:
+    res = (
+        supabase.table("carts")
+        .select("*")
+        .eq("phone", phone)
+        .eq("business_id", business_id)
+        .limit(1)
+        .execute()
+    )
+    cart = _one("carts", res)
+    if not cart:
+        return {"phone": phone, "business_id": business_id, "items": {}}
+    return cart
+
+
+def save_cart(phone: str, business_id: int, items: dict) -> dict:
+    res = (
+        supabase.table("carts")
+        .upsert(
+            {
+                "phone": phone,
+                "business_id": business_id,
+                "items": items,
+                "updated_at": _now(),
+            },
+            on_conflict="phone,business_id",
+        )
+        .execute()
+    )
+    return _one("carts", res)
+
+
+def clear_cart(phone: str, business_id: int) -> None:
+    supabase.table("carts")\
+        .delete()\
+        .eq("phone", phone)\
+        .eq("business_id", business_id)\
+        .execute()
+    
+# ── AI MEMORY (Phase 3 Support) ─────────────────────────────────────────────
+
+def get_user_memory(phone: str, business_id: int) -> dict:
+    """
+    Stores long-term behavioral memory per user.
+    Used for recommendations and personalization.
+    """
+    res = (
+        supabase.table("user_memory")
+        .select("*")
+        .eq("phone", phone)
+        .eq("business_id", business_id)
+        .limit(1)
+        .execute()
+    )
+
+    row = _one("user_memory", res)
+
+    if not row:
+        return {
+            "phone": phone,
+            "business_id": business_id,
+            "frequent_items": {},
+            "last_orders": []
+        }
+
+    return row
+
+
+def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
+    """
+    Upsert user behavioral memory.
+    """
+    res = (
+        supabase.table("user_memory")
+        .upsert(
+            {
+                "phone": phone,
+                "business_id": business_id,
+                "frequent_items": memory.get("frequent_items", {}),
+                "last_orders": memory.get("last_orders", []),
+                "updated_at": _now(),
+            },
+            on_conflict="phone,business_id",
+        )
+        .execute()
+    )
+
+    return _one("user_memory", res)    

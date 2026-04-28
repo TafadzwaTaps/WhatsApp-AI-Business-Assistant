@@ -1,26 +1,15 @@
-from fastapi import APIRouter, Request, Depends
-from sqlalchemy.orm import Session
-from database import SessionLocal
-import crud, schemas
+from fastapi import APIRouter, Request
+import crud
 from ai import generate_reply
 
 router = APIRouter()
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 @router.post("/webhook")
-async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
+async def whatsapp_webhook(request: Request):
     data = await request.json()
 
     try:
-        # =========================================
-        # 🟢 META FORMAT (WhatsApp Cloud API)
-        # =========================================
         entry = data.get("entry", [None])[0]
         change = entry.get("changes", [None])[0] if entry else None
         value = change.get("value", {}) if change else {}
@@ -28,66 +17,71 @@ async def whatsapp_webhook(request: Request, db: Session = Depends(get_db)):
         phone_number_id = value.get("metadata", {}).get("phone_number_id")
         messages = value.get("messages", [])
 
-        if messages:
-            message = messages[0].get("text", {}).get("body", "")
-            phone = messages[0].get("from", "")
-        else:
-            # =========================================
-            # 🔵 FALLBACK (Twilio format)
-            # =========================================
-            message = data.get("Body", "")
-            phone = data.get("From", "")
-            phone_number_id = None
+        if not messages:
+            return {"status": "no message"}
 
-        print("📩 Message:", message)
+        msg_obj = messages[0]
 
-        # =========================================
-        # 🔎 MULTI-USER: GET CREDENTIALS
-        # =========================================
-        access_token = None
+        # ❌ ignore non-text
+        if "text" not in msg_obj:
+            return {"status": "ignored non-text"}
 
-        if phone_number_id:
-            creds = crud.get_credentials_by_phone_id(db, phone_number_id)
-            if creds:
-                access_token = creds.access_token
+        message = msg_obj.get("text", {}).get("body", "").strip()
+        phone = msg_obj.get("from", "")
+        wa_id = msg_obj.get("id")
 
-        # =========================================
-        # 🤖 AI RESPONSE
-        # =========================================
-        reply = generate_reply(message)
+        if not message:
+            return {"status": "empty message"}
 
-        # =========================================
-        # 🛒 ORDER LOGIC (UNCHANGED)
-        # =========================================
-        if message.lower().startswith("order"):
-            try:
-                _, product, qty = message.split()
-                order = schemas.OrderCreate(
-                    customer_phone=phone,
-                    product_name=product,
-                    quantity=int(qty)
-                )
-                crud.create_order(db, order)
-                reply = f"✅ Order placed: {product} x{qty}"
-            except:
-                reply = "❌ Invalid format. Use: order <product> <quantity>"
+        # 🔥 deduplication (CRITICAL)
+        if wa_id and crud.message_exists(wa_id):
+            return {"status": "duplicate ignored"}
 
-        # =========================================
-        # 📤 SEND RESPONSE (META ONLY)
-        # =========================================
-        if phone_number_id and access_token:
-            from meta_sender import send_whatsapp_message
+        business = crud.get_business_by_phone_id(phone_number_id)
 
-            send_whatsapp_message(
-                phone_number_id=phone_number_id,
-                access_token=access_token,
-                to=phone,
-                message=reply
-            )
+        if not business:
+            return {"error": "business not found"}
 
-        # Twilio auto-responds differently, so just return
-        return {"reply": reply}
+        business_id = business["id"]
+        business_name = business["name"]
+
+        # safe logging
+        try:
+            crud.log_message(business_id, phone, "in", message)
+        except Exception as e:
+            print("log_message failed:", e)
+
+        products = crud.get_products(business_id)
+
+        reply = generate_reply(
+            message=message,
+            phone=phone,
+            business_id=business_id,
+            business_name=business_name,
+            products=products
+        )
+
+        try:
+            crud.log_message(business_id, phone, "out", reply)
+        except Exception as e:
+            print("log_message failed:", e)
+
+        token = crud.get_decrypted_token(business)
+
+        if not token:
+            return {"error": "missing token"}
+
+        from meta_sender import send_whatsapp_message
+
+        send_whatsapp_message(
+            phone_number_id=phone_number_id,
+            access_token=token,
+            to=phone,
+            message=reply
+        )
+
+        return {"status": "sent"}
 
     except Exception as e:
-        print("🔥 Error:", str(e))
-        return {"error": "Something went wrong"}
+        print("🔥 Webhook Error:", str(e))
+        return {"error": "server error"}
