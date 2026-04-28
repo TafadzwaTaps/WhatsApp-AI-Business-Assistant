@@ -466,12 +466,38 @@ async def receive_message(request: Request):
                         phone_number_id, customer_phone, text)
             return {"status": "ok"}
 
-        log.info("📥 STEP 1 OK — Incoming  phone_id=%s  from=%s  text=%r",
-                 phone_number_id, customer_phone, text)
+        # ── Extract the WhatsApp message ID (wamid.XXX…) ─────────────────
+        # This is Meta's unique ID per message — present on every inbound text.
+        # We use it as the deduplication key so webhook retries are ignored.
+        wa_message_id = msg_obj.get("id", "")
+
+        log.info(
+            "📩 STEP 1 OK — Incoming  wa_id=%s  phone_id=%s  from=%s  text=%r",
+            wa_message_id, phone_number_id, customer_phone, text,
+        )
 
     except Exception as exc:
         log.error("📥 STEP 1 FAIL — Could not parse webhook payload: %s | body: %s", exc, data)
         return {"status": "ok"}
+
+    # ── STEP 1b: Deduplication gate ───────────────────────────────────────
+    # WhatsApp retries unacknowledged webhooks up to ~20 times over ~24 h.
+    # We must return HTTP 200 immediately (which we do), but if a previous
+    # delivery already processed this message_id we must NOT process it again.
+    # Check happens here — BEFORE business lookup, token decryption, DB writes,
+    # AI calls, and WhatsApp sends — so retries are cheap (one DB read).
+    if wa_message_id:
+        try:
+            if crud.message_exists(wa_message_id):
+                log.warning(
+                    "⚠️  DUPLICATE — wa_id=%s already processed, skipping  from=%s",
+                    wa_message_id, customer_phone,
+                )
+                return {"status": "ok"}
+        except Exception as exc:
+            # If the dedup check itself fails, log and continue processing
+            # to avoid dropping a real message due to a transient DB error.
+            log.error("⚠️  Dedup check failed (will process anyway): %s", exc)
 
     # ── STEP 2: Find business ─────────────────────────────────────────────
     try:
@@ -510,18 +536,30 @@ async def receive_message(request: Request):
         return {"status": "ok"}
 
     # ── STEP 5: Save incoming message ────────────────────────────────────
+    in_msg: dict = {}
     try:
         crud.log_message(business["id"], customer_phone, "in", text)
-        in_msg = crud.create_message(customer["id"], business["id"], text, "incoming")
-        log.info("💾 STEP 5 OK — Incoming message saved  id=%s", in_msg["id"] if in_msg else "?")
+        in_msg = crud.create_message(
+            customer["id"], business["id"], text, "incoming",
+            wa_message_id=wa_message_id,   # stored for dedup on retries
+        )
+        log.info("💾 STEP 5 OK — Incoming message saved  id=%s  wa_id=%s",
+                 in_msg.get("id", "?"), wa_message_id)
     except Exception as exc:
+        # A UNIQUE violation on wa_message_id here means the dedup SELECT
+        # above had a race condition with a concurrent retry — safe to skip.
+        err_str = str(exc)
+        if "wa_message_id" in err_str or "unique" in err_str.lower():
+            log.warning("💾 STEP 5 — Duplicate detected at INSERT level  wa_id=%s — skipping",
+                        wa_message_id)
+            return {"status": "ok"}
         log.exception("💾 STEP 5 FAIL — could not save incoming message: %s", exc)
         # Non-fatal — still attempt to reply
 
     try:
         await manager.broadcast(business["id"], {
             "event": "new_message", "customer_id": customer["id"],
-            "phone": customer_phone, "message": in_msg if "in_msg" in dir() else {},
+            "phone": customer_phone, "message": in_msg,
         })
     except Exception:
         pass  # WebSocket broadcast failure must never block the reply
@@ -616,7 +654,7 @@ async def receive_message(request: Request):
     try:
         await manager.broadcast(business["id"], {
             "event": "new_message", "customer_id": customer["id"],
-            "phone": customer_phone, "message": out_msg if "out_msg" in dir() else {},
+            "phone": customer_phone, "message": out_msg,
         })
     except Exception:
         pass
@@ -916,6 +954,76 @@ def chat_conversations(
     user=Depends(get_current_user),
 ):
     return crud.get_chat_conversations(user["business_id"], filter_unread=unread_only)
+
+
+@app.get("/chat/conversations/{phone:path}")
+def chat_messages_by_phone(
+    phone: str,
+    limit:  int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user=Depends(get_current_user),
+):
+    """
+    Return messages for a conversation identified by phone number.
+
+    dashboard.js calls:  GET /chat/conversations/{phone}
+    This endpoint resolves phone → customer → messages so the dashboard
+    never gets a 404.  The response shape is identical to /chat/messages/{id}
+    so no frontend changes are needed.
+
+    The {phone:path} converter handles phone numbers that contain a '+'
+    prefix (e.g. +263771234567) which FastAPI would otherwise reject as
+    an invalid path segment.
+    """
+    # URL-decode the phone in case it was percent-encoded by the browser
+    from urllib.parse import unquote
+    phone = unquote(phone)
+
+    from db import supabase as _supa
+    customer = (
+        _supa.table("customers")
+        .select("*")
+        .eq("phone", phone)
+        .eq("business_id", user["business_id"])
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not customer:
+        # Fall back to legacy chat_messages table so the dashboard still
+        # shows data for contacts who haven't been migrated to the CRM yet.
+        legacy = crud.get_messages_for_phone(user["business_id"], phone)
+        if not legacy:
+            raise HTTPException(404, f"No conversation found for phone: {phone}")
+        return {
+            "customer_id":   None,
+            "phone":         phone,
+            "total_fetched": len(legacy),
+            "limit":         limit,
+            "offset":        offset,
+            "messages": [
+                {
+                    "id":         m.get("id"),
+                    "text":       m.get("message", ""),
+                    "direction":  "outgoing" if m.get("direction") == "out" else "incoming",
+                    "is_read":    True,
+                    "status":     "sent",
+                    "created_at": m.get("created_at"),
+                }
+                for m in legacy
+            ],
+        }
+
+    c = customer[0]
+    msgs = crud.get_messages_by_customer(c["id"], limit=limit, offset=offset)
+    return {
+        "customer_id":   c["id"],
+        "phone":         phone,
+        "total_fetched": len(msgs),
+        "limit":         limit,
+        "offset":        offset,
+        "messages":      msgs,
+    }
 
 
 @app.get("/chat/messages/{customer_id}")

@@ -400,18 +400,45 @@ def get_customer_by_id(customer_id: int, business_id: int) -> Optional[dict]:
 
 # ── Message (CRM) ─────────────────────────────────────────────────────────────
 
+def message_exists(wa_message_id: str) -> bool:
+    """
+    Return True if this WhatsApp message ID has already been processed.
+    Used as the deduplication gate in the webhook — checked BEFORE any
+    business logic runs so nothing is processed twice.
+
+    wa_message_id is the 'wamid.XXX' string from Meta's payload.
+    The messages.wa_message_id column has a UNIQUE constraint so a
+    second insert would also fail, but checking first is cheaper and
+    gives us a clean log line instead of a DB error.
+    """
+    if not wa_message_id:
+        return False
+    res = (
+        supabase.table("messages")
+        .select("id")
+        .eq("wa_message_id", wa_message_id)
+        .limit(1)
+        .execute()
+    )
+    exists = bool(res.data)
+    if exists:
+        log.warning("⚠️  Duplicate WA message skipped  wa_id=%s", wa_message_id)
+    return exists
+
+
 def create_message(
     customer_id: int,
     business_id: int,
     text: str,
     direction: str,
+    wa_message_id: str | None = None,
 ) -> dict:
     """
     Insert a message row and increment unread_count for incoming messages.
     Returns the inserted row dict.
     """
     is_read = direction == "outgoing"
-    row = {
+    row: dict = {
         "customer_id": customer_id,
         "business_id": business_id,
         "text":        text,
@@ -420,6 +447,11 @@ def create_message(
         "status":      "sent",
         "created_at":  _now(),
     }
+    # Store the WhatsApp message ID when available (incoming messages only).
+    # The UNIQUE constraint on this column means a second insert for the same
+    # wa_message_id will raise a DB error — message_exists() catches it first.
+    if wa_message_id:
+        row["wa_message_id"] = wa_message_id
     res = supabase.table("messages").insert(row).execute()
     msg = _one("messages", res)
 
