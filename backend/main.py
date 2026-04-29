@@ -22,8 +22,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 
-from backend.analytic import get_dashboard_stats
-from backend.payments import confirm_payment
+from .analytic import get_dashboard_stats
+from .payments import confirm_payment
 import crud
 from crypto import TokenDecryptionError
 from ai import generate_reply
