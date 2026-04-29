@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request
+import requests
 import crud
 from ai import generate_reply
 
@@ -85,3 +86,37 @@ async def whatsapp_webhook(request: Request):
     except Exception as e:
         print("🔥 Webhook Error:", str(e))
         return {"error": "server error"}
+    
+def send_whatsapp_document(phone, file_path, token, phone_id):
+
+    # Upload file
+    upload_url = f"https://graph.facebook.com/v18.0/{phone_id}/media"
+
+    files = {
+        'file': open(file_path, 'rb')
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    upload_res = requests.post(upload_url, headers=headers, files=files)
+    media_id = upload_res.json().get("id")
+
+    # Send doc
+    url = f"https://graph.facebook.com/v18.0/{phone_id}/messages"
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": phone,
+        "type": "document",
+        "document": {
+            "id": media_id,
+            "filename": file_path.split("/")[-1]
+        }
+    }
+
+    requests.post(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }, json=payload)    

@@ -22,6 +22,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 
+from backend.analytic import get_dashboard_stats
+from backend.payments import confirm_payment
 import crud
 from crypto import TokenDecryptionError
 from ai import generate_reply
@@ -1043,3 +1045,20 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     })
 
     return {"ok": True, "message_id": msg["id"], "whatsapp_result": wa_result}
+
+@app.post("/payment/webhook")
+async def payment_webhook(request: Request):
+
+    data = await request.json()
+
+    result = confirm_payment(
+        supabase,
+        data.get("reference"),
+        data.get("amount")
+    )
+
+    return result
+
+@app.get("/dashboard/{business_id}")
+def dashboard_stats(business_id: int):
+    return get_dashboard_stats(supabase, business_id)
