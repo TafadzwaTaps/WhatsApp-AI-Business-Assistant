@@ -521,7 +521,7 @@ async def receive_message(request: Request):
             products=products,
         )
         log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
-
+       
     except Exception as exc:
         log.exception("📦 STEP 6 FAIL: %s", exc)
         reply = (

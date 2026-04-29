@@ -19,7 +19,6 @@ import crud
 
 from order_lifecycle import create_order
 from pdf_invoice import generate_pdf_invoice
-from whatsapp import send_whatsapp_document
 
 log = logging.getLogger(__name__)
 
@@ -239,12 +238,6 @@ def generate_reply(
 
             pdf_path = generate_pdf_invoice(order)
 
-            send_whatsapp_document(
-                phone=phone,
-                file_path=pdf_path,
-                token=crud.WHATSAPP_TOKEN,
-                phone_id=crud.PHONE_NUMBER_ID
-            )
 
             return (
                 f"✅ Order placed!\n"
