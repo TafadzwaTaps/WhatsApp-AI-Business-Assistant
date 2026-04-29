@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 # ── Business ──────────────────────────────────────────────
@@ -31,22 +31,30 @@ class BusinessUpdate(BaseModel):
 class ProductCreate(BaseModel):
     name: str
     price: float
-    image_url: Optional[str] = None   # optional URL or base64 data URI
+    image_url: Optional[str] = None
+    stock: int = 0
+    low_stock_threshold: int = 5
 
 class ProductOut(BaseModel):
     id: int
     name: str
     price: float
     image_url: Optional[str] = None
+    stock: Optional[int] = 0
+    low_stock_threshold: Optional[int] = 5
 
     class Config:
         from_attributes = True
 
 # ── Order ─────────────────────────────────────────────────
+class CartItem(BaseModel):
+    name: str
+    qty: int
+    price: float
+
 class OrderCreate(BaseModel):
     customer_phone: str
-    product_name: str
-    quantity: int
+    items: List[CartItem]
 
 class OrderOut(BaseModel):
     id: int
@@ -60,6 +68,9 @@ class OrderOut(BaseModel):
     class Config:
         from_attributes = True
 
+class OrderStatusUpdate(BaseModel):
+    status: str  # pending | confirmed | paid | delivered
+
 # ── Chat ──────────────────────────────────────────────────
 class ChatMessageOut(BaseModel):
     id: int
@@ -70,8 +81,6 @@ class ChatMessageOut(BaseModel):
 
     class Config:
         from_attributes = True
-
-# ADD
 
 class WhatsAppCredentialCreate(BaseModel):
     user_id: int

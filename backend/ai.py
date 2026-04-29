@@ -1,35 +1,37 @@
 """
-ai.py — Final Universal Autonomous Business AI Engine
+ai.py — Universal Autonomous Business AI Engine
 
 WHAT THIS IS:
-- A business-agnostic AI commerce + service brain
+- Business-agnostic AI commerce + service brain
 - Works for ANY industry (barber, shop, salon, SaaS, repairs, etc.)
-- Handles ordering, booking-style services, carts, and recommendations
+- Handles ordering, carts, recommendations
 - Learns user behavior over time (lightweight memory layer)
 
-CORE IDEA:
-Everything = "catalog item"
-User intent = "action on catalog"
-AI = "decision engine + memory + recommendation layer"
+CHECKOUT FLOW:
+  detect "checkout" → create_order_supabase() → generate_invoice() → return invoice as WA message
+  Stock is reduced atomically; insufficient stock blocks checkout with a friendly message.
 """
 
 import re
+import logging
 from difflib import get_close_matches
 import crud
+
+log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
 # MEMORY (USER BEHAVIOR LAYER)
 # ─────────────────────────────────────────────
 
-def _get_memory(phone, business_id):
+def _get_memory(phone: str, business_id: int) -> dict:
     return crud.get_user_memory(phone, business_id) or {
         "frequent_items": {},
-        "last_orders": []
+        "last_orders": [],
     }
 
 
-def _update_memory(phone, business_id, cart):
+def _update_memory(phone: str, business_id: int, cart: list) -> None:
     mem = _get_memory(phone, business_id)
 
     for item in cart:
@@ -43,41 +45,47 @@ def _update_memory(phone, business_id, cart):
 
 
 # ─────────────────────────────────────────────
-# INTENT ENGINE (UNIVERSAL)
+# INTENT ENGINE
 # ─────────────────────────────────────────────
 
-def _intent(text: str):
-    text = text.lower()
+def _intent(text: str) -> str:
+    t = text.lower()
 
-    if any(w in text for w in ["menu", "list", "browse", "show"]):
+    if any(w in t for w in ["menu", "list", "browse", "show", "catalog"]):
         return "browse"
-    if any(w in text for w in ["cart", "my cart"]):
+    if any(w in t for w in ["my cart", "view cart", "show cart", "cart"]):
         return "cart"
-    if any(w in text for w in ["checkout", "pay", "order", "done"]):
+    if any(w in t for w in ["checkout", "pay", "confirm order", "place order", "done", "finish"]):
         return "checkout"
-    if text.startswith("remove"):
+    if t.startswith("remove") or t.startswith("delete"):
         return "remove"
-    if any(w in text for w in ["help"]):
+    if any(w in t for w in ["help", "hi ", "hello", "hey", "start"]) or t in ("hi", "hello", "hey"):
         return "help"
 
     return "order"
 
 
 # ─────────────────────────────────────────────
-# SMART MATCHING (NO INDUSTRY ASSUMPTIONS)
+# SMART MATCHING
 # ─────────────────────────────────────────────
 
-def _find_product(text, products):
-    names = [p["name"].lower() for p in products]
-    match = get_close_matches(text.lower(), names, n=1, cutoff=0.55)
+def _find_product(text: str, products: list) -> dict | None:
+    if not products:
+        return None
 
+    names = [p["name"].lower() for p in products]
+
+    # Full phrase match
+    match = get_close_matches(text.lower(), names, n=1, cutoff=0.55)
     if match:
         for p in products:
             if p["name"].lower() == match[0]:
                 return p
 
-    # fallback word scan
+    # Word-by-word scan
     for word in text.split():
+        if len(word) < 3:
+            continue
         match = get_close_matches(word, names, n=1, cutoff=0.6)
         if match:
             for p in products:
@@ -88,7 +96,7 @@ def _find_product(text, products):
 
 
 # ─────────────────────────────────────────────
-# QUANTITY ENGINE (UNIVERSAL)
+# QUANTITY ENGINE
 # ─────────────────────────────────────────────
 
 NUMBER_WORDS = {
@@ -96,22 +104,22 @@ NUMBER_WORDS = {
     "two": 2, "three": 3, "four": 4,
     "five": 5, "six": 6, "seven": 7,
     "eight": 8, "nine": 9, "ten": 10,
-    "couple": 2, "few": 3
+    "couple": 2, "few": 3,
 }
 
 
-def _qty(text: str):
-    text = text.lower()
+def _qty(text: str) -> int:
+    t = text.lower()
 
-    m = re.search(r"x(\d+)", text)
+    m = re.search(r"x\s*(\d+)", t)
     if m:
-        return int(m.group(1))
+        return max(1, int(m.group(1)))
 
-    m = re.search(r"\b(\d+)\b", text)
+    m = re.search(r"\b(\d+)\b", t)
     if m:
-        return int(m.group(1))
+        return max(1, int(m.group(1)))
 
-    for w in text.split():
+    for w in t.split():
         if w in NUMBER_WORDS:
             return NUMBER_WORDS[w]
 
@@ -119,23 +127,17 @@ def _qty(text: str):
 
 
 # ─────────────────────────────────────────────
-# RECOMMENDATION ENGINE (LEARNING LAYER)
+# RECOMMENDATION ENGINE
 # ─────────────────────────────────────────────
 
-def _recommend(phone, business_id, products):
+def _recommend(phone: str, business_id: int, products: list) -> list:
     mem = _get_memory(phone, business_id)
-
     freq = mem.get("frequent_items", {})
     if not freq:
         return []
 
     top = max(freq, key=freq.get)
-
-    suggestions = []
-    for p in products:
-        if p["name"].lower() != top.lower():
-            suggestions.append(p)
-
+    suggestions = [p for p in products if p["name"].lower() != top.lower()]
     return suggestions[:2]
 
 
@@ -143,41 +145,64 @@ def _recommend(phone, business_id, products):
 # CART FORMATTER
 # ─────────────────────────────────────────────
 
-def _format_cart(cart):
+def _format_cart(cart: list) -> str:
     if not cart:
-        return "🛒 Cart is empty."
+        return "🛒 Your cart is empty."
 
-    total = 0
+    total = 0.0
     lines = []
 
     for i in cart:
-        subtotal = i["qty"] * i["price"]
+        subtotal = i["qty"] * float(i["price"])
         total += subtotal
-        lines.append(f"• {i['name']} x{i['qty']} — ${subtotal:.2f}")
+        lines.append(f"  • {i['name']} x{i['qty']}  — ${subtotal:.2f}")
 
-    return "🛒 Cart:\n\n" + "\n".join(lines) + f"\n\n💰 Total: ${total:.2f}"
+    return (
+        "🛒 *Your Cart:*\n"
+        + "\n".join(lines)
+        + f"\n\n💰 *Total: ${total:.2f}*"
+    )
 
 
 # ─────────────────────────────────────────────
 # MAIN ENGINE
 # ─────────────────────────────────────────────
 
-def generate_reply(message, phone, business_id, business_name, products):
-    text = message.lower().strip()
+def generate_reply(
+    message: str,
+    phone: str,
+    business_id: int,
+    business_name: str,
+    products: list,
+) -> str:
+    text = message.strip()
     intent = _intent(text)
 
-    cart = crud.get_cart(phone, business_id) or []
+    # Load cart (list of {name, qty, price})
+    cart_raw = crud.get_cart(phone, business_id)
+    # crud.get_cart returns a dict with an "items" key OR a list depending on storage
+    if isinstance(cart_raw, dict):
+        cart = cart_raw.get("items") or []
+        # Handle case where items is stored as a dict keyed by name
+        if isinstance(cart, dict):
+            cart = list(cart.values())
+    elif isinstance(cart_raw, list):
+        cart = cart_raw
+    else:
+        cart = []
 
     # ─────────────────────────────
     # HELP
     # ─────────────────────────────
     if intent == "help":
         return (
-            f"👋 Welcome to *{business_name}*\n\n"
-            f"You can:\n"
-            f"• Add items naturally (e.g. '2 haircut')\n"
-            f"• View cart\n"
-            f"• Checkout\n\n"
+            f"👋 Welcome to *{business_name}*!\n\n"
+            f"Here's what you can do:\n"
+            f"  • *menu* — browse our catalog\n"
+            f"  • Add items (e.g. '2 burgers')\n"
+            f"  • *cart* — view your cart\n"
+            f"  • *checkout* — place your order\n"
+            f"  • *remove [item]* — remove from cart\n\n"
             f"I learn your preferences over time 🤖"
         )
 
@@ -185,17 +210,25 @@ def generate_reply(message, phone, business_id, business_name, products):
     # BROWSE
     # ─────────────────────────────
     if intent == "browse":
-        menu = "\n".join([f"{p['name']} — ${p['price']}" for p in products])
+        if not products:
+            return f"📋 *{business_name}*\n\nNo items available yet. Check back soon! 🙏"
+
+        menu_lines = "\n".join(
+            [f"  {i+1}. {p['name']} — ${float(p['price']):.2f}" for i, p in enumerate(products)]
+        )
 
         recs = _recommend(phone, business_id, products)
         rec_text = ""
-
         if recs:
-            rec_text = "\n\n⭐ Recommended for you:\n" + "\n".join(
-                [f"• {r['name']}" for r in recs]
+            rec_text = "\n\n⭐ *Recommended for you:*\n" + "\n".join(
+                [f"  • {r['name']}" for r in recs]
             )
 
-        return f"📋 *{business_name}*\n\n{menu}{rec_text}"
+        return (
+            f"📋 *{business_name} Menu*\n\n"
+            f"{menu_lines}{rec_text}\n\n"
+            f"_Type item name to add to cart, or 'checkout' to place order._"
+        )
 
     # ─────────────────────────────
     # CART
@@ -208,44 +241,66 @@ def generate_reply(message, phone, business_id, business_name, products):
     # ─────────────────────────────
     if intent == "checkout":
         if not cart:
-            return "🛒 Cart is empty."
+            return "🛒 Your cart is empty. Add some items first!"
 
-        total = sum(i["qty"] * i["price"] for i in cart)
+        try:
+            from order_lifecycle import create_order_supabase
+            from invoice import generate_invoice_text
 
-        for item in cart:
-            crud.create_order(
-                business_id,
-                type("Order", (), {
-                    "customer_phone": phone,
-                    "product_name": item["name"],
-                    "quantity": item["qty"]
-                })
+            order = create_order_supabase(
+                business_id=business_id,
+                customer_phone=phone,
+                cart=cart,
             )
 
-        _update_memory(phone, business_id, cart)
-        crud.clear_cart(phone, business_id)
+            _update_memory(phone, business_id, cart)
+            crud.clear_cart(phone, business_id)
 
-        return f"✅ Order placed!\n💰 Total: ${total:.2f}"
+            invoice = generate_invoice_text(order)
+            return invoice
+
+        except ValueError as e:
+            # Stock issues, missing product, etc.
+            log.warning("checkout blocked — %s", e)
+            return f"⚠️ Could not place order:\n{e}\n\nPlease adjust your cart and try again."
+
+        except Exception as e:
+            log.exception("checkout error: %s", e)
+            return "❌ Something went wrong placing your order. Please try again."
 
     # ─────────────────────────────
     # REMOVE ITEM
     # ─────────────────────────────
     if intent == "remove":
-        for item in cart:
-            if item["name"].lower() in text:
+        text_lower = text.lower()
+        for item in list(cart):
+            if item["name"].lower() in text_lower:
                 cart.remove(item)
                 crud.save_cart(phone, business_id, cart)
-                return f"❌ Removed {item['name']}\n\n{_format_cart(cart)}"
+                return f"❌ Removed *{item['name']}* from cart.\n\n{_format_cart(cart)}"
 
-        return "Item not found."
+        return "⚠️ Item not found in cart.\n\n" + _format_cart(cart)
 
     # ─────────────────────────────
-    # ADD / ORDER (UNIVERSAL)
+    # ADD / ORDER
     # ─────────────────────────────
     product = _find_product(text, products)
 
     if product:
         qty = _qty(text)
+
+        # Check available stock before adding
+        available_stock = product.get("stock")
+        if available_stock is not None:
+            # Calculate already-in-cart qty
+            in_cart = next((i["qty"] for i in cart if i["name"] == product["name"]), 0)
+            if in_cart + qty > available_stock:
+                if available_stock == 0:
+                    return f"😔 Sorry, *{product['name']}* is out of stock."
+                return (
+                    f"⚠️ Only *{available_stock}* unit(s) of *{product['name']}* available "
+                    f"(you already have {in_cart} in cart)."
+                )
 
         for item in cart:
             if item["name"] == product["name"]:
@@ -253,32 +308,32 @@ def generate_reply(message, phone, business_id, business_name, products):
                 break
         else:
             cart.append({
-                "name": product["name"],
-                "qty": qty,
-                "price": float(product["price"])
+                "name":  product["name"],
+                "qty":   qty,
+                "price": float(product["price"]),
             })
 
         crud.save_cart(phone, business_id, cart)
 
         recs = _recommend(phone, business_id, products)
-
-        msg = f"👍 Added {product['name']} x{qty}\n\n" + _format_cart(cart)
+        msg = f"👍 Added *{product['name']}* x{qty} to cart.\n\n{_format_cart(cart)}"
 
         if recs:
-            msg += "\n\n⭐ You may also like:\n" + "\n".join(
-                [f"• {r['name']}" for r in recs]
+            msg += "\n\n⭐ *You may also like:*\n" + "\n".join(
+                [f"  • {r['name']}" for r in recs]
             )
 
+        msg += "\n\n_Type 'checkout' to place your order._"
         return msg
 
     # ─────────────────────────────
     # FALLBACK
     # ─────────────────────────────
     return (
-        f"🤖 I didn’t fully understand that.\n\n"
+        f"🤖 I didn't quite understand that.\n\n"
         f"Try:\n"
-        f"• 'add item name'\n"
-        f"• '2 of item name'\n"
-        f"• 'show cart'\n"
-        f"• 'checkout'\n"
+        f"  • *menu* — see what we offer\n"
+        f"  • '2 burgers' — add items\n"
+        f"  • *cart* — view your cart\n"
+        f"  • *checkout* — place your order\n"
     )

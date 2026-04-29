@@ -1,16 +1,14 @@
 """
 main.py — WaziBot SaaS API (Supabase edition)
 
-SQLAlchemy completely removed. All DB access goes through crud.py
-which uses the supabase-py client directly.
-
-No models.py, no database.py, no Session dependency.
+All DB access goes through crud.py which uses the supabase-py client.
+No SQLAlchemy, no database.py, no Session dependency.
 """
 
 import os
 import json
 import logging
-from typing import List, Optional
+from typing import Optional
 from datetime import datetime
 
 import requests as http_requests
@@ -34,6 +32,12 @@ from auth import (
     get_current_user, require_superadmin, require_business,
     SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
 )
+from order_lifecycle import (
+    create_order_supabase,
+    update_order_status_supabase,
+    VALID_STATUSES,
+)
+from invoice import generate_invoice_text
 
 load_dotenv()
 
@@ -66,7 +70,7 @@ app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -80,16 +84,16 @@ def _html(name: str) -> FileResponse:
     return FileResponse(path)
 
 
-@app.get("/")           
+@app.get("/")
 def landing():    return _html("landing.html")
 
-@app.get("/dashboard")  
+@app.get("/dashboard")
 def dashboard():  return _html("dashboard.html")
 
-@app.get("/inbox")      
+@app.get("/inbox")
 def inbox():      return _html("inbox.html")
 
-@app.get("/signup")     
+@app.get("/signup")
 def signup_page(): return _html("signup.html")
 
 
@@ -207,10 +211,9 @@ def signup(data: SignupRequest):
         raise HTTPException(
             400,
             "That WhatsApp Phone Number ID is already registered. "
-            "Check your Meta Developer Portal or update your existing account in Settings."
+            "Check your Meta Developer Portal or update your existing account in Settings.",
         )
 
-    # Use a simple namespace so crud.create_business(data) works unchanged
     class _Payload:
         name              = data.business_name
         owner_username    = data.username
@@ -285,7 +288,7 @@ def refresh_token_endpoint(data: RefreshRequest):
     return {
         **_token_pair(sub, role, business_id),
         "role": role,
-        **({"business_id": business_id} if business_id else {}),
+        **({} if business_id is None else {"business_id": business_id}),
     }
 
 
@@ -295,10 +298,10 @@ def refresh_token_endpoint(data: RefreshRequest):
 
 @app.get("/debug/env")
 def debug_env():
-    fernet_key  = os.getenv("FERNET_KEY", "")
-    secret_key  = os.getenv("SECRET_KEY", "")
-    supa_url    = os.getenv("SUPABASE_URL", "")
-    supa_key    = os.getenv("SUPABASE_KEY", "")
+    fernet_key = os.getenv("FERNET_KEY", "")
+    secret_key = os.getenv("SECRET_KEY", "")
+    supa_url   = os.getenv("SUPABASE_URL", "")
+    supa_key   = os.getenv("SUPABASE_KEY", "")
     return {
         "FERNET_KEY":   f"{fernet_key[:8]}…({len(fernet_key)} chars)" if fernet_key else "❌ NOT SET",
         "SECRET_KEY":   f"{secret_key[:4]}…({len(secret_key)} chars)" if secret_key else "❌ NOT SET",
@@ -323,14 +326,6 @@ def debug_token():
 
 @app.get("/debug/webhook")
 def debug_webhook(user=Depends(require_business)):
-    """
-    Diagnostic endpoint — checks every step the webhook relies on:
-      1. Business record found by phone_number_id
-      2. Token can be decrypted
-      3. Products exist in DB
-      4. WhatsApp API reachable with current token
-    Hit this URL in a browser after logging in to see exactly what's broken.
-    """
     bid      = user["business_id"]
     business = crud.get_business_by_id(bid)
     if not business:
@@ -344,7 +339,6 @@ def debug_webhook(user=Depends(require_business)):
         "has_token_stored":   bool(business.get("whatsapp_token")),
     }
 
-    # Step: decrypt token
     token = ""
     try:
         token = crud.get_decrypted_token(business)
@@ -354,7 +348,6 @@ def debug_webhook(user=Depends(require_business)):
         steps["token_decrypts"] = False
         steps["token_error"]    = str(exc)
 
-    # Step: products
     try:
         products = crud.get_products(bid)
         steps["products_count"] = len(products)
@@ -363,7 +356,6 @@ def debug_webhook(user=Depends(require_business)):
         steps["products_count"] = 0
         steps["products_error"] = str(exc)
 
-    # Step: WhatsApp API ping
     if token and business.get("whatsapp_phone_id"):
         try:
             resp = http_requests.get(
@@ -379,10 +371,9 @@ def debug_webhook(user=Depends(require_business)):
             steps["whatsapp_api_ok"]    = False
             steps["whatsapp_api_error"] = str(exc)
     else:
-        steps["whatsapp_api_ok"] = False
+        steps["whatsapp_api_ok"]   = False
         steps["whatsapp_api_skip"] = "missing phone_id or token"
 
-    # Overall health
     all_ok = (
         steps["has_phone_id"]
         and steps.get("token_decrypts")
@@ -399,12 +390,6 @@ def debug_webhook(user=Depends(require_business)):
 
 @app.get("/webhook")
 async def verify_webhook(request: Request):
-    """
-    Meta webhook verification.
-    MUST return the challenge as plain text (not JSON).
-    Returning an int or JSON object causes Meta to reject the verification
-    and stop sending all incoming messages to this endpoint.
-    """
     from fastapi.responses import PlainTextResponse
     p = request.query_params
     mode      = p.get("hub.mode", "")
@@ -419,19 +404,12 @@ async def verify_webhook(request: Request):
 
 @app.post("/webhook")
 async def receive_message(request: Request):
-    """
-    WhatsApp Cloud API webhook.
-
-    Every step is logged individually so Render logs show exactly where
-    a failure occurs rather than silently returning {"status": "ok"}.
-    """
     data = await request.json()
 
     # ── STEP 1: Parse Meta payload ────────────────────────────────────────
     try:
-        entry   = data.get("entry", [])
+        entry = data.get("entry", [])
         if not entry:
-            log.debug("Webhook: no entry — likely a status update, ignoring")
             return {"status": "ok"}
 
         changes = entry[0].get("changes", [])
@@ -440,18 +418,15 @@ async def receive_message(request: Request):
 
         value = changes[0].get("value", {})
 
-        # Status updates (delivered / read receipts) — ignore silently
         if "statuses" in value and "messages" not in value:
             return {"status": "ok"}
 
         if "messages" not in value:
-            log.debug("Webhook: no messages key in value — ignoring  value_keys=%s", list(value.keys()))
             return {"status": "ok"}
 
-        msg_obj = value["messages"][0]
+        msg_obj  = value["messages"][0]
         msg_type = msg_obj.get("type", "")
 
-        # Log non-text types so we know they arrived but were skipped
         if msg_type != "text":
             log.info("Webhook: skipping non-text message  type=%s", msg_type)
             return {"status": "ok"}
@@ -460,58 +435,37 @@ async def receive_message(request: Request):
         phone_number_id = metadata.get("phone_number_id", "")
         customer_phone  = msg_obj.get("from", "")
         text            = msg_obj.get("text", {}).get("body", "").strip()
+        wa_message_id   = msg_obj.get("id", "")
 
         if not phone_number_id or not customer_phone or not text:
-            log.warning("Webhook: missing required fields  phone_id=%r  from=%r  text=%r",
-                        phone_number_id, customer_phone, text)
+            log.warning("Webhook: missing required fields")
             return {"status": "ok"}
 
-        # ── Extract the WhatsApp message ID (wamid.XXX…) ─────────────────
-        # This is Meta's unique ID per message — present on every inbound text.
-        # We use it as the deduplication key so webhook retries are ignored.
-        wa_message_id = msg_obj.get("id", "")
-
-        log.info(
-            "📩 STEP 1 OK — Incoming  wa_id=%s  phone_id=%s  from=%s  text=%r",
-            wa_message_id, phone_number_id, customer_phone, text,
-        )
+        log.info("📩 STEP 1 OK  wa_id=%s  from=%s  text=%r", wa_message_id, customer_phone, text)
 
     except Exception as exc:
-        log.error("📥 STEP 1 FAIL — Could not parse webhook payload: %s | body: %s", exc, data)
+        log.error("📥 STEP 1 FAIL — parse error: %s", exc)
         return {"status": "ok"}
 
-    # ── STEP 1b: Deduplication gate ───────────────────────────────────────
-    # WhatsApp retries unacknowledged webhooks up to ~20 times over ~24 h.
-    # We must return HTTP 200 immediately (which we do), but if a previous
-    # delivery already processed this message_id we must NOT process it again.
-    # Check happens here — BEFORE business lookup, token decryption, DB writes,
-    # AI calls, and WhatsApp sends — so retries are cheap (one DB read).
+    # ── STEP 1b: Deduplication ─────────────────────────────────────────────
     if wa_message_id:
         try:
             if crud.message_exists(wa_message_id):
-                log.warning(
-                    "⚠️  DUPLICATE — wa_id=%s already processed, skipping  from=%s",
-                    wa_message_id, customer_phone,
-                )
                 return {"status": "ok"}
         except Exception as exc:
-            # If the dedup check itself fails, log and continue processing
-            # to avoid dropping a real message due to a transient DB error.
             log.error("⚠️  Dedup check failed (will process anyway): %s", exc)
 
     # ── STEP 2: Find business ─────────────────────────────────────────────
     try:
         business = crud.get_business_by_phone_id(phone_number_id)
         if not business:
-            log.error("📋 STEP 2 FAIL — No business found for phone_number_id=%s  "
-                      "Check that this Phone Number ID is saved in Settings.", phone_number_id)
+            log.error("📋 STEP 2 FAIL — No business for phone_number_id=%s", phone_number_id)
             return {"status": "ok"}
         if not business.get("is_active", True):
-            log.warning("📋 STEP 2 — Business suspended  id=%s  name=%s", business["id"], business["name"])
             return {"status": "ok"}
-        log.info("📋 STEP 2 OK — Business found  id=%s  name=%s", business["id"], business["name"])
+        log.info("📋 STEP 2 OK  id=%s  name=%s", business["id"], business["name"])
     except Exception as exc:
-        log.exception("📋 STEP 2 FAIL — business lookup error: %s", exc)
+        log.exception("📋 STEP 2 FAIL: %s", exc)
         return {"status": "ok"}
 
     # ── STEP 3: Decrypt token ─────────────────────────────────────────────
@@ -519,20 +473,18 @@ async def receive_message(request: Request):
     try:
         token = crud.get_decrypted_token(business)
         if token:
-            log.info("🔑 STEP 3 OK — Token decrypted  tail=…%s", token[-6:])
+            log.info("🔑 STEP 3 OK  tail=…%s", token[-6:])
         else:
-            log.warning("🔑 STEP 3 — No token configured for business %s  "
-                        "Messages will be saved but NOT sent via WhatsApp", business["name"])
+            log.warning("🔑 STEP 3 — No token for %s", business["name"])
     except TokenDecryptionError as exc:
-        log.error("🔑 STEP 3 FAIL — Token decryption error for %s: %s  "
-                  "Re-enter WhatsApp token in Settings.", business["name"], exc)
+        log.error("🔑 STEP 3 FAIL — %s: %s", business["name"], exc)
 
     # ── STEP 4: Get or create customer ────────────────────────────────────
     try:
         customer = crud.get_or_create_customer(customer_phone, business["id"])
-        log.info("👤 STEP 4 OK — Customer  id=%s  phone=%s", customer["id"], customer["phone"])
+        log.info("👤 STEP 4 OK  id=%s  phone=%s", customer["id"], customer["phone"])
     except Exception as exc:
-        log.exception("👤 STEP 4 FAIL — customer upsert error: %s", exc)
+        log.exception("👤 STEP 4 FAIL: %s", exc)
         return {"status": "ok"}
 
     # ── STEP 5: Save incoming message ────────────────────────────────────
@@ -541,20 +493,15 @@ async def receive_message(request: Request):
         crud.log_message(business["id"], customer_phone, "in", text)
         in_msg = crud.create_message(
             customer["id"], business["id"], text, "incoming",
-            wa_message_id=wa_message_id,   # stored for dedup on retries
+            wa_message_id=wa_message_id,
         )
-        log.info("💾 STEP 5 OK — Incoming message saved  id=%s  wa_id=%s",
-                 in_msg.get("id", "?"), wa_message_id)
+        log.info("💾 STEP 5 OK  id=%s  wa_id=%s", in_msg.get("id", "?"), wa_message_id)
     except Exception as exc:
-        # A UNIQUE violation on wa_message_id here means the dedup SELECT
-        # above had a race condition with a concurrent retry — safe to skip.
         err_str = str(exc)
         if "wa_message_id" in err_str or "unique" in err_str.lower():
-            log.warning("💾 STEP 5 — Duplicate detected at INSERT level  wa_id=%s — skipping",
-                        wa_message_id)
+            log.warning("💾 STEP 5 — Duplicate at INSERT level  wa_id=%s — skipping", wa_message_id)
             return {"status": "ok"}
-        log.exception("💾 STEP 5 FAIL — could not save incoming message: %s", exc)
-        # Non-fatal — still attempt to reply
+        log.exception("💾 STEP 5 FAIL: %s", exc)
 
     try:
         await manager.broadcast(business["id"], {
@@ -562,94 +509,37 @@ async def receive_message(request: Request):
             "phone": customer_phone, "message": in_msg,
         })
     except Exception:
-        pass  # WebSocket broadcast failure must never block the reply
+        pass
 
-    # ── STEP 6: Fetch products + generate reply ────────────────────────────
+    # ── STEP 6: Fetch products + generate AI reply ────────────────────────
     try:
         products = crud.get_products(business["id"])
-        log.info("📦 STEP 6 — Products fetched  count=%d  business_id=%s",
-                 len(products), business["id"])
+        log.info("📦 STEP 6 — Products fetched  count=%d", len(products))
 
-        text_lower = text.lower().strip()
-
-        if "menu" in text_lower:
-            if products:
-                lines = "\n".join(
-                    [f"{i+1}. {p['name']} — ${float(p['price']):.2f}"
-                     for i, p in enumerate(products)]
-                )
-                reply = (
-                    f"📋 *{business['name']} Menu*\n\n"
-                    f"{lines}\n\n"
-                    f"To order, type:\n*order <item> <quantity>*\n"
-                    f"Example: _order {products[0]['name']} 1_"
-                )
-                log.info("📋 STEP 6 — Menu reply built  products=%d", len(products))
-            else:
-                reply = (
-                    f"Hi! 👋 {business['name']}'s menu is being updated. "
-                    f"Check back very soon! 🙏"
-                )
-                log.warning("📋 STEP 6 — Menu requested but NO products in DB for business_id=%s",
-                            business["id"])
-
-        elif text_lower.startswith("order "):
-            parts = text.strip().split()
-            if len(parts) < 3:
-                reply = "❌ Format: order <item> <quantity>\nExample: order sadza 2"
-            else:
-                try:
-                    p_name = parts[1].lower()
-                    qty    = int(parts[2])
-                    if qty <= 0:
-                        raise ValueError("qty must be positive")
-
-                    # Use a plain dict passed into crud.create_order via a simple namespace
-                    class _OrderPayload:
-                        pass
-                    op = _OrderPayload()
-                    op.customer_phone = customer_phone
-                    op.product_name   = p_name
-                    op.quantity       = qty
-
-                    crud.create_order(business["id"], op)
-                    log.info("🛒 STEP 6 — Order created  product=%s  qty=%d", p_name, qty)
-                    reply = (
-                        f"✅ *Order confirmed!*\n\n"
-                        f"{p_name.capitalize()} × {qty}\n\n"
-                        f"Thank you for ordering from *{business['name']}*! "
-                        f"We\'ll be in touch shortly. 🙏"
-                    )
-                except ValueError:
-                    reply = "❌ Invalid quantity. Please use a whole number.\nExample: order sadza 2"
-
-        else:
-            class _ProductProxy:
-                def __init__(self, d: dict):
-                    self.name  = d.get("name", "")
-                    self.price = d.get("price", 0)
-
-            reply = generate_reply(
-                message=text,
-                business_name=business["name"],
-                products=[_ProductProxy(p) for p in products],
-            )
-            log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
+        reply = generate_reply(
+            message=text,
+            phone=customer_phone,
+            business_id=business["id"],
+            business_name=business["name"],
+            products=products,
+        )
+        log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
 
     except Exception as exc:
-        log.exception("📦 STEP 6 FAIL — reply generation error: %s", exc)
+        log.exception("📦 STEP 6 FAIL: %s", exc)
         reply = (
             f"Hi! 👋 Thanks for contacting *{business['name']}*. "
             f"We received your message and will get back to you shortly."
         )
 
     # ── STEP 7: Save outgoing message ─────────────────────────────────────
+    out_msg: dict = {}
     try:
         crud.log_message(business["id"], customer_phone, "out", reply)
         out_msg = crud.create_message(customer["id"], business["id"], reply, "outgoing")
-        log.info("💾 STEP 7 OK — Outgoing message saved  id=%s", out_msg["id"] if out_msg else "?")
+        log.info("💾 STEP 7 OK  id=%s", out_msg.get("id", "?") if out_msg else "?")
     except Exception as exc:
-        log.exception("💾 STEP 7 FAIL — could not save outgoing message: %s", exc)
+        log.exception("💾 STEP 7 FAIL: %s", exc)
 
     try:
         await manager.broadcast(business["id"], {
@@ -661,20 +551,17 @@ async def receive_message(request: Request):
 
     # ── STEP 8: Send via WhatsApp API ─────────────────────────────────────
     if token:
-        log.info("📤 STEP 8 — Sending via WhatsApp  to=%s  phone_id=%s  reply_len=%d",
-                 customer_phone, phone_number_id, len(reply))
         result = send_whatsapp(phone_number_id, token, customer_phone, reply)
         if "error" in result:
-            log.error("📤 STEP 8 FAIL — WhatsApp API error: %s", result["error"])
+            log.error("📤 STEP 8 FAIL — WhatsApp error: %s", result["error"])
         else:
-            log.info("📤 STEP 8 OK — WhatsApp delivered  msg_id=%s",
+            log.info("📤 STEP 8 OK  msg_id=%s",
                      (result.get("messages") or [{}])[0].get("id", "?"))
     else:
         log.error(
-            "📤 STEP 8 FAIL — No WhatsApp token for business '%s' (id=%s). "
-            "Message was SAVED to DB but NOT delivered. "
-            "Fix: go to Settings → enter WhatsApp Access Token.",
-            business["name"], business["id"]
+            "📤 STEP 8 FAIL — No token for '%s' (id=%s). "
+            "Message saved but NOT delivered.",
+            business["name"], business["id"],
         )
 
     return {"status": "ok"}
@@ -719,18 +606,12 @@ def list_businesses(_=Depends(require_superadmin)):
     return crud.get_all_businesses()
 
 
-@app.post("/admin/businesses")
-def admin_create_business(data: BaseModel, _=Depends(require_superadmin)):
-    if crud.get_business_by_username(data.owner_username):
-        raise HTTPException(400, "Username already taken")
-    if getattr(data, "whatsapp_phone_id", None) and crud.get_business_by_phone_id(data.whatsapp_phone_id):
-        raise HTTPException(400, "WhatsApp Phone Number ID already registered.")
-    return crud.create_business(data)
-
-
 @app.patch("/admin/businesses/{business_id}")
-def admin_update_business(business_id: int, data: BaseModel, _=Depends(require_superadmin)):
-    b = crud.update_business(business_id, data)
+def admin_update_business(business_id: int, data: dict, _=Depends(require_superadmin)):
+    class _D:
+        def dict(self, **_):
+            return data
+    b = crud.update_business(business_id, _D())
     if not b:
         raise HTTPException(404, "Business not found")
     return b
@@ -754,10 +635,10 @@ def admin_stats(_=Depends(require_superadmin)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class BusinessUpdate(BaseModel):
-    name:               Optional[str]  = None
-    whatsapp_phone_id:  Optional[str]  = None
-    whatsapp_token:     Optional[str]  = None
-    is_active:          Optional[bool] = None
+    name:              Optional[str]  = None
+    whatsapp_phone_id: Optional[str]  = None
+    whatsapp_token:    Optional[str]  = None
+    is_active:         Optional[bool] = None
 
 
 @app.get("/me")
@@ -775,15 +656,11 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
     safe = data.dict(exclude_none=True)
     safe.pop("is_active", None)
 
-    # Duplicate phone_id check before UPDATE to give a clean 400 instead of DB error
     new_phone_id = safe.get("whatsapp_phone_id")
     if new_phone_id:
         existing = crud.get_business_by_phone_id(new_phone_id)
         if existing and existing["id"] != user["business_id"]:
-            raise HTTPException(
-                400,
-                "That WhatsApp Phone Number ID is already registered to another account."
-            )
+            raise HTTPException(400, "That WhatsApp Phone Number ID is already registered.")
 
     class _D:
         def dict(self, **_):
@@ -826,9 +703,11 @@ def test_whatsapp_connection(user=Depends(require_business)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class ProductCreate(BaseModel):
-    name:      str
-    price:     float
-    image_url: Optional[str] = None
+    name:                str
+    price:               float
+    image_url:           Optional[str] = None
+    stock:               int           = 0
+    low_stock_threshold: int           = 5
 
 
 @app.get("/products")
@@ -839,8 +718,8 @@ def get_products(user=Depends(require_business)):
 @app.post("/products", status_code=201)
 def create_product(product: ProductCreate, user=Depends(require_business)):
     log.info(
-        "📦 create_product  business_id=%s  name=%r  price=%s  has_image=%s",
-        user["business_id"], product.name, product.price, bool(product.image_url),
+        "📦 create_product  business_id=%s  name=%r  price=%s  stock=%s",
+        user["business_id"], product.name, product.price, product.stock,
     )
     return crud.create_product(user["business_id"], product)
 
@@ -857,9 +736,79 @@ def delete_product(product_id: int, user=Depends(require_business)):
 # ORDERS
 # ─────────────────────────────────────────────────────────────────────────────
 
+class OrderCreateRequest(BaseModel):
+    customer_phone: str
+    items: list   # [{name: str, qty: int, price: float}, ...]
+
+
+class OrderStatusUpdate(BaseModel):
+    status: str
+
+    @validator("status")
+    def status_valid(cls, v):
+        if v not in VALID_STATUSES:
+            raise ValueError(f"status must be one of {VALID_STATUSES}")
+        return v
+
+
 @app.get("/orders")
 def get_orders(user=Depends(require_business)):
     return crud.get_orders(user["business_id"])
+
+
+@app.post("/orders", status_code=201)
+def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
+    """
+    Create an order for the authenticated business.
+    Reduces stock automatically.
+    Returns the order + invoice text.
+    """
+    try:
+        order = create_order_supabase(
+            business_id=user["business_id"],
+            customer_phone=data.customer_phone,
+            cart=data.items,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    except Exception as exc:
+        log.exception("create_order_api error: %s", exc)
+        raise HTTPException(500, "Failed to create order")
+
+    invoice = generate_invoice_text(order)
+    return {
+        "message":  "Order created",
+        "order_id": order.get("id"),
+        "order":    order,
+        "invoice":  invoice,
+    }
+
+
+@app.put("/orders/{order_id}/status")
+def update_order_status_api(
+    order_id: int,
+    data: OrderStatusUpdate,
+    user=Depends(require_business),
+):
+    # Verify order belongs to this business
+    existing = crud.get_order_by_id(order_id, user["business_id"])
+    if not existing:
+        raise HTTPException(404, "Order not found")
+
+    try:
+        order = update_order_status_supabase(order_id, data.status)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    return {"message": "Status updated", "order_id": order_id, "status": order["status"]}
+
+
+@app.get("/orders/{order_id}/invoice")
+def get_invoice(order_id: int, user=Depends(require_business)):
+    order = crud.get_order_by_id(order_id, user["business_id"])
+    if not order:
+        raise HTTPException(404, "Order not found")
+    return {"invoice": generate_invoice_text(order)}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -963,19 +912,6 @@ def chat_messages_by_phone(
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user),
 ):
-    """
-    Return messages for a conversation identified by phone number.
-
-    dashboard.js calls:  GET /chat/conversations/{phone}
-    This endpoint resolves phone → customer → messages so the dashboard
-    never gets a 404.  The response shape is identical to /chat/messages/{id}
-    so no frontend changes are needed.
-
-    The {phone:path} converter handles phone numbers that contain a '+'
-    prefix (e.g. +263771234567) which FastAPI would otherwise reject as
-    an invalid path segment.
-    """
-    # URL-decode the phone in case it was percent-encoded by the browser
     from urllib.parse import unquote
     phone = unquote(phone)
 
@@ -990,8 +926,6 @@ def chat_messages_by_phone(
         .data
     )
     if not customer:
-        # Fall back to legacy chat_messages table so the dashboard still
-        # shows data for contacts who haven't been migrated to the CRM yet.
         legacy = crud.get_messages_for_phone(user["business_id"], phone)
         if not legacy:
             raise HTTPException(404, f"No conversation found for phone: {phone}")
@@ -1089,11 +1023,6 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 
     has_phone_id = bool(business.get("whatsapp_phone_id"))
     has_token    = bool(token)
-    log.info(
-        "chat_send  customer=%s  phone=%s  has_phone_id=%s  has_token=%s  token_tail=…%s",
-        body.customer_id, customer["phone"], has_phone_id, has_token,
-        token[-6:] if has_token else "N/A",
-    )
 
     crud.log_message(bid, customer["phone"], "out", body.text)
     msg = crud.create_message(customer["id"], bid, body.text, "outgoing")

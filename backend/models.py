@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, UniqueConstraint, Index, Numeric
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, UniqueConstraint, Index, Numeric, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -13,7 +13,6 @@ class Business(Base):
     owner_username = Column(String, unique=True, nullable=False)
     owner_password = Column(String, nullable=False)
 
-    # ✅ FIXED: removed unique
     whatsapp_phone_id = Column(String, nullable=True)
     whatsapp_token = Column(String, nullable=True)
 
@@ -33,11 +32,11 @@ class Product(Base):
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
 
     name = Column(String, nullable=False)
-
-    # ✅ FIXED: use Numeric instead of Float
     price = Column(Numeric(10, 2), nullable=False)
-
     image_url = Column(String, nullable=True)
+
+    stock = Column(Integer, default=0)
+    low_stock_threshold = Column(Integer, default=5)
 
     business = relationship("Business", back_populates="products")
 
@@ -56,9 +55,12 @@ class Order(Base):
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
 
-    # ✅ FIXED: use Numeric
+    # Full serialised cart: "[{name, qty, price}, ...]"
+    items = Column(Text, nullable=True)
+
     total_price = Column(Numeric(10, 2), nullable=False)
 
+    # Lifecycle: pending → confirmed → paid → delivered
     status = Column(String, default="pending")
 
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
@@ -69,6 +71,11 @@ class Order(Base):
         Index("ix_order_business", "business_id"),
     )
 
+    # Convenience alias so invoice.py / order_lifecycle.py can use .total
+    @property
+    def total(self):
+        return self.total_price
+
 
 class ChatMessage(Base):
     """Legacy table — keep for compatibility"""
@@ -78,10 +85,7 @@ class ChatMessage(Base):
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
 
     phone = Column(String, index=True)
-
-    # ✅ FIXED: standardized values
     direction = Column(String)  # incoming | outgoing
-
     message = Column(String, nullable=False)
 
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
@@ -117,8 +121,6 @@ class Message(Base):
     business_id = Column(Integer, ForeignKey("businesses.id"), nullable=False)
 
     text = Column(String, nullable=False)
-
-    # ✅ FIXED: consistent naming
     direction = Column(String, nullable=False)  # incoming | outgoing
 
     is_read = Column(Boolean, default=False)
@@ -127,7 +129,7 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
     customer = relationship("Customer", back_populates="customer_messages")
-    business = relationship("Business")  # ✅ FIXED
+    business = relationship("Business")
 
     __table_args__ = (
         Index("ix_message_customer_created", "customer_id", "created_at"),

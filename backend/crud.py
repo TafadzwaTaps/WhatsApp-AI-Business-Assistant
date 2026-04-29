@@ -1,16 +1,10 @@
 """
 crud.py — All database operations via Supabase (no SQLAlchemy).
 
-Every public function has the same name and return shape as the old
-SQLAlchemy version so main.py needs minimal changes.
-
 Return convention:
   • Single-row lookups return a dict or None.
   • Multi-row lookups return a list of dicts.
   • Create / update operations return the created/updated dict.
-
-The `db` parameter is gone — all functions use the module-level
-`supabase` client directly.
 """
 
 from __future__ import annotations
@@ -28,12 +22,10 @@ log = logging.getLogger(__name__)
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _now() -> str:
-    """UTC timestamp in ISO-8601 format for Supabase TIMESTAMPTZ columns."""
     return datetime.now(timezone.utc).isoformat()
 
 
 def _one(table: str, res) -> Optional[dict]:
-    """Return first row from a Supabase response or None."""
     data = res.data
     return data[0] if data else None
 
@@ -41,11 +33,6 @@ def _one(table: str, res) -> Optional[dict]:
 # ── Business ──────────────────────────────────────────────────────────────────
 
 def create_business(data) -> dict:
-    """
-    Insert a new business row.
-    `data` must have: name, owner_username, owner_password,
-                      whatsapp_phone_id (optional), whatsapp_token (optional)
-    """
     raw_token = (data.whatsapp_token or "").strip()
     row = {
         "name":               data.name,
@@ -101,26 +88,14 @@ def get_business_by_id(business_id: int) -> Optional[dict]:
 
 
 def get_decrypted_token(business: dict) -> str:
-    """
-    Decrypt and return the WhatsApp access token for *business* (dict).
-
-    Returns "" when no token is configured.
-    Raises TokenDecryptionError if decryption fails (key mismatch etc).
-    """
     if not business or not business.get("whatsapp_token"):
         return ""
     return decrypt_token(business["whatsapp_token"])
 
 
 def update_business(business_id: int, data) -> Optional[dict]:
-    """
-    PATCH a business row. `data` is a Pydantic model with optional fields.
-    Handles token encryption, blocks is_active changes from the business itself
-    (caller must strip that field before calling if needed).
-    """
     update_dict = data.dict(exclude_none=True) if hasattr(data, "dict") else dict(data)
 
-    # Encrypt token before saving — idempotent guard is inside encrypt_token()
     if update_dict.get("whatsapp_token"):
         new_token = update_dict["whatsapp_token"].strip()
         if new_token:
@@ -154,10 +129,12 @@ def delete_business(business_id: int) -> Optional[dict]:
 
 def create_product(business_id: int, product) -> dict:
     row = {
-        "business_id": business_id,
-        "name":        product.name,
-        "price":       product.price,
-        "image_url":   getattr(product, "image_url", None),
+        "business_id":        business_id,
+        "name":               product.name,
+        "price":              product.price,
+        "image_url":          getattr(product, "image_url", None),
+        "stock":              getattr(product, "stock", 0) or 0,
+        "low_stock_threshold": getattr(product, "low_stock_threshold", 5) or 5,
     }
     res = supabase.table("products").insert(row).execute()
     p = _one("products", res)
@@ -175,6 +152,18 @@ def get_products(business_id: int) -> list[dict]:
     return res.data or []
 
 
+def get_product_by_id(product_id: int, business_id: int) -> Optional[dict]:
+    res = (
+        supabase.table("products")
+        .select("*")
+        .eq("id", product_id)
+        .eq("business_id", business_id)
+        .limit(1)
+        .execute()
+    )
+    return _one("products", res)
+
+
 def get_product_price(business_id: int, name: str) -> float:
     res = (
         supabase.table("products")
@@ -186,6 +175,17 @@ def get_product_price(business_id: int, name: str) -> float:
     )
     row = _one("products", res)
     return float(row["price"]) if row and row.get("price") is not None else 0.0
+
+
+def update_product(product_id: int, business_id: int, data: dict) -> Optional[dict]:
+    res = (
+        supabase.table("products")
+        .update(data)
+        .eq("id", product_id)
+        .eq("business_id", business_id)
+        .execute()
+    )
+    return _one("products", res)
 
 
 def delete_product(product_id: int, business_id: int) -> Optional[dict]:
@@ -202,13 +202,17 @@ def delete_product(product_id: int, business_id: int) -> Optional[dict]:
 # ── Orders ────────────────────────────────────────────────────────────────────
 
 def create_order(business_id: int, order) -> dict:
+    """
+    Simple single-item order creation (used by legacy webhook path).
+    For full cart checkout use order_lifecycle.create_order_supabase().
+    """
     total = order.quantity * get_product_price(business_id, order.product_name)
     row = {
         "business_id":    business_id,
         "customer_phone": order.customer_phone,
         "product_name":   order.product_name,
         "quantity":       order.quantity,
-        "total_price":    total,
+        "total_price":    round(float(total), 2),
         "status":         "pending",
         "created_at":     _now(),
     }
@@ -227,10 +231,32 @@ def get_orders(business_id: int) -> list[dict]:
     return res.data or []
 
 
+def get_order_by_id(order_id: int, business_id: int) -> Optional[dict]:
+    res = (
+        supabase.table("orders")
+        .select("*")
+        .eq("id", order_id)
+        .eq("business_id", business_id)
+        .limit(1)
+        .execute()
+    )
+    return _one("orders", res)
+
+
+def update_order_status(order_id: int, business_id: int, status: str) -> Optional[dict]:
+    res = (
+        supabase.table("orders")
+        .update({"status": status})
+        .eq("id", order_id)
+        .eq("business_id", business_id)
+        .execute()
+    )
+    return _one("orders", res)
+
+
 # ── ChatMessage (legacy) ──────────────────────────────────────────────────────
 
 def log_message(business_id: int, phone: str, direction: str, message: str) -> None:
-    """Insert a legacy chat_messages row. Fire-and-forget — errors are logged."""
     try:
         supabase.table("chat_messages").insert({
             "business_id": business_id,
@@ -244,16 +270,6 @@ def log_message(business_id: int, phone: str, direction: str, message: str) -> N
 
 
 def get_conversations(business_id: int) -> list[dict]:
-    """
-    One row per phone number — the most recent message for each.
-    Mirrors the SQLAlchemy subquery logic using Supabase's RPC or
-    a window-function approach via raw PostgREST view.
-
-    We implement it with two queries to avoid raw SQL dependency:
-      1. Fetch all messages for the business ordered by id desc.
-      2. Deduplicate by phone in Python (keeps first = latest seen).
-    This is correct and fast enough for dashboard use (not webhook hot path).
-    """
     res = (
         supabase.table("chat_messages")
         .select("*")
@@ -284,7 +300,6 @@ def get_messages_for_phone(business_id: int, phone: str) -> list[dict]:
 
 
 def get_all_customer_phones(business_id: int) -> list[str]:
-    """All distinct phones that have sent at least one inbound message."""
     res = (
         supabase.table("chat_messages")
         .select("phone")
@@ -305,40 +320,23 @@ def get_all_customer_phones(business_id: int) -> list[str]:
 # ── Customer (CRM) ────────────────────────────────────────────────────────────
 
 def get_or_create_customer(phone: str, business_id: int) -> dict:
-    """
-    Upsert a customer row, always returning the full row dict.
-
-    Strategy:
-      1. Try INSERT … ON CONFLICT DO UPDATE via upsert (updates last_seen).
-      2. If upsert returns no data (can happen in some supabase-py versions
-         when no columns changed), fall back to a plain SELECT.
-      3. If SELECT also returns nothing, create a fresh row with INSERT.
-    Never raises — always returns a valid customer dict.
-    """
     now = _now()
 
-    # Step 1: upsert
     try:
         res = (
             supabase.table("customers")
             .upsert(
-                {
-                    "phone":        phone,
-                    "business_id":  business_id,
-                    "last_seen":    now,
-                },
+                {"phone": phone, "business_id": business_id, "last_seen": now},
                 on_conflict="phone,business_id",
             )
             .execute()
         )
         customer = _one("customers", res)
         if customer:
-            log.debug("get_or_create_customer: upsert returned row  id=%s", customer["id"])
             return customer
     except Exception as exc:
         log.warning("get_or_create_customer: upsert failed (%s) — trying select", exc)
 
-    # Step 2: fetch existing row
     try:
         res2 = (
             supabase.table("customers")
@@ -350,14 +348,11 @@ def get_or_create_customer(phone: str, business_id: int) -> dict:
         )
         if res2.data:
             customer = res2.data[0]
-            # Touch last_seen
             supabase.table("customers").update({"last_seen": now}).eq("id", customer["id"]).execute()
-            log.debug("get_or_create_customer: found via select  id=%s", customer["id"])
             return customer
     except Exception as exc:
         log.warning("get_or_create_customer: select failed (%s) — trying insert", exc)
 
-    # Step 3: fresh insert (first contact from this number)
     res3 = (
         supabase.table("customers")
         .insert({
@@ -370,7 +365,7 @@ def get_or_create_customer(phone: str, business_id: int) -> dict:
         .execute()
     )
     customer = _one("customers", res3)
-    log.info("get_or_create_customer: inserted new customer  id=%s  phone=%s", customer["id"], phone)
+    log.info("get_or_create_customer: new customer  id=%s  phone=%s", customer["id"], phone)
     return customer
 
 
@@ -401,16 +396,6 @@ def get_customer_by_id(customer_id: int, business_id: int) -> Optional[dict]:
 # ── Message (CRM) ─────────────────────────────────────────────────────────────
 
 def message_exists(wa_message_id: str) -> bool:
-    """
-    Return True if this WhatsApp message ID has already been processed.
-    Used as the deduplication gate in the webhook — checked BEFORE any
-    business logic runs so nothing is processed twice.
-
-    wa_message_id is the 'wamid.XXX' string from Meta's payload.
-    The messages.wa_message_id column has a UNIQUE constraint so a
-    second insert would also fail, but checking first is cheaper and
-    gives us a clean log line instead of a DB error.
-    """
     if not wa_message_id:
         return False
     res = (
@@ -433,10 +418,6 @@ def create_message(
     direction: str,
     wa_message_id: str | None = None,
 ) -> dict:
-    """
-    Insert a message row and increment unread_count for incoming messages.
-    Returns the inserted row dict.
-    """
     is_read = direction == "outgoing"
     row: dict = {
         "customer_id": customer_id,
@@ -447,26 +428,16 @@ def create_message(
         "status":      "sent",
         "created_at":  _now(),
     }
-    # Store the WhatsApp message ID when available (incoming messages only).
-    # The UNIQUE constraint on this column means a second insert for the same
-    # wa_message_id will raise a DB error — message_exists() catches it first.
     if wa_message_id:
         row["wa_message_id"] = wa_message_id
+
     res = supabase.table("messages").insert(row).execute()
     msg = _one("messages", res)
 
-    # Increment unread_count on the customer row for incoming messages
     if direction == "incoming":
         try:
-            # Supabase doesn't support atomic increment via the REST API directly,
-            # so we use rpc() with a custom SQL function — OR we fetch + update.
-            # We use rpc so it's a single round-trip and race-condition safe.
-            supabase.rpc(
-                "increment_unread",
-                {"p_customer_id": customer_id},
-            ).execute()
+            supabase.rpc("increment_unread", {"p_customer_id": customer_id}).execute()
         except Exception as exc:
-            # Non-fatal — the message is already saved
             log.warning("increment_unread rpc failed (customer %s): %s", customer_id, exc)
 
     return msg
@@ -489,8 +460,6 @@ def get_messages_by_customer(
 
 
 def mark_messages_read(customer_id: int, business_id: int) -> None:
-    """Mark all incoming messages as read and reset unread_count."""
-    # Update messages
     supabase.table("messages").update({
         "is_read": True,
         "status":  "read",
@@ -500,23 +469,10 @@ def mark_messages_read(customer_id: int, business_id: int) -> None:
       .eq("is_read", False)\
       .execute()
 
-    # Reset unread_count on the customer
-    supabase.table("customers").update({
-        "unread_count": 0,
-    }).eq("id", customer_id).execute()
+    supabase.table("customers").update({"unread_count": 0}).eq("id", customer_id).execute()
 
 
 def get_chat_conversations(business_id: int, filter_unread: bool = False) -> list[dict]:
-    """
-    Inbox view: one row per customer with last message details + unread count.
-
-    Implemented with two queries:
-      1. Fetch all customers for the business.
-      2. Fetch the latest message per customer in a single bulk query,
-         then join in Python.
-    This avoids raw SQL while keeping round-trips to two.
-    """
-    # 1. Customers
     cust_q = (
         supabase.table("customers")
         .select("*")
@@ -532,19 +488,17 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
 
     customer_ids = [c["id"] for c in customers]
 
-    # 2. Latest message per customer — fetch recent messages, dedupe in Python
     msgs_res = (
         supabase.table("messages")
         .select("*")
         .eq("business_id", business_id)
         .in_("customer_id", customer_ids)
         .order("id", desc=True)
-        .limit(len(customer_ids) * 5)   # enough to cover each customer at least once
+        .limit(len(customer_ids) * 5)
         .execute()
     )
     msgs = msgs_res.data or []
 
-    # Build a map: customer_id → latest message
     latest: dict[int, dict] = {}
     for m in msgs:
         cid = m["customer_id"]
@@ -555,15 +509,15 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
     for c in customers:
         last = latest.get(c["id"], {})
         result.append({
-            "customer_id":    c["id"],
-            "phone":          c["phone"],
-            "customer_since": c.get("created_at"),
-            "last_seen":      c.get("last_seen"),
-            "unread_count":   c.get("unread_count") or 0,
-            "last_message":   last.get("text", ""),
-            "last_direction": last.get("direction", ""),
+            "customer_id":     c["id"],
+            "phone":           c["phone"],
+            "customer_since":  c.get("created_at"),
+            "last_seen":       c.get("last_seen"),
+            "unread_count":    c.get("unread_count") or 0,
+            "last_message":    last.get("text", ""),
+            "last_direction":  last.get("direction", ""),
             "last_message_at": last.get("created_at"),
-            "last_status":    last.get("status", "sent"),
+            "last_status":     last.get("status", "sent"),
         })
     return result
 
@@ -581,9 +535,11 @@ def get_admin_stats() -> dict:
         "total_revenue":     round(sum(float(o.get("total_price") or 0) for o in orders), 2),
     }
 
-# ── CARTS (AI ORDER MEMORY) ────────────────────────────────────────────────
 
-def get_cart(phone: str, business_id: int) -> dict:
+# ── CARTS ─────────────────────────────────────────────────────────────────────
+
+def get_cart(phone: str, business_id: int) -> list:
+    """Returns the cart as a list of {name, qty, price} dicts."""
     res = (
         supabase.table("carts")
         .select("*")
@@ -592,21 +548,25 @@ def get_cart(phone: str, business_id: int) -> dict:
         .limit(1)
         .execute()
     )
-    cart = _one("carts", res)
-    if not cart:
-        return {"phone": phone, "business_id": business_id, "items": {}}
-    return cart
+    row = _one("carts", res)
+    if not row:
+        return []
+    items = row.get("items") or []
+    # Normalise: if stored as dict keyed by name, convert to list
+    if isinstance(items, dict):
+        items = list(items.values())
+    return items
 
 
-def save_cart(phone: str, business_id: int, items: dict) -> dict:
+def save_cart(phone: str, business_id: int, items: list) -> dict:
     res = (
         supabase.table("carts")
         .upsert(
             {
-                "phone": phone,
+                "phone":       phone,
                 "business_id": business_id,
-                "items": items,
-                "updated_at": _now(),
+                "items":       items,
+                "updated_at":  _now(),
             },
             on_conflict="phone,business_id",
         )
@@ -621,14 +581,11 @@ def clear_cart(phone: str, business_id: int) -> None:
         .eq("phone", phone)\
         .eq("business_id", business_id)\
         .execute()
-    
-# ── AI MEMORY (Phase 3 Support) ─────────────────────────────────────────────
+
+
+# ── AI MEMORY ─────────────────────────────────────────────────────────────────
 
 def get_user_memory(phone: str, business_id: int) -> dict:
-    """
-    Stores long-term behavioral memory per user.
-    Used for recommendations and personalization.
-    """
     res = (
         supabase.table("user_memory")
         .select("*")
@@ -637,37 +594,30 @@ def get_user_memory(phone: str, business_id: int) -> dict:
         .limit(1)
         .execute()
     )
-
     row = _one("user_memory", res)
-
     if not row:
         return {
-            "phone": phone,
-            "business_id": business_id,
+            "phone":          phone,
+            "business_id":    business_id,
             "frequent_items": {},
-            "last_orders": []
+            "last_orders":    [],
         }
-
     return row
 
 
 def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
-    """
-    Upsert user behavioral memory.
-    """
     res = (
         supabase.table("user_memory")
         .upsert(
             {
-                "phone": phone,
-                "business_id": business_id,
+                "phone":          phone,
+                "business_id":    business_id,
                 "frequent_items": memory.get("frequent_items", {}),
-                "last_orders": memory.get("last_orders", []),
-                "updated_at": _now(),
+                "last_orders":    memory.get("last_orders", []),
+                "updated_at":     _now(),
             },
             on_conflict="phone,business_id",
         )
         .execute()
     )
-
-    return _one("user_memory", res)    
+    return _one("user_memory", res)
