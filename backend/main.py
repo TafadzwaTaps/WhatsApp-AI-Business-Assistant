@@ -32,11 +32,8 @@ from auth import (
     get_current_user, require_superadmin, require_business,
     SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
 )
-from order_lifecycle import (
-    create_order_supabase,
-    update_order_status_supabase,
-    VALID_STATUSES,
-)
+from order_lifecycle import create_order, update_order, VALID_STATUSES
+
 from invoice import generate_invoice_text
 
 load_dotenv()
@@ -764,7 +761,7 @@ def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
     Returns the order + invoice text.
     """
     try:
-        order = create_order_supabase(
+        order = create_order(
             business_id=user["business_id"],
             customer_phone=data.customer_phone,
             cart=data.items,
@@ -796,7 +793,7 @@ def update_order_status_api(
         raise HTTPException(404, "Order not found")
 
     try:
-        order = update_order_status_supabase(order_id, data.status)
+        order = update_order(order_id, data.status)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
