@@ -32,32 +32,32 @@ def get_product_by_name(business_id: int, name: str) -> dict | None:
     return res.data[0] if res.data else None
 
 
-# inventory.py
+def reduce_stock(product_id: int, quantity: int) -> dict:
+    product = get_product(product_id)
 
-def reduce_stock(supabase, product_id: int, quantity: int):
-    res = supabase.table("products").select("*").eq("id", product_id).execute()
+    if not product:
+        raise ValueError(f"Product id={product_id} not found")
 
-    if not res.data:
-        raise Exception("Product not found")
+    current = product.get("stock") or 0
 
-    product = res.data[0]
+    if current < quantity:
+        raise ValueError(
+            f"Insufficient stock for '{product['name']}': "
+            f"requested {quantity}, available {current}"
+        )
 
-    stock = product.get("stock", 0)
+    new_stock = current - quantity
+    supabase.table("products").update({"stock": new_stock}).eq("id", product_id).execute()
 
-    if stock < quantity:
-        raise Exception(f"Not enough stock for {product['name']}")
+    threshold = product.get("low_stock_threshold") or 5
+    if new_stock <= threshold:
+        log.warning(
+            "⚠️  LOW STOCK — product='%s' id=%s remaining=%d threshold=%d",
+            product["name"], product_id, new_stock, threshold,
+        )
 
-    new_stock = stock - quantity
-
-    supabase.table("products").update({
-        "stock": new_stock
-    }).eq("id", product_id).execute()
-
-    # Low stock alert
-    if product.get("low_stock_threshold") and new_stock <= product["low_stock_threshold"]:
-        print(f"[LOW STOCK] {product['name']} → {new_stock} left")
-
-    return True
+    product["stock"] = new_stock
+    return product
 
 
 def reduce_stock_by_name(business_id: int, name: str, quantity: int) -> dict:

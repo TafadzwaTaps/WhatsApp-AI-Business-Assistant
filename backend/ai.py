@@ -8,7 +8,7 @@ WHAT THIS IS:
 - Learns user behavior over time (lightweight memory layer)
 
 CHECKOUT FLOW:
-  detect "checkout" → create_order() → generate PDF → send via WhatsApp
+  detect "checkout" → create_order_supabase() → generate_invoice() → return invoice as WA message
   Stock is reduced atomically; insufficient stock blocks checkout with a friendly message.
 """
 
@@ -16,9 +16,6 @@ import re
 import logging
 from difflib import get_close_matches
 import crud
-
-from order_lifecycle import create_order
-from pdf_invoice import generate_pdf_invoice
 
 log = logging.getLogger(__name__)
 
@@ -78,12 +75,14 @@ def _find_product(text: str, products: list) -> dict | None:
 
     names = [p["name"].lower() for p in products]
 
+    # Full phrase match
     match = get_close_matches(text.lower(), names, n=1, cutoff=0.55)
     if match:
         for p in products:
             if p["name"].lower() == match[0]:
                 return p
 
+    # Word-by-word scan
     for word in text.split():
         if len(word) < 3:
             continue
@@ -176,14 +175,15 @@ def generate_reply(
     business_name: str,
     products: list,
 ) -> str:
-
     text = message.strip()
     intent = _intent(text)
 
+    # Load cart (list of {name, qty, price})
     cart_raw = crud.get_cart(phone, business_id)
-
+    # crud.get_cart returns a dict with an "items" key OR a list depending on storage
     if isinstance(cart_raw, dict):
         cart = cart_raw.get("items") or []
+        # Handle case where items is stored as a dict keyed by name
         if isinstance(cart, dict):
             cart = list(cart.values())
     elif isinstance(cart_raw, list):
@@ -191,96 +191,140 @@ def generate_reply(
     else:
         cart = []
 
-    # ───────── HELP ─────────
+    # ─────────────────────────────
+    # HELP
+    # ─────────────────────────────
     if intent == "help":
         return (
             f"👋 Welcome to *{business_name}*!\n\n"
-            f"• *menu* — browse catalog\n"
-            f"• Add items (e.g. '2 burgers')\n"
-            f"• *cart* — view cart\n"
-            f"• *checkout* — place order\n"
-            f"• *remove [item]* — remove item\n"
+            f"Here's what you can do:\n"
+            f"  • *menu* — browse our catalog\n"
+            f"  • Add items (e.g. '2 burgers')\n"
+            f"  • *cart* — view your cart\n"
+            f"  • *checkout* — place your order\n"
+            f"  • *remove [item]* — remove from cart\n\n"
+            f"I learn your preferences over time 🤖"
         )
 
-    # ───────── BROWSE ─────────
+    # ─────────────────────────────
+    # BROWSE
+    # ─────────────────────────────
     if intent == "browse":
         if not products:
-            return "No items available."
+            return f"📋 *{business_name}*\n\nNo items available yet. Check back soon! 🙏"
 
-        menu = "\n".join([f"{p['name']} — ${p['price']}" for p in products])
-        return f"📋 *Menu*\n\n{menu}"
+        menu_lines = "\n".join(
+            [f"  {i+1}. {p['name']} — ${float(p['price']):.2f}" for i, p in enumerate(products)]
+        )
 
-    # ───────── CART ─────────
+        recs = _recommend(phone, business_id, products)
+        rec_text = ""
+        if recs:
+            rec_text = "\n\n⭐ *Recommended for you:*\n" + "\n".join(
+                [f"  • {r['name']}" for r in recs]
+            )
+
+        return (
+            f"📋 *{business_name} Menu*\n\n"
+            f"{menu_lines}{rec_text}\n\n"
+            f"_Type item name to add to cart, or 'checkout' to place order._"
+        )
+
+    # ─────────────────────────────
+    # CART
+    # ─────────────────────────────
     if intent == "cart":
         return _format_cart(cart)
 
-    # ───────── CHECKOUT (🔥 FULLY WIRED) ─────────
+    # ─────────────────────────────
+    # CHECKOUT
+    # ─────────────────────────────
     if intent == "checkout":
         if not cart:
-            return "🛒 Your cart is empty."
+            return "🛒 Your cart is empty. Add some items first!"
 
         try:
-            order = create_order(
-                supabase=crud.supabase,
+            from order_lifecycle import create_order_supabase
+            from invoice import generate_invoice_text
+
+            order = create_order_supabase(
                 business_id=business_id,
-                items=[
-                    {
-                        "product_id": i["id"],
-                        "quantity": i["qty"],
-                        "price": i["price"]
-                    }
-                    for i in cart
-                ]
+                customer_phone=phone,
+                cart=cart,
             )
 
             _update_memory(phone, business_id, cart)
             crud.clear_cart(phone, business_id)
 
-            pdf_path = generate_pdf_invoice(order)
+            invoice = generate_invoice_text(order)
+            return invoice
 
-
-            return (
-                f"✅ Order placed!\n"
-                f"📄 Invoice sent\n"
-                f"Reference: ORDER-{order['id']}"
-            )
+        except ValueError as e:
+            # Stock issues, missing product, etc.
+            log.warning("checkout blocked — %s", e)
+            return f"⚠️ Could not place order:\n{e}\n\nPlease adjust your cart and try again."
 
         except Exception as e:
-            log.exception("checkout error")
-            return f"❌ Checkout failed: {str(e)}"
+            log.exception("checkout error: %s", e)
+            return "❌ Something went wrong placing your order. Please try again."
 
-    # ───────── REMOVE ─────────
+    # ─────────────────────────────
+    # REMOVE ITEM
+    # ─────────────────────────────
     if intent == "remove":
         text_lower = text.lower()
         for item in list(cart):
             if item["name"].lower() in text_lower:
                 cart.remove(item)
                 crud.save_cart(phone, business_id, cart)
-                return f"Removed {item['name']}"
+                return f"❌ Removed *{item['name']}* from cart.\n\n{_format_cart(cart)}"
 
-        return "Item not found."
+        return "⚠️ Item not found in cart.\n\n" + _format_cart(cart)
 
-    # ───────── ADD ITEM (🔥 FIXED WITH ID) ─────────
+    # ─────────────────────────────
+    # ADD / ORDER
+    # ─────────────────────────────
     product = _find_product(text, products)
 
     if product:
         qty = _qty(text)
 
+        # Check available stock before adding
+        available_stock = product.get("stock")
+        if available_stock is not None:
+            # Calculate already-in-cart qty
+            in_cart = next((i["qty"] for i in cart if i["name"] == product["name"]), 0)
+            if in_cart + qty > available_stock:
+                if available_stock == 0:
+                    return f"😔 Sorry, *{product['name']}* is out of stock."
+                return (
+                    f"⚠️ Only *{available_stock}* unit(s) of *{product['name']}* available "
+                    f"(you already have {in_cart} in cart)."
+                )
+
         for item in cart:
-            if item["id"] == product["id"]:
+            if item["name"] == product["name"]:
                 item["qty"] += qty
                 break
         else:
             cart.append({
-                "id": product["id"],   # 🔥 CRITICAL FIX
-                "name": product["name"],
-                "qty": qty,
+                "name":  product["name"],
+                "qty":   qty,
                 "price": float(product["price"]),
             })
 
         crud.save_cart(phone, business_id, cart)
 
-        return f"Added {product['name']} x{qty}\n\n{_format_cart(cart)}"
+        recs = _recommend(phone, business_id, products)
+        msg = f"👍 Added *{product['name']}* x{qty} to cart.\n\n{_format_cart(cart)}"
+
+        if recs:
+            msg += "\n\n⭐ *You may also like:*\n" + "\n".join(
+                [f"  • {r['name']}" for r in recs]
+            )
+
+        msg += "\n\n_Type 'checkout' to place your order._"
+        return msg
 
     # ─────────────────────────────
     # FALLBACK
@@ -293,4 +337,3 @@ def generate_reply(
         f"  • *cart* — view your cart\n"
         f"  • *checkout* — place your order\n"
     )
-

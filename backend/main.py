@@ -32,8 +32,11 @@ from auth import (
     get_current_user, require_superadmin, require_business,
     SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
 )
-from order_lifecycle import create_order, update_order, VALID_STATUSES
-
+from order_lifecycle import (
+    create_order_supabase,
+    update_order_status_supabase,
+    VALID_STATUSES,
+)
 from invoice import generate_invoice_text
 
 load_dotenv()
@@ -521,7 +524,7 @@ async def receive_message(request: Request):
             products=products,
         )
         log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
-       
+
     except Exception as exc:
         log.exception("📦 STEP 6 FAIL: %s", exc)
         reply = (
@@ -761,7 +764,7 @@ def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
     Returns the order + invoice text.
     """
     try:
-        order = create_order(
+        order = create_order_supabase(
             business_id=user["business_id"],
             customer_phone=data.customer_phone,
             cart=data.items,
@@ -793,7 +796,7 @@ def update_order_status_api(
         raise HTTPException(404, "Order not found")
 
     try:
-        order = update_order(order_id, data.status)
+        order = update_order_status_supabase(order_id, data.status)
     except ValueError as exc:
         raise HTTPException(400, str(exc))
 
@@ -1040,4 +1043,3 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     })
 
     return {"ok": True, "message_id": msg["id"], "whatsapp_result": wa_result}
-
