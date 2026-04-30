@@ -129,11 +129,11 @@ def delete_business(business_id: int) -> Optional[dict]:
 
 def create_product(business_id: int, product) -> dict:
     row = {
-        "business_id":        business_id,
-        "name":               product.name,
-        "price":              product.price,
-        "image_url":          getattr(product, "image_url", None),
-        "stock":              getattr(product, "stock", 0) or 0,
+        "business_id":         business_id,
+        "name":                product.name,
+        "price":               product.price,
+        "image_url":           getattr(product, "image_url", None),
+        "stock":               getattr(product, "stock", 0) or 0,
         "low_stock_threshold": getattr(product, "low_stock_threshold", 5) or 5,
     }
     res = supabase.table("products").insert(row).execute()
@@ -158,6 +158,23 @@ def get_product_by_id(product_id: int, business_id: int) -> Optional[dict]:
         .select("*")
         .eq("id", product_id)
         .eq("business_id", business_id)
+        .limit(1)
+        .execute()
+    )
+    return _one("products", res)
+
+
+def get_product_by_name(business_id: int, name: str) -> Optional[dict]:
+    """
+    Case-insensitive product lookup by name within a business.
+    Used by ai.py to get a fresh stock-accurate product row before adding to cart.
+    Returns None if not found.
+    """
+    res = (
+        supabase.table("products")
+        .select("*")
+        .eq("business_id", business_id)
+        .ilike("name", name)
         .limit(1)
         .execute()
     )
@@ -203,7 +220,7 @@ def delete_product(product_id: int, business_id: int) -> Optional[dict]:
 
 def create_order(business_id: int, order) -> dict:
     """
-    Simple single-item order creation (used by legacy webhook path).
+    Simple single-item order creation (legacy webhook path).
     For full cart checkout use order_lifecycle.create_order_supabase().
     """
     total = order.quantity * get_product_price(business_id, order.product_name)
@@ -214,6 +231,7 @@ def create_order(business_id: int, order) -> dict:
         "quantity":       order.quantity,
         "total_price":    round(float(total), 2),
         "status":         "pending",
+        "payment_status": "pending",
         "created_at":     _now(),
     }
     res = supabase.table("orders").insert(row).execute()
@@ -252,6 +270,93 @@ def update_order_status(order_id: int, business_id: int, status: str) -> Optiona
         .execute()
     )
     return _one("orders", res)
+
+
+# ── Dashboard analytics ───────────────────────────────────────────────────────
+
+def get_dashboard_stats(business_id: int) -> dict:
+    """
+    Returns analytics data for the business dashboard:
+    total_revenue, total_orders, total_customers,
+    orders_per_day (last 30 days), top_products, recent_orders,
+    revenue_per_day, orders_by_status.
+    """
+    from collections import defaultdict, Counter
+
+    orders = get_orders(business_id)
+    customers_res = (
+        supabase.table("customers")
+        .select("id,created_at")
+        .eq("business_id", business_id)
+        .execute()
+    )
+    customers = customers_res.data or []
+
+    total_revenue = round(sum(float(o.get("total_price") or 0) for o in orders), 2)
+    total_orders  = len(orders)
+    total_customers = len(customers)
+
+    # Orders per day (last 30 days)
+    orders_per_day: dict[str, int] = defaultdict(int)
+    revenue_per_day: dict[str, float] = defaultdict(float)
+    product_counter: Counter = Counter()
+    status_counter: Counter = Counter()
+
+    for o in orders:
+        raw_date = o.get("created_at", "")
+        day = raw_date[:10] if raw_date else "unknown"
+        orders_per_day[day] += 1
+        revenue_per_day[day] += float(o.get("total_price") or 0)
+        status_counter[o.get("status", "pending")] += 1
+
+        # Count products from product_name field
+        names = o.get("product_name", "")
+        if names:
+            for name in [n.strip() for n in names.split(",")]:
+                if name:
+                    product_counter[name] += 1
+
+    # Sort days
+    sorted_days = sorted(orders_per_day.keys())[-30:]
+    orders_by_day   = {d: orders_per_day[d] for d in sorted_days}
+    revenue_by_day  = {d: round(revenue_per_day[d], 2) for d in sorted_days}
+
+    top_products = product_counter.most_common(8)
+
+    # New customers per day
+    customers_per_day: dict[str, int] = defaultdict(int)
+    for c in customers:
+        raw = c.get("created_at", "")
+        day = raw[:10] if raw else "unknown"
+        customers_per_day[day] += 1
+
+    sorted_cust_days = sorted(customers_per_day.keys())[-30:]
+    customers_by_day = {d: customers_per_day[d] for d in sorted_cust_days}
+
+    # Recent orders (last 10)
+    recent_orders = [
+        {
+            "id":      o.get("id"),
+            "phone":   o.get("customer_phone", ""),
+            "total":   float(o.get("total_price") or 0),
+            "status":  o.get("status", "pending"),
+            "payment": o.get("payment_status", "pending"),
+            "date":    (o.get("created_at") or "")[:16],
+        }
+        for o in orders[:10]
+    ]
+
+    return {
+        "total_revenue":     total_revenue,
+        "total_orders":      total_orders,
+        "total_customers":   total_customers,
+        "orders_per_day":    orders_by_day,
+        "revenue_per_day":   revenue_by_day,
+        "top_products":      top_products,
+        "orders_by_status":  dict(status_counter),
+        "customers_per_day": customers_by_day,
+        "recent_orders":     recent_orders,
+    }
 
 
 # ── ChatMessage (legacy) ──────────────────────────────────────────────────────
@@ -365,7 +470,7 @@ def get_or_create_customer(phone: str, business_id: int) -> dict:
         .execute()
     )
     customer = _one("customers", res3)
-    log.info("get_or_create_customer: new customer  id=%s  phone=%s", customer["id"], phone)
+    log.info("get_or_create_customer: new  id=%s  phone=%s", customer["id"], phone)
     return customer
 
 
@@ -539,48 +644,76 @@ def get_admin_stats() -> dict:
 # ── CARTS ─────────────────────────────────────────────────────────────────────
 
 def get_cart(phone: str, business_id: int) -> list:
-    """Returns the cart as a list of {name, qty, price} dicts."""
-    res = (
-        supabase.table("carts")
-        .select("*")
-        .eq("phone", phone)
-        .eq("business_id", business_id)
-        .limit(1)
-        .execute()
-    )
-    row = _one("carts", res)
-    if not row:
-        return []
-    items = row.get("items") or []
-    # Normalise: if stored as dict keyed by name, convert to list
-    if isinstance(items, dict):
-        items = list(items.values())
-    return items
-
-
-def save_cart(phone: str, business_id: int, items: list) -> dict:
-    res = (
-        supabase.table("carts")
-        .upsert(
-            {
-                "phone":       phone,
-                "business_id": business_id,
-                "items":       items,
-                "updated_at":  _now(),
-            },
-            on_conflict="phone,business_id",
+    """Returns the cart as a list of {name, qty, price} dicts. Always safe."""
+    try:
+        res = (
+            supabase.table("carts")
+            .select("*")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
         )
-        .execute()
-    )
-    return _one("carts", res)
+        row = _one("carts", res)
+        if not row:
+            return []
+        items = row.get("items") or []
+        if isinstance(items, dict):
+            items = list(items.values())
+        # Filter: only valid cart items
+        return [i for i in items if isinstance(i, dict) and "name" in i and "price" in i]
+    except Exception as exc:
+        log.error("get_cart error  phone=%s  biz=%s  exc=%s", phone, business_id, exc)
+        return []
+
+
+def save_cart(phone: str, business_id: int, items: list) -> Optional[dict]:
+    """
+    Upsert cart for phone+business. items must be a list of {name, qty, price}.
+    Returns the saved row or None on error.
+    """
+    # Sanitise: ensure all items are dicts with required keys
+    clean = [
+        {
+            "name":  str(i.get("name", "")).strip(),
+            "qty":   max(1, int(i.get("qty", 1))),
+            "price": float(i.get("price", 0)),
+        }
+        for i in items
+        if isinstance(i, dict) and i.get("name") and i.get("price") is not None
+    ]
+    try:
+        res = (
+            supabase.table("carts")
+            .upsert(
+                {
+                    "phone":       phone,
+                    "business_id": business_id,
+                    "items":       clean,
+                    "updated_at":  _now(),
+                },
+                on_conflict="phone,business_id",
+            )
+            .execute()
+        )
+        log.debug("save_cart OK  phone=%s  items=%d", phone, len(clean))
+        return _one("carts", res)
+    except Exception as exc:
+        log.error("save_cart error  phone=%s  exc=%s", phone, exc)
+        return None
 
 
 def clear_cart(phone: str, business_id: int) -> None:
-    supabase.table("carts")\
-        .delete()\
-        .eq("phone", phone)\
-        .eq("business_id", business_id)\
-        .execute()
+    """Delete the cart row for this phone+business."""
+    try:
+        supabase.table("carts")\
+            .delete()\
+            .eq("phone", phone)\
+            .eq("business_id", business_id)\
+            .execute()
+        log.debug("clear_cart OK  phone=%s", phone)
+    except Exception as exc:
+        log.error("clear_cart error  phone=%s  exc=%s", phone, exc)
 
 
 # ── AI MEMORY ─────────────────────────────────────────────────────────────────

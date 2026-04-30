@@ -3,200 +3,658 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dashboard</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
-
+<title>WaziBot — Analytics</title>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" rel="stylesheet">
 <style>
 :root {
-    --bg: #f5f7fa;
-    --card: #ffffff;
-    --text: #1e293b;
-    --accent: #2563eb;
+  --bg:          #f7f6f2;
+  --surface:     #ffffff;
+  --surface2:    #f0efe9;
+  --border:      rgba(0,0,0,0.08);
+  --border2:     rgba(0,0,0,0.14);
+  --text:        #18181a;
+  --text2:       #6b6b72;
+  --text3:       #9e9ea6;
+  --accent:      #1a1a2e;
+  --accent2:     #e94560;
+  --success:     #0f6e56;
+  --success-bg:  #e1f5ee;
+  --warn:        #ba7517;
+  --warn-bg:     #faeeda;
+  --info:        #185fa5;
+  --info-bg:     #e6f1fb;
+  --radius:      10px;
+  --radius-lg:   16px;
 }
-
-body.dark {
-    --bg: #0f172a;
-    --card: #1e293b;
-    --text: #f1f5f9;
+[data-theme=dark] {
+  --bg:       #0f0f12;
+  --surface:  #1a1a20;
+  --surface2: #23232c;
+  --border:   rgba(255,255,255,0.07);
+  --border2:  rgba(255,255,255,0.12);
+  --text:     #f0f0f4;
+  --text2:    #9090a0;
+  --text3:    #5a5a6a;
+  --accent:   #e8e8f0;
+  --success-bg: #04342c;
+  --warn-bg:    #412402;
+  --info-bg:    #042c53;
 }
-
+* { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    transition: 0.3s;
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  font-size: 14px;
+  line-height: 1.5;
+  transition: background 0.2s, color 0.2s;
 }
 
-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 15px 20px;
-    background: var(--card);
-    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+/* ── TOPBAR ── */
+.topbar {
+  position: sticky; top: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px;
+  height: 56px;
+  background: var(--surface);
+  border-bottom: 0.5px solid var(--border2);
+}
+.topbar-left { display: flex; align-items: center; gap: 12px; }
+.logo {
+  font-family: 'Instrument Serif', serif;
+  font-size: 20px; font-weight: 400;
+  color: var(--text);
+  text-decoration: none;
+}
+.divider { width: 1px; height: 20px; background: var(--border2); }
+.page-title { font-size: 13px; color: var(--text2); letter-spacing: 0.02em; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.topbar-right a {
+  font-size: 13px; color: var(--text2);
+  text-decoration: none;
+  padding: 5px 12px;
+  border: 0.5px solid var(--border2);
+  border-radius: var(--radius);
+  transition: background 0.15s;
+}
+.topbar-right a:hover { background: var(--surface2); }
+.theme-btn {
+  background: none; border: 0.5px solid var(--border2);
+  color: var(--text2); cursor: pointer;
+  padding: 5px 10px; border-radius: var(--radius);
+  font-size: 13px; transition: background 0.15s;
+}
+.theme-btn:hover { background: var(--surface2); }
+
+/* ── LAYOUT ── */
+.page { max-width: 1200px; margin: 0 auto; padding: 28px 24px 48px; }
+
+/* ── DATE RANGE BAR ── */
+.controls-row {
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+  margin-bottom: 24px;
+}
+.controls-left { display: flex; align-items: center; gap: 8px; }
+.period-btn {
+  background: none; border: 0.5px solid var(--border2);
+  color: var(--text2); cursor: pointer;
+  padding: 5px 14px; border-radius: 20px;
+  font-size: 13px; font-family: 'DM Sans', sans-serif;
+  transition: all 0.15s;
+}
+.period-btn.active, .period-btn:hover {
+  background: var(--accent); color: var(--bg);
+  border-color: var(--accent);
+}
+.last-updated { font-size: 12px; color: var(--text3); }
+.refresh-btn {
+  background: none; border: 0.5px solid var(--border2);
+  color: var(--text2); cursor: pointer;
+  padding: 5px 12px; border-radius: var(--radius);
+  font-size: 13px; font-family: 'DM Sans', sans-serif;
+  transition: background 0.15s;
+}
+.refresh-btn:hover { background: var(--surface2); }
+
+/* ── KPI STRIP ── */
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.kpi {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  position: relative;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.kpi:hover { border-color: var(--border2); }
+.kpi-label { font-size: 12px; color: var(--text2); letter-spacing: 0.03em; margin-bottom: 6px; }
+.kpi-value { font-size: 26px; font-weight: 500; color: var(--text); line-height: 1; }
+.kpi-sub { font-size: 12px; color: var(--text3); margin-top: 5px; }
+.kpi-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 11px; padding: 2px 7px; border-radius: 20px;
+  margin-top: 5px;
+}
+.badge-up { background: var(--success-bg); color: var(--success); }
+.badge-down { background: var(--warn-bg); color: var(--warn); }
+.badge-neutral { background: var(--info-bg); color: var(--info); }
+.kpi-accent-bar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 3px;
 }
 
-button {
-    padding: 8px 12px;
-    border: none;
-    background: var(--accent);
-    color: white;
-    border-radius: 8px;
-    cursor: pointer;
+/* ── CHART GRID ── */
+.chart-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
 }
-
-.container {
-    padding: 20px;
+.chart-grid-3 {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
 }
-
-.stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
+@media (max-width: 760px) {
+  .chart-grid, .chart-grid-3 { grid-template-columns: 1fr; }
 }
-
 .card {
-    background: var(--card);
-    padding: 20px;
-    border-radius: 12px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  overflow: hidden;
+}
+.card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.card-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.card-meta { font-size: 12px; color: var(--text3); }
+
+/* ── CHARTS ── */
+.chart-wrap { position: relative; width: 100%; }
+
+/* ── STATUS DONUTS ── */
+.donut-legend {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: 12px;
+}
+.legend-row {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 13px;
+}
+.legend-dot {
+  width: 10px; height: 10px; border-radius: 2px;
+  margin-right: 8px; flex-shrink: 0;
 }
 
-.card h3 {
-    margin: 0;
-    font-size: 14px;
-    opacity: 0.7;
+/* ── ORDERS TABLE ── */
+.orders-table { width: 100%; border-collapse: collapse; }
+.orders-table th {
+  font-size: 11px; font-weight: 500; color: var(--text3);
+  text-align: left; padding: 0 8px 10px;
+  letter-spacing: 0.05em; text-transform: uppercase;
+  border-bottom: 0.5px solid var(--border2);
 }
-
-.card p {
-    font-size: 24px;
-    margin: 5px 0 0;
-    font-weight: bold;
+.orders-table td {
+  font-size: 13px; color: var(--text);
+  padding: 10px 8px;
+  border-bottom: 0.5px solid var(--border);
 }
-
-.charts {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    margin-top: 20px;
+.orders-table tr:last-child td { border-bottom: none; }
+.orders-table tr:hover td { background: var(--surface2); }
+.status-pill {
+  display: inline-block; font-size: 11px;
+  padding: 2px 8px; border-radius: 20px;
+  font-weight: 500;
 }
+.pill-pending   { background: var(--warn-bg);    color: var(--warn); }
+.pill-paid      { background: var(--success-bg); color: var(--success); }
+.pill-delivered { background: var(--info-bg);    color: var(--info); }
+.pill-confirmed { background: var(--surface2);   color: var(--text2); }
 
-canvas {
-    background: var(--card);
-    padding: 15px;
-    border-radius: 12px;
+/* ── TOP PRODUCTS ── */
+.product-list { display: flex; flex-direction: column; gap: 10px; }
+.product-row { display: flex; align-items: center; gap: 10px; }
+.product-name { flex: 1; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.product-bar-track { flex: 2; height: 6px; background: var(--surface2); border-radius: 4px; overflow: hidden; }
+.product-bar-fill { height: 100%; background: var(--accent2); border-radius: 4px; transition: width 0.6s ease; }
+.product-count { font-size: 12px; color: var(--text3); min-width: 28px; text-align: right; }
+
+/* ── EMPTY / LOADING ── */
+.loading-state {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 200px; color: var(--text3); font-size: 14px;
 }
-
-@media (max-width: 768px) {
-    .charts {
-        grid-template-columns: 1fr;
-    }
+.error-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  min-height: 200px; gap: 8px; color: var(--text3); font-size: 14px;
+}
+.error-state button {
+  margin-top: 4px; background: none; border: 0.5px solid var(--border2);
+  color: var(--text2); cursor: pointer; padding: 6px 16px;
+  border-radius: var(--radius); font-size: 13px;
 }
 </style>
 </head>
 
 <body>
 
-<header>
-    <h2>📊 Business Dashboard</h2>
-    <button onclick="toggleTheme()">Toggle Mode</button>
+<header class="topbar">
+  <div class="topbar-left">
+    <a class="logo" href="/">WaziBot</a>
+    <div class="divider"></div>
+    <span class="page-title">Analytics</span>
+  </div>
+  <div class="topbar-right">
+    <span class="last-updated" id="last-updated">—</span>
+    <button class="refresh-btn" onclick="loadAll()">↻ Refresh</button>
+    <button class="theme-btn" id="theme-btn" onclick="toggleTheme()">◐</button>
+    <a href="/dashboard">← Dashboard</a>
+  </div>
 </header>
 
-<div class="container">
+<div class="page">
 
-<div class="stats">
-    <div class="card">
-        <h3>Total Revenue</h3>
-        <p>$<span id="revenue">0</span></p>
+  <!-- Date range controls -->
+  <div class="controls-row">
+    <div class="controls-left">
+      <button class="period-btn active" onclick="setPeriod(7,this)">7 days</button>
+      <button class="period-btn" onclick="setPeriod(14,this)">14 days</button>
+      <button class="period-btn" onclick="setPeriod(30,this)">30 days</button>
     </div>
+    <div id="biz-name" style="font-size:13px;color:var(--text3);"></div>
+  </div>
 
+  <!-- KPI strip -->
+  <div class="kpi-grid" id="kpi-grid">
+    <div class="loading-state">Loading…</div>
+  </div>
+
+  <!-- Revenue + Orders over time -->
+  <div class="chart-grid-3">
     <div class="card">
-        <h3>Total Orders</h3>
-        <p><span id="orders">0</span></p>
+      <div class="card-header">
+        <span class="card-title">Revenue over time</span>
+        <span class="card-meta" id="rev-meta">—</span>
+      </div>
+      <div class="chart-wrap" style="height:220px;">
+        <canvas id="revenueChart" role="img" aria-label="Revenue trend line chart">Revenue trend chart</canvas>
+      </div>
     </div>
-
     <div class="card">
-        <h3>Total Customers</h3>
-        <p><span id="customers">0</span></p>
+      <div class="card-header">
+        <span class="card-title">Order status</span>
+        <span class="card-meta" id="status-meta">—</span>
+      </div>
+      <div class="chart-wrap" style="height:140px;">
+        <canvas id="statusChart" role="img" aria-label="Order status donut chart">Order status distribution</canvas>
+      </div>
+      <div class="donut-legend" id="donut-legend"></div>
     </div>
-</div>
+  </div>
 
-<div class="charts">
-    <canvas id="ordersChart"></canvas>
-    <canvas id="productsChart"></canvas>
-</div>
+  <!-- Orders per day + Top products -->
+  <div class="chart-grid">
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Orders per day</span>
+        <span class="card-meta" id="orders-meta">—</span>
+      </div>
+      <div class="chart-wrap" style="height:200px;">
+        <canvas id="ordersChart" role="img" aria-label="Daily order count bar chart">Daily orders chart</canvas>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Top products</span>
+        <span class="card-meta">by order volume</span>
+      </div>
+      <div class="product-list" id="product-list">
+        <div class="loading-state" style="min-height:80px;">—</div>
+      </div>
+    </div>
+  </div>
 
-</div>
+  <!-- Recent orders table -->
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">Recent orders</span>
+      <span class="card-meta" id="orders-count">—</span>
+    </div>
+    <div id="orders-table-wrap">
+      <div class="loading-state">Loading orders…</div>
+    </div>
+  </div>
 
+</div><!-- /page -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
+'use strict';
 
+const API   = 'https://wazibot-api-assistant.onrender.com';
+const token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token');
+const bizId = parseInt(localStorage.getItem('wazi_business_id') || localStorage.getItem('wazibot_biz_id') || '0');
+
+let currentDays = 7;
+let chartInstances = {};
+
+/* ── THEME ── */
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  document.getElementById('theme-btn').textContent = t === 'dark' ? '☀' : '◐';
+  localStorage.setItem('wazi_theme', t);
+}
 function toggleTheme() {
-    document.body.classList.toggle("dark");
-    localStorage.setItem("theme", document.body.classList.contains("dark") ? "dark" : "light");
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+}
+const savedTheme = localStorage.getItem('wazi_theme') ||
+  (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+applyTheme(savedTheme);
+
+/* ── PERIOD ── */
+function setPeriod(days, btn) {
+  currentDays = days;
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadAll();
 }
 
-// Load saved theme
-if (localStorage.getItem("theme") === "dark") {
-    document.body.classList.add("dark");
+/* ── API ── */
+async function apiFetch(path) {
+  if (!token) { window.location.href = '/dashboard'; return null; }
+  const res = await fetch(API + path, {
+    headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+  });
+  if (res.status === 401) { window.location.href = '/dashboard'; return null; }
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
 }
 
-async function loadDashboard() {
-    const res = await fetch("http://127.0.0.1:8000/dashboard/1");
-    const data = await res.json();
+/* ── CHART COLORS ── */
+const C = {
+  blue:    '#378add',
+  teal:    '#1d9e75',
+  coral:   '#d85a30',
+  amber:   '#ef9f27',
+  purple:  '#7f77dd',
+  red:     '#e24b4a',
+  gray:    '#888780',
+  line:    '#e94560',
+};
+const STATUS_COLORS = {
+  pending:   C.amber,
+  confirmed: C.blue,
+  paid:      C.teal,
+  delivered: C.purple,
+};
 
-    document.getElementById("revenue").innerText = data.total_revenue;
-    document.getElementById("orders").innerText = data.total_orders;
-    document.getElementById("customers").innerText = data.total_customers;
-
-    // Orders per day
-    const dates = Object.keys(data.orders_per_day);
-    const values = Object.values(data.orders_per_day);
-
-    new Chart(document.getElementById("ordersChart"), {
-        type: "line",
-        data: {
-            labels: dates,
-            datasets: [{
-                label: "Orders",
-                data: values,
-                borderWidth: 2,
-                tension: 0.3
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: false }
-            }
-        }
-    });
-
-    // Top products
-    const productNames = data.top_products.map(p => p[0]);
-    const productCounts = data.top_products.map(p => p[1]);
-
-    new Chart(document.getElementById("productsChart"), {
-        type: "bar",
-        data: {
-            labels: productNames,
-            datasets: [{
-                label: "Sales",
-                data: productCounts
-            }]
-        },
-        options: {
-            responsive: true,
-            plugins: {
-                legend: { display: false }
-            }
-        }
-    });
+/* ── DESTROY CHART ── */
+function destroyChart(id) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
 }
 
-loadDashboard();
+/* ── FILTER BY DAYS ── */
+function filterDays(dataObj, days) {
+  const allKeys = Object.keys(dataObj).sort();
+  return allKeys.slice(-days);
+}
 
+/* ── KPIs ── */
+function renderKPIs(data, prevData) {
+  const totalRev   = data.total_revenue;
+  const totalOrds  = data.total_orders;
+  const totalCusts = data.total_customers;
+  const avgOrder   = totalOrds > 0 ? (totalRev / totalOrds) : 0;
+
+  const paidOrders = (data.orders_by_status && data.orders_by_status.paid) || 0;
+  const payRate    = totalOrds > 0 ? Math.round(paidOrders / totalOrds * 100) : 0;
+
+  const kpis = [
+    { label: 'Total revenue', value: '$' + totalRev.toLocaleString('en', {minimumFractionDigits:2,maximumFractionDigits:2}), sub: 'all time', badge: null, bar: C.teal },
+    { label: 'Total orders', value: totalOrds.toLocaleString(), sub: 'all time', badge: null, bar: C.blue },
+    { label: 'Customers', value: totalCusts.toLocaleString(), sub: 'registered', badge: null, bar: C.purple },
+    { label: 'Avg order value', value: '$' + avgOrder.toFixed(2), sub: 'per order', badge: null, bar: C.amber },
+    { label: 'Payment rate', value: payRate + '%', sub: 'orders paid', badge: { text: payRate >= 70 ? 'healthy' : 'needs attention', cls: payRate >= 70 ? 'badge-up' : 'badge-down' }, bar: payRate >= 70 ? C.teal : C.coral },
+  ];
+
+  document.getElementById('kpi-grid').innerHTML = kpis.map(k => `
+    <div class="kpi">
+      <div class="kpi-label">${k.label}</div>
+      <div class="kpi-value">${k.value}</div>
+      <div class="kpi-sub">${k.sub}</div>
+      ${k.badge ? `<div class="kpi-badge ${k.badge.cls}">${k.badge.text}</div>` : ''}
+      <div class="kpi-accent-bar" style="background:${k.bar};opacity:0.35;"></div>
+    </div>
+  `).join('');
+}
+
+/* ── REVENUE CHART ── */
+function renderRevenue(data) {
+  destroyChart('revenueChart');
+  const days  = filterDays(data.revenue_per_day || {}, currentDays);
+  const vals  = days.map(d => data.revenue_per_day[d] || 0);
+  const total = vals.reduce((a,b) => a+b, 0);
+  document.getElementById('rev-meta').textContent = '$' + total.toFixed(2) + ' last ' + currentDays + 'd';
+
+  chartInstances.revenueChart = new Chart(document.getElementById('revenueChart'), {
+    type: 'line',
+    data: {
+      labels: days.map(d => d.slice(5)),
+      datasets: [{
+        label: 'Revenue',
+        data: vals,
+        borderColor: C.line,
+        backgroundColor: 'rgba(233,69,96,0.08)',
+        borderWidth: 2,
+        pointRadius: vals.length > 10 ? 0 : 3,
+        pointHoverRadius: 5,
+        tension: 0.4,
+        fill: true,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: {
+        callbacks: { label: ctx => '$' + ctx.parsed.y.toFixed(2) }
+      }},
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#888', font: { size: 11 }, maxTicksLimit: 7 } },
+        y: { grid: { color: 'rgba(128,128,128,0.1)' }, ticks: { color: '#888', font: { size: 11 }, callback: v => '$'+v } },
+      }
+    }
+  });
+}
+
+/* ── ORDERS PER DAY ── */
+function renderOrdersChart(data) {
+  destroyChart('ordersChart');
+  const days = filterDays(data.orders_per_day || {}, currentDays);
+  const vals = days.map(d => data.orders_per_day[d] || 0);
+  const total = vals.reduce((a,b) => a+b, 0);
+  document.getElementById('orders-meta').textContent = total + ' orders';
+
+  chartInstances.ordersChart = new Chart(document.getElementById('ordersChart'), {
+    type: 'bar',
+    data: {
+      labels: days.map(d => d.slice(5)),
+      datasets: [{
+        label: 'Orders',
+        data: vals,
+        backgroundColor: 'rgba(55,138,221,0.75)',
+        borderRadius: 4,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#888', font: { size: 11 }, maxTicksLimit: 8, autoSkip: true } },
+        y: { grid: { color: 'rgba(128,128,128,0.1)' }, ticks: { color: '#888', font: { size: 11 }, stepSize: 1 } },
+      }
+    }
+  });
+}
+
+/* ── STATUS DONUT ── */
+function renderStatus(data) {
+  destroyChart('statusChart');
+  const statuses = data.orders_by_status || {};
+  const keys   = Object.keys(statuses);
+  const vals   = keys.map(k => statuses[k]);
+  const colors = keys.map(k => STATUS_COLORS[k] || C.gray);
+  const total  = vals.reduce((a,b)=>a+b,0);
+  document.getElementById('status-meta').textContent = total + ' total';
+
+  if (!keys.length) {
+    document.getElementById('statusChart').parentElement.innerHTML = '<div class="loading-state" style="min-height:100px;">No orders yet</div>';
+    return;
+  }
+
+  chartInstances.statusChart = new Chart(document.getElementById('statusChart'), {
+    type: 'doughnut',
+    data: {
+      labels: keys,
+      datasets: [{ data: vals, backgroundColor: colors, borderWidth: 0, hoverOffset: 4 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '68%',
+      plugins: { legend: { display: false }, tooltip: {
+        callbacks: { label: ctx => ctx.label + ': ' + ctx.parsed + ' (' + Math.round(ctx.parsed/total*100) + '%)' }
+      }}
+    }
+  });
+
+  document.getElementById('donut-legend').innerHTML = keys.map((k,i) => `
+    <div class="legend-row">
+      <div style="display:flex;align-items:center;">
+        <div class="legend-dot" style="background:${colors[i]};"></div>
+        <span style="color:var(--text2);text-transform:capitalize;">${k}</span>
+      </div>
+      <span style="color:var(--text3);">${vals[i]} (${Math.round(vals[i]/total*100)}%)</span>
+    </div>
+  `).join('');
+}
+
+/* ── TOP PRODUCTS ── */
+function renderProducts(data) {
+  const prods = (data.top_products || []).slice(0, 6);
+  if (!prods.length) {
+    document.getElementById('product-list').innerHTML = '<div class="loading-state" style="min-height:60px;">No product data yet</div>';
+    return;
+  }
+  const max = prods[0][1] || 1;
+  document.getElementById('product-list').innerHTML = prods.map(([name, count]) => `
+    <div class="product-row">
+      <div class="product-name" title="${name}">${name}</div>
+      <div class="product-bar-track">
+        <div class="product-bar-fill" style="width:${Math.round(count/max*100)}%;"></div>
+      </div>
+      <div class="product-count">${count}</div>
+    </div>
+  `).join('');
+}
+
+/* ── ORDERS TABLE ── */
+function renderOrdersTable(data) {
+  const orders = data.recent_orders || [];
+  document.getElementById('orders-count').textContent = orders.length + ' most recent';
+
+  if (!orders.length) {
+    document.getElementById('orders-table-wrap').innerHTML = '<div class="loading-state">No orders yet</div>';
+    return;
+  }
+
+  const pillClass = s => {
+    if (s === 'paid') return 'pill-paid';
+    if (s === 'delivered') return 'pill-delivered';
+    if (s === 'confirmed') return 'pill-confirmed';
+    return 'pill-pending';
+  };
+
+  document.getElementById('orders-table-wrap').innerHTML = `
+    <table class="orders-table">
+      <thead>
+        <tr>
+          <th>Order</th>
+          <th>Customer</th>
+          <th>Total</th>
+          <th>Status</th>
+          <th>Payment</th>
+          <th>Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${orders.map(o => `
+          <tr>
+            <td><strong>#${o.id}</strong></td>
+            <td style="color:var(--text2);">${o.phone || '—'}</td>
+            <td>$${parseFloat(o.total || 0).toFixed(2)}</td>
+            <td><span class="status-pill ${pillClass(o.status)}">${o.status}</span></td>
+            <td><span class="status-pill ${o.payment === 'paid' ? 'pill-paid' : 'pill-pending'}">${o.payment || 'pending'}</span></td>
+            <td style="color:var(--text3);">${o.date || '—'}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+/* ── ERROR STATES ── */
+function showError(msg) {
+  document.getElementById('kpi-grid').innerHTML = `
+    <div class="error-state" style="grid-column:1/-1;">
+      <div>⚠ ${msg}</div>
+      <button onclick="loadAll()">Try again</button>
+    </div>`;
+}
+
+/* ── MAIN LOAD ── */
+async function loadAll() {
+  if (!token || !bizId) {
+    window.location.href = '/dashboard';
+    return;
+  }
+
+  document.getElementById('last-updated').textContent = 'Loading…';
+
+  try {
+    const data = await apiFetch(`/analytics/${bizId}`);
+    if (!data) return;
+
+    document.getElementById('biz-name').textContent = data.business_name || '';
+    renderKPIs(data);
+    renderRevenue(data);
+    renderOrdersChart(data);
+    renderStatus(data);
+    renderProducts(data);
+    renderOrdersTable(data);
+
+    const now = new Date();
+    document.getElementById('last-updated').textContent =
+      'Updated ' + now.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+
+  } catch (err) {
+    console.error('loadAll error:', err);
+    /* Fallback: try the old endpoint or show a useful error */
+    showError('Could not load analytics. Check your connection or try refreshing.');
+    document.getElementById('last-updated').textContent = 'Failed';
+  }
+}
+
+loadAll();
 </script>
-
 </body>
 </html>
