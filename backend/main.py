@@ -1174,3 +1174,45 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     })
 
     return {"ok": True, "message_id": msg["id"], "whatsapp_result": wa_result}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CART MANAGEMENT (debug + admin)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/cart/{phone}")
+def get_cart(phone: str, user=Depends(require_business)):
+    """View the current cart for a customer phone number."""
+    cart = crud.get_cart(phone, user["business_id"])
+    total = sum(i["qty"] * float(i["price"]) for i in cart)
+    return {"phone": phone, "items": cart, "total": round(total, 2), "count": len(cart)}
+
+
+@app.delete("/cart/{phone}")
+def clear_cart(phone: str, user=Depends(require_business)):
+    """Clear the cart for a customer (useful for testing / support)."""
+    crud.clear_cart(phone, user["business_id"])
+    log.info("cart cleared  phone=%s  by=%s", phone, user["username"])
+    return {"ok": True, "phone": phone, "message": "Cart cleared"}
+
+
+@app.get("/debug/schema")
+def debug_schema(user=Depends(require_business)):
+    """
+    Show which optional columns exist in the orders table.
+    Useful to confirm whether MIGRATION.sql has been run.
+    """
+    from order_lifecycle import _get_orders_columns, _invalidate_column_cache
+    _invalidate_column_cache()   # force re-probe
+    cols = _get_orders_columns()
+    optional = ["items", "payment_status", "payment_reference"]
+    return {
+        "all_columns":      sorted(cols),
+        "optional_columns": {c: (c in cols) for c in optional},
+        "migration_needed": not all(c in cols for c in optional),
+        "action": (
+            "✅ Schema is up to date"
+            if all(c in cols for c in optional)
+            else "⚠️  Run MIGRATION.sql in Supabase SQL Editor to add missing columns"
+        ),
+    }
