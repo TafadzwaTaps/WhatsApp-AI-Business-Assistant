@@ -55,13 +55,17 @@ class Order(Base):
     product_name = Column(String, nullable=False)
     quantity = Column(Integer, nullable=False)
 
-    # Full serialised cart: "[{name, qty, price}, ...]"
+    # Full serialised cart: "[{name, qty, price, subtotal}, ...]"
     items = Column(Text, nullable=True)
 
     total_price = Column(Numeric(10, 2), nullable=False)
 
     # Lifecycle: pending → confirmed → paid → delivered
     status = Column(String, default="pending")
+
+    # Payment tracking
+    payment_status = Column(String, default="pending")       # pending | paid
+    payment_reference = Column(String, nullable=True)        # ORDER-{id}
 
     created_at = Column(DateTime, default=datetime.utcnow, server_default=func.now())
 
@@ -71,7 +75,6 @@ class Order(Base):
         Index("ix_order_business", "business_id"),
     )
 
-    # Convenience alias so invoice.py / order_lifecycle.py can use .total
     @property
     def total(self):
         return self.total_price

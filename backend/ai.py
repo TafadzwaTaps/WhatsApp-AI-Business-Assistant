@@ -8,7 +8,12 @@ WHAT THIS IS:
 - Learns user behavior over time (lightweight memory layer)
 
 CHECKOUT FLOW:
-  detect "checkout" → create_order_supabase() → generate_invoice() → return invoice as WA message
+  detect "checkout"
+    → create_order_supabase()   (reduces stock)
+    → generate_invoice_text()   (WhatsApp text invoice)
+    → generate_pdf_invoice()    (PDF file)
+    → send_whatsapp_document()  (PDF sent to customer)
+    → return text invoice as WA reply
   Stock is reduced atomically; insufficient stock blocks checkout with a friendly message.
 """
 
@@ -75,14 +80,12 @@ def _find_product(text: str, products: list) -> dict | None:
 
     names = [p["name"].lower() for p in products]
 
-    # Full phrase match
     match = get_close_matches(text.lower(), names, n=1, cutoff=0.55)
     if match:
         for p in products:
             if p["name"].lower() == match[0]:
                 return p
 
-    # Word-by-word scan
     for word in text.split():
         if len(word) < 3:
             continue
@@ -165,6 +168,52 @@ def _format_cart(cart: list) -> str:
 
 
 # ─────────────────────────────────────────────
+# PDF + WHATSAPP DOCUMENT HELPER
+# ─────────────────────────────────────────────
+
+def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
+    """
+    Generate PDF invoice and send it via WhatsApp.
+    Silently logs errors — never crashes the checkout flow.
+    """
+    try:
+        from pdf_invoice import generate_pdf_invoice
+        pdf_path = generate_pdf_invoice(order)
+    except Exception as exc:
+        log.error("_send_pdf_invoice: PDF generation failed — %s", exc)
+        return
+
+    try:
+        business = crud.get_business_by_id(business_id)
+        if not business:
+            log.warning("_send_pdf_invoice: business %s not found", business_id)
+            return
+
+        token = crud.get_decrypted_token(business)
+        phone_number_id = business.get("whatsapp_phone_id")
+
+        if not token or not phone_number_id:
+            log.warning("_send_pdf_invoice: missing token or phone_id for business %s", business_id)
+            return
+
+        from whatsapp import send_whatsapp_document
+        result = send_whatsapp_document(
+            phone=phone,
+            file_path=pdf_path,
+            access_token=token,
+            phone_number_id=phone_number_id,
+            caption=f"📄 Your invoice for ORDER-{order.get('id', '?')}",
+        )
+        if "error" in result:
+            log.error("_send_pdf_invoice: WhatsApp send failed — %s", result["error"])
+        else:
+            log.info("_send_pdf_invoice: ✅ PDF sent  order=%s  phone=%s", order.get("id"), phone)
+
+    except Exception as exc:
+        log.exception("_send_pdf_invoice: unexpected error — %s", exc)
+
+
+# ─────────────────────────────────────────────
 # MAIN ENGINE
 # ─────────────────────────────────────────────
 
@@ -180,10 +229,8 @@ def generate_reply(
 
     # Load cart (list of {name, qty, price})
     cart_raw = crud.get_cart(phone, business_id)
-    # crud.get_cart returns a dict with an "items" key OR a list depending on storage
     if isinstance(cart_raw, dict):
         cart = cart_raw.get("items") or []
-        # Handle case where items is stored as a dict keyed by name
         if isinstance(cart, dict):
             cart = list(cart.values())
     elif isinstance(cart_raw, list):
@@ -256,11 +303,18 @@ def generate_reply(
             _update_memory(phone, business_id, cart)
             crud.clear_cart(phone, business_id)
 
+            # Generate text invoice for WhatsApp reply
             invoice = generate_invoice_text(order)
+
+            # Enrich order with business name for PDF header
+            order["business_name"] = business_name
+
+            # Generate PDF + send via WhatsApp (non-blocking — errors are logged only)
+            _send_pdf_invoice(order, phone, business_id)
+
             return invoice
 
         except ValueError as e:
-            # Stock issues, missing product, etc.
             log.warning("checkout blocked — %s", e)
             return f"⚠️ Could not place order:\n{e}\n\nPlease adjust your cart and try again."
 
@@ -287,12 +341,15 @@ def generate_reply(
     product = _find_product(text, products)
 
     if product:
+        # Force fresh stock from DB
+        fresh = crud.get_product_by_name(business_id, product["name"])
+        if fresh:
+            product = fresh
+
         qty = _qty(text)
 
-        # Check available stock before adding
         available_stock = product.get("stock")
         if available_stock is not None:
-            # Calculate already-in-cart qty
             in_cart = next((i["qty"] for i in cart if i["name"] == product["name"]), 0)
             if in_cart + qty > available_stock:
                 if available_stock == 0:

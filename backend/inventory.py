@@ -33,12 +33,21 @@ def get_product_by_name(business_id: int, name: str) -> dict | None:
 
 
 def reduce_stock(product_id: int, quantity: int) -> dict:
+    """
+    Atomically reduce stock for a product.
+    Raises ValueError if product not found or insufficient stock.
+    Logs a warning when stock falls at or below low_stock_threshold.
+    """
     product = get_product(product_id)
 
     if not product:
         raise ValueError(f"Product id={product_id} not found")
 
-    current = product.get("stock") or 0
+    current = product.get("stock")
+    if current is None:
+        # stock column not set — treat as unlimited, skip reduction
+        log.info("reduce_stock: product '%s' has no stock field — skipping reduction", product.get("name"))
+        return product
 
     if current < quantity:
         raise ValueError(
@@ -61,17 +70,34 @@ def reduce_stock(product_id: int, quantity: int) -> dict:
 
 
 def reduce_stock_by_name(business_id: int, name: str, quantity: int) -> dict:
+    """Reduce stock by product name within a business. Raises ValueError on failure."""
     product = get_product_by_name(business_id, name)
     if not product:
-        raise ValueError(f"Product '{name}' not found")
+        raise ValueError(f"Product '{name}' not found in business id={business_id}")
     return reduce_stock(product["id"], quantity)
 
 
 def restock_product(product_id: int, quantity: int) -> dict:
+    """Add stock to a product."""
     product = get_product(product_id)
     if not product:
         raise ValueError(f"Product id={product_id} not found")
     new_stock = (product.get("stock") or 0) + quantity
     supabase.table("products").update({"stock": new_stock}).eq("id", product_id).execute()
     product["stock"] = new_stock
+    log.info("restock_product: id=%s +%d → %d", product_id, quantity, new_stock)
     return product
+
+
+def check_stock(business_id: int, name: str, quantity: int) -> tuple[bool, int]:
+    """
+    Check if enough stock is available without reducing it.
+    Returns (ok: bool, available: int).
+    """
+    product = get_product_by_name(business_id, name)
+    if not product:
+        return False, 0
+    available = product.get("stock")
+    if available is None:
+        return True, 9999  # unlimited
+    return available >= quantity, available

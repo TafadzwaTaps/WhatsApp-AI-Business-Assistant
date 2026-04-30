@@ -28,12 +28,14 @@ def generate_invoice(order) -> str:
         items_raw      = order.get("items", "")
         total          = order.get("total_price", 0)
         status         = order.get("status", "pending")
+        payment_status = order.get("payment_status", "pending")
         customer_phone = order.get("customer_phone", "")
     else:
         order_id       = getattr(order, "id", "N/A")
         items_raw      = getattr(order, "items", "") or ""
         total          = getattr(order, "total_price", None) or getattr(order, "total", 0)
         status         = getattr(order, "status", "pending")
+        payment_status = getattr(order, "payment_status", "pending")
         customer_phone = getattr(order, "customer_phone", "")
 
     # Parse items JSON if present
@@ -54,6 +56,9 @@ def generate_invoice(order) -> str:
     else:
         items_text = "  (no item detail)"
 
+    pay_icon = "✅" if payment_status == "paid" else "⏳"
+    pay_label = "PAID" if payment_status == "paid" else "PENDING"
+
     invoice = (
         f"🧾 *INVOICE*\n"
         f"{'─' * 28}\n"
@@ -64,11 +69,14 @@ def generate_invoice(order) -> str:
         f"{'─' * 28}\n"
         f"💰 *Total: ${float(total):.2f}*\n"
         f"Status   : {status.upper()}\n"
+        f"{pay_icon} Payment : {pay_label}\n"
         f"{'─' * 28}\n"
-        f"💳 Payment: EcoCash / Mobile Money\n"
-        f"Reference: ORDER-{order_id}\n"
+        f"💳 *How to Pay:*\n"
+        f"  EcoCash / Mobile Money\n"
+        f"  Reference: *ORDER-{order_id}*\n"
         f"{'─' * 28}\n"
-        f"Thank you for your order! 🙏"
+        f"Thank you for your order! 🙏\n"
+        f"_Reply 'menu' to keep shopping._"
     )
 
     log.info("🧾 Invoice generated  order_id=%s  total=%.2f", order_id, float(total))
@@ -82,6 +90,7 @@ generate_invoice_text = generate_invoice
 def mark_order_paid(db, order):
     """SQLAlchemy helper — flip order to paid."""
     order.status = "paid"
+    order.payment_status = "paid"
     db.commit()
     log.info("💳 Order %s marked paid", order.id)
     return order

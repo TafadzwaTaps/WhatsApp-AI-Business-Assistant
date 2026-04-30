@@ -35,9 +35,11 @@ from auth import (
 from order_lifecycle import (
     create_order_supabase,
     update_order_status_supabase,
+    get_order,
     VALID_STATUSES,
 )
 from invoice import generate_invoice_text
+from payments import confirm_payment
 
 load_dotenv()
 
@@ -63,6 +65,10 @@ STATIC_DIR = next(
 )
 os.makedirs(STATIC_DIR, exist_ok=True)
 log.info("📁 Static dir: %s", STATIC_DIR)
+
+# ── Invoice dir ────────────────────────────────────────────────────────────────
+INVOICES_DIR = os.path.join(_BASE, "invoices")
+os.makedirs(INVOICES_DIR, exist_ok=True)
 
 # ── App ────────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None)
@@ -568,6 +574,103 @@ async def receive_message(request: Request):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT WEBHOOK
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaymentWebhookRequest(BaseModel):
+    reference: str   # e.g. ORDER-12
+    amount: float
+
+
+@app.post("/payment/webhook")
+async def payment_webhook(data: PaymentWebhookRequest):
+    """
+    Receive a payment confirmation from a payment gateway or manual trigger.
+
+    Payload: { "reference": "ORDER-12", "amount": 10.00 }
+
+    Steps:
+      1. Confirm payment (validate amount, mark order paid)
+      2. Look up the business that owns the order
+      3. Send a WhatsApp confirmation message to the customer
+    """
+    result = confirm_payment(reference=data.reference, amount=data.amount)
+
+    if not result["success"]:
+        log.warning("payment_webhook: failed — %s", result.get("error"))
+        raise HTTPException(400, result.get("error", "Payment confirmation failed"))
+
+    order     = result["order"]
+    order_id  = result["order_id"]
+    phone     = order.get("customer_phone", "")
+    biz_id    = order.get("business_id")
+
+    # Send WhatsApp confirmation to customer
+    if phone and biz_id:
+        try:
+            business = crud.get_business_by_id(biz_id)
+            if business:
+                token       = crud.get_decrypted_token(business)
+                phone_id    = business.get("whatsapp_phone_id")
+                biz_name    = business.get("name", "")
+
+                if token and phone_id:
+                    confirmation_msg = (
+                        f"✅ *Payment Received!*\n\n"
+                        f"Thank you! Your payment for *ORDER-{order_id}* has been confirmed.\n\n"
+                        f"💰 Amount: ${float(order.get('total_price', 0)):.2f}\n"
+                        f"📦 Status: *CONFIRMED*\n\n"
+                        f"Your order is now being processed. Thank you for shopping with *{biz_name}*! 🙏"
+                    )
+                    send_whatsapp(phone_id, token, phone, confirmation_msg)
+                    log.info("payment_webhook: confirmation sent  order=%s  phone=%s", order_id, phone)
+        except Exception as exc:
+            log.exception("payment_webhook: WhatsApp notification failed — %s", exc)
+
+    log.info("payment_webhook: ✅ success  order=%s  amount=%.2f", order_id, data.amount)
+    return {
+        "success":  True,
+        "message":  result["message"],
+        "order_id": order_id,
+        "order":    order,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INVOICE DOWNLOAD
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/invoice/{order_id}")
+def download_invoice(order_id: int, user=Depends(require_business)):
+    """
+    Generate (or return cached) PDF invoice for an order.
+    Returns the PDF file as a download.
+    """
+    order = crud.get_order_by_id(order_id, user["business_id"])
+    if not order:
+        raise HTTPException(404, "Order not found")
+
+    pdf_path = os.path.join(INVOICES_DIR, f"invoice_{order_id}.pdf")
+
+    # Regenerate if missing
+    if not os.path.exists(pdf_path):
+        try:
+            business = crud.get_business_by_id(user["business_id"])
+            order["business_name"] = business.get("name", "") if business else ""
+            from pdf_invoice import generate_pdf_invoice
+            pdf_path = generate_pdf_invoice(order)
+        except Exception as exc:
+            log.exception("download_invoice: PDF generation failed — %s", exc)
+            raise HTTPException(500, "Failed to generate invoice PDF")
+
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        filename=f"invoice_{order_id}.pdf",
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # WEBSOCKET
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -761,7 +864,7 @@ def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
     """
     Create an order for the authenticated business.
     Reduces stock automatically.
-    Returns the order + invoice text.
+    Returns the order + text invoice.
     """
     try:
         order = create_order_supabase(
@@ -790,7 +893,6 @@ def update_order_status_api(
     data: OrderStatusUpdate,
     user=Depends(require_business),
 ):
-    # Verify order belongs to this business
     existing = crud.get_order_by_id(order_id, user["business_id"])
     if not existing:
         raise HTTPException(404, "Order not found")
@@ -804,7 +906,7 @@ def update_order_status_api(
 
 
 @app.get("/orders/{order_id}/invoice")
-def get_invoice(order_id: int, user=Depends(require_business)):
+def get_invoice_text(order_id: int, user=Depends(require_business)):
     order = crud.get_order_by_id(order_id, user["business_id"])
     if not order:
         raise HTTPException(404, "Order not found")
