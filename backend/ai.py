@@ -1,17 +1,29 @@
 """
-ai.py — Universal Autonomous Business AI Engine
+ai.py — Universal Autonomous Business AI Engine  (v4 — multi-payment)
 
-ChatGPT-style WhatsApp ordering system.
-Reliable cart + checkout + product matching.
+CHECKOUT FLOW (new):
+  User: "checkout"
+    → Bot shows cart summary + asks for payment method
+  User: "1" / "ecocash" / "2" / "paynow" / "3" / "paypal"
+    → Order is created in Supabase
+    → Payment gateway is called
+    → Customer receives payment instructions / URL
+    → Cart is cleared ONLY after order is successfully created
 
 PRIORITY ORDER:
-  1. Checkout
-  2. Remove item
-  3. Add to cart  (NLP product match — highest priority for product inputs)
-  4. Cart view
-  5. Browse menu
-  6. Help / greeting
-  7. Fallback LAST
+  1. Checkout initiation  — asks for payment method
+  2. Payment method reply — handles 1/2/3 or ecocash/paynow/paypal
+  3. Remove item
+  4. Add to cart  (NLP product match)
+  5. Cart view
+  6. Browse menu
+  7. Help / greeting
+  8. Fallback LAST
+
+SESSION STATE for payment flow:
+  Stored as a "session" JSON object in Supabase user_memory under key "pending_checkout".
+  Structure: { "awaiting_payment_method": true, "cart_snapshot": [...] }
+  Cleared once the order is placed or the user cancels.
 """
 
 import re
@@ -22,18 +34,18 @@ import crud
 log = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # MEMORY
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _get_memory(phone: str, business_id: int) -> dict:
     try:
         return crud.get_user_memory(phone, business_id) or {
-            "frequent_items": {}, "last_orders": [],
+            "frequent_items": {}, "last_orders": [], "pending_checkout": None,
         }
     except Exception as exc:
         log.warning("_get_memory failed: %s", exc)
-        return {"frequent_items": {}, "last_orders": []}
+        return {"frequent_items": {}, "last_orders": [], "pending_checkout": None}
 
 
 def _update_memory(phone: str, business_id: int, cart: list) -> None:
@@ -49,9 +61,41 @@ def _update_memory(phone: str, business_id: int, cart: list) -> None:
         log.warning("_update_memory failed: %s", exc)
 
 
-# ─────────────────────────────────────────────
-# CART HELPERS — always safe, always list
-# ─────────────────────────────────────────────
+def _get_pending_checkout(phone: str, business_id: int) -> dict | None:
+    """Return pending checkout session dict or None."""
+    try:
+        mem = _get_memory(phone, business_id)
+        return mem.get("pending_checkout") or None
+    except Exception:
+        return None
+
+
+def _set_pending_checkout(phone: str, business_id: int, cart: list) -> None:
+    """Store that we're waiting for a payment method selection."""
+    try:
+        mem = _get_memory(phone, business_id)
+        mem["pending_checkout"] = {
+            "awaiting_payment_method": True,
+            "cart_snapshot": cart,
+        }
+        crud.save_user_memory(phone, business_id, mem)
+    except Exception as exc:
+        log.warning("_set_pending_checkout failed: %s", exc)
+
+
+def _clear_pending_checkout(phone: str, business_id: int) -> None:
+    """Remove the pending checkout session."""
+    try:
+        mem = _get_memory(phone, business_id)
+        mem["pending_checkout"] = None
+        crud.save_user_memory(phone, business_id, mem)
+    except Exception as exc:
+        log.warning("_clear_pending_checkout failed: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CART HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _load_cart(phone: str, business_id: int) -> list:
     """Always returns a clean list of {name, qty, price} dicts."""
@@ -76,23 +120,58 @@ def _load_cart(phone: str, business_id: int) -> list:
 def _save_cart(phone: str, business_id: int, cart: list) -> None:
     try:
         crud.save_cart(phone, business_id, cart)
-        log.debug("_save_cart: %d item(s) for %s", len(cart), phone)
+        log.debug("_save_cart: %d item(s)  phone=%s", len(cart), phone)
     except Exception as exc:
         log.error("_save_cart error: %s", exc)
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # INTENT ENGINE
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Explicit payment method keywords
+_ECOCASH_WORDS = {"ecocash", "eco", "1", "1️⃣", "one"}
+_PAYNOW_WORDS  = {"paynow", "pay now", "pn", "2", "2️⃣", "two"}
+_PAYPAL_WORDS  = {"paypal", "pp", "international", "3", "3️⃣", "three"}
+_CANCEL_WORDS  = {"cancel", "back", "no", "stop", "nevermind", "never mind"}
+
+
+def _detect_payment_method(text: str) -> str | None:
+    """
+    Detect if the user is selecting a payment method.
+    Returns: "ecocash" | "paynow" | "paypal" | "cancel" | None
+    """
+    t = text.lower().strip()
+    if t in _ECOCASH_WORDS:
+        return "ecocash"
+    if t in _PAYNOW_WORDS:
+        return "paynow"
+    if t in _PAYPAL_WORDS:
+        return "paypal"
+    if t in _CANCEL_WORDS:
+        return "cancel"
+    # Partial / embedded keyword match
+    if "ecocash" in t or "eco cash" in t:
+        return "ecocash"
+    if "paynow" in t or "pay now" in t:
+        return "paynow"
+    if "paypal" in t or "pay pal" in t:
+        return "paypal"
+    return None
+
 
 def _intent(text: str) -> str:
     t = text.lower().strip()
 
     if any(w in t for w in [
-        "checkout", "pay", "confirm order", "place order",
+        "checkout", "confirm order", "place order",
         "done", "finish", "complete order", "i'm done", "im done",
         "order now", "submit order",
     ]):
+        return "checkout"
+
+    # "pay" alone can mean payment method OR checkout — treat as checkout
+    if t == "pay":
         return "checkout"
 
     if t.startswith("remove") or t.startswith("delete") or "remove " in t:
@@ -118,38 +197,28 @@ def _intent(text: str) -> str:
     return "order"
 
 
-# ─────────────────────────────────────────────
-# SMART PRODUCT MATCHING
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# PRODUCT MATCHING
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _find_product(text: str, products: list) -> dict | None:
-    """
-    Multi-strategy matcher.
-    exact → stripped → close-phrase → word-by-word → substring → reverse-word
-    """
     if not products:
         return None
 
-    t = text.lower().strip()
+    t        = text.lower().strip()
     name_map = {p["name"].lower(): p for p in products}
-    names = list(name_map.keys())
+    names    = list(name_map.keys())
 
-    # 1. Exact full match
     if t in name_map:
         return name_map[t]
 
-    # 2. Strip intent prefixes + leading qty, then exact match
     stripped = t
-    for prefix in [
-        r"^(i want|i'd like|give me|add|order|get me|can i have|can i get|please)\s+",
-    ]:
+    for prefix in [r"^(i want|i'd like|give me|add|order|get me|can i have|can i get|please)\s+"]:
         stripped = re.sub(prefix, "", stripped, flags=re.IGNORECASE).strip()
-    # Remove leading qty: "2 sadza" → "sadza", "x2 sadza" → "sadza"
     stripped = re.sub(r"^(x\s*)?\d+\s+", "", stripped).strip()
-    if stripped and stripped != t and stripped in name_map:
+    if stripped and stripped in name_map:
         return name_map[stripped]
 
-    # 3. Close phrase match (full cleaned text)
     for candidate in (t, stripped):
         if not candidate:
             continue
@@ -157,7 +226,6 @@ def _find_product(text: str, products: list) -> dict | None:
         if match:
             return name_map[match[0]]
 
-    # 4. Word-by-word close match
     for word in t.split():
         if len(word) < 3:
             continue
@@ -165,12 +233,10 @@ def _find_product(text: str, products: list) -> dict | None:
         if match:
             return name_map[match[0]]
 
-    # 5. Substring: product name appears in user text
     for name, product in name_map.items():
         if name in t:
             return product
 
-    # 6. Reverse: any word of product name appears in user text
     for name, product in name_map.items():
         for part in name.split():
             if len(part) >= 3 and part in t:
@@ -179,11 +245,11 @@ def _find_product(text: str, products: list) -> dict | None:
     return None
 
 
-# ─────────────────────────────────────────────
-# QUANTITY ENGINE
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# QUANTITY PARSER
+# ─────────────────────────────────────────────────────────────────────────────
 
-NUMBER_WORDS = {
+_NUMBER_WORDS = {
     "a": 1, "an": 1, "one": 1, "two": 2, "three": 3,
     "four": 4, "five": 5, "six": 6, "seven": 7,
     "eight": 8, "nine": 9, "ten": 10, "couple": 2, "few": 3,
@@ -199,17 +265,17 @@ def _qty(text: str) -> int:
     if m:
         return max(1, int(m.group(1)))
     for w in t.split():
-        if w in NUMBER_WORDS:
-            return NUMBER_WORDS[w]
+        if w in _NUMBER_WORDS:
+            return _NUMBER_WORDS[w]
     return 1
 
 
-# ─────────────────────────────────────────────
-# RECOMMENDATION ENGINE
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# RECOMMENDATIONS
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _recommend(phone: str, business_id: int, products: list, exclude: str = "") -> list:
-    mem = _get_memory(phone, business_id)
+    mem  = _get_memory(phone, business_id)
     freq = mem.get("frequent_items", {})
     recs = [p for p in products if p["name"].lower() != exclude.lower()]
     if freq:
@@ -217,9 +283,9 @@ def _recommend(phone: str, business_id: int, products: list, exclude: str = "") 
     return recs[:2]
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # CART FORMATTER
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _format_cart(cart: list) -> str:
     if not cart:
@@ -239,9 +305,26 @@ def _format_cart(cart: list) -> str:
     )
 
 
-# ─────────────────────────────────────────────
-# PDF SEND HELPER (non-blocking)
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT METHOD SELECTION PROMPT
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _payment_prompt(cart: list) -> str:
+    cart_summary = _format_cart(cart)
+    return (
+        f"{cart_summary}\n\n"
+        f"You're almost done! 😊\n\n"
+        f"How would you like to pay?\n\n"
+        f"1️⃣  *EcoCash* — Send via *151# (Zimbabwe)\n"
+        f"2️⃣  *Paynow*  — Pay online (Zimbabwe)\n"
+        f"3️⃣  *PayPal*  — International / card\n\n"
+        f"_Reply with *1*, *2*, or *3*_ — or type the name."
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PDF INVOICE HELPER (non-blocking)
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
     try:
@@ -254,7 +337,7 @@ def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
         business = crud.get_business_by_id(business_id)
         if not business:
             return
-        token = crud.get_decrypted_token(business)
+        token           = crud.get_decrypted_token(business)
         phone_number_id = business.get("whatsapp_phone_id")
         if not token or not phone_number_id:
             return
@@ -270,9 +353,125 @@ def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
         log.exception("_send_pdf_invoice error: %s", exc)
 
 
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+# PROCESS PAYMENT METHOD — core checkout logic
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _process_payment(
+    method: str,
+    cart: list,
+    phone: str,
+    business_id: int,
+    business_name: str,
+) -> str:
+    """
+    Create the order in Supabase then call the appropriate payment gateway.
+    Returns a WhatsApp-ready reply string.
+    """
+    from order_lifecycle import create_order_supabase
+    from invoice import generate_invoice_text
+    from payments import (
+        generate_ecocash_instructions,
+        create_paynow_payment,
+        create_paypal_payment,
+    )
+
+    # ── STEP 1: Create order (always first — captures the sale) ───────────────
+    try:
+        log.info("_process_payment  method=%s  phone=%s  cart=%s", method, phone, cart)
+
+        order = create_order_supabase(
+            business_id=business_id,
+            customer_phone=phone,
+            cart=cart,
+            payment_method=method,       # saved to orders.payment_method
+        )
+        order["business_name"] = business_name
+
+        # Pull business payment details (EcoCash number, etc.) into order dict
+        try:
+            biz = crud.get_business_by_id(business_id)
+            if biz:
+                order["payment_number"] = biz.get("payment_number", "")
+                order["payment_name"]   = biz.get("payment_name", "")
+        except Exception:
+            pass
+
+        log.info("order created  id=%s  method=%s", order.get("id", "?"), method)
+
+    except ValueError as exc:
+        log.warning("_process_payment order creation blocked: %s", exc)
+        return (
+            f"⚠️ Couldn't place your order:\n_{exc}_\n\n"
+            "Please adjust your cart and try *checkout* again."
+        )
+    except Exception as exc:
+        log.exception("_process_payment order creation failed: %s", exc)
+        return (
+            "❌ Something went wrong saving your order.\n\n"
+            "Please try again in a moment. Your cart is still saved."
+        )
+
+    # ── STEP 2: Call payment gateway ──────────────────────────────────────────
+    try:
+        if method == "ecocash":
+            pay_result = generate_ecocash_instructions(order)
+        elif method == "paynow":
+            pay_result = create_paynow_payment(order)
+        elif method == "paypal":
+            pay_result = create_paypal_payment(order)
+        else:
+            pay_result = generate_ecocash_instructions(order)  # safe default
+
+    except Exception as exc:
+        log.exception("payment gateway error  method=%s  exc=%s", method, exc)
+        pay_result = {
+            "error":   str(exc),
+            "message": (
+                "⚠️ Payment link could not be generated right now.\n"
+                "Your order is saved. Please contact us to complete payment.\n"
+                f"Order reference: *ORDER-{order.get('id', '?')}*"
+            ),
+        }
+
+    # ── STEP 3: Save payment details back to order ────────────────────────────
+    try:
+        order_id = order.get("id")
+        if order_id:
+            update: dict = {
+                "payment_method":    method,
+                "payment_status":    "pending_payment" if not pay_result.get("error") else "payment_error",
+                "payment_reference": pay_result.get("reference", f"ORDER-{order_id}"),
+            }
+            if pay_result.get("url"):
+                update["payment_url"] = pay_result["url"]
+            crud.update_order_payment(order_id, business_id, update)
+    except Exception as exc:
+        log.warning("update payment details failed: %s", exc)
+
+    # ── STEP 4: Clear cart + memory + session ─────────────────────────────────
+    _update_memory(phone, business_id, cart)
+    crud.clear_cart(phone, business_id)
+    _clear_pending_checkout(phone, business_id)
+
+    # ── STEP 5: Send PDF invoice (non-blocking) ───────────────────────────────
+    _send_pdf_invoice(order, phone, business_id)
+
+    # ── STEP 6: Return reply ──────────────────────────────────────────────────
+    pay_message = pay_result.get("message", "")
+    if pay_result.get("error") and not pay_message:
+        pay_message = (
+            "⚠️ Payment link failed, but your order is saved.\n"
+            f"Reference: *ORDER-{order.get('id', '?')}*\n"
+            "Please contact us to arrange payment."
+        )
+
+    return pay_message
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MAIN ENGINE
-# ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 def generate_reply(
     message: str,
@@ -287,52 +486,64 @@ def generate_reply(
     log.info("▶ reply  phone=%s  biz=%s  intent=%s  msg=%r", phone, business_id, intent, text[:80])
 
     cart = _load_cart(phone, business_id)
-    log.debug("cart_before  size=%d  %s", len(cart), cart)
+    log.debug("cart_before  size=%d", len(cart))
 
-    # ══════════════════════════════════════════
-    # 1. CHECKOUT
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
+    # PRIORITY 0 — PAYMENT METHOD REPLY
+    # Check BEFORE all other intents so "1", "2", "3" resolve correctly when
+    # the user is in the middle of a checkout flow.
+    # ══════════════════════════════════════════════════════════════════════════
+    pending = _get_pending_checkout(phone, business_id)
+
+    if pending and pending.get("awaiting_payment_method"):
+        method = _detect_payment_method(text)
+
+        if method == "cancel":
+            _clear_pending_checkout(phone, business_id)
+            return (
+                "🚫 Checkout cancelled. Your cart is still saved.\n\n"
+                f"{_format_cart(cart)}\n\n"
+                "_Type *checkout* when you're ready._"
+            )
+
+        if method in ("ecocash", "paynow", "paypal"):
+            # Use cart snapshot stored at checkout initiation
+            snapshot = pending.get("cart_snapshot") or cart
+            return _process_payment(
+                method=method,
+                cart=snapshot,
+                phone=phone,
+                business_id=business_id,
+                business_name=business_name,
+            )
+
+        # User replied something unrecognised while in payment selection
+        return (
+            "🤔 I didn't catch that.\n\n"
+            "Please choose your payment method:\n"
+            "1️⃣ *EcoCash*  2️⃣ *Paynow*  3️⃣ *PayPal*\n\n"
+            "_Or type *cancel* to go back._"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 1. CHECKOUT INITIATION — ask for payment method
+    # ══════════════════════════════════════════════════════════════════════════
     if intent == "checkout":
         if not cart:
             return (
                 "🛒 Your cart is empty!\n\n"
-                "Type *menu* to see what we offer, then add an item — e.g. _\"Sadza\"_ or _\"2 Beef\"_"
-            )
-        try:
-            from order_lifecycle import create_order_supabase
-            from invoice import generate_invoice_text
-
-            log.info("checkout  phone=%s  cart=%s", phone, cart)
-            order = create_order_supabase(
-                business_id=business_id,
-                customer_phone=phone,
-                cart=cart,
-            )
-            log.info("order created  id=%s", order.get("id", "?"))
-
-            _update_memory(phone, business_id, cart)
-            crud.clear_cart(phone, business_id)
-            order["business_name"] = business_name
-            invoice = generate_invoice_text(order)
-            _send_pdf_invoice(order, phone, business_id)
-            return invoice
-
-        except ValueError as e:
-            log.warning("checkout ValueError: %s", e)
-            return (
-                f"⚠️ Couldn't place your order:\n_{e}_\n\n"
-                "Please adjust your cart and try *checkout* again."
-            )
-        except Exception as e:
-            log.exception("checkout error: %s", e)
-            return (
-                "❌ Something went wrong placing your order.\n\n"
-                "Please try again in a moment."
+                "Type *menu* to see what we offer, then add an item — "
+                "e.g. _\"Sadza\"_ or _\"2 Beef\"_"
             )
 
-    # ══════════════════════════════════════════
+        # Store cart snapshot so it survives if the user adds more items
+        _set_pending_checkout(phone, business_id, cart)
+
+        return _payment_prompt(cart)
+
+    # ══════════════════════════════════════════════════════════════════════════
     # 2. REMOVE ITEM
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if intent == "remove":
         t_lower = text.lower()
         for item in list(cart):
@@ -342,9 +553,9 @@ def generate_reply(
                 return f"🗑️ Removed *{item['name']}* from your cart.\n\n{_format_cart(cart)}"
         return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart)}"
 
-    # ══════════════════════════════════════════
-    # 3. ADD / ORDER — always try product match
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. ADD / ORDER — NLP product match
+    # ══════════════════════════════════════════════════════════════════════════
     if intent == "order":
         product = _find_product(text, products)
 
@@ -360,7 +571,6 @@ def generate_reply(
             qty          = _qty(text)
             product_name = product["name"]
 
-            # Stock guard
             available = product.get("stock")
             if available is not None:
                 in_cart = next((i["qty"] for i in cart if i["name"] == product_name), 0)
@@ -375,7 +585,6 @@ def generate_reply(
                         f"(you already have {in_cart} in your cart)."
                     )
 
-            # Update cart in-place
             found = False
             for item in cart:
                 if item["name"] == product_name:
@@ -383,41 +592,33 @@ def generate_reply(
                     found = True
                     break
             if not found:
-                cart.append({
-                    "name":  product_name,
-                    "qty":   qty,
-                    "price": float(product["price"]),
-                })
+                cart.append({"name": product_name, "qty": qty, "price": float(product["price"])})
 
             _save_cart(phone, business_id, cart)
             log.info("added  %s ×%d  phone=%s", product_name, qty, phone)
 
-            recs = _recommend(phone, business_id, products, exclude=product_name)
+            recs      = _recommend(phone, business_id, products, exclude=product_name)
             qty_label = f" ×{qty}" if qty > 1 else ""
-            msg = (
-                f"👍 Nice choice! Added *{product_name}*{qty_label} to your cart.\n\n"
-                f"{_format_cart(cart)}"
-            )
+            msg       = f"👍 Nice choice! Added *{product_name}*{qty_label} to your cart.\n\n{_format_cart(cart)}"
+
             if recs:
                 rec_str = " or ".join(f"*{r['name']}*" for r in recs)
                 msg += f"\n\n💡 You might also enjoy {rec_str}."
             msg += "\n\n_Type *checkout* to place your order, or keep adding items._"
             return msg
 
-        # No product match → fall through to fallback
-
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # 4. CART VIEW
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if intent == "cart":
         reply = _format_cart(cart)
         if cart:
             reply += "\n\n_Ready? Type *checkout* to place your order._"
         return reply
 
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # 5. BROWSE MENU
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if intent == "browse":
         if not products:
             return f"📋 *{business_name}*\n\nNo items available yet. Check back soon! 🙏"
@@ -430,7 +631,7 @@ def generate_reply(
                 stock_note = f"  ⚠️ _only {s} left_"
             lines.append(f"  {i+1}. *{p['name']}* — ${float(p['price']):.2f}{stock_note}")
 
-        recs = _recommend(phone, business_id, products)
+        recs     = _recommend(phone, business_id, products)
         rec_text = ""
         if recs:
             rec_text = "\n\n⭐ *You usually order:*\n" + "\n".join(
@@ -444,9 +645,9 @@ def generate_reply(
             + "\n\n_Type a product name to add it — e.g. \"Sadza\" or \"2 Beef\"_"
         )
 
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # 6. HELP / GREETING
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     if intent == "help":
         hint = f"*{products[0]['name']}*" if products else "an item"
         return (
@@ -460,10 +661,9 @@ def generate_reply(
             f"What can I get you today? 😊"
         )
 
-    # ══════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════
     # 7. FALLBACK — last resort
-    # ══════════════════════════════════════════
-    # One more product-match attempt before giving up
+    # ══════════════════════════════════════════════════════════════════════════
     product = _find_product(text, products)
     if product:
         return generate_reply(

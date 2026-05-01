@@ -820,3 +820,37 @@ def clear_customer_messages(customer_id: int, business_id: int) -> int:
     except Exception as exc:
         log.error("clear_customer_messages error  customer=%s  exc=%s", customer_id, exc)
         return 0
+
+
+# ── Payment update ────────────────────────────────────────────────────────────
+
+def update_order_payment(order_id: int, business_id: int, data: dict) -> Optional[dict]:
+    """
+    Update payment-related fields on an order.
+    Only updates columns that exist in the schema (safe for old deployments).
+    data keys: payment_method, payment_status, payment_reference, payment_url
+    """
+    from order_lifecycle import _has_col
+
+    safe: dict = {}
+    for col in ("payment_method", "payment_status", "payment_reference", "payment_url"):
+        if col in data and _has_col(col):
+            safe[col] = data[col]
+
+    if not safe:
+        log.debug("update_order_payment: no valid columns to update")
+        return None
+
+    try:
+        res = (
+            supabase.table("orders")
+            .update(safe)
+            .eq("id", order_id)
+            .eq("business_id", business_id)
+            .execute()
+        )
+        log.info("update_order_payment  order=%s  fields=%s", order_id, list(safe.keys()))
+        return _one("orders", res)
+    except Exception as exc:
+        log.error("update_order_payment error  order=%s  exc=%s", order_id, exc)
+        return None

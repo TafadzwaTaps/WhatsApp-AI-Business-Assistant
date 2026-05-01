@@ -1309,3 +1309,235 @@ def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_bu
         "payment_name":   name,
         "message":        "Payment details saved. These will now appear on all customer invoices.",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT CALLBACKS & WEBHOOKS
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaynowCallbackRequest(BaseModel):
+    """Paynow IPN POST fields (all as strings per Paynow spec)."""
+    reference:  str = ""
+    paynowreference: str = ""
+    amount:     str = "0"
+    status:     str = ""
+    pollurl:    str = ""
+    hash:       str = ""
+
+
+async def _notify_customer_payment(order: dict, message: str) -> None:
+    """Send a WhatsApp message to the customer after payment confirmation."""
+    if not order:
+        return
+    biz_id = order.get("business_id")
+    phone  = order.get("customer_phone", "")
+    if not biz_id or not phone:
+        return
+    try:
+        business = crud.get_business_by_id(biz_id)
+        if not business:
+            return
+        token    = crud.get_decrypted_token(business)
+        phone_id = business.get("whatsapp_phone_id")
+        if token and phone_id:
+            send_whatsapp(phone_id, token, phone, message)
+            log.info("payment notification sent  phone=%s", phone)
+    except Exception as exc:
+        log.error("_notify_customer_payment error: %s", exc)
+
+
+@app.post("/payments/paynow/callback")
+async def paynow_callback(request: Request):
+    """
+    Paynow IPN endpoint — receives POST from Paynow when payment status changes.
+    Set PAYNOW_RESULT_URL to this URL in your env vars.
+    """
+    from payments import verify_paynow_callback
+    from order_lifecycle import get_order
+
+    try:
+        # Paynow sends form-encoded data
+        form = await request.form()
+        post_data = dict(form)
+        log.info("paynow callback received: %s", {k: v for k, v in post_data.items() if k != "hash"})
+
+        result = verify_paynow_callback(post_data)
+
+        if not result["paid"]:
+            log.warning("paynow callback: not paid  ref=%s  status=%s  error=%s",
+                        result.get("reference"), result.get("status"), result.get("error"))
+            return {"status": "not_paid", "reference": result.get("reference")}
+
+        reference = result["reference"]   # e.g. "ORDER-42"
+        if not reference.startswith("ORDER-"):
+            log.warning("paynow callback: unexpected reference format: %s", reference)
+            return {"status": "ignored"}
+
+        order_id = int(reference.split("-")[1])
+        order    = get_order(order_id)
+
+        if not order:
+            log.error("paynow callback: order not found  id=%s", order_id)
+            return {"status": "order_not_found"}
+
+        # Update order
+        crud.update_order_payment(order_id, order["business_id"], {
+            "payment_status":    "paid",
+            "payment_reference": reference,
+        })
+
+        # Notify customer via WhatsApp
+        await _notify_customer_payment(order, (
+            f"✅ *Payment Received!*\n\n"
+            f"Thank you! Your Paynow payment for *{reference}* has been confirmed.\n\n"
+            f"💰 Amount: ${result['amount']:.2f}\n"
+            f"📦 Your order is now being prepared. Thank you! 🙏"
+        ))
+
+        log.info("paynow callback: payment confirmed  ref=%s  amount=%.2f",
+                 reference, result["amount"])
+        return {"status": "ok", "reference": reference, "paid": True}
+
+    except Exception as exc:
+        log.exception("paynow_callback error: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+@app.get("/payments/paynow/return")
+async def paynow_return(request: Request):
+    """
+    User lands here after completing (or abandoning) Paynow payment.
+    This is a browser redirect — return a simple HTML page.
+    """
+    params    = request.query_params
+    reference = params.get("reference", "")
+    return {
+        "message":   "Payment processing. You will receive a WhatsApp confirmation shortly.",
+        "reference": reference,
+    }
+
+
+@app.get("/payments/paypal/success")
+async def paypal_success(
+    request: Request,
+    token: str = "",            # PayPal order ID
+    PayerID: str = "",          # PayPal payer ID
+    reference: str = "",        # our ORDER-{id} reference
+):
+    """
+    User lands here after approving a PayPal payment.
+    Captures the payment and confirms the order.
+    """
+    from payments import capture_paypal_order
+    from order_lifecycle import get_order
+
+    log.info("paypal success  token=%s  reference=%s  PayerID=%s", token, reference, PayerID)
+
+    if not token:
+        return {"status": "error", "detail": "Missing PayPal token"}
+
+    try:
+        capture = capture_paypal_order(token)
+
+        if not capture["paid"]:
+            log.warning("paypal success but capture failed: %s", capture.get("error"))
+            return {
+                "status":  "capture_failed",
+                "detail":  capture.get("error"),
+                "message": "Payment not completed. Please try again or contact support.",
+            }
+
+        # Use reference from URL param, fall back to captured reference
+        ref = reference or capture.get("reference", "")
+        if not ref.startswith("ORDER-"):
+            return {"status": "ok", "message": "Payment captured but reference unclear."}
+
+        order_id = int(ref.split("-")[1])
+        order    = get_order(order_id)
+
+        if order:
+            crud.update_order_payment(order_id, order["business_id"], {
+                "payment_status":    "paid",
+                "payment_reference": ref,
+            })
+            await _notify_customer_payment(order, (
+                f"✅ *PayPal Payment Confirmed!*\n\n"
+                f"Thank you! Your payment for *{ref}* is complete.\n\n"
+                f"💰 Amount: ${capture['amount']:.2f} USD\n"
+                f"📦 Your order is now being prepared. Thank you! 🙏"
+            ))
+
+        log.info("paypal capture confirmed  ref=%s  amount=%.2f", ref, capture["amount"])
+        return {
+            "status":    "ok",
+            "paid":      True,
+            "reference": ref,
+            "amount":    capture["amount"],
+            "message":   "Payment confirmed! You will receive a WhatsApp message shortly.",
+        }
+
+    except Exception as exc:
+        log.exception("paypal_success error: %s", exc)
+        return {"status": "error", "detail": str(exc)}
+
+
+@app.get("/payments/paypal/cancel")
+async def paypal_cancel(reference: str = ""):
+    """User cancelled PayPal checkout — order stays in pending state."""
+    log.info("paypal cancel  reference=%s", reference)
+    return {
+        "status":    "cancelled",
+        "reference": reference,
+        "message":   "Payment cancelled. Your cart is still saved — return to WhatsApp to try again.",
+    }
+
+
+@app.post("/payments/manual/confirm")
+async def manual_payment_confirm(request: Request, user=Depends(require_business)):
+    """
+    Business owner manually confirms a payment (e.g. after EcoCash transfer is verified).
+
+    Body: { "order_id": 42, "reference": "ORDER-42", "amount": 10.50 }
+    """
+    from order_lifecycle import get_order, update_order_status_supabase
+    from payments import confirm_payment   # existing payments helper if available
+
+    body = await request.json()
+    order_id  = int(body.get("order_id", 0))
+    reference = body.get("reference", f"ORDER-{order_id}")
+    amount    = float(body.get("amount", 0))
+
+    if not order_id:
+        raise HTTPException(400, "order_id is required")
+
+    order = get_order(order_id)
+    if not order:
+        raise HTTPException(404, f"Order {order_id} not found")
+    if order.get("business_id") != user["business_id"]:
+        raise HTTPException(403, "Access denied")
+
+    # Mark as paid
+    crud.update_order_payment(order_id, user["business_id"], {
+        "payment_status":    "paid",
+        "payment_reference": reference,
+    })
+    try:
+        update_order_status_supabase(order_id, "paid")
+    except Exception:
+        pass
+
+    # Notify customer
+    await _notify_customer_payment(order, (
+        f"✅ *Payment Confirmed!*\n\n"
+        f"Your payment for *{reference}* has been manually verified.\n\n"
+        f"💰 Amount: ${amount:.2f}\n"
+        f"📦 Your order is confirmed and being prepared. Thank you! 🙏"
+    ))
+
+    log.info("manual payment confirmed  order=%s  by=%s", order_id, user["username"])
+    return {
+        "ok":        True,
+        "order_id":  order_id,
+        "reference": reference,
+        "message":   "Payment confirmed and customer notified.",
+    }

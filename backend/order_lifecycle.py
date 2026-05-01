@@ -81,6 +81,7 @@ def create_order_supabase(
     business_id: int,
     customer_phone: str,
     cart: list,
+    payment_method: str = "ecocash",
 ) -> dict:
     """
     Create an order and reduce inventory atomically.
@@ -120,6 +121,9 @@ def create_order_supabase(
         "status":         "pending",
         "created_at":     _now(),
     }
+
+    if _has_col("payment_method"):
+        row["payment_method"] = payment_method
 
     if _has_col("items"):
         row["items"] = json.dumps(items_detail)
