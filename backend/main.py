@@ -39,7 +39,7 @@ from order_lifecycle import (
     VALID_STATUSES,
 )
 from invoice import generate_invoice_text
-from payments import confirm_payment
+# payments.py — see payments.py for available functions
 
 load_dotenv()
 
@@ -577,63 +577,77 @@ async def receive_message(request: Request):
 # PAYMENT WEBHOOK
 # ─────────────────────────────────────────────────────────────────────────────
 
-class PaymentWebhookRequest(BaseModel):
+class PaymentConfirmRequest(BaseModel):
     reference: str   # e.g. ORDER-12
     amount: float
 
 
 @app.post("/payment/webhook")
-async def payment_webhook(data: PaymentWebhookRequest):
+async def payment_webhook(data: PaymentConfirmRequest):
     """
-    Receive a payment confirmation from a payment gateway or manual trigger.
+    Manual payment confirmation endpoint.
+    Business owner (or a future gateway) calls this to mark an order as paid.
 
     Payload: { "reference": "ORDER-12", "amount": 10.00 }
-
-    Steps:
-      1. Confirm payment (validate amount, mark order paid)
-      2. Look up the business that owns the order
-      3. Send a WhatsApp confirmation message to the customer
     """
-    result = confirm_payment(reference=data.reference, amount=data.amount)
+    from order_lifecycle import get_order
 
-    if not result["success"]:
-        log.warning("payment_webhook: failed — %s", result.get("error"))
-        raise HTTPException(400, result.get("error", "Payment confirmation failed"))
+    reference = (data.reference or "").strip().upper()
+    if not reference.startswith("ORDER-"):
+        raise HTTPException(400, f"Invalid reference format. Expected ORDER-{{id}}, got: {reference}")
 
-    order     = result["order"]
-    order_id  = result["order_id"]
-    phone     = order.get("customer_phone", "")
-    biz_id    = order.get("business_id")
+    try:
+        order_id = int(reference.split("-")[1])
+    except (IndexError, ValueError):
+        raise HTTPException(400, f"Cannot parse order ID from reference: {reference}")
 
-    # Send WhatsApp confirmation to customer
+    order = get_order(order_id)
+    if not order:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    # Validate amount
+    order_total = float(order.get("total_price") or 0)
+    if round(float(data.amount), 2) != round(order_total, 2):
+        raise HTTPException(400,
+            f"Amount mismatch: expected ${order_total:.2f}, received ${data.amount:.2f}")
+
+    if order.get("payment_status") == "paid":
+        return {"success": True, "message": f"Order {order_id} is already marked paid.", "order_id": order_id}
+
+    # Mark as paid
+    biz_id = order.get("business_id")
+    crud.update_order_payment(order_id, biz_id, {
+        "payment_status":    "paid",
+        "payment_reference": reference,
+    })
+    try:
+        from order_lifecycle import update_order_status_supabase
+        update_order_status_supabase(order_id, "paid")
+    except Exception:
+        pass
+
+    # Notify customer via WhatsApp
+    phone = order.get("customer_phone", "")
     if phone and biz_id:
         try:
             business = crud.get_business_by_id(biz_id)
             if business:
-                token       = crud.get_decrypted_token(business)
-                phone_id    = business.get("whatsapp_phone_id")
-                biz_name    = business.get("name", "")
-
+                token    = crud.get_decrypted_token(business)
+                phone_id = business.get("whatsapp_phone_id")
+                biz_name = business.get("name", "")
                 if token and phone_id:
-                    confirmation_msg = (
-                        f"✅ *Payment Received!*\n\n"
-                        f"Thank you! Your payment for *ORDER-{order_id}* has been confirmed.\n\n"
-                        f"💰 Amount: ${float(order.get('total_price', 0)):.2f}\n"
-                        f"📦 Status: *CONFIRMED*\n\n"
-                        f"Your order is now being processed. Thank you for shopping with *{biz_name}*! 🙏"
+                    send_whatsapp(phone_id, token, phone,
+                        f"✅ *Payment Confirmed!*\n\n"
+                        f"Thank you! Your payment for *{reference}* has been verified.\n\n"
+                        f"💰 Amount: ${order_total:.2f}\n"
+                        f"📦 Your order is now being prepared. Thank you for shopping with *{biz_name}*! 🙏"
                     )
-                    send_whatsapp(phone_id, token, phone, confirmation_msg)
-                    log.info("payment_webhook: confirmation sent  order=%s  phone=%s", order_id, phone)
         except Exception as exc:
-            log.exception("payment_webhook: WhatsApp notification failed — %s", exc)
+            log.exception("payment_webhook notify error: %s", exc)
 
-    log.info("payment_webhook: ✅ success  order=%s  amount=%.2f", order_id, data.amount)
-    return {
-        "success":  True,
-        "message":  result["message"],
-        "order_id": order_id,
-        "order":    order,
-    }
+    log.info("payment confirmed  order=%s  amount=%.2f", order_id, data.amount)
+    return {"success": True, "order_id": order_id, "reference": reference,
+            "message": f"Payment confirmed for {reference}"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1315,14 +1329,6 @@ def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_bu
 # PAYMENT CALLBACKS & WEBHOOKS
 # ─────────────────────────────────────────────────────────────────────────────
 
-class PaynowCallbackRequest(BaseModel):
-    """Paynow IPN POST fields (all as strings per Paynow spec)."""
-    reference:  str = ""
-    paynowreference: str = ""
-    amount:     str = "0"
-    status:     str = ""
-    pollurl:    str = ""
-    hash:       str = ""
 
 
 async def _notify_customer_payment(order: dict, message: str) -> None:
@@ -1346,75 +1352,8 @@ async def _notify_customer_payment(order: dict, message: str) -> None:
         log.error("_notify_customer_payment error: %s", exc)
 
 
-@app.post("/payments/paynow/callback")
-async def paynow_callback(request: Request):
-    """
-    Paynow IPN endpoint — receives POST from Paynow when payment status changes.
-    Set PAYNOW_RESULT_URL to this URL in your env vars.
-    """
-    from payments import verify_paynow_callback
-    from order_lifecycle import get_order
-
-    try:
-        # Paynow sends form-encoded data
-        form = await request.form()
-        post_data = dict(form)
-        log.info("paynow callback received: %s", {k: v for k, v in post_data.items() if k != "hash"})
-
-        result = verify_paynow_callback(post_data)
-
-        if not result["paid"]:
-            log.warning("paynow callback: not paid  ref=%s  status=%s  error=%s",
-                        result.get("reference"), result.get("status"), result.get("error"))
-            return {"status": "not_paid", "reference": result.get("reference")}
-
-        reference = result["reference"]   # e.g. "ORDER-42"
-        if not reference.startswith("ORDER-"):
-            log.warning("paynow callback: unexpected reference format: %s", reference)
-            return {"status": "ignored"}
-
-        order_id = int(reference.split("-")[1])
-        order    = get_order(order_id)
-
-        if not order:
-            log.error("paynow callback: order not found  id=%s", order_id)
-            return {"status": "order_not_found"}
-
-        # Update order
-        crud.update_order_payment(order_id, order["business_id"], {
-            "payment_status":    "paid",
-            "payment_reference": reference,
-        })
-
-        # Notify customer via WhatsApp
-        await _notify_customer_payment(order, (
-            f"✅ *Payment Received!*\n\n"
-            f"Thank you! Your Paynow payment for *{reference}* has been confirmed.\n\n"
-            f"💰 Amount: ${result['amount']:.2f}\n"
-            f"📦 Your order is now being prepared. Thank you! 🙏"
-        ))
-
-        log.info("paynow callback: payment confirmed  ref=%s  amount=%.2f",
-                 reference, result["amount"])
-        return {"status": "ok", "reference": reference, "paid": True}
-
-    except Exception as exc:
-        log.exception("paynow_callback error: %s", exc)
-        return {"status": "error", "detail": str(exc)}
 
 
-@app.get("/payments/paynow/return")
-async def paynow_return(request: Request):
-    """
-    User lands here after completing (or abandoning) Paynow payment.
-    This is a browser redirect — return a simple HTML page.
-    """
-    params    = request.query_params
-    reference = params.get("reference", "")
-    return {
-        "message":   "Payment processing. You will receive a WhatsApp confirmation shortly.",
-        "reference": reference,
-    }
 
 
 @app.get("/payments/paypal/success")
@@ -1500,7 +1439,6 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
     Body: { "order_id": 42, "reference": "ORDER-42", "amount": 10.50 }
     """
     from order_lifecycle import get_order, update_order_status_supabase
-    from payments import confirm_payment   # existing payments helper if available
 
     body = await request.json()
     order_id  = int(body.get("order_id", 0))

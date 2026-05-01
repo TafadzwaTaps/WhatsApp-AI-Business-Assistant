@@ -1,46 +1,41 @@
 """
-payments.py — Multi-payment gateway abstraction for WaziBot.
+payments.py — Simple, trust-based payment stack for WaziBot.
 
-Supports:
-  1. EcoCash   — Instruction-based. No API. Returns formatted payment text.
-  2. Paynow    — Zimbabwe processor. Generates a redirect URL via Paynow API.
-  3. PayPal    — International. Creates a PayPal checkout session + capture.
+Methods supported:
+  1. EcoCash        — Manual. Customer dials *151#, sends money, replies "paid".
+  2. PayPal email   — Simple. Customer sends to business PayPal email, replies "paid".
+  3. PayPal API     — Optional. Auto-generates a checkout link if credentials exist.
+  4. Cash           — Pay on delivery or pickup. No gateway needed.
 
-Required environment variables (Render → Environment or .env):
-  # EcoCash
+Environment variables:
+  # EcoCash (required for EcoCash option to show)
   ECOCASH_NUMBER=+263771234567
   ECOCASH_NAME=Flavoury Foods
 
-  # Paynow
-  PAYNOW_INTEGRATION_ID=your_id
-  PAYNOW_INTEGRATION_KEY=your_key
-  PAYNOW_RETURN_URL=https://your-api.onrender.com/payments/paynow/return
-  PAYNOW_RESULT_URL=https://your-api.onrender.com/payments/paynow/callback
+  # PayPal simple (required for PayPal option)
+  PAYPAL_EMAIL=payments@yourbusiness.com
 
-  # PayPal
-  PAYPAL_CLIENT_ID=your_paypal_client_id
-  PAYPAL_SECRET=your_paypal_secret
+  # PayPal API (optional — upgrades PayPal to auto-link mode)
+  PAYPAL_CLIENT_ID=your_client_id
+  PAYPAL_SECRET=your_secret
   PAYPAL_RETURN_URL=https://your-api.onrender.com/payments/paypal/success
   PAYPAL_CANCEL_URL=https://your-api.onrender.com/payments/paypal/cancel
-  PAYPAL_MODE=sandbox   # change to 'live' for production
+  PAYPAL_MODE=sandbox   # or 'live'
 
 Return contract — every function returns:
   {
-    "method":    str,   # "ecocash" | "paynow" | "paypal"
-    "url":       str,   # payment URL (empty for EcoCash)
-    "reference": str,   # e.g. "ORDER-42"
-    "status":    str,   # "pending_payment" | "error"
-    "message":   str,   # WhatsApp-ready text to send to customer
-    "poll_url":  str,   # Paynow poll URL | PayPal order ID (for others: "")
-    "error":     str,   # non-empty string if something failed
+    "method":   str,    # "ecocash" | "paypal" | "cash"
+    "message":  str,    # WhatsApp-ready instruction text
+    "url":      str,    # payment URL (empty for manual methods)
+    "reference":str,    # ORDER-{id}
+    "status":   str,    # "awaiting_payment" | "error"
+    "error":    str,    # non-empty if something failed
   }
 """
 
 import os
-import hmac
-import hashlib
-import logging
 import base64
+import logging
 
 import requests as http
 
@@ -48,15 +43,14 @@ log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# INTERNAL HELPERS
+# HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _env(key: str, default: str = "") -> str:
-    """Read an env var, strip whitespace, never raise."""
     return os.getenv(key, default).strip()
 
 
-def _reference(order: dict) -> str:
+def _ref(order: dict) -> str:
     return f"ORDER-{order.get('id', 'X')}"
 
 
@@ -64,34 +58,49 @@ def _total(order: dict) -> float:
     return float(order.get("total_price") or order.get("total") or 0)
 
 
-def _empty_result(method: str, order: dict) -> dict:
-    """Baseline result dict — every gateway function starts from this."""
+def _base(method: str, order: dict) -> dict:
     return {
         "method":    method,
-        "url":       "",
-        "reference": _reference(order),
-        "status":    "pending_payment",
         "message":   "",
-        "poll_url":  "",
+        "url":       "",
+        "reference": _ref(order),
+        "status":    "awaiting_payment",
         "error":     "",
     }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. ECOCASH — Instruction-based, no external API
+# AVAILABILITY CHECK — which methods are configured?
+# ─────────────────────────────────────────────────────────────────────────────
+
+def available_methods() -> list[str]:
+    """
+    Return ordered list of payment methods that are configured.
+    Always includes 'cash'. Others require env vars to be set.
+    """
+    methods = []
+    if _env("ECOCASH_NUMBER"):
+        methods.append("ecocash")
+    if _env("PAYPAL_EMAIL") or _env("PAYPAL_CLIENT_ID"):
+        methods.append("paypal")
+    methods.append("cash")   # always available
+    return methods
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. ECOCASH — Manual, instruction-based
 # ─────────────────────────────────────────────────────────────────────────────
 
 def generate_ecocash_instructions(order: dict) -> dict:
     """
     Build WhatsApp-ready EcoCash payment instructions.
-
-    Number priority:
-      ECOCASH_NUMBER env var → order["payment_number"] → fallback warning
+    No API call required — pure text generation.
     """
-    result = _empty_result("ecocash", order)
+    result = _base("ecocash", order)
     total  = _total(order)
-    ref    = _reference(order)
+    ref    = _ref(order)
 
+    # Number: env var → business payment_number stored on the order dict
     number = (
         _env("ECOCASH_NUMBER")
         or order.get("payment_number", "")
@@ -104,187 +113,88 @@ def generate_ecocash_instructions(order: dict) -> dict:
     )
 
     if not number:
-        log.warning("generate_ecocash_instructions: ECOCASH_NUMBER not configured")
+        log.warning("generate_ecocash_instructions: ECOCASH_NUMBER not set")
         result["error"]   = "EcoCash number not configured"
+        result["status"]  = "error"
         result["message"] = (
-            "⚠️ EcoCash payment details are not set up yet.\n"
-            "Please contact us directly to arrange payment."
+            "⚠️ EcoCash details aren't set up yet.\n"
+            "Please contact us to arrange payment directly."
         )
         return result
 
     result["message"] = (
-        f"💚 *EcoCash Payment*\n"
-        f"{'─' * 30}\n"
+        f"💚 *Pay via EcoCash*\n"
+        f"{'─' * 28}\n"
         f"  Send to  : *{number}*\n"
         f"  Name     : *{name}*\n"
         f"  Amount   : *${total:.2f}*\n"
         f"  Ref      : *{ref}*\n"
-        f"{'─' * 30}\n"
-        f"📋 *Steps (dial *151#)*\n"
+        f"{'─' * 28}\n"
+        f"📱 *How to send (dial *151#)*\n"
         f"  1️⃣  Select _Send Money_\n"
-        f"  2️⃣  Enter: *{number}*\n"
-        f"  3️⃣  Amount: *${total:.2f}*\n"
-        f"  4️⃣  Reference: *{ref}*\n"
-        f"{'─' * 30}\n"
+        f"  2️⃣  Enter number: *{number}*\n"
+        f"  3️⃣  Enter amount: *${total:.2f}*\n"
+        f"  4️⃣  Use reference: *{ref}*\n"
+        f"{'─' * 28}\n"
         f"🔒 Verified merchant: *{name}*\n\n"
-        f"Your order will be confirmed once payment is received.\n"
-        f"_Keep your receipt screenshot!_ 📸"
+        f"Once sent, reply *paid* and we'll confirm your order. 📸\n"
+        f"_Keep your receipt screenshot just in case!_"
     )
-    log.info("ecocash instructions  ref=%s  total=%.2f  number=%s", ref, total, number)
+    log.info("ecocash instructions  ref=%s  total=%.2f", ref, total)
     return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. PAYNOW (Zimbabwe)
+# 2. PAYPAL — Simple email mode (no API needed)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_PAYNOW_URL = "https://www.paynow.co.zw/interface/remotetransaction"
-
-
-def _paynow_hash(fields: dict, key: str) -> str:
-    """SHA512 HMAC of all field values (excluding 'hash') joined as one string."""
-    values = "".join(str(v) for k, v in fields.items() if k.lower() != "hash")
-    return hmac.new(key.encode(), values.encode(), hashlib.sha512).hexdigest().upper()
-
-
-def _parse_paynow_response(text: str) -> dict:
-    """Parse Paynow's URL-encoded response into a dict."""
-    result: dict = {}
-    for part in text.split("&"):
-        if "=" in part:
-            k, _, v = part.partition("=")
-            result[k.strip().lower()] = v.strip()
-    return result
-
-
-def create_paynow_payment(order: dict) -> dict:
+def generate_paypal_email_instructions(order: dict) -> dict:
     """
-    Initiate a Paynow web payment.
-    Returns result with 'url' = Paynow redirect link and 'poll_url' for status checks.
+    Simple PayPal instructions — customer sends money to the business email.
+    No API key required. Works for any PayPal account.
     """
-    result = _empty_result("paynow", order)
+    result = _base("paypal", order)
+    total  = _total(order)
+    ref    = _ref(order)
+    email  = _env("PAYPAL_EMAIL")
+    name   = _env("ECOCASH_NAME") or order.get("business_name", "WaziBot Business")
 
-    integration_id  = _env("PAYNOW_INTEGRATION_ID")
-    integration_key = _env("PAYNOW_INTEGRATION_KEY")
-    return_url      = _env("PAYNOW_RETURN_URL", "https://example.com/payments/paynow/return")
-    result_url      = _env("PAYNOW_RESULT_URL", "https://example.com/payments/paynow/callback")
-
-    if not integration_id or not integration_key:
-        log.error("create_paynow_payment: PAYNOW credentials not set")
-        result["error"]   = "Paynow not configured"
-        result["message"] = "⚠️ Paynow is not configured. Please choose EcoCash or PayPal."
-        return result
-
-    ref   = _reference(order)
-    total = _total(order)
-    phone = order.get("customer_phone", "")
-    email = f"{phone.replace('+', '')}@wazibot.app"
-
-    fields = {
-        "id":             integration_id,
-        "reference":      ref,
-        "amount":         f"{total:.2f}",
-        "additionalinfo": f"WaziBot {ref}",
-        "returnurl":      return_url,
-        "resulturl":      result_url,
-        "authemail":      email,
-        "status":         "Message",
-    }
-    fields["hash"] = _paynow_hash(fields, integration_key)
-
-    try:
-        resp = http.post(_PAYNOW_URL, data=fields, timeout=15)
-        resp.raise_for_status()
-
-        data        = _parse_paynow_response(resp.text)
-        status      = data.get("status", "").lower()
-        browser_url = data.get("browserurl", "")
-        poll_url    = data.get("pollurl", "")
-
-        log.debug("paynow response: %s", data)
-
-        if status != "ok" or not browser_url:
-            err = data.get("error", data.get("status", "Unknown error from Paynow"))
-            raise ValueError(err)
-
-        result["url"]      = browser_url
-        result["poll_url"] = poll_url
-        result["message"]  = (
-            f"💳 *Paynow Payment*\n"
-            f"{'─' * 30}\n"
-            f"  Order  : *{ref}*\n"
-            f"  Amount : *${total:.2f}*\n"
-            f"{'─' * 30}\n"
-            f"👆 Click to pay:\n{browser_url}\n\n"
-            f"Your order is confirmed automatically after payment.\n"
-            f"_Link valid for 30 minutes._"
-        )
-        log.info("paynow payment created  ref=%s  url=%s", ref, browser_url[:60])
-        return result
-
-    except Exception as exc:
-        log.exception("create_paynow_payment failed: %s", exc)
-        result["error"]   = str(exc)
+    if not email:
+        result["error"]   = "PayPal email not configured"
         result["status"]  = "error"
         result["message"] = (
-            f"⚠️ Could not create a Paynow link right now.\n"
-            f"Please try *EcoCash* or *PayPal* instead, or try again shortly."
+            "⚠️ PayPal isn't set up yet.\n"
+            "Please choose EcoCash or Cash on Delivery."
         )
         return result
 
-
-def verify_paynow_callback(post_data: dict) -> dict:
-    """
-    Verify an incoming Paynow IPN callback (POST to /payments/paynow/callback).
-    Returns: { paid, reference, status, amount, error }
-    """
-    integration_key = _env("PAYNOW_INTEGRATION_KEY")
-
-    # Pop hash before verifying so it's not included in the recalculation
-    incoming_hash   = post_data.pop("hash", "").upper()
-    expected_hash   = _paynow_hash(post_data, integration_key)
-
-    if incoming_hash != expected_hash:
-        log.warning("paynow callback hash mismatch  incoming=%s  expected=%s",
-                    incoming_hash[:16], expected_hash[:16])
-        return {"paid": False, "error": "Hash mismatch", "reference": "", "amount": 0}
-
-    status    = post_data.get("status", "").lower()
-    paid      = status in ("paid", "awaiting delivery")
-    reference = post_data.get("reference", "")
-    amount    = float(post_data.get("amount", 0))
-
-    log.info("paynow callback  ref=%s  status=%s  paid=%s  amount=%.2f",
-             reference, status, paid, amount)
-    return {"paid": paid, "reference": reference, "status": status, "amount": amount, "error": ""}
-
-
-def poll_paynow_status(poll_url: str) -> dict:
-    """Poll a Paynow poll URL to check live payment status."""
-    if not poll_url:
-        return {"paid": False, "error": "No poll URL provided"}
-    try:
-        resp = http.get(poll_url, timeout=10)
-        resp.raise_for_status()
-        data   = _parse_paynow_response(resp.text)
-        status = data.get("status", "").lower()
-        return {
-            "paid":      status in ("paid", "awaiting delivery"),
-            "status":    status,
-            "reference": data.get("reference", ""),
-            "amount":    float(data.get("amount", 0)),
-            "error":     "",
-        }
-    except Exception as exc:
-        log.error("poll_paynow_status error: %s", exc)
-        return {"paid": False, "error": str(exc), "status": "unknown"}
+    result["message"] = (
+        f"🌍 *Pay via PayPal*\n"
+        f"{'─' * 28}\n"
+        f"  Send to  : *{email}*\n"
+        f"  Name     : *{name}*\n"
+        f"  Amount   : *${total:.2f} USD*\n"
+        f"  Note/Ref : *{ref}*\n"
+        f"{'─' * 28}\n"
+        f"💡 *Steps:*\n"
+        f"  1️⃣  Open PayPal app or paypal.com\n"
+        f"  2️⃣  Tap _Send Money_\n"
+        f"  3️⃣  Enter email: *{email}*\n"
+        f"  4️⃣  Amount: *${total:.2f}* → Add note: *{ref}*\n"
+        f"{'─' * 28}\n"
+        f"🔒 Verified merchant: *{name}*\n\n"
+        f"Once sent, reply *paid* and we'll confirm your order. ✅\n"
+        f"_Cards, PayPal balance & Buy Now Pay Later accepted._"
+    )
+    log.info("paypal email instructions  ref=%s  total=%.2f  email=%s", ref, total, email)
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. PAYPAL (International)
+# 3. PAYPAL API — Auto-link mode (optional upgrade)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _paypal_base() -> str:
+def _paypal_base_url() -> str:
     mode = _env("PAYPAL_MODE", "sandbox")
     return (
         "https://api-m.sandbox.paypal.com"
@@ -294,136 +204,164 @@ def _paypal_base() -> str:
 
 
 def _paypal_token() -> str:
-    """Fetch a short-lived OAuth2 access token from PayPal."""
+    """Get a short-lived PayPal OAuth2 access token."""
     client_id = _env("PAYPAL_CLIENT_ID")
     secret    = _env("PAYPAL_SECRET")
-
     if not client_id or not secret:
         raise ValueError("PAYPAL_CLIENT_ID / PAYPAL_SECRET not set")
-
     creds = base64.b64encode(f"{client_id}:{secret}".encode()).decode()
     resp  = http.post(
-        f"{_paypal_base()}/v1/oauth2/token",
+        f"{_paypal_base_url()}/v1/oauth2/token",
         headers={
             "Authorization": f"Basic {creds}",
             "Content-Type":  "application/x-www-form-urlencoded",
         },
         data="grant_type=client_credentials",
-        timeout=15,
+        timeout=12,
     )
     resp.raise_for_status()
     token = resp.json().get("access_token")
     if not token:
-        raise ValueError("PayPal did not return an access token")
+        raise ValueError("PayPal returned no access token")
     return token
 
 
-def create_paypal_payment(order: dict) -> dict:
+def create_paypal_checkout(order: dict) -> dict:
     """
-    Create a PayPal checkout order and return the user approval URL.
-    Result 'poll_url' carries the PayPal order ID for capture later.
+    Optional: generate a PayPal checkout link automatically.
+    Only called when PAYPAL_CLIENT_ID + PAYPAL_SECRET are set.
+    Falls back to email instructions on any failure.
     """
-    result = _empty_result("paypal", order)
-    ref    = _reference(order)
-    total  = _total(order)
-
+    result     = _base("paypal", order)
+    ref        = _ref(order)
+    total      = _total(order)
     return_url = _env("PAYPAL_RETURN_URL", "https://example.com/payments/paypal/success")
     cancel_url = _env("PAYPAL_CANCEL_URL", "https://example.com/payments/paypal/cancel")
+    biz_name   = order.get("business_name", "WaziBot")
 
     try:
         token = _paypal_token()
-
         payload = {
             "intent": "CAPTURE",
             "purchase_units": [{
                 "reference_id": ref,
                 "description":  f"WaziBot {ref}",
-                "amount": {
-                    "currency_code": "USD",
-                    "value":         f"{total:.2f}",
-                },
+                "amount": {"currency_code": "USD", "value": f"{total:.2f}"},
             }],
             "application_context": {
                 "return_url":          return_url + f"?reference={ref}",
                 "cancel_url":          cancel_url + f"?reference={ref}",
-                "brand_name":          order.get("business_name", "WaziBot"),
+                "brand_name":          biz_name,
                 "landing_page":        "BILLING",
                 "user_action":         "PAY_NOW",
                 "shipping_preference": "NO_SHIPPING",
             },
         }
-
         resp = http.post(
-            f"{_paypal_base()}/v2/checkout/orders",
+            f"{_paypal_base_url()}/v2/checkout/orders",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json=payload,
-            timeout=15,
+            timeout=12,
         )
         resp.raise_for_status()
         data = resp.json()
 
-        paypal_order_id = data.get("id", "")
         approval_url = next(
             (lnk["href"] for lnk in data.get("links", []) if lnk.get("rel") == "approve"),
             "",
         )
+        paypal_order_id = data.get("id", "")
 
         if not approval_url:
-            raise ValueError("PayPal did not return an approval URL")
+            raise ValueError("No approval URL in PayPal response")
 
         result["url"]      = approval_url
-        result["poll_url"] = paypal_order_id      # stored for capture step
+        result["poll_url"] = paypal_order_id
         result["message"]  = (
-            f"🌍 *PayPal Payment*\n"
-            f"{'─' * 30}\n"
+            f"🌍 *Pay via PayPal*\n"
+            f"{'─' * 28}\n"
             f"  Order  : *{ref}*\n"
             f"  Amount : *${total:.2f} USD*\n"
-            f"{'─' * 30}\n"
-            f"👆 Pay securely via PayPal:\n{approval_url}\n\n"
-            f"Order confirmed automatically after payment.\n"
-            f"_Cards, PayPal balance & Buy Now Pay Later accepted._"
+            f"{'─' * 28}\n"
+            f"👆 Tap to pay securely:\n{approval_url}\n\n"
+            f"Your order is confirmed automatically after payment.\n"
+            f"_Cards, PayPal balance & BNPL accepted._"
         )
-        log.info("paypal payment created  ref=%s  paypal_id=%s", ref, paypal_order_id)
+        log.info("paypal checkout created  ref=%s  paypal_id=%s", ref, paypal_order_id)
         return result
 
     except Exception as exc:
-        log.exception("create_paypal_payment failed: %s", exc)
-        result["error"]   = str(exc)
-        result["status"]  = "error"
-        result["message"] = (
-            "⚠️ Could not create a PayPal link right now.\n"
-            "Please try *EcoCash* or *Paynow* instead, or try again shortly."
-        )
-        return result
+        log.warning("create_paypal_checkout failed (%s) — falling back to email", exc)
+        # Graceful fallback to email instructions
+        return generate_paypal_email_instructions(order)
+
+
+def paypal_payment(order: dict) -> dict:
+    """
+    Smart dispatcher:
+    - If PAYPAL_CLIENT_ID + PAYPAL_SECRET exist → generate checkout link
+    - Otherwise → return email instructions
+    Always works, never crashes.
+    """
+    if _env("PAYPAL_CLIENT_ID") and _env("PAYPAL_SECRET"):
+        return create_paypal_checkout(order)
+    return generate_paypal_email_instructions(order)
 
 
 def capture_paypal_order(paypal_order_id: str) -> dict:
     """
-    Capture an approved PayPal order.
-    Call this from the /payments/paypal/success endpoint after user approves.
+    Capture a PayPal order after user approves.
+    Called from /payments/paypal/success endpoint.
     Returns: { paid, reference, amount, status, error }
     """
     try:
         token = _paypal_token()
         resp  = http.post(
-            f"{_paypal_base()}/v2/checkout/orders/{paypal_order_id}/capture",
+            f"{_paypal_base_url()}/v2/checkout/orders/{paypal_order_id}/capture",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-            timeout=15,
+            timeout=12,
         )
         resp.raise_for_status()
-        data   = resp.json()
-        status = data.get("status", "")
-        paid   = (status == "COMPLETED")
-
+        data     = resp.json()
+        status   = data.get("status", "")
+        paid     = status == "COMPLETED"
         pu       = (data.get("purchase_units") or [{}])[0]
         ref      = pu.get("reference_id", "")
         captures = pu.get("payments", {}).get("captures", [{}])
         amount   = float((captures[0] if captures else {}).get("amount", {}).get("value", 0))
-
-        log.info("paypal capture  paypal_id=%s  paid=%s  ref=%s  amount=%.2f",
-                 paypal_order_id, paid, ref, amount)
+        log.info("paypal capture  id=%s  paid=%s  ref=%s  amount=%.2f", paypal_order_id, paid, ref, amount)
         return {"paid": paid, "reference": ref, "amount": amount, "status": status, "error": ""}
-
     except Exception as exc:
-        log.exception("capture_paypal_order failed: %s", exc)
+        log.exception("capture_paypal_order error: %s", exc)
         return {"paid": False, "reference": "", "amount": 0, "error": str(exc), "status": "error"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 4. CASH — Pay on delivery / pickup
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_cash_instructions(order: dict) -> dict:
+    """
+    Cash on delivery / pickup instructions.
+    No API, no credentials required.
+    """
+    result = _base("cash", order)
+    total  = _total(order)
+    ref    = _ref(order)
+    name   = order.get("business_name", "WaziBot Business")
+
+    result["message"] = (
+        f"💵 *Cash on Delivery / Pickup*\n"
+        f"{'─' * 28}\n"
+        f"  Order  : *{ref}*\n"
+        f"  Amount : *${total:.2f}*\n"
+        f"{'─' * 28}\n"
+        f"Your order is confirmed! 🎉\n\n"
+        f"Please have *${total:.2f}* ready when your order\n"
+        f"is delivered or when you come to collect.\n"
+        f"{'─' * 28}\n"
+        f"🔒 Merchant: *{name}*\n\n"
+        f"We'll contact you to arrange delivery or pickup. 📦"
+    )
+    log.info("cash instructions  ref=%s  total=%.2f", ref, total)
+    return result
