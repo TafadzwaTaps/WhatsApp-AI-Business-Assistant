@@ -771,6 +771,8 @@ class BusinessUpdate(BaseModel):
     whatsapp_phone_id: Optional[str]  = None
     whatsapp_token:    Optional[str]  = None
     is_active:         Optional[bool] = None
+    payment_number:    Optional[str]  = None
+    payment_name:      Optional[str]  = None
 
 
 @app.get("/me")
@@ -1215,4 +1217,95 @@ def debug_schema(user=Depends(require_business)):
             if all(c in cols for c in optional)
             else "⚠️  Run MIGRATION.sql in Supabase SQL Editor to add missing columns"
         ),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INBOX — MESSAGE DELETE / CLEAR  (required by inbox.js v3.0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.delete("/chat/messages/{message_id}")
+def delete_single_message(message_id: int, user=Depends(require_business)):
+    """
+    Delete a single message by its DB id.
+    Only deletes messages belonging to the authenticated business.
+    """
+    deleted = crud.delete_message(message_id, user["business_id"])
+    if not deleted:
+        raise HTTPException(404, "Message not found or access denied")
+    return {"ok": True, "deleted_id": message_id}
+
+
+@app.delete("/chat/clear/{customer_id}")
+def clear_conversation(customer_id: int, user=Depends(require_business)):
+    """
+    Delete all messages for a customer conversation.
+    Resets unread count to 0.
+    """
+    # Verify this customer belongs to the business
+    customer = crud.get_customer_by_id(customer_id, user["business_id"])
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    count = crud.clear_customer_messages(customer_id, user["business_id"])
+    log.info("clear_conversation  customer=%s  deleted=%d  by=%s", customer_id, count, user["username"])
+    return {"ok": True, "customer_id": customer_id, "deleted": count}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUSINESS SETTINGS — PAYMENT DETAILS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/me/payment")
+def get_payment_settings(user=Depends(require_business)):
+    """
+    Get the payment number and name configured for this business.
+    These appear on every invoice sent to customers.
+    """
+    b = crud.get_business_by_id(user["business_id"])
+    if not b:
+        raise HTTPException(404, "Business not found")
+    return {
+        "payment_number": b.get("payment_number") or "",
+        "payment_name":   b.get("payment_name")   or "",
+        "business_name":  b.get("name", ""),
+        "configured":     bool(b.get("payment_number")),
+    }
+
+
+class PaymentSettingsUpdate(BaseModel):
+    payment_number: str   # e.g. +263771234567
+    payment_name:   str   # e.g. Flavoury Foods (Pvt) Ltd
+
+
+@app.post("/me/payment")
+def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_business)):
+    """
+    Set the EcoCash / Mobile Money number and registered name for this business.
+    These are shown on all invoices so customers know exactly who to pay.
+    """
+    number = data.payment_number.strip()
+    name   = data.payment_name.strip()
+
+    if not number:
+        raise HTTPException(400, "Payment number is required")
+    if len(number) < 7:
+        raise HTTPException(400, "Payment number is too short — include country code (e.g. +263771234567)")
+    if not name:
+        raise HTTPException(400, "Payment name is required — use your registered business name")
+
+    class _D:
+        def dict(self, **_):
+            return {"payment_number": number, "payment_name": name}
+
+    b = crud.update_business(user["business_id"], _D())
+    if not b:
+        raise HTTPException(500, "Failed to update payment settings")
+
+    log.info("payment settings updated  business=%s  number=%s  name=%s", user["business_id"], number, name)
+    return {
+        "ok":             True,
+        "payment_number": number,
+        "payment_name":   name,
+        "message":        "Payment details saved. These will now appear on all customer invoices.",
     }

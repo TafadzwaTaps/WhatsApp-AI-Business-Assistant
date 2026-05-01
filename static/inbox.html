@@ -4,9 +4,7 @@
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>WaziBot — Inbox</title>
-  <link
-    href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap"
-    rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link rel="stylesheet" href="/static/inbox.css"/>
 </head>
 <body>
@@ -16,11 +14,8 @@
 
 <!-- ══ TOP BAR ═══════════════════════════════════════════ -->
 <header class="topbar">
-
   <div class="topbar-left">
-    <!-- Hamburger (mobile only) -->
     <button class="hamburger" id="hamburger" aria-label="Open contacts">☰</button>
-
     <a href="/" class="topbar-logo">WaziBot</a>
     <div class="topbar-divider"></div>
     <span class="topbar-title">Inbox</span>
@@ -29,19 +24,13 @@
   <div class="topbar-center"></div>
 
   <div class="topbar-right">
-    <!-- WebSocket status -->
     <div class="ws-indicator" title="Live connection status">
       <div class="ws-dot" id="ws-dot"></div>
       <span id="ws-label">Connecting…</span>
     </div>
-
-    <!-- Theme toggle -->
-    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme" title="Toggle light/dark mode">☀️</button>
-
-    <!-- Back to dashboard -->
+    <button class="theme-toggle" id="theme-toggle" aria-label="Toggle theme">☀️</button>
     <a href="/dashboard" class="btn-back">← Dashboard</a>
   </div>
-
 </header>
 
 <!-- ══ MAIN LAYOUT ════════════════════════════════════════ -->
@@ -49,141 +38,138 @@
 
   <!-- ── SIDEBAR ──────────────────────────────────────── -->
   <aside class="sidebar" id="sidebar">
-
     <div class="sidebar-header">
-      <!-- Search -->
       <div class="search-wrap">
         <span class="search-icon">🔍</span>
-        <input
-          class="search-input"
-          id="search-input"
-          type="search"
-          placeholder="Search by phone…"
-          oninput="filterContacts(this.value)"
-          autocomplete="off"
-        />
+        <input class="search-input" id="search-input" type="search"
+          placeholder="Search by phone…" oninput="filterContacts(this.value)" autocomplete="off"/>
       </div>
-
-      <!-- Filters -->
       <div class="filter-row">
         <button class="filter-btn active" id="filter-all"    onclick="setFilter('all')">All</button>
         <button class="filter-btn"        id="filter-unread" onclick="setFilter('unread')">Unread</button>
         <button class="filter-btn"        id="filter-recent" onclick="setFilter('recent')">Recent</button>
       </div>
     </div>
-
-    <!-- Contact list (rendered by JS) -->
     <div class="contact-list" id="contact-list">
-      <!-- Skeletons shown while loading -->
       <div class="skeleton-list" id="skeleton">
-        <div class="skeleton-item">
-          <div class="skeleton skeleton-avatar"></div>
-          <div class="skeleton-lines">
-            <div class="skeleton skeleton-line-a"></div>
-            <div class="skeleton skeleton-line-b"></div>
-          </div>
-        </div>
-        <div class="skeleton-item">
-          <div class="skeleton skeleton-avatar"></div>
-          <div class="skeleton-lines">
-            <div class="skeleton skeleton-line-a" style="width:45%"></div>
-            <div class="skeleton skeleton-line-b" style="width:70%"></div>
-          </div>
-        </div>
-        <div class="skeleton-item">
-          <div class="skeleton skeleton-avatar"></div>
-          <div class="skeleton-lines">
-            <div class="skeleton skeleton-line-a" style="width:60%"></div>
-            <div class="skeleton skeleton-line-b"></div>
-          </div>
-        </div>
+        <div class="skeleton-item"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-a"></div><div class="skeleton skeleton-line-b"></div></div></div>
+        <div class="skeleton-item"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-a" style="width:45%"></div><div class="skeleton skeleton-line-b" style="width:70%"></div></div></div>
+        <div class="skeleton-item"><div class="skeleton skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton skeleton-line-a" style="width:60%"></div><div class="skeleton skeleton-line-b"></div></div></div>
       </div>
     </div>
-
   </aside>
 
   <!-- ── CHAT PANEL ─────────────────────────────────── -->
   <main class="chat-panel" id="chat-panel">
 
-    <!-- No-conversation selected state -->
+    <!-- No-selection state -->
     <div class="no-selection" id="no-selection">
       <div class="ns-icon">💬</div>
       <div class="ns-title">Select a conversation</div>
       <div class="ns-sub">Choose a customer from the list to start chatting</div>
     </div>
 
-    <!-- Active conversation (hidden until a chat is opened) -->
-    <div id="active-chat" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+    <!-- Active conversation -->
+    <div id="active-chat" style="display:none; flex:1; flex-direction:column; overflow:hidden; position:relative;">
 
       <!-- Chat header -->
       <div class="chat-header">
-        <!-- Back arrow on mobile -->
-        <button class="chat-header-back" onclick="goBackToList()" aria-label="Back to contacts">←</button>
-
-        <div class="chat-avatar" aria-hidden="true">👤</div>
-
+        <button class="chat-header-back" onclick="goBackToList()" aria-label="Back">←</button>
+        <div class="chat-avatar-wrap">
+          <div class="chat-avatar" aria-hidden="true">👤</div>
+          <div class="online-dot" id="online-dot" title="Active recently"></div>
+        </div>
         <div class="chat-info">
           <div class="chat-phone" id="chat-phone">—</div>
           <div class="chat-status" id="chat-status">—</div>
         </div>
-
         <div class="chat-actions">
-          <button class="icon-btn" onclick="markRead()"                               title="Mark as read">✓ Read</button>
-          <button class="icon-btn" onclick="loadMessages(currentCustomerId, true)"    title="Refresh">↻</button>
+          <!-- Search in chat -->
+          <button class="icon-btn" onclick="toggleMsgSearch()" title="Search in chat (Ctrl+F)">🔍</button>
+          <!-- Mark read -->
+          <button class="icon-btn" onclick="markRead()" title="Mark as read">✓ Read</button>
+          <!-- Refresh -->
+          <button class="icon-btn" onclick="loadMessages(currentCustomerId, true)" title="Refresh">↻</button>
+          <!-- Info panel -->
+          <button class="icon-btn" onclick="toggleInfoPanel()" title="Contact info">ℹ</button>
         </div>
       </div>
 
-      <!-- Messages -->
-      <div class="chat-messages" id="chat-messages">
-        <button
-          class="load-more-btn"
-          id="load-more-btn"
-          onclick="loadMoreMessages()"
-          style="display:none">
-          Load earlier messages
-        </button>
+      <!-- In-chat search bar (hidden until toggled) -->
+      <div class="msg-search-bar" id="msg-search-bar">
+        <span class="search-icon" style="position:relative;left:0;transform:none;">🔍</span>
+        <input class="msg-search-input" id="msg-search-input" type="search"
+          placeholder="Search in conversation…"
+          oninput="doMsgSearch(this.value)"
+          onkeydown="if(event.key==='Escape'){closeMsgSearch()}"
+          autocomplete="off"/>
+        <span class="msg-search-count" id="msg-search-count"></span>
+        <button class="msg-search-close" onclick="closeMsgSearch()">✕</button>
       </div>
+
+      <!-- Chat body (messages + info panel side by side) -->
+      <div class="chat-body">
+
+        <!-- Messages -->
+        <div class="chat-messages" id="chat-messages">
+          <button class="load-more-btn" id="load-more-btn" onclick="loadMoreMessages()" style="display:none">
+            ↑ Load earlier messages
+          </button>
+        </div>
+
+        <!-- Info panel (hidden until toggled) -->
+        <aside class="info-panel" id="info-panel">
+          <div class="info-header">Contact Info</div>
+          <div class="info-row"><span class="info-label">Phone</span><span class="info-val" id="info-phone">—</span></div>
+          <div class="info-row"><span class="info-label">Last seen</span><span class="info-val" id="info-last-seen">—</span></div>
+          <div class="info-divider"></div>
+          <div class="info-header">Actions</div>
+          <button class="info-btn" onclick="copyToClipboard(currentPhone,'Phone copied')">📋 Copy number</button>
+          <button class="info-btn" onclick="if(currentCustomerId)confirmClearMessages(currentCustomerId,currentPhone)">🗑 Clear messages</button>
+          <button class="info-btn" onclick="setFilter('all');closeSidebar()">📋 All conversations</button>
+        </aside>
+
+      </div><!-- /chat-body -->
 
       <!-- Typing indicator -->
       <div class="typing-indicator" id="typing-indicator" aria-live="polite">
-        <div class="typing-dot"></div>
-        <div class="typing-dot"></div>
-        <div class="typing-dot"></div>
+        <div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>
       </div>
 
-      <!-- Send box (sticky bottom) -->
+      <!-- Quick replies toolbar -->
+      <div class="quick-replies" id="quick-replies">
+        <span class="qr-label">Quick:</span>
+        <button class="qr-btn" onclick="insertQuickReply('👍')">👍</button>
+        <button class="qr-btn" onclick="insertQuickReply('✅')">✅</button>
+        <button class="qr-btn" onclick="insertQuickReply('🙏')">🙏</button>
+        <button class="qr-btn" onclick="insertQuickReply('Thank you!')">Thank you!</button>
+        <button class="qr-btn" onclick="insertQuickReply('Order is ready ✅')">Order ready</button>
+        <button class="qr-btn" onclick="insertQuickReply('Payment received ✅')">Payment received</button>
+        <button class="qr-btn" onclick="insertQuickReply('Hello! How can I help you?')">Hello!</button>
+      </div>
+
+      <!-- Send box -->
       <div class="send-box">
-        <textarea
-          class="send-input"
-          id="send-input"
+        <textarea class="send-input" id="send-input"
           placeholder="Type a message… (Enter to send, Shift+Enter for new line)"
           rows="1"
           onkeydown="handleSendKey(event)"
           oninput="autoResize(this)"
           aria-label="Message input"
         ></textarea>
-        <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send message" aria-label="Send">
-          ➤
-        </button>
+        <button class="send-btn" id="send-btn" onclick="sendMessage()" title="Send" aria-label="Send">➤</button>
       </div>
 
     </div><!-- /active-chat -->
-
   </main><!-- /chat-panel -->
 
 </div><!-- /inbox -->
 
-<!-- ══ TOAST (created dynamically by JS) ════════════════ -->
-
 <script src="/static/inbox.js"></script>
-
-<!-- Mobile back-to-list helper (inline, tiny) -->
 <script>
   function goBackToList() {
-    // On mobile, open the sidebar to show the contacts list
     if (typeof openSidebar === 'function') openSidebar();
   }
 </script>
-
 </body>
 </html>

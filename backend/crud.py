@@ -754,3 +754,69 @@ def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
         .execute()
     )
     return _one("user_memory", res)
+
+
+# ── Message delete / clear ────────────────────────────────────────────────────
+
+def delete_message(message_id: int, business_id: int) -> bool:
+    """
+    Soft-delete a single message by id.
+    Only deletes messages belonging to the given business.
+    Returns True if a row was deleted.
+    """
+    try:
+        res = (
+            supabase.table("messages")
+            .delete()
+            .eq("id", message_id)
+            .eq("business_id", business_id)
+            .execute()
+        )
+        deleted = bool(res.data)
+        if deleted:
+            log.info("delete_message OK  id=%s  business=%s", message_id, business_id)
+        return deleted
+    except Exception as exc:
+        log.error("delete_message error  id=%s  exc=%s", message_id, exc)
+        return False
+
+
+def clear_customer_messages(customer_id: int, business_id: int) -> int:
+    """
+    Delete all messages for a customer within a business.
+    Also resets the customer's unread_count to 0.
+    Returns the number of rows deleted.
+    """
+    try:
+        res = (
+            supabase.table("messages")
+            .delete()
+            .eq("customer_id", customer_id)
+            .eq("business_id", business_id)
+            .execute()
+        )
+        count = len(res.data) if res.data else 0
+
+        # Also clear legacy chat_messages table for same phone
+        try:
+            cust = get_customer_by_id(customer_id, business_id)
+            if cust:
+                supabase.table("chat_messages") \
+                    .delete() \
+                    .eq("business_id", business_id) \
+                    .eq("phone", cust["phone"]) \
+                    .execute()
+        except Exception:
+            pass
+
+        # Reset unread badge
+        supabase.table("customers") \
+            .update({"unread_count": 0}) \
+            .eq("id", customer_id) \
+            .execute()
+
+        log.info("clear_customer_messages  customer=%s  deleted=%d", customer_id, count)
+        return count
+    except Exception as exc:
+        log.error("clear_customer_messages error  customer=%s  exc=%s", customer_id, exc)
+        return 0
