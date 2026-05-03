@@ -30,22 +30,19 @@ DEFAULT_PAYMENT_NAME   = os.getenv("DEFAULT_PAYMENT_NAME", "")
 
 def _get_business_payment(business_id) -> dict:
     """
-    Fetch the business payment details from the DB.
-    Returns a dict with: payment_number, payment_name, business_name.
+    Fetch payment settings for a business.
+    Returns: ecocash_number, ecocash_name, paypal_email, payment_number (legacy),
+             payment_name (legacy), business_name.
     Never raises — returns empty strings on any failure.
     """
     if not business_id:
         return {}
     try:
         import crud
-        biz = crud.get_business_by_id(int(business_id))
-        if not biz:
-            return {}
-        return {
-            "payment_number": biz.get("payment_number") or DEFAULT_PAYMENT_NUMBER,
-            "payment_name":   biz.get("payment_name")   or DEFAULT_PAYMENT_NAME,
-            "business_name":  biz.get("name", ""),
-        }
+        settings = crud.get_business_payment_settings(int(business_id))
+        biz      = crud.get_business_by_id(int(business_id))
+        settings["business_name"] = biz.get("name", "") if biz else ""
+        return settings
     except Exception as exc:
         log.warning("_get_business_payment failed: %s", exc)
         return {}
@@ -108,9 +105,18 @@ def generate_invoice(order, business_id=None) -> str:
 
     # ── Business payment details ──────────────────────────────────────────────
     biz_info = _get_business_payment(biz_id)
-    biz_name     = biz_info.get("business_name") or biz_name_order or "WaziBot Business"
-    pay_number   = biz_info.get("payment_number") or DEFAULT_PAYMENT_NUMBER
-    pay_name     = biz_info.get("payment_name")   or DEFAULT_PAYMENT_NAME
+    biz_name   = biz_info.get("business_name") or biz_name_order or "WaziBot Business"
+    # Prefer new dedicated fields, fall back to legacy payment_number / payment_name
+    pay_number = (
+        biz_info.get("ecocash_number")
+        or biz_info.get("payment_number")
+        or DEFAULT_PAYMENT_NUMBER
+    )
+    pay_name   = (
+        biz_info.get("ecocash_name")
+        or biz_info.get("payment_name")
+        or DEFAULT_PAYMENT_NAME
+    )
 
     # Build payment section based on available info
     if pay_number:

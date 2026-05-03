@@ -93,6 +93,38 @@ def get_decrypted_token(business: dict) -> str:
     return decrypt_token(business["whatsapp_token"])
 
 
+def get_business_payment_settings(business_id: int) -> dict:
+    """
+    Return all payment settings for a business in a single dict.
+    Used by ai.py / payments.py to inject into the order dict before
+    calling gateway functions.
+
+    Returns:
+      {
+        "ecocash_number":  str,   # e.g. "+263771234567"
+        "ecocash_name":    str,   # e.g. "Flavoury Foods"
+        "paypal_email":    str,   # e.g. "pay@flavoury.com"
+        "payment_number":  str,   # legacy field (same as ecocash_number)
+        "payment_name":    str,   # legacy field (same as ecocash_name)
+      }
+    All values are empty strings if not configured.
+    """
+    biz = get_business_by_id(business_id)
+    if not biz:
+        return {
+            "ecocash_number": "", "ecocash_name": "",
+            "paypal_email": "", "payment_number": "", "payment_name": "",
+        }
+    return {
+        "ecocash_number": biz.get("ecocash_number") or biz.get("payment_number") or "",
+        "ecocash_name":   biz.get("ecocash_name")   or biz.get("payment_name")  or "",
+        "paypal_email":   biz.get("paypal_email")   or "",
+        # Legacy aliases — kept for backward compatibility with invoice.py
+        "payment_number": biz.get("ecocash_number") or biz.get("payment_number") or "",
+        "payment_name":   biz.get("ecocash_name")   or biz.get("payment_name")  or "",
+    }
+
+
 def update_business(business_id: int, data) -> Optional[dict]:
     update_dict = data.dict(exclude_none=True) if hasattr(data, "dict") else dict(data)
 

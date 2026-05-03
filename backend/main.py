@@ -785,8 +785,13 @@ class BusinessUpdate(BaseModel):
     whatsapp_phone_id: Optional[str]  = None
     whatsapp_token:    Optional[str]  = None
     is_active:         Optional[bool] = None
+    # Legacy payment fields (kept for backward compat)
     payment_number:    Optional[str]  = None
     payment_name:      Optional[str]  = None
+    # New dedicated fields — set via /me/payment-settings
+    ecocash_number:    Optional[str]  = None
+    ecocash_name:      Optional[str]  = None
+    paypal_email:      Optional[str]  = None
 
 
 @app.get("/me")
@@ -1330,59 +1335,226 @@ def clear_conversation(customer_id: int, user=Depends(require_business)):
 # BUSINESS SETTINGS — PAYMENT DETAILS
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.get("/me/payment")
+# ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT SETTINGS — per-business EcoCash + PayPal configuration
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/me/payment-settings")
 def get_payment_settings(user=Depends(require_business)):
     """
-    Get the payment number and name configured for this business.
-    These appear on every invoice sent to customers.
+    Get all payment settings for the authenticated business.
+    Returns EcoCash and PayPal configuration so the settings page can
+    pre-populate form fields.
     """
     b = crud.get_business_by_id(user["business_id"])
     if not b:
         raise HTTPException(404, "Business not found")
+
+    # Resolve with legacy fallbacks
+    ecocash_number = b.get("ecocash_number") or b.get("payment_number") or ""
+    ecocash_name   = b.get("ecocash_name")   or b.get("payment_name")  or ""
+    paypal_email   = b.get("paypal_email") or ""
+
     return {
-        "payment_number": b.get("payment_number") or "",
-        "payment_name":   b.get("payment_name")   or "",
-        "business_name":  b.get("name", ""),
-        "configured":     bool(b.get("payment_number")),
+        "business_name":    b.get("name", ""),
+        # EcoCash
+        "ecocash_number":   ecocash_number,
+        "ecocash_name":     ecocash_name,
+        "ecocash_configured": bool(ecocash_number),
+        # PayPal
+        "paypal_email":     paypal_email,
+        "paypal_configured": bool(paypal_email),
+        # Legacy fields (kept for backward compat with existing code/frontend)
+        "payment_number":   ecocash_number,
+        "payment_name":     ecocash_name,
     }
+
+
+class EcoCashSettingsUpdate(BaseModel):
+    ecocash_number: str    # e.g. +263771234567
+    ecocash_name:   str    # e.g. Flavoury Foods (Pvt) Ltd
+
+
+class PayPalSettingsUpdate(BaseModel):
+    paypal_email: str      # e.g. payments@flavoury.com
 
 
 class PaymentSettingsUpdate(BaseModel):
-    payment_number: str   # e.g. +263771234567
-    payment_name:   str   # e.g. Flavoury Foods (Pvt) Ltd
+    """Combined update — all fields optional so frontend can patch any subset."""
+    ecocash_number: Optional[str] = None
+    ecocash_name:   Optional[str] = None
+    paypal_email:   Optional[str] = None
 
 
-@app.post("/me/payment")
+@app.post("/me/payment-settings")
 def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_business)):
     """
-    Set the EcoCash / Mobile Money number and registered name for this business.
-    These are shown on all invoices so customers know exactly who to pay.
-    """
-    number = data.payment_number.strip()
-    name   = data.payment_name.strip()
+    Update EcoCash and/or PayPal settings for the authenticated business.
+    All fields are optional — send only the ones you want to update.
 
-    if not number:
-        raise HTTPException(400, "Payment number is required")
-    if len(number) < 7:
-        raise HTTPException(400, "Payment number is too short — include country code (e.g. +263771234567)")
-    if not name:
-        raise HTTPException(400, "Payment name is required — use your registered business name")
+    EcoCash:
+      { "ecocash_number": "+263771234567", "ecocash_name": "Flavoury Foods" }
+
+    PayPal:
+      { "paypal_email": "payments@flavoury.com" }
+
+    Both at once:
+      { "ecocash_number": "...", "ecocash_name": "...", "paypal_email": "..." }
+    """
+    bid     = user["business_id"]
+    updates = {}
+    errors  = []
+
+    # ── Validate + collect EcoCash updates ────────────────────────────────────
+    if data.ecocash_number is not None:
+        number = data.ecocash_number.strip()
+        if number and len(number) < 7:
+            errors.append("EcoCash number is too short — include country code (e.g. +263771234567)")
+        elif number:
+            updates["ecocash_number"] = number
+            updates["payment_number"] = number   # keep legacy field in sync
+        else:
+            # Empty string = clear the setting
+            updates["ecocash_number"] = None
+            updates["payment_number"] = None
+
+    if data.ecocash_name is not None:
+        name = data.ecocash_name.strip()
+        updates["ecocash_name"] = name or None
+        updates["payment_name"] = name or None   # keep legacy field in sync
+
+    # ── Validate + collect PayPal updates ────────────────────────────────────
+    if data.paypal_email is not None:
+        email = data.paypal_email.strip().lower()
+        if email and "@" not in email:
+            errors.append("PayPal email address is invalid — must contain @")
+        elif email:
+            updates["paypal_email"] = email
+        else:
+            updates["paypal_email"] = None
+
+    if errors:
+        raise HTTPException(422, "; ".join(errors))
+
+    if not updates:
+        raise HTTPException(422, "No valid fields provided to update")
 
     class _D:
         def dict(self, **_):
-            return {"payment_number": number, "payment_name": name}
+            return updates
 
-    b = crud.update_business(user["business_id"], _D())
+    b = crud.update_business(bid, _D())
     if not b:
         raise HTTPException(500, "Failed to update payment settings")
 
-    log.info("payment settings updated  business=%s  number=%s  name=%s", user["business_id"], number, name)
+    log.info(
+        "payment settings updated  business=%s  fields=%s",
+        bid, list(updates.keys()),
+    )
+
+    # Return the full current state so the UI can refresh without a second GET
+    ecocash_number = b.get("ecocash_number") or b.get("payment_number") or ""
+    ecocash_name   = b.get("ecocash_name")   or b.get("payment_name")  or ""
+    paypal_email   = b.get("paypal_email") or ""
+
+    return {
+        "ok":              True,
+        "message":         "Payment settings saved successfully.",
+        "ecocash_number":  ecocash_number,
+        "ecocash_name":    ecocash_name,
+        "paypal_email":    paypal_email,
+        "ecocash_configured": bool(ecocash_number),
+        "paypal_configured":  bool(paypal_email),
+    }
+
+
+@app.post("/me/payment-settings/ecocash")
+def update_ecocash_settings(data: EcoCashSettingsUpdate, user=Depends(require_business)):
+    """
+    Dedicated endpoint for EcoCash-only updates.
+    Useful for single-purpose settings forms.
+    """
+    number = data.ecocash_number.strip()
+    name   = data.ecocash_name.strip()
+
+    if not number:
+        raise HTTPException(422, "EcoCash number is required")
+    if len(number) < 7:
+        raise HTTPException(422, "EcoCash number too short — include country code (e.g. +263771234567)")
+    if not name:
+        raise HTTPException(422, "Business name is required")
+
+    bid = user["business_id"]
+
+    class _D:
+        def dict(self, **_):
+            return {
+                "ecocash_number": number,
+                "ecocash_name":   name,
+                "payment_number": number,   # legacy sync
+                "payment_name":   name,     # legacy sync
+            }
+
+    b = crud.update_business(bid, _D())
+    if not b:
+        raise HTTPException(500, "Failed to save EcoCash settings")
+
+    log.info("ecocash settings updated  business=%s  number=%s  name=%s", bid, number, name)
     return {
         "ok":             True,
-        "payment_number": number,
-        "payment_name":   name,
-        "message":        "Payment details saved. These will now appear on all customer invoices.",
+        "message":        f"EcoCash number saved. Customers will now be instructed to send money to {number}.",
+        "ecocash_number": number,
+        "ecocash_name":   name,
     }
+
+
+@app.post("/me/payment-settings/paypal")
+def update_paypal_settings(data: PayPalSettingsUpdate, user=Depends(require_business)):
+    """
+    Dedicated endpoint for PayPal-only updates.
+    The email entered here is the business's real PayPal account email
+    where they receive money — no sandbox, no API keys required.
+    """
+    email = data.paypal_email.strip().lower()
+
+    if not email:
+        raise HTTPException(422, "PayPal email is required")
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(422, "Invalid PayPal email address")
+
+    bid = user["business_id"]
+
+    class _D:
+        def dict(self, **_):
+            return {"paypal_email": email}
+
+    b = crud.update_business(bid, _D())
+    if not b:
+        raise HTTPException(500, "Failed to save PayPal settings")
+
+    log.info("paypal settings updated  business=%s  email=%s", bid, email)
+    return {
+        "ok":           True,
+        "message":      f"PayPal email saved. Customers will be instructed to send money to {email}.",
+        "paypal_email": email,
+    }
+
+
+# ── Legacy endpoint — kept for backward compat with older frontend code ───────
+@app.get("/me/payment")
+def get_payment_settings_legacy(user=Depends(require_business)):
+    """Deprecated — use GET /me/payment-settings instead."""
+    return get_payment_settings(user)
+
+
+@app.post("/me/payment")
+def update_payment_legacy(user=Depends(require_business)):
+    """Deprecated — use POST /me/payment-settings instead."""
+    raise HTTPException(
+        410,
+        "This endpoint is deprecated. "
+        "Use POST /me/payment-settings with { ecocash_number, ecocash_name, paypal_email }."
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
