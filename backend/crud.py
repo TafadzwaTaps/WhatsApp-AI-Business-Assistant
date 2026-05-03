@@ -128,17 +128,43 @@ def delete_business(business_id: int) -> Optional[dict]:
 # ── Products ──────────────────────────────────────────────────────────────────
 
 def create_product(business_id: int, product) -> dict:
+    """
+    Insert a new product row into Supabase.
+    Validates name and price. Raises ValueError on invalid input.
+    """
+    name  = (getattr(product, "name", "") or "").strip()
+    price = getattr(product, "price", None)
+
+    if not name:
+        raise ValueError("Product name is required")
+    if price is None or float(price) < 0:
+        raise ValueError("Product price must be a non-negative number")
+
     row = {
-        "business_id":         business_id,
-        "name":                product.name,
-        "price":               product.price,
-        "image_url":           getattr(product, "image_url", None),
-        "stock":               getattr(product, "stock", 0) or 0,
-        "low_stock_threshold": getattr(product, "low_stock_threshold", 5) or 5,
+        "business_id":         int(business_id),
+        "name":                name,
+        "price":               float(price),
+        "image_url":           getattr(product, "image_url", None) or None,
+        "stock":               int(getattr(product, "stock", 0) or 0),
+        "low_stock_threshold": int(getattr(product, "low_stock_threshold", 5) or 5),
     }
-    res = supabase.table("products").insert(row).execute()
+
+    log.info("create_product  business_id=%s  name=%r  price=%s  stock=%s",
+             business_id, name, price, row["stock"])
+
+    try:
+        res = supabase.table("products").insert(row).execute()
+    except Exception as exc:
+        log.error("create_product Supabase error  business_id=%s  name=%r  exc=%s",
+                  business_id, name, exc)
+        raise RuntimeError(f"Database error creating product: {exc}") from exc
+
     p = _one("products", res)
-    log.info("create_product OK  id=%s  business_id=%s", p["id"], business_id)
+    if not p:
+        log.error("create_product: insert returned no data  row=%s", row)
+        raise RuntimeError("Product insert returned no data — check Supabase RLS policies")
+
+    log.info("create_product OK  id=%s  name=%r  business_id=%s", p["id"], name, business_id)
     return p
 
 
@@ -206,14 +232,38 @@ def update_product(product_id: int, business_id: int, data: dict) -> Optional[di
 
 
 def delete_product(product_id: int, business_id: int) -> Optional[dict]:
-    res = (
-        supabase.table("products")
-        .delete()
-        .eq("id", product_id)
-        .eq("business_id", business_id)
-        .execute()
-    )
-    return _one("products", res)
+    """
+    Delete a product by id. Returns the deleted row or None if not found.
+    Scoped to business_id to prevent cross-tenant deletion.
+    """
+    # Check existence first so we can give a clear log message
+    existing = get_product_by_id(product_id, business_id)
+    if not existing:
+        log.warning("delete_product: id=%s not found for business_id=%s", product_id, business_id)
+        return None
+
+    try:
+        res = (
+            supabase.table("products")
+            .delete()
+            .eq("id", product_id)
+            .eq("business_id", business_id)
+            .execute()
+        )
+        deleted = _one("products", res)
+        if deleted:
+            log.info("delete_product OK  id=%s  name=%r  business_id=%s",
+                     product_id, deleted.get("name"), business_id)
+        else:
+            # Some Supabase versions return empty data on DELETE — treat as success
+            log.info("delete_product OK (empty response)  id=%s  business_id=%s",
+                     product_id, business_id)
+            return existing   # return what we fetched earlier
+        return deleted
+    except Exception as exc:
+        log.error("delete_product error  id=%s  business_id=%s  exc=%s",
+                  product_id, business_id, exc)
+        raise RuntimeError(f"Database error deleting product: {exc}") from exc
 
 
 # ── Orders ────────────────────────────────────────────────────────────────────

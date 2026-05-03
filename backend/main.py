@@ -865,19 +865,79 @@ def get_products(user=Depends(require_business)):
 
 @app.post("/products", status_code=201)
 def create_product(product: ProductCreate, user=Depends(require_business)):
+    """
+    Create a new product for the authenticated business.
+    Returns the created product dict including its Supabase-generated id.
+    """
+    bid = user["business_id"]
     log.info(
         "📦 create_product  business_id=%s  name=%r  price=%s  stock=%s",
-        user["business_id"], product.name, product.price, product.stock,
+        bid, product.name, product.price, product.stock,
     )
-    return crud.create_product(user["business_id"], product)
+
+    # Validate before hitting the DB
+    if not product.name or not product.name.strip():
+        raise HTTPException(422, "Product name cannot be empty")
+    if product.price < 0:
+        raise HTTPException(422, "Product price must be a non-negative number")
+
+    try:
+        created = crud.create_product(bid, product)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    except RuntimeError as exc:
+        log.error("create_product runtime error: %s", exc)
+        raise HTTPException(500, str(exc))
+    except Exception as exc:
+        log.exception("create_product unexpected error: %s", exc)
+        raise HTTPException(500, "Failed to create product — please try again")
+
+    return created
+
+
+@app.patch("/products/{product_id}")
+def update_product(product_id: int, data: dict, user=Depends(require_business)):
+    """Update specific fields of a product (name, price, stock, image_url, etc.)."""
+    bid = user["business_id"]
+    # Prevent updating business_id
+    data.pop("business_id", None)
+    data.pop("id", None)
+
+    if not data:
+        raise HTTPException(422, "No fields to update")
+
+    updated = crud.update_product(product_id, bid, data)
+    if not updated:
+        raise HTTPException(404, f"Product {product_id} not found")
+
+    log.info("update_product OK  id=%s  fields=%s  business=%s",
+             product_id, list(data.keys()), bid)
+    return updated
 
 
 @app.delete("/products/{product_id}")
 def delete_product(product_id: int, user=Depends(require_business)):
-    p = crud.delete_product(product_id, user["business_id"])
+    """
+    Delete a product by id. Returns { deleted: id, name: str }.
+    Returns 404 if product not found or belongs to another business.
+    """
+    bid = user["business_id"]
+    log.info("delete_product  id=%s  business=%s", product_id, bid)
+
+    try:
+        p = crud.delete_product(product_id, bid)
+    except RuntimeError as exc:
+        log.error("delete_product runtime error: %s", exc)
+        raise HTTPException(500, str(exc))
+    except Exception as exc:
+        log.exception("delete_product unexpected error: %s", exc)
+        raise HTTPException(500, "Failed to delete product — please try again")
+
     if not p:
-        raise HTTPException(404, "Product not found")
-    return {"deleted": product_id}
+        raise HTTPException(404, f"Product {product_id} not found or access denied")
+
+    log.info("delete_product OK  id=%s  name=%r  business=%s", product_id, p.get("name"), bid)
+    return {"deleted": product_id, "name": p.get("name", "")}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
