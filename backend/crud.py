@@ -786,14 +786,26 @@ def save_cart(phone: str, business_id: int, items: list) -> Optional[dict]:
 
 
 def clear_cart(phone: str, business_id: int) -> None:
-    """Delete the cart row for this phone+business."""
+    """
+    Clear cart items WITHOUT deleting the row.
+    We UPDATE items to [] and preserve state_data (which holds
+    pending_payment / awaiting_payment state) so the "paid" reply
+    still works after checkout.
+
+    IMPORTANT: Do NOT use DELETE here — it would wipe state_data
+    and break the awaiting_payment → paid confirmation flow.
+    """
     try:
-        supabase.table("carts")\
-            .delete()\
-            .eq("phone", phone)\
-            .eq("business_id", business_id)\
-            .execute()
-        log.debug("clear_cart OK  phone=%s", phone)
+        supabase.table("carts").upsert(
+            {
+                "phone":       phone,
+                "business_id": business_id,
+                "items":       [],
+                "updated_at":  _now(),
+            },
+            on_conflict="phone,business_id",
+        ).execute()
+        log.debug("clear_cart OK (items cleared, state preserved)  phone=%s", phone)
     except Exception as exc:
         log.error("clear_cart error  phone=%s  exc=%s", phone, exc)
 

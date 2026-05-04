@@ -433,8 +433,18 @@ async def receive_message(request: Request):
         msg_obj  = value["messages"][0]
         msg_type = msg_obj.get("type", "")
 
-        if msg_type != "text":
-            log.info("Webhook: skipping non-text message  type=%s", msg_type)
+        # For image/document messages in awaiting_proof state, we still need to process
+        # them (customer is sending payment screenshot). For all other non-text, skip.
+        if msg_type not in ("text", "image", "document", "sticker"):
+            log.info("Webhook: skipping non-text/image message  type=%s", msg_type)
+            return {"status": "ok"}
+
+        # For image messages with no text body, use a placeholder
+        if msg_type in ("image", "document", "sticker"):
+            # Extract caption if present, otherwise use placeholder
+            img_obj = msg_obj.get(msg_type, {})
+            text = img_obj.get("caption", "").strip() or "[image]"
+        elif msg_type != "text":
             return {"status": "ok"}
 
         metadata        = value.get("metadata", {})
@@ -522,12 +532,19 @@ async def receive_message(request: Request):
         products = crud.get_products(business["id"])
         log.info("📦 STEP 6 — Products fetched  count=%d", len(products))
 
+        # Detect image/media messages — customer may be sending payment proof
+        message_has_image = (
+            msg_type in ("image", "document", "sticker")
+            or "image" in value.get("messages", [{}])[0]
+        )
+
         reply = generate_reply(
             message=text,
             phone=customer_phone,
             business_id=business["id"],
             business_name=business["name"],
             products=products,
+            message_has_image=message_has_image,
         )
         log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
 
