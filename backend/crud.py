@@ -159,10 +159,60 @@ def delete_business(business_id: int) -> Optional[dict]:
 
 # ── Products ──────────────────────────────────────────────────────────────────
 
+# ── Products column cache (same pattern as order_lifecycle._has_col) ──────────
+
+_products_columns: set | None = None
+
+
+def _get_products_columns() -> set:
+    """
+    Discover which columns exist in the products table.
+    Reads one row and caches the result for the process lifetime.
+    Falls back to the guaranteed-safe minimal set on any error.
+    """
+    global _products_columns
+    if _products_columns is not None:
+        return _products_columns
+
+    # Columns guaranteed to exist in every deployment
+    MINIMAL = {"id", "business_id", "name", "price", "created_at"}
+
+    try:
+        res = supabase.table("products").select("*").limit(1).execute()
+        if res.data:
+            _products_columns = set(res.data[0].keys())
+            log.info("products columns discovered: %s", sorted(_products_columns))
+        else:
+            # Table exists but is empty — insert only the minimal safe set
+            # and let the optional columns be added later via MIGRATION.sql
+            _products_columns = MINIMAL
+            log.info("products table empty — using minimal columns: %s", sorted(_products_columns))
+    except Exception as exc:
+        log.warning("products column probe failed (%s) — using minimal set", exc)
+        _products_columns = MINIMAL
+
+    return _products_columns
+
+
+def _has_product_col(col: str) -> bool:
+    return col in _get_products_columns()
+
+
+def _invalidate_products_column_cache() -> None:
+    global _products_columns
+    _products_columns = None
+
+
 def create_product(business_id: int, product) -> dict:
     """
     Insert a new product row into Supabase.
-    Validates name and price. Raises ValueError on invalid input.
+
+    Validates name and price. Only inserts columns that actually exist in the
+    products table — safe on both old schemas (no stock/image_url columns) and
+    new schemas (all columns present). Raises ValueError on invalid input.
+
+    IMPORTANT: If your products table is missing stock or low_stock_threshold,
+    run MIGRATION.sql section 15 in Supabase SQL Editor to add them.
     """
     name  = (getattr(product, "name", "") or "").strip()
     price = getattr(product, "price", None)
@@ -172,21 +222,31 @@ def create_product(business_id: int, product) -> dict:
     if price is None or float(price) < 0:
         raise ValueError("Product price must be a non-negative number")
 
-    row = {
-        "business_id":         int(business_id),
-        "name":                name,
-        "price":               float(price),
-        "image_url":           getattr(product, "image_url", None) or None,
-        "stock":               int(getattr(product, "stock", 0) or 0),
-        "low_stock_threshold": int(getattr(product, "low_stock_threshold", 5) or 5),
+    # Core row — always safe
+    row: dict = {
+        "business_id": int(business_id),
+        "name":        name,
+        "price":       float(price),
     }
 
-    log.info("create_product  business_id=%s  name=%r  price=%s  stock=%s",
-             business_id, name, price, row["stock"])
+    # Optional columns — only added if they exist in the schema
+    if _has_product_col("image_url"):
+        row["image_url"] = getattr(product, "image_url", None) or None
+
+    if _has_product_col("stock"):
+        row["stock"] = int(getattr(product, "stock", 0) or 0)
+
+    if _has_product_col("low_stock_threshold"):
+        row["low_stock_threshold"] = int(getattr(product, "low_stock_threshold", 5) or 5)
+
+    log.info("create_product  business_id=%s  name=%r  price=%s  columns=%s",
+             business_id, name, price, sorted(row.keys()))
 
     try:
         res = supabase.table("products").insert(row).execute()
     except Exception as exc:
+        # Schema mismatch — invalidate cache so next call re-probes columns
+        _invalidate_products_column_cache()
         log.error("create_product Supabase error  business_id=%s  name=%r  exc=%s",
                   business_id, name, exc)
         raise RuntimeError(f"Database error creating product: {exc}") from exc
@@ -253,14 +313,28 @@ def get_product_price(business_id: int, name: str) -> float:
 
 
 def update_product(product_id: int, business_id: int, data: dict) -> Optional[dict]:
-    res = (
-        supabase.table("products")
-        .update(data)
-        .eq("id", product_id)
-        .eq("business_id", business_id)
-        .execute()
-    )
-    return _one("products", res)
+    """
+    Update specific fields of a product.
+    Silently drops any keys that don't exist as columns in the schema.
+    """
+    # Strip unknown columns to avoid PGRST204 schema-cache errors
+    safe = {k: v for k, v in data.items() if _has_product_col(k)}
+    if not safe:
+        log.warning("update_product: no valid columns in data keys=%s", list(data.keys()))
+        return get_product_by_id(product_id, business_id)
+    try:
+        res = (
+            supabase.table("products")
+            .update(safe)
+            .eq("id", product_id)
+            .eq("business_id", business_id)
+            .execute()
+        )
+        return _one("products", res)
+    except Exception as exc:
+        _invalidate_products_column_cache()
+        log.error("update_product error  id=%s  exc=%s", product_id, exc)
+        raise RuntimeError(f"Database error updating product: {exc}") from exc
 
 
 def delete_product(product_id: int, business_id: int) -> Optional[dict]:
@@ -922,17 +996,25 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
     """
     Update payment-related fields on an order.
     Only updates columns that exist in the schema (safe for old deployments).
-    data keys: payment_method, payment_status, payment_reference, payment_url
+
+    Supported keys:
+      payment_method, payment_status, payment_reference, payment_url,
+      paypal_order_id   ← NEW: stores PayPal's order ID for webhook lookup
     """
     from order_lifecycle import _has_col
 
+    # All columns we are allowed to update (paypal_order_id is new)
+    allowed = (
+        "payment_method", "payment_status", "payment_reference",
+        "payment_url", "paypal_order_id",
+    )
     safe: dict = {}
-    for col in ("payment_method", "payment_status", "payment_reference", "payment_url"):
+    for col in allowed:
         if col in data and _has_col(col):
             safe[col] = data[col]
 
     if not safe:
-        log.debug("update_order_payment: no valid columns to update")
+        log.debug("update_order_payment: no valid columns to update  data_keys=%s", list(data.keys()))
         return None
 
     try:
@@ -947,4 +1029,30 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
         return _one("orders", res)
     except Exception as exc:
         log.error("update_order_payment error  order=%s  exc=%s", order_id, exc)
+        return None
+
+
+def get_order_by_paypal_id(paypal_order_id: str) -> Optional[dict]:
+    """
+    Look up an internal order by PayPal's order ID.
+    Used by the PayPal webhook handler to find which order was paid.
+    Returns the order dict or None.
+    """
+    if not paypal_order_id:
+        return None
+    try:
+        res = (
+            supabase.table("orders")
+            .select("*")
+            .eq("paypal_order_id", paypal_order_id)
+            .limit(1)
+            .execute()
+        )
+        order = _one("orders", res)
+        if order:
+            log.debug("get_order_by_paypal_id  paypal_id=%s  order_id=%s",
+                      paypal_order_id, order.get("id"))
+        return order
+    except Exception as exc:
+        log.error("get_order_by_paypal_id error  paypal_id=%s  exc=%s", paypal_order_id, exc)
         return None

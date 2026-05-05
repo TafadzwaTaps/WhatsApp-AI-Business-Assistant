@@ -1608,60 +1608,83 @@ async def _notify_customer_payment(order: dict, message: str) -> None:
 @app.get("/payments/paypal/success")
 async def paypal_success(
     request: Request,
-    token: str = "",            # PayPal order ID
+    token: str = "",            # PayPal order ID (set by PayPal in redirect)
     PayerID: str = "",          # PayPal payer ID
-    reference: str = "",        # our ORDER-{id} reference
+    reference: str = "",        # our ORDER-{id} reference (set in application_context)
 ):
     """
-    User lands here after approving a PayPal payment.
+    Browser redirect after customer approves payment on PayPal.
     Captures the payment and confirms the order.
+    NOTE: The PayPal webhook (/payments/paypal/webhook) is the primary
+    confirmation path. This endpoint is a fallback for browser users.
     """
     from payments import capture_paypal_order
     from order_lifecycle import get_order
 
-    log.info("paypal success  token=%s  reference=%s  PayerID=%s", token, reference, PayerID)
+    log.info("paypal_success  token=%s  reference=%s  PayerID=%s", token, reference, PayerID)
 
     if not token:
-        return {"status": "error", "detail": "Missing PayPal token"}
+        return {"status": "error", "detail": "Missing PayPal token (order ID)"}
 
     try:
         capture = capture_paypal_order(token)
 
         if not capture["paid"]:
-            log.warning("paypal success but capture failed: %s", capture.get("error"))
+            log.warning("paypal_success: capture not paid  error=%s", capture.get("error"))
             return {
                 "status":  "capture_failed",
                 "detail":  capture.get("error"),
                 "message": "Payment not completed. Please try again or contact support.",
             }
 
-        # Use reference from URL param, fall back to captured reference
+        # Resolve the internal order ID
         ref = reference or capture.get("reference", "")
-        if not ref.startswith("ORDER-"):
-            return {"status": "ok", "message": "Payment captured but reference unclear."}
+        internal_id = capture.get("internal_order_id")
 
-        order_id = int(ref.split("-")[1])
-        order    = get_order(order_id)
+        order = None
+        if internal_id:
+            order = get_order(internal_id)
+        elif ref.startswith("ORDER-"):
+            try:
+                order = get_order(int(ref.split("-")[1]))
+            except (ValueError, IndexError):
+                pass
 
-        if order:
-            crud.update_order_payment(order_id, order["business_id"], {
-                "payment_status":    "paid",
-                "payment_reference": ref,
-            })
-            await _notify_customer_payment(order, (
-                f"✅ *PayPal Payment Confirmed!*\n\n"
-                f"Thank you! Your payment for *{ref}* is complete.\n\n"
-                f"💰 Amount: ${capture['amount']:.2f} USD\n"
-                f"📦 Your order is now being prepared. Thank you! 🙏"
-            ))
+        if not order:
+            log.error("paypal_success: order not found  ref=%s  internal_id=%s", ref, internal_id)
+            return {"status": "error", "detail": "Order not found"}
 
-        log.info("paypal capture confirmed  ref=%s  amount=%.2f", ref, capture["amount"])
+        order_id = order["id"]
+        biz_id   = order["business_id"]
+        ref      = ref or f"ORDER-{order_id}"
+
+        # Idempotency: skip if already paid
+        if order.get("payment_status") == "paid":
+            log.info("paypal_success: order %s already paid — skipping", order_id)
+            return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
+
+        # Mark as paid
+        crud.update_order_payment(order_id, biz_id, {
+            "payment_status":    "paid",
+            "payment_reference": ref,
+            "paypal_order_id":   token,
+        })
+
+        # Send WhatsApp confirmation
+        await _notify_customer_payment(order, (
+            f"✅ *PayPal Payment Confirmed!*\n\n"
+            f"Thank you! Your payment for *{ref}* is complete.\n\n"
+            f"💰 Amount: ${capture['amount']:.2f} USD\n"
+            f"📦 Your order is now being prepared. Thank you! 🙏"
+        ))
+
+        log.info("paypal_success: confirmed  ref=%s  amount=%.2f", ref, capture["amount"])
         return {
             "status":    "ok",
             "paid":      True,
             "reference": ref,
             "amount":    capture["amount"],
-            "message":   "Payment confirmed! You will receive a WhatsApp message shortly.",
+            "message":   "Payment confirmed! You will receive a WhatsApp confirmation shortly.",
         }
 
     except Exception as exc:
@@ -1678,6 +1701,199 @@ async def paypal_cancel(reference: str = ""):
         "reference": reference,
         "message":   "Payment cancelled. Your cart is still saved — return to WhatsApp to try again.",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAYPAL WEBHOOK — Primary auto-confirmation path
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/payments/paypal/webhook")
+async def paypal_webhook(request: Request):
+    """
+    Receive PayPal Instant Payment Notification (IPN) events.
+
+    Register this URL in PayPal Developer Dashboard:
+      Dashboard → My Apps → [Your App] → Webhooks → Add Webhook
+      URL: https://wazibot-api-assistant.onrender.com/payments/paypal/webhook
+      Events to subscribe:
+        - PAYMENT.CAPTURE.COMPLETED
+        - PAYMENT.CAPTURE.DENIED    (optional, for failed payment handling)
+
+    Security:
+      - Validates PayPal-Transmission-Sig using verify_paypal_webhook_signature()
+      - Validates event_type == PAYMENT.CAPTURE.COMPLETED
+      - Validates amount and currency match the stored order
+      - Idempotent: skips already-paid orders
+
+    Required ENV var:
+      PAYPAL_WEBHOOK_ID — the Webhook ID from PayPal Developer Dashboard
+    """
+    from payments import verify_paypal_webhook_signature
+    from order_lifecycle import get_order
+
+    WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
+
+    # ── 1. Read raw body (must be done before await request.json()) ───────────
+    raw_body = await request.body()
+
+    # ── 2. Verify signature (skip in dev if PAYPAL_WEBHOOK_ID not set) ───────
+    if WEBHOOK_ID:
+        is_valid = verify_paypal_webhook_signature(
+            headers=dict(request.headers),
+            raw_body=raw_body,
+            webhook_id=WEBHOOK_ID,
+        )
+        if not is_valid:
+            log.warning("paypal_webhook: invalid signature — rejecting")
+            raise HTTPException(400, "Invalid PayPal webhook signature")
+    else:
+        log.warning("paypal_webhook: PAYPAL_WEBHOOK_ID not set — skipping signature verification (dev mode)")
+
+    # ── 3. Parse event ────────────────────────────────────────────────────────
+    try:
+        event = await request.json()
+    except Exception as exc:
+        log.error("paypal_webhook: could not parse JSON body: %s", exc)
+        raise HTTPException(400, "Invalid JSON body")
+
+    event_type = event.get("event_type", "")
+    log.info("paypal_webhook: event_type=%s", event_type)
+
+    # ── 4. Handle PAYMENT.CAPTURE.COMPLETED ──────────────────────────────────
+    if event_type == "PAYMENT.CAPTURE.COMPLETED":
+        try:
+            resource = event.get("resource", {})
+
+            # Extract paypal_order_id from supplementary_data or links
+            supplementary = resource.get("supplementary_data", {})
+            related_ids    = supplementary.get("related_ids", {})
+            paypal_order_id = related_ids.get("order_id", "")
+
+            # Fallback: extract from links
+            if not paypal_order_id:
+                for link in resource.get("links", []):
+                    if "orders" in link.get("href", ""):
+                        paypal_order_id = link["href"].rstrip("/").split("/")[-1]
+                        break
+
+            if not paypal_order_id:
+                log.error("paypal_webhook: could not extract paypal_order_id from event")
+                return {"status": "error", "detail": "Could not extract order ID"}
+
+            # Amount and currency validation
+            amount_obj = resource.get("amount", {})
+            paid_amount   = float(amount_obj.get("value", 0))
+            paid_currency = amount_obj.get("currency_code", "USD").upper()
+
+            if paid_currency != "USD":
+                log.warning("paypal_webhook: unexpected currency %s", paid_currency)
+                return {"status": "error", "detail": f"Unexpected currency: {paid_currency}"}
+
+            # ── 5. Find the internal order ────────────────────────────────────
+            order = crud.get_order_by_paypal_id(paypal_order_id)
+
+            if not order:
+                log.warning("paypal_webhook: order not found for paypal_id=%s — checking custom_id",
+                            paypal_order_id)
+                # Try via custom_id in purchase unit (stored as internal order ID)
+                custom_id = resource.get("custom_id", "")
+                if custom_id and custom_id.isdigit():
+                    order = get_order(int(custom_id))
+
+            if not order:
+                log.error("paypal_webhook: no matching order for paypal_id=%s", paypal_order_id)
+                return {"status": "error", "detail": "Order not found"}
+
+            order_id = order["id"]
+            biz_id   = order["business_id"]
+            ref      = order.get("payment_reference") or f"ORDER-{order_id}"
+
+            # ── 6. Idempotency ─────────────────────────────────────────────────
+            if order.get("payment_status") == "paid":
+                log.info("paypal_webhook: order %s already paid — skip", order_id)
+                return {"status": "ok", "detail": "already_paid"}
+
+            # ── 7. Validate amount ─────────────────────────────────────────────
+            order_total = round(float(order.get("total_price") or 0), 2)
+            if round(paid_amount, 2) != order_total:
+                log.error(
+                    "paypal_webhook: amount mismatch  expected=%.2f  received=%.2f  order=%s",
+                    order_total, paid_amount, order_id,
+                )
+                # Don't reject outright — could be fees/rounding. Log and proceed if close.
+                if abs(paid_amount - order_total) > 0.10:
+                    raise HTTPException(400,
+                        f"Amount mismatch: expected ${order_total:.2f}, received ${paid_amount:.2f}")
+
+            # ── 8. Mark order as paid ──────────────────────────────────────────
+            crud.update_order_payment(order_id, biz_id, {
+                "payment_status":    "paid",
+                "payment_reference": ref,
+                "paypal_order_id":   paypal_order_id,
+            })
+            try:
+                from order_lifecycle import update_order_status_supabase
+                update_order_status_supabase(order_id, "paid")
+            except Exception as exc:
+                log.warning("paypal_webhook: status update failed: %s", exc)
+
+            # ── 9. Reset customer's conversation state ─────────────────────────
+            customer_phone = order.get("customer_phone", "")
+            if customer_phone:
+                try:
+                    # Import ai state functions to reset the customer's flow
+                    from ai import _reset_state as ai_reset_state
+                    ai_reset_state(customer_phone, biz_id)
+                except Exception as exc:
+                    log.warning("paypal_webhook: state reset failed: %s", exc)
+
+            # ── 10. Send WhatsApp confirmation ──────────────────────────────────
+            await _notify_customer_payment(order, (
+                f"✅ *Payment Received!*\n\n"
+                f"Your PayPal payment of *${paid_amount:.2f} USD* has been confirmed.\n\n"
+                f"📦 Order : *{ref}*\n"
+                f"📍 Status: *CONFIRMED*\n\n"
+                f"We're now preparing your order — we'll be in touch shortly! 🙌\n\n"
+                f"_Thank you for choosing us!_ 🙏"
+            ))
+
+            log.info(
+                "paypal_webhook: ✅ payment confirmed  order=%s  amount=%.2f  paypal_id=%s",
+                order_id, paid_amount, paypal_order_id,
+            )
+            return {"status": "ok", "order_id": order_id, "paid": True}
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            log.exception("paypal_webhook: PAYMENT.CAPTURE.COMPLETED handler error: %s", exc)
+            return {"status": "error", "detail": str(exc)}
+
+    # ── Handle PAYMENT.CAPTURE.DENIED ────────────────────────────────────────
+    elif event_type == "PAYMENT.CAPTURE.DENIED":
+        try:
+            resource    = event.get("resource", {})
+            custom_id   = resource.get("custom_id", "")
+            order       = get_order(int(custom_id)) if custom_id.isdigit() else None
+            if order:
+                crud.update_order_payment(order["id"], order["business_id"], {
+                    "payment_status": "payment_failed",
+                })
+                await _notify_customer_payment(order, (
+                    f"❌ *PayPal payment failed.*\n\n"
+                    f"Your payment for *ORDER-{order['id']}* was declined.\n\n"
+                    f"Please try again or choose a different payment method.\n"
+                    f"Type *checkout* to try again."
+                ))
+                log.info("paypal_webhook: DENIED  order=%s", order["id"])
+        except Exception as exc:
+            log.error("paypal_webhook: DENIED handler error: %s", exc)
+        return {"status": "ok"}
+
+    # ── All other event types — acknowledge but don't process ─────────────────
+    else:
+        log.debug("paypal_webhook: unhandled event_type=%s — ignored", event_type)
+        return {"status": "ok", "detail": f"event {event_type} not handled"}
 
 
 @app.post("/payments/manual/confirm")

@@ -728,6 +728,85 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
 # CHECKOUT PIPELINE — create order + dispatch payment
 # ═════════════════════════════════════════════════════════════════════════════
 
+def _handle_paypal_paid_message(
+    phone: str,
+    business_id: int,
+    business_name: str,
+    order_id,
+    reference: str,
+) -> str:
+    """
+    Called when a user says "paid" while awaiting a PayPal payment.
+
+    Logic:
+      1. Read paypal_order_id from state_data
+      2. Call PayPal API to check if payment is COMPLETED
+      3a. If paid → mark order, reset state, confirm
+      3b. If pending → tell user we're verifying (webhook will fire soon)
+      3c. No paypal_order_id → fall back to manual proof flow
+    """
+    from payments import get_paypal_order_details
+
+    # Get the PayPal order ID we stored when creating the checkout
+    state_data     = _read_state_data(phone, business_id)
+    paypal_order_id = state_data.get("paypal_order_id", "")
+
+    if not paypal_order_id:
+        log.warning("_handle_paypal_paid_message: no paypal_order_id in state  phone=%s", phone)
+        # No API order ID — this is manual PayPal email mode, require proof
+        _set_awaiting_proof(phone, business_id,
+                            order_id=order_id,
+                            method="paypal",
+                            reference=reference)
+        return (
+            f"✅ *Got it! Thank you for paying.*\n\n"
+            f"To confirm your PayPal payment, please send your *transaction ID* "
+            f"or a *screenshot* of the payment.\n\n"
+            f"📦 Order: *{reference}*\n\n"
+            f"_This helps us verify and process your order. 🙏_"
+        )
+
+    # Poll PayPal API for the current status
+    try:
+        details = get_paypal_order_details(paypal_order_id)
+    except Exception as exc:
+        log.error("PayPal status check failed: %s", exc)
+        details = {"paid": False, "error": str(exc)}
+
+    if details.get("paid"):
+        # Payment confirmed — mark order and reset state
+        try:
+            if order_id:
+                crud.update_order_payment(order_id, business_id, {
+                    "payment_status":    "paid",
+                    "payment_reference": reference,
+                })
+        except Exception as exc:
+            log.warning("PayPal payment status update failed: %s", exc)
+
+        _reset_state(phone, business_id)
+        amount = details.get("amount", 0)
+
+        return (
+            f"✅ *PayPal Payment Confirmed!*\n\n"
+            f"Thank you! Your payment of *${amount:.2f} USD* has been verified.\n\n"
+            f"📦 Order : *{reference}*\n"
+            f"📍 Status: *CONFIRMED*\n\n"
+            f"We're now preparing your order. You'll hear from us shortly! 🙌\n\n"
+            f"_Thank you for choosing *{business_name}*!_"
+        )
+
+    # Payment not yet completed — webhook will fire when it does
+    return (
+        f"⏳ *We're verifying your PayPal payment.*\n\n"
+        f"📦 Order: *{reference}*\n\n"
+        f"This usually only takes a few seconds. You'll receive an automatic "
+        f"confirmation message as soon as your payment clears.\n\n"
+        f"_No action needed — just wait for our message! 😊_\n"
+        f"_Type *cancel* if you want to cancel this order._"
+    )
+
+
 def _process_payment(
     method: str,
     cart: list,
@@ -791,7 +870,7 @@ def _process_payment(
             "error":     str(exc),
         }
 
-    # 3. Persist payment fields
+    # 3. Persist payment fields (including paypal_order_id if available)
     try:
         oid = order.get("id")
         if oid:
@@ -802,15 +881,36 @@ def _process_payment(
             }
             if pay.get("url"):
                 update["payment_url"] = pay["url"]
+            # Store PayPal's order ID so webhook can find this order later
+            if pay.get("paypal_order_id"):
+                update["paypal_order_id"] = pay["paypal_order_id"]
             crud.update_order_payment(oid, business_id, update)
     except Exception as exc:
         log.warning("update payment details failed: %s", exc)
 
-    # 4. Set state
-    if method == "cash":
-        # Cash = confirmed immediately — no proof needed
-        _reset_state(phone, business_id)
+    # 4. Set state — depends on payment method and whether it's auto-verified
+    auto_verified = pay.get("auto_verified", False)
+
+    if method == "cash" or auto_verified:
+        # Cash = instant, PayPal API = webhook will confirm
+        # Both go to awaiting_payment (not awaiting_proof)
+        if method == "cash":
+            _reset_state(phone, business_id)
+        else:
+            # PayPal API: store paypal_order_id in session for status polling
+            _set_awaiting_payment(
+                phone, business_id,
+                order_id=order.get("id"),
+                method=method,
+                reference=pay.get("reference", f"ORDER-{order.get('id', '?')}"),
+            )
+            # Also stash paypal_order_id in state for quick lookup
+            _write_state_data(phone, business_id, {
+                "paypal_order_id": pay.get("paypal_order_id", "")
+            })
     else:
+        # Manual methods (EcoCash, PayPal email) — stay in awaiting_payment
+        # until customer says "paid", then move to awaiting_proof
         _set_awaiting_payment(
             phone, business_id,
             order_id=order.get("id"),
@@ -1028,20 +1128,31 @@ def generate_reply(
         method    = pending.get("method", "unknown")
         reference = pending.get("reference", f"ORDER-{order_id}")
 
-        # Handle "paid" — move to proof collection
+        # Handle "paid" — behaviour differs by method
         if _is_payment_confirmation(text):
-            _set_awaiting_proof(phone, business_id,
-                                order_id=order_id,
-                                method=method,
-                                reference=reference)
-            method_label = {"ecocash": "EcoCash", "paypal": "PayPal"}.get(method, "payment")
-            return (
-                f"✅ *Got it! Thank you for paying.*\n\n"
-                f"To complete your order, please send your *{method_label} "
-                f"transaction ID* or a *screenshot* of your payment.\n\n"
-                f"📦 Order: *{reference}*\n\n"
-                f"_This helps us verify your payment quickly and process your order. 🙏_"
-            )
+            if method == "paypal":
+                # PayPal: check if webhook already confirmed, or poll the API
+                return _handle_paypal_paid_message(
+                    phone=phone,
+                    business_id=business_id,
+                    business_name=business_name,
+                    order_id=order_id,
+                    reference=reference,
+                )
+            else:
+                # EcoCash / manual PayPal email: require proof
+                _set_awaiting_proof(phone, business_id,
+                                    order_id=order_id,
+                                    method=method,
+                                    reference=reference)
+                method_label = {"ecocash": "EcoCash", "paypal": "PayPal (email)"}.get(method, "payment")
+                return (
+                    f"✅ *Got it! Thank you for paying.*\n\n"
+                    f"To complete your order, please send your *{method_label} "
+                    f"transaction ID* or a *screenshot* of your payment.\n\n"
+                    f"📦 Order: *{reference}*\n\n"
+                    f"_This helps us verify your payment quickly and process your order. 🙏_"
+                )
 
         # Handle image directly in awaiting_payment state
         if message_has_image:
