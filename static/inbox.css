@@ -249,9 +249,9 @@ body {
 
 /* ── MAIN LAYOUT ────────────────────────────────────────── */
 .inbox {
-  min-height: 0;          /* FIX: flex child must shrink */
   display: flex;
   flex: 1;
+  min-height: 0;    /* desktop fix: flex child must shrink so inner scroll works */
   overflow: hidden;
   position: relative;
 }
@@ -479,7 +479,7 @@ body {
 /* ── CHAT PANEL ─────────────────────────────────────────── */
 .chat-panel {
   flex: 1;
-  min-height: 0;          /* FIX: flex child must be able to shrink */
+  min-height: 0;    /* desktop fix: must shrink so .chat-messages can scroll */
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -488,12 +488,12 @@ body {
   transition: background 0.3s var(--ease);
 }
 
-/* Active chat wrapper */
+/* Active chat container — must be a proper flex column that can shrink */
 #active-chat {
   display: flex;
   flex-direction: column;
   flex: 1;
-  min-height: 0;          /* FIX: critical for inner scroll to work */
+  min-height: 0;    /* desktop fix: needed at every level of flex column chain */
   overflow: hidden;
 }
 
@@ -602,7 +602,7 @@ body {
 /* ── MESSAGES AREA ──────────────────────────────────────── */
 .chat-messages {
   flex: 1;
-  min-height: 0;          /* FIX: must be 0 so flex shrinks and overflow-y works */
+  min-height: 0;    /* desktop fix: without this, flex:1 won't shrink and scroll never engages */
   overflow-y: auto;
   overflow-x: hidden;
   padding: 16px 14px;
