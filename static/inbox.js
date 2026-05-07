@@ -126,14 +126,9 @@ function connectWS() {
 
         // If this conversation is currently open, append bubble
         if (customer_id === currentCustomerId && message) {
-          // Dedup: skip if bubble with this id already exists
-          if (message.id && document.querySelector(`[data-msg-id="${message.id}"]`)) {
-            // already rendered — just update sidebar
-          } else {
-            appendBubble(message);
-            scrollToBottom();
-            if (message.direction === 'incoming') markRead().catch(() => {});
-          }
+          appendBubble(message);
+          scrollToBottom();
+          if (message.direction === 'incoming') markRead().catch(() => {});
         }
 
         // Always refresh sidebar to update preview + unread badge
@@ -160,14 +155,8 @@ async function loadConversations(showSkeleton = true) {
     if (showSkeleton) showSkeletons();
     const unread = activeFilter === 'unread';
     const raw = await apiFetch(`/chat/conversations?unread_only=${unread}`);
-    const rawArr = Array.isArray(raw) ? raw
+    allConversations = Array.isArray(raw) ? raw
       : (raw && Array.isArray(raw.data)) ? raw.data : [];
-    // Sort newest-first before storing so allConversations is always ordered
-    allConversations = rawArr.slice().sort((a, b) => {
-      const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-      const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-      return tb - ta;
-    });
     renderContacts(allConversations);
   } catch (e) {
     const list = document.getElementById('contact-list');
@@ -201,15 +190,8 @@ function renderContacts(convos) {
   const search = searchEl ? searchEl.value.trim().toLowerCase() : '';
   const safe   = Array.isArray(convos) ? convos : [];
 
-  // Always sort newest-message-first so sidebar stays current
-  const sorted = safe.slice().sort((a, b) => {
-    const ta = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-    const tb = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-    return tb - ta;
-  });
-
-  let filtered = sorted;
-  if (search) filtered = sorted.filter(c => (c.phone || '').includes(search));
+  let filtered = safe;
+  if (search) filtered = safe.filter(c => (c.phone || '').includes(search));
   if (activeFilter === 'recent') filtered = filtered.slice(0, 20);
 
   if (!filtered.length) {
@@ -268,10 +250,11 @@ async function openChat(customerId, phone, lastSeen) {
 
   const ac = document.getElementById('active-chat');
   if (!ac) return;
-  ac.style.display    = 'flex';
+  ac.style.display       = 'flex';
   ac.style.flexDirection = 'column';
-  ac.style.overflow   = 'hidden';
-  ac.style.flex       = '1';
+  ac.style.overflow      = 'hidden';
+  ac.style.flex          = '1';
+  ac.style.minHeight     = '0';   /* FIX: without this, flex child won't shrink and scroll breaks */
 
   const phoneEl  = document.getElementById('chat-phone');
   if (phoneEl)  phoneEl.textContent = phone;
@@ -351,17 +334,8 @@ async function loadMessages(customerId, reset = false) {
 
 async function loadMoreMessages() {
   if (!currentCustomerId) return;
-  const container = document.getElementById('chat-messages');
-  // Save scroll height before prepend so we can restore position
-  const prevScrollHeight = container ? container.scrollHeight : 0;
   msgOffset += msgLimit;
   await loadMessages(currentCustomerId, false);
-  // After prepend, nudge scroll so the user's view doesn't jump
-  if (container) {
-    requestAnimationFrame(() => {
-      container.scrollTop = container.scrollHeight - prevScrollHeight;
-    });
-  }
 }
 
 /* ── BUBBLES ────────────────────────────────────────────── */
@@ -554,5 +528,5 @@ document.addEventListener('DOMContentLoaded', () => {
   loadConversations(true).catch(e => console.warn('Initial load failed:', e));
 
   // Fallback poll every 30s
-  setInterval(() => loadConversations(false).catch(() => {}), 8000);
+  setInterval(() => loadConversations(false).catch(() => {}), 30000);
 });
