@@ -295,6 +295,50 @@
           <button class="btn btn-primary" onclick="saveBusinessName()">Update Name</button>
         </div>
       </div>
+      <!-- ── PAYMENT SETTINGS ─────────────────────────────── -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">💳 Payment Settings</div></div>
+        <div class="panel-body">
+          <p style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.6;">
+            These override the platform defaults. Each business can set their own numbers.
+          </p>
+
+          <!-- EcoCash -->
+          <div style="margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid var(--border);">
+            <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">
+              💚 EcoCash
+            </div>
+            <div class="form-group">
+              <label>EcoCash Number <span style="color:var(--text-dim);font-weight:400;">(e.g. +263771234567)</span></label>
+              <input type="tel" id="set-ecocash-number" placeholder="+263771234567" autocomplete="off"/>
+            </div>
+            <div class="form-group">
+              <label>Registered Account Name</label>
+              <input type="text" id="set-ecocash-name" placeholder="e.g. Flavoury Foods (Pvt) Ltd" autocomplete="off"/>
+            </div>
+            <button class="btn btn-primary" onclick="saveEcoCashSettings()">Save EcoCash Details</button>
+          </div>
+
+          <!-- PayPal -->
+          <div>
+            <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">
+              🌍 PayPal
+            </div>
+            <div class="form-group">
+              <label>PayPal Email <span style="color:var(--text-dim);font-weight:400;">(real account email — money goes here)</span></label>
+              <input type="email" id="set-paypal-email" placeholder="payments@yourbusiness.com" autocomplete="off"/>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.6;">
+              ℹ️ Customers will be instructed to send money directly to this email via the PayPal app.
+              This must be your <strong>real PayPal account email</strong>.
+            </div>
+            <button class="btn btn-primary" onclick="savePayPalSettings()">Save PayPal Email</button>
+          </div>
+
+          <div id="payment-settings-status" style="margin-top:14px;font-size:11px;font-family:var(--mono);"></div>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="panel-header"><div class="panel-title">Appearance</div></div>
         <div class="panel-body">

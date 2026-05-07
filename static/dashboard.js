@@ -675,11 +675,39 @@ async function checkStatus(){
 
 // ── SETTINGS ──────────────────────────────────────────────
 async function loadSettings() {
+  // Load WhatsApp credentials + business name
   try {
     const b = await apiFetch('/me');
     if(b&&b.whatsapp_phone_id){const _spi=document.getElementById('set-phone-id');if(_spi)_spi.value=b.whatsapp_phone_id;}
     if(b&&b.name){const _sbn=document.getElementById('set-biz-name');if(_sbn)_sbn.value=b.name;}
   } catch(e) {}
+
+  // Load payment settings (EcoCash + PayPal)
+  try {
+    const pay = await apiFetch('/me/payment-settings');
+    const ecoNum  = document.getElementById('set-ecocash-number');
+    const ecoName = document.getElementById('set-ecocash-name');
+    const ppEmail = document.getElementById('set-paypal-email');
+    if (ecoNum  && pay.ecocash_number) ecoNum.value  = pay.ecocash_number;
+    if (ecoName && pay.ecocash_name)   ecoName.value = pay.ecocash_name;
+    if (ppEmail && pay.paypal_email)   ppEmail.value = pay.paypal_email;
+
+    // Show configured status
+    const statusEl = document.getElementById('payment-settings-status');
+    if (statusEl) {
+      const parts = [];
+      if (pay.ecocash_configured) parts.push('✅ EcoCash configured');
+      if (pay.paypal_configured)  parts.push('✅ PayPal configured');
+      if (!parts.length)          parts.push('⚠️ No payment methods configured yet');
+      statusEl.innerHTML = parts.join(' &nbsp;·&nbsp; ');
+      statusEl.style.color = (pay.ecocash_configured || pay.paypal_configured)
+        ? 'var(--green)' : 'var(--amber)';
+    }
+  } catch(e) {
+    // /me/payment-settings may not exist on older deployments — fail silently
+    console.warn('loadSettings: payment settings unavailable', e.message);
+  }
+
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
   const savedFont = localStorage.getItem('wazi_font') || "'Syne',sans-serif";
   setTheme(savedTheme, true);
@@ -696,6 +724,59 @@ async function saveSettings() {
     toast('✅ Credentials saved');
     const _stok=document.getElementById('set-token'); if(_stok) _stok.value='';
   } catch(e) { toast('Failed: ' + e.message, true); }
+}
+
+async function saveEcoCashSettings() {
+  const number = (document.getElementById('set-ecocash-number')?.value || '').trim();
+  const name   = (document.getElementById('set-ecocash-name')?.value   || '').trim();
+  if (!number) { toast('Enter your EcoCash number (include country code, e.g. +263...)', true); return; }
+  if (!name)   { toast('Enter the registered account name', true); return; }
+  if (number.length < 7) { toast('EcoCash number too short — include country code', true); return; }
+
+  try {
+    setLoading(document.querySelector('[onclick="saveEcoCashSettings()"]'), true);
+    const res = await apiFetch('/me/payment-settings/ecocash', {
+      method: 'POST',
+      body: JSON.stringify({ ecocash_number: number, ecocash_name: name }),
+    });
+    toast('✅ EcoCash details saved — customers will now see your number on invoices');
+
+    // Refresh status line
+    const statusEl = document.getElementById('payment-settings-status');
+    if (statusEl) {
+      statusEl.textContent = '✅ EcoCash configured';
+      statusEl.style.color = 'var(--green)';
+    }
+  } catch(e) {
+    toast('Failed to save EcoCash: ' + (e.message || 'Unknown error'), true);
+  } finally {
+    setLoading(document.querySelector('[onclick="saveEcoCashSettings()"]'), false);
+  }
+}
+
+async function savePayPalSettings() {
+  const email = (document.getElementById('set-paypal-email')?.value || '').trim().toLowerCase();
+  if (!email) { toast('Enter your PayPal email address', true); return; }
+  if (!email.includes('@') || !email.includes('.')) { toast('Enter a valid email address', true); return; }
+
+  try {
+    setLoading(document.querySelector('[onclick="savePayPalSettings()"]'), true);
+    const res = await apiFetch('/me/payment-settings/paypal', {
+      method: 'POST',
+      body: JSON.stringify({ paypal_email: email }),
+    });
+    toast('✅ PayPal email saved — customers will be instructed to send money to ' + email);
+
+    const statusEl = document.getElementById('payment-settings-status');
+    if (statusEl) {
+      statusEl.textContent = '✅ PayPal configured';
+      statusEl.style.color = 'var(--green)';
+    }
+  } catch(e) {
+    toast('Failed to save PayPal: ' + (e.message || 'Unknown error'), true);
+  } finally {
+    setLoading(document.querySelector('[onclick="savePayPalSettings()"]'), false);
+  }
 }
 
 async function saveBusinessName() {
