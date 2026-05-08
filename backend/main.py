@@ -573,6 +573,11 @@ async def receive_message(request: Request):
         pass
 
     # ── STEP 8: Send via WhatsApp API ─────────────────────────────────────
+    # Empty reply means the message was an agent status update — do not send
+    if not reply:
+        log.info("📤 STEP 8 SKIP — empty reply (agent message suppressed)  phone=%s", customer_phone)
+        return {"status": "ok"}
+
     if token:
         result = send_whatsapp(phone_number_id, token, customer_phone, reply)
         if "error" in result:
@@ -762,6 +767,166 @@ def admin_delete_business(business_id: int, _=Depends(require_superadmin)):
 @app.get("/admin/stats")
 def admin_stats(_=Depends(require_superadmin)):
     return crud.get_admin_stats()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ORDER LIFECYCLE — business pushes status updates + notifies customer via WA
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OrderLifecycleUpdate(BaseModel):
+    order_id:         int
+    status:           str   # preparing | ready | out_for_delivery | delivered | completed
+    message:          Optional[str] = None    # custom message to customer (optional)
+    estimated_minutes: Optional[int] = None  # ETA in minutes for delivery/prep
+
+
+# Human-readable status messages sent to the customer automatically
+_LIFECYCLE_MESSAGES = {
+    "preparing": (
+        "👨‍🍳 *Your order is being prepared!*\n\n"
+        "📦 Order: *{ref}*\n\n"
+        "We're working on it now. Estimated preparation time: *{eta}*\n\n"
+        "_We'll let you know when it's ready! 😊_"
+    ),
+    "ready": (
+        "🎉 *Your order is ready!*\n\n"
+        "📦 Order: *{ref}*\n\n"
+        "Your order is ready for *pickup* or will be dispatched for delivery shortly.\n\n"
+        "_Please come collect or wait for your delivery rider. 🙌_"
+    ),
+    "out_for_delivery": (
+        "🛵 *Your order is on the way!*\n\n"
+        "📦 Order: *{ref}*\n\n"
+        "Your delivery rider has been assigned and is heading your way.\n"
+        "{eta}"
+        "\n_Please be available to receive your order. 😊_"
+    ),
+    "delivered": (
+        "✅ *Order delivered! Enjoy your meal!*\n\n"
+        "📦 Order: *{ref}*\n\n"
+        "Thank you for ordering from *{biz}*! 🙏\n\n"
+        "_We hope you love it! Type *menu* to order again anytime._"
+    ),
+    "completed": (
+        "✅ *Order completed! Thank you!*\n\n"
+        "📦 Order: *{ref}*\n\n"
+        "We hope you enjoyed your order from *{biz}*! 🙏\n\n"
+        "_Type *menu* to order again._"
+    ),
+}
+
+
+@app.post("/orders/{order_id}/lifecycle")
+async def push_lifecycle_update(
+    order_id: int,
+    data: OrderLifecycleUpdate,
+    user=Depends(require_business),
+):
+    """
+    Business-facing endpoint: push an order lifecycle status update.
+
+    Automatically:
+      1. Updates order status in Supabase
+      2. Sends a WhatsApp message to the customer with the new status
+      3. Triggers end-of-conversation survey if status is delivered/completed
+
+    Status values: preparing | ready | out_for_delivery | delivered | completed
+    """
+    from order_lifecycle import get_order
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+
+    if not order:
+        raise HTTPException(404, f"Order {order_id} not found")
+    if order.get("business_id") != bid:
+        raise HTTPException(403, "Access denied")
+
+    new_status = data.status.lower().strip()
+    valid_push_statuses = {
+        "preparing", "ready", "out_for_delivery", "delivered", "completed"
+    }
+    if new_status not in valid_push_statuses:
+        raise HTTPException(422,
+            f"Invalid status '{new_status}'. Valid: {sorted(valid_push_statuses)}")
+
+    # ── Update DB ─────────────────────────────────────────────────────────────
+    try:
+        crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
+    except Exception:
+        pass  # may already be paid
+
+    # Map our push status to the VALID_STATUSES in order_lifecycle
+    status_map = {
+        "preparing":        "confirmed",
+        "ready":            "confirmed",
+        "out_for_delivery": "confirmed",
+        "delivered":        "delivered",
+        "completed":        "delivered",
+    }
+    db_status = status_map.get(new_status, "confirmed")
+    try:
+        from order_lifecycle import update_order_status_supabase
+        update_order_status_supabase(order_id, db_status)
+    except Exception as exc:
+        log.warning("lifecycle: db status update failed: %s", exc)
+
+    # ── Build customer message ────────────────────────────────────────────────
+    ref      = f"ORDER-{order_id}"
+    biz_name = order.get("business_name", "")
+    try:
+        biz_row  = crud.get_business_by_id(bid)
+        biz_name = biz_row.get("name", "") if biz_row else biz_name
+    except Exception:
+        pass
+
+    if data.message:
+        customer_msg = data.message
+    else:
+        template = _LIFECYCLE_MESSAGES.get(new_status, "📦 Order *{ref}* status updated.")
+        eta_text = ""
+        if data.estimated_minutes:
+            eta_text = f"Estimated arrival: *{data.estimated_minutes} minutes* ⏱\n"
+        elif new_status == "preparing" and data.estimated_minutes:
+            eta_text = f"*{data.estimated_minutes} minutes*"
+        else:
+            eta_text = "*shortly*" if new_status == "preparing" else ""
+
+        customer_msg = template.format(ref=ref, biz=biz_name, eta=eta_text)
+
+    # ── Send WhatsApp notification ────────────────────────────────────────────
+    phone = order.get("customer_phone", "")
+    wa_result: dict = {}
+    if phone:
+        try:
+            biz_row  = crud.get_business_by_id(bid)
+            token    = crud.get_decrypted_token(biz_row) if biz_row else ""
+            phone_id = biz_row.get("whatsapp_phone_id", "") if biz_row else ""
+            if token and phone_id:
+                wa_result = send_whatsapp(phone_id, token, phone, customer_msg)
+                log.info("lifecycle: WA sent  order=%s  status=%s  phone=%s",
+                         order_id, new_status, phone)
+        except Exception as exc:
+            log.error("lifecycle: WA send failed: %s", exc)
+            wa_result = {"error": str(exc)}
+
+    # ── Trigger survey if order is complete ───────────────────────────────────
+    if new_status in ("delivered", "completed") and phone:
+        try:
+            from ai import _set_survey_state
+            _set_survey_state(phone, bid)
+            log.info("lifecycle: survey triggered  phone=%s", phone)
+        except Exception as exc:
+            log.warning("lifecycle: survey trigger failed: %s", exc)
+
+    log.info("lifecycle update  order=%s  status=%s  by=%s", order_id, new_status, user["username"])
+    return {
+        "ok":          True,
+        "order_id":    order_id,
+        "new_status":  new_status,
+        "customer_notified": bool(phone and not wa_result.get("error")),
+        "message_sent": customer_msg[:80] + "..." if len(customer_msg) > 80 else customer_msg,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
