@@ -197,6 +197,15 @@ def _reset_state(phone: str, business_id: int) -> None:
                session={}, pending_payment=None, pending_proof=None)
 
 
+def _set_survey_state(phone: str, business_id: int) -> None:
+    """Enter survey state — awaiting satisfaction rating."""
+    _set_state(phone, business_id, "survey", session={})
+
+
+def _in_survey_state(phone: str, business_id: int) -> bool:
+    return _get_state(phone, business_id) == "survey"
+
+
 # ═════════════════════════════════════════════════════════════════════════════
 # SPAM / RATE LIMITING
 # ═════════════════════════════════════════════════════════════════════════════
@@ -311,6 +320,99 @@ _CANCEL_EXACT = {
 def _is_cancel(text: str) -> bool:
     t = text.lower().strip()
     return t in _CANCEL_EXACT or t.startswith("cancel")
+
+
+# ── Refund / dispute intent ───────────────────────────────────────────────────
+
+_REFUND_WORDS = {
+    "refund", "refund please", "i want a refund", "give me a refund",
+    "money back", "get my money back", "want my money back",
+    "dispute", "chargeback", "wrong order", "not received",
+    "didn't receive", "didnt receive", "never got", "where is my order",
+    "where is my food", "where is my delivery",
+}
+
+
+def _is_refund_request(text: str) -> bool:
+    t = text.lower().strip()
+    return t in _REFUND_WORDS or any(w in t for w in [
+        "refund", "money back", "dispute", "chargeback",
+        "not received", "never got", "where is my order",
+    ])
+
+
+# ── Completion / farewell detection ──────────────────────────────────────────
+
+_DONE_EXACT = {
+    "thank you", "thanks", "ty", "thx", "thank u",
+    "that's all", "thats all", "nothing else", "i'm done", "im done",
+    "no thanks", "no thank you", "nah thanks", "all good",
+    "okay thanks", "ok thanks", "okay thank you", "ok thank you",
+    "thanks bye", "thank you bye", "bye", "goodbye", "good bye",
+    "cheers", "cool thanks", "perfect thanks", "great thanks",
+    "awesome thanks", "sorted thanks", "sorted",
+    "we're done", "we are done", "that will be all",
+}
+
+def _is_conversation_done(text: str) -> bool:
+    """Detect farewell / completion phrases so we can close gracefully."""
+    t = text.lower().strip()
+    if t in _DONE_EXACT:
+        return True
+    # Short gratitude that starts with thanks/thank
+    if t.startswith("thank") and len(t) < 30:
+        return True
+    return False
+
+
+# ── Survey state helpers ──────────────────────────────────────────────────────
+
+_SURVEY_OPTIONS = {"1": "excellent", "2": "good", "3": "average", "4": "poor",
+                   "excellent": "excellent", "good": "good",
+                   "average": "average", "poor": "poor",
+                   "👍": "excellent", "😊": "good", "😐": "average", "😞": "poor"}
+
+def _is_survey_response(text: str) -> bool:
+    return text.lower().strip() in _SURVEY_OPTIONS
+
+def _parse_survey_rating(text: str) -> str:
+    return _SURVEY_OPTIONS.get(text.lower().strip(), "")
+
+
+# ── Urgency / delivery follow-up detection ───────────────────────────────────
+
+_URGENCY_PHRASES = [
+    "hurry", "urgent", "asap", "quickly", "fast", "how long", "when will",
+    "where is", "still waiting", "taking long", "taking too long",
+    "late", "delayed", "not arrived", "hasn't arrived", "not here yet",
+    "cold", "hungry", "starving",
+]
+
+def _is_urgency_message(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in _URGENCY_PHRASES)
+
+
+# ── Business-agent message detection ─────────────────────────────────────────
+# Detects when a business owner sends a status update directly into the chat
+# (e.g. "Your payment has been verified") so we don't reply with a fallback.
+
+_AGENT_PHRASES = [
+    "your payment has been verified", "payment verified", "payment confirmed",
+    "order is being prepared", "order is ready", "ready for pickup",
+    "rider has been assigned", "out for delivery", "on the way",
+    "delivered", "order complete", "thank you for your order",
+    "your order is ready", "being prepared", "preparation",
+]
+
+def _is_agent_message(text: str) -> bool:
+    """
+    Returns True if the message looks like it came from a business agent
+    (not the customer). These are status updates sent into the chat by staff.
+    We should not reply with a generic fallback to these.
+    """
+    t = text.lower()
+    return any(p in t for p in _AGENT_PHRASES)
 
 
 # ── Payment confirmation ──────────────────────────────────────────────────
@@ -438,42 +540,84 @@ def _intent(text: str) -> str:
 # PROOF OF PAYMENT — detect if message looks like a proof submission
 # ═════════════════════════════════════════════════════════════════════════════
 
+# Words that look like txn IDs by length/charset but are NOT proof.
+# Extended to prevent common words and intent-words from being misclassified.
+_PROOF_SKIP_WORDS = {
+    # Payment methods / system words
+    "ORDER", "PAYPAL", "ECOCASH", "BITCOIN", "CRYPTO", "PROOF", "IMAGE",
+    # Common English words users type (6+ uppercase chars)
+    "REFUND", "CANCEL", "THANKS", "SORTED", "CHEERS", "DONEIT",
+    "PLEASE", "CHANGE", "RETURN", "UNABLE", "FAILED", "IGNORE",
+    "HELPME", "SOMETH", "NEWONE", "REUNDO", "REVERT",
+    # Single-word intent expressions (all-caps version)
+    "CANCEL", "REFUND", "PAID", "DONE", "SENT",
+}
+
+# Real txn IDs almost always:
+#   - Are ≥ 8 characters (EcoCash: 10-15, PayPal: 17+)
+#   - Contain at least one digit
+#   - Are mixed alphanumeric (not purely alphabetic)
+_TXN_PATTERN = re.compile(r"\b([A-Z0-9]{8,30})\b")
+
+
+def _looks_like_txn_id(token: str) -> bool:
+    """
+    Returns True if token looks like a real transaction ID:
+      - 8–30 chars of A-Z and 0-9
+      - Contains at least one digit (pure words are not txn IDs)
+      - Not in the skip list of common words
+    """
+    t = token.upper().strip()
+    if t in _PROOF_SKIP_WORDS:
+        return False
+    if not re.fullmatch(r"[A-Z0-9]{8,30}", t):
+        return False
+    # Must contain at least one digit — real IDs are never purely alphabetic
+    if not any(c.isdigit() for c in t):
+        return False
+    return True
+
+
 def _is_proof_submission(text: str, message_has_image: bool = False) -> tuple[bool, str]:
     """
     Detect if the customer is submitting payment proof.
     Returns (is_proof: bool, proof_text: str).
 
     Accepts:
-      - Transaction IDs (alphanumeric, 6+ chars)
-      - Confirmation codes
-      - "Screenshot attached" type messages
       - WhatsApp image attachments (message_has_image=True)
+      - Transaction IDs: ≥ 8 chars, alphanumeric, contains a digit
+      - Descriptive proof phrases ("here is my receipt", "transaction 1A2B3C")
+    Rejects:
+      - Pure English words (REFUND, CANCEL, THANKS, SORTED, etc.)
+      - Words shorter than 8 chars passed alone
     """
     if message_has_image:
         return True, "image_attached"
 
     t = text.strip()
+    t_lower = t.lower()
 
-    # Look for transaction ID patterns:
-    # EcoCash: "INF2024...", "ECO..." alphanumeric 8-20 chars
-    # PayPal: "1AB23456CD..." long alphanumeric
-    txn_pattern = re.search(r"\b([A-Z0-9]{6,25})\b", t.upper())
-    if txn_pattern:
-        txn_id = txn_pattern.group(1)
-        # Filter out common non-txn uppercase words
-        skip = {"ORDER", "PAYPAL", "ECOCASH", "BITCOIN", "PROOF", "IMAGE"}
-        if txn_id not in skip:
-            return True, txn_id
-
-    # Check for descriptive proof phrases
+    # ── Check for explicit proof phrases ─────────────────────────────────────
     proof_phrases = [
         "transaction", "reference", "txn", "receipt", "confirmation",
-        "screenshot", "transfer id", "payment id", "proof", "i sent",
-        "i paid", "check", "here is", "here's", "attached", "see",
+        "screenshot", "transfer id", "payment id", "proof",
+        "here is", "here's", "attached",
     ]
-    t_lower = t.lower()
-    if any(p in t_lower for p in proof_phrases) and len(t) > 5:
-        return True, t[:100]
+    has_proof_phrase = any(p in t_lower for p in proof_phrases)
+
+    # ── Look for transaction ID tokens ────────────────────────────────────────
+    found_txn = None
+    for match in _TXN_PATTERN.finditer(t.upper()):
+        candidate = match.group(1)
+        if _looks_like_txn_id(candidate):
+            found_txn = candidate
+            break
+
+    if found_txn:
+        return True, found_txn
+
+    if has_proof_phrase and len(t) > 8:
+        return True, t[:120]
 
     return False, ""
 
@@ -681,8 +825,25 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
 # ORDER STATUS LOOKUP
 # ═════════════════════════════════════════════════════════════════════════════
 
+# Full order lifecycle with emoji and human-readable labels
+_LIFECYCLE_ICONS = {
+    "pending":           ("🕐", "Order received — awaiting payment"),
+    "awaiting_payment":  ("⏳", "Awaiting payment"),
+    "payment_pending":   ("⏳", "Payment pending"),
+    "awaiting_confirmation": ("🔍", "Payment under review by our team"),
+    "confirmed":         ("✅", "Payment confirmed"),
+    "paid":              ("✅", "Payment confirmed"),
+    "preparing":         ("👨‍🍳", "Your order is being prepared"),
+    "ready":             ("🎉", "Ready for pickup!"),
+    "out_for_delivery":  ("🛵", "Out for delivery — on the way!"),
+    "delivered":         ("📦", "Delivered — enjoy your meal!"),
+    "completed":         ("🎉", "Order completed"),
+    "cancelled":         ("❌", "Order cancelled"),
+}
+
+
 def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
-    """Look up an order and return a formatted status message."""
+    """Look up an order and return a rich formatted status message."""
     try:
         from order_lifecycle import get_order
         order = get_order(order_id)
@@ -693,19 +854,48 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
                 "or type *help* for assistance."
             )
 
-        # Verify this order belongs to this customer + business
+        # Verify this order belongs to this customer or business
         if str(order.get("customer_phone", "")).replace("+", "") != str(phone).replace("+", ""):
             if order.get("business_id") != business_id:
                 return f"❓ I couldn't find *ORDER-{order_id}* for your account."
 
-        status         = order.get("status", "pending").upper()
+        status         = order.get("status", "pending")
         payment_status = order.get("payment_status", "pending")
         total          = float(order.get("total_price") or 0)
         created        = (order.get("created_at") or "")[:16].replace("T", " ")
 
-        pay_icon  = "✅" if payment_status == "paid"  else "⏳"
-        ord_icon  = {"PENDING": "🕐", "PAID": "✅", "CONFIRMED": "✅",
-                     "DELIVERED": "📦", "CANCELLED": "❌"}.get(status, "📋")
+        # Determine effective display status
+        # payment_status can be more informative than order status
+        effective_key = payment_status if payment_status in _LIFECYCLE_ICONS else status
+        icon, label   = _LIFECYCLE_ICONS.get(effective_key,
+                         _LIFECYCLE_ICONS.get(status, ("📋", status.upper())))
+
+        pay_icon = "✅" if payment_status in ("paid", "confirmed") else "⏳"
+
+        # Build a lifecycle progress bar
+        stages  = ["received", "payment", "preparing", "ready", "delivered"]
+        s_lower = status.lower()
+        p_lower = payment_status.lower()
+
+        if s_lower in ("cancelled",):
+            progress = "❌ Cancelled"
+        elif s_lower == "delivered" or s_lower == "completed":
+            progress = "✅ ✅ ✅ ✅ ✅  Complete!"
+        elif s_lower in ("preparing",):
+            progress = "✅ ✅ ✅ ⬜ ⬜  Preparing"
+        elif s_lower in ("paid", "confirmed") or p_lower in ("paid",):
+            progress = "✅ ✅ ⬜ ⬜ ⬜  Preparing soon"
+        elif p_lower in ("awaiting_confirmation", "awaiting_payment"):
+            progress = "✅ ⏳ ⬜ ⬜ ⬜  Verifying payment"
+        else:
+            progress = "✅ ⬜ ⬜ ⬜ ⬜  Order received"
+
+        # Human-agent note for payment verification
+        agent_note = ""
+        if p_lower == "awaiting_confirmation":
+            agent_note = "\n🔍 _A team member is reviewing your payment proof._"
+        elif p_lower in ("awaiting_payment", "pending") and s_lower == "pending":
+            agent_note = "\n⏳ _Waiting for your payment._"
 
         return (
             f"📋 *Order Status*\n"
@@ -714,8 +904,11 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
             f"  Date    : {created}\n"
             f"  Total   : *${total:.2f}*\n"
             f"{'─' * 26}\n"
-            f"{ord_icon} Status  : *{status}*\n"
-            f"{pay_icon} Payment : *{payment_status.upper()}*\n"
+            f"{icon} {label}\n"
+            f"{pay_icon} Payment : *{payment_status.replace('_', ' ').upper()}*\n"
+            f"{'─' * 26}\n"
+            f"📊 {progress}"
+            f"{agent_note}\n"
             f"{'─' * 26}\n"
             f"_Type *menu* to place a new order._"
         )
@@ -727,6 +920,42 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 # CHECKOUT PIPELINE — create order + dispatch payment
 # ═════════════════════════════════════════════════════════════════════════════
+
+def _parse_multi_items(text: str, products: list) -> list[tuple]:
+    """
+    Parse a message that may contain multiple products.
+    Returns a list of (product_dict, qty) tuples.
+
+    Handles:
+      "Pizza and ice cream"
+      "2 beef and a sadza"
+      "pizza, ice cream and 2 sadza"
+      "pizza + ice cream"
+    """
+    if not products:
+        return []
+
+    # Normalise separators
+    t = text.lower().strip()
+    # Replace connectors with a pipe for splitting
+    for sep in [" and ", ", and ", " & ", " + ", ", "]:
+        t = t.replace(sep, "|")
+
+    parts = [p.strip() for p in t.split("|") if p.strip()]
+    if len(parts) <= 1:
+        # Single item — let normal path handle it
+        return []
+
+    found = []
+    for part in parts:
+        product = _find_product(part, products)
+        if product:
+            qty = _qty(part)
+            found.append((product, qty))
+
+    # Only return if we found ≥ 2 items (otherwise let normal path handle)
+    return found if len(found) >= 2 else []
+
 
 def _handle_paypal_paid_message(
     phone: str,
@@ -985,10 +1214,105 @@ def generate_reply(
     log.info("state=%s  cart=%d", current_state, len(cart))
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P-2 — AGENT MESSAGE DETECTION (silence bot when staff posts status)
+    # If the incoming text looks like a business-owner/agent status update,
+    # do not reply with a fallback — the agent is talking TO the customer.
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_agent_message(text):
+        log.info("agent message detected — suppressing reply  phone=%s", phone)
+        # Return empty string — webhook will not send anything
+        return ""
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P-1 — SURVEY STATE (post-conversation satisfaction rating)
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "survey":
+        if _is_survey_response(text):
+            rating = _parse_survey_rating(text)
+            _reset_state(phone, business_id)
+
+            # Log the rating (stored as a note in user_memory for lightweight persistence)
+            try:
+                mem = _get_memory(phone, business_id)
+                mem["last_rating"] = rating
+                crud.save_user_memory(phone, business_id, mem)
+            except Exception:
+                pass
+
+            follow_up = (
+                "We're sorry to hear that. We'll work on improving! 🙏"
+                if rating in ("poor", "average")
+                else "That's wonderful to hear! 😊"
+            )
+            return (
+                f"🙏 *Thank you for your feedback!*\n\n"
+                f"Rating: *{rating.title()}*\n\n"
+                f"{follow_up}\n\n"
+                f"_We look forward to serving you again at *{business_name}*!_"
+            )
+
+        # Optional suggestion
+        t_lower = text.lower().strip()
+        if len(t_lower) > 8 and not _is_conversation_done(text):
+            # Treat longer text as a suggestion
+            try:
+                mem = _get_memory(phone, business_id)
+                mem["last_suggestion"] = text[:200]
+                crud.save_user_memory(phone, business_id, mem)
+            except Exception:
+                pass
+            _reset_state(phone, business_id)
+            return (
+                f"📝 *Thank you for your suggestion!*\n\n"
+                f"We really appreciate the feedback and will pass it on to our team.\n\n"
+                f"_See you next time at *{business_name}*! 🙏_"
+            )
+
+        # They said something unrelated — let them exit gracefully
+        _reset_state(phone, business_id)
+        return (
+            f"Thanks again! Have a great day. 😊\n\n"
+            f"_Type *menu* anytime to start a new order._"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P0 — GLOBAL CANCEL  (works in every state)
     # ══════════════════════════════════════════════════════════════════════════
     if _is_cancel(text):
         if current_state == "browsing":
+            # Check if the customer means they want to cancel a recent order.
+            # "Cancel order" typed after checkout completion is a common pattern.
+            t_lower = text.lower()
+            order_ref_id = _extract_order_id(text)
+            if order_ref_id or any(w in t_lower for w in ["cancel order", "cancel my order"]):
+                # Try to find a recent pending order for this customer
+                try:
+                    from db import supabase as _sb
+                    res = (
+                        _sb.table("orders")
+                        .select("id,status,payment_status,total_price")
+                        .eq("customer_phone", phone)
+                        .eq("business_id", business_id)
+                        .in_("status", ["pending", "confirmed"])
+                        .order("id", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    recent = res.data[0] if res.data else None
+                except Exception:
+                    recent = None
+
+                if recent:
+                    ref = order_ref_id or recent["id"]
+                    return (
+                        f"🚫 *Cancel ORDER-{recent['id']}?*\n\n"
+                        f"💰 Amount: ${float(recent['total_price']):.2f}\n"
+                        f"📍 Status: {recent['status'].upper()}\n\n"
+                        f"Reply *yes, cancel* to confirm cancellation, "
+                        f"or type anything else to keep your order.\n\n"
+                        f"_If you've already paid, reply *refund* and we'll arrange a refund._"
+                    )
+
             return (
                 "ℹ️ Nothing to cancel right now.\n\n"
                 "Type *menu* to browse, or *cart* to see what's in your cart. 😊"
@@ -1043,6 +1367,129 @@ def generate_reply(
         return "🚫 Cancelled. Type *menu* to start fresh. 😊"
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P0.5 — REFUND / DISPUTE REQUEST (works in any state)
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_refund_request(text):
+        # Look up the customer's most recent order
+        recent_order = None
+        try:
+            from db import supabase as _sb
+            res = (
+                _sb.table("orders")
+                .select("id,status,payment_status,total_price,created_at")
+                .eq("customer_phone", phone)
+                .eq("business_id", business_id)
+                .order("id", desc=True)
+                .limit(1)
+                .execute()
+            )
+            recent_order = res.data[0] if res.data else None
+        except Exception as exc:
+            log.warning("refund handler: order lookup failed: %s", exc)
+
+        if recent_order:
+            ref = f"ORDER-{recent_order['id']}"
+            pay_status = recent_order.get("payment_status", "pending")
+            total = float(recent_order.get("total_price") or 0)
+            return (
+                f"💳 *Refund / Dispute Request*\n\n"
+                f"We've noted your request regarding *{ref}*.\n\n"
+                f"  💰 Amount : ${total:.2f}\n"
+                f"  📍 Payment: {pay_status.upper()}\n\n"
+                f"Our team will review your request and get back to you shortly.\n\n"
+                f"_For urgent issues, please contact us directly. "
+                f"Refunds are processed within 24–48 hours once verified._\n\n"
+                f"_Thank you for your patience. 🙏_"
+            )
+        return (
+            f"💳 *Refund / Dispute Request*\n\n"
+            f"We've noted your request and our team will be in touch shortly.\n\n"
+            f"_Please include your order reference (e.g. *ORDER-13*) "
+            f"to help us find your payment. Thank you! 🙏_"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P0.7 — CONVERSATION COMPLETION DETECTION
+    # Detect farewell phrases and trigger optional survey
+    # Only trigger when NOT in the middle of an active order flow
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_conversation_done(text) and current_state == "browsing":
+        # Check if they have a recent completed order — personalise the goodbye
+        recent_ref = ""
+        try:
+            from db import supabase as _sb
+            res = (
+                _sb.table("orders")
+                .select("id,status")
+                .eq("customer_phone", phone)
+                .eq("business_id", business_id)
+                .order("id", desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                o = res.data[0]
+                if o.get("status") in ("paid", "confirmed", "delivered"):
+                    recent_ref = f"ORDER-{o['id']}"
+        except Exception:
+            pass
+
+        order_line = f"\n📦 Order *{recent_ref}* is being taken care of.\n" if recent_ref else "\n"
+
+        _set_survey_state(phone, business_id)
+        return (
+            f"😊 *You're welcome! We hope to see you again soon.*\n"
+            f"{order_line}\n"
+            f"Before you go — how was your experience today?\n\n"
+            f"  1️⃣ *Excellent*\n"
+            f"  2️⃣ *Good*\n"
+            f"  3️⃣ *Average*\n"
+            f"  4️⃣ *Poor*\n\n"
+            f"_Reply with a number or word — this is optional and helps us improve! 🙏_"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P0.8 — URGENCY / DELIVERY FOLLOW-UP
+    # Customer is anxious about their order ("hurry", "how long", "cold food")
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_urgency_message(text) and current_state == "browsing":
+        # Check if they have a recent active order
+        active_order = None
+        try:
+            from db import supabase as _sb
+            res = (
+                _sb.table("orders")
+                .select("id,status,payment_status,total_price")
+                .eq("customer_phone", phone)
+                .eq("business_id", business_id)
+                .in_("status", ["pending", "confirmed", "paid"])
+                .order("id", desc=True)
+                .limit(1)
+                .execute()
+            )
+            active_order = res.data[0] if res.data else None
+        except Exception:
+            pass
+
+        if active_order:
+            ref    = f"ORDER-{active_order['id']}"
+            status = active_order.get("status", "pending").upper()
+            return (
+                f"⏳ *We hear you! Checking on your order...*\n\n"
+                f"📦 Order : *{ref}*\n"
+                f"📍 Status: *{status}*\n\n"
+                f"Our team has been notified of your message and will update you shortly.\n"
+                f"We apologise for any delay! 🙏\n\n"
+                f"_Type *{ref.lower()}* to see full order details._"
+            )
+
+        return (
+            f"⏳ We're sorry you're waiting!\n\n"
+            f"Please share your *order reference* (e.g. *ORDER-12*) "
+            f"and we'll check the status for you right away. 🙏"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P1 — AWAITING PROOF STATE
     # Customer has said "paid" — now waiting for transaction ID / screenshot
     # ══════════════════════════════════════════════════════════════════════════
@@ -1095,9 +1542,10 @@ def generate_reply(
                 f"{proof_display}\n\n"
                 f"📦 Order   : *{reference}*\n"
                 f"💳 Method  : *{method_label}*\n\n"
-                f"Our team will verify your payment and confirm your order shortly.\n"
-                f"You'll receive a confirmation message once verified. 🙏\n\n"
-                f"_Thank you for choosing *{business_name}*!_"
+                f"🔍 *A human agent is now reviewing your payment proof.*\n"
+                f"You'll receive a confirmation message shortly.\n\n"
+                f"Typical verification time: *5–15 minutes* ⏱\n\n"
+                f"_Thank you for choosing *{business_name}*! We'll be in touch. 🙏_"
             )
 
         # Message doesn't look like proof — ask again
@@ -1301,9 +1749,59 @@ def generate_reply(
         return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart)}"
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P7 — ADD TO CART (NLP product match)
+    # P7 — ADD TO CART (NLP product match + multi-item parsing)
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "order":
+
+        # ── Multi-item check first ("Pizza and ice cream") ────────────────────
+        multi = _parse_multi_items(text, products)
+        if multi:
+            added_names = []
+            blocked     = []
+            for product, qty in multi:
+                try:
+                    fresh = crud.get_product_by_name(business_id, product["name"])
+                    if fresh:
+                        product = fresh
+                except Exception:
+                    pass
+
+                product_name = product["name"]
+                available    = product.get("stock")
+                in_cart      = next((i["qty"] for i in cart if i["name"] == product_name), 0)
+
+                if available is not None and in_cart + qty > available:
+                    if available == 0:
+                        blocked.append(f"*{product_name}* (out of stock)")
+                    else:
+                        blocked.append(f"*{product_name}* (only {available} left)")
+                    continue
+
+                found = False
+                for item in cart:
+                    if item["name"] == product_name:
+                        item["qty"] += qty
+                        found = True
+                        break
+                if not found:
+                    cart.append({"name": product_name, "qty": qty, "price": float(product["price"])})
+                added_names.append(f"*{product_name}*" + (f" ×{qty}" if qty > 1 else ""))
+
+            if added_names:
+                _save_cart(phone, business_id, cart)
+                log.info("multi-add  items=%s  phone=%s", added_names, phone)
+                blocked_note = ""
+                if blocked:
+                    blocked_note = f"\n\n⚠️ Could not add: {', '.join(blocked)}"
+                return (
+                    f"👍 Added {', '.join(added_names)} to your cart.\n\n"
+                    f"{_format_cart(cart)}"
+                    f"{blocked_note}"
+                    f"\n\n_Type *checkout* when you're ready to order._"
+                )
+            # If none could be added (all blocked), fall through to single match
+
+        # ── Single item ───────────────────────────────────────────────────────
         product = _find_product(text, products)
 
         if product:
