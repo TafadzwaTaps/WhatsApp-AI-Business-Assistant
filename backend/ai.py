@@ -232,6 +232,45 @@ def _set_survey_state(phone: str, business_id: int) -> None:
     _set_state(phone, business_id, "survey", session={})
 
 
+def _set_awaiting_fulfillment(phone: str, business_id: int,
+                               order_id, reference: str) -> None:
+    """Enter awaiting_fulfillment state — asking delivery vs pickup."""
+    _set_state(phone, business_id, "awaiting_fulfillment",
+               session={"order_id": order_id, "reference": reference},
+               pending_payment=None, pending_proof=None)
+
+
+def _set_awaiting_address(phone: str, business_id: int,
+                           order_id, reference: str) -> None:
+    """Enter awaiting_address state — customer needs to provide delivery address."""
+    _set_state(phone, business_id, "awaiting_address",
+               session={"order_id": order_id, "reference": reference})
+
+
+def _get_active_order(phone: str, business_id: int) -> dict | None:
+    """
+    Find the most recent active (non-completed, non-cancelled) order for
+    this customer. Used for contextual intent detection.
+    Returns the order dict or None.
+    """
+    try:
+        from db import supabase as _sb
+        res = (
+            _sb.table("orders")
+            .select("*")
+            .eq("customer_phone", phone)
+            .eq("business_id", business_id)
+            .not_.in_("status", ["completed", "cancelled", "refunded", "delivered"])
+            .order("id", desc=True)
+            .limit(1)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as exc:
+        log.warning("_get_active_order error: %s", exc)
+        return None
+
+
 def _set_human_handoff(phone: str, business_id: int) -> None:
     """Pause AI and flag this customer for human agent attention."""
     _set_state(phone, business_id, "human_handoff",
@@ -378,6 +417,52 @@ def _is_refund_request(text: str) -> bool:
 
 
 # ── Completion / farewell detection ──────────────────────────────────────────
+
+# ── Reorder triggers ─────────────────────────────────────────────────────────
+_REORDER_PHRASES = {
+    "repeat last order", "same order", "order again", "same as last time",
+    "same as before", "repeat order", "reorder", "last order again",
+    "previous order", "order same thing",
+}
+
+def _is_reorder_request(text: str) -> bool:
+    t = text.lower().strip()
+    return t in _REORDER_PHRASES or any(p in t for p in _REORDER_PHRASES)
+
+
+# ── Fulfillment / delivery intent ─────────────────────────────────────────────
+_DELIVERY_TRIGGERS = {
+    "delivery", "deliver", "deliver it", "deliver to me",
+    "1", "1️⃣", "home delivery", "door delivery",
+}
+_PICKUP_TRIGGERS = {
+    "pickup", "pick up", "collect", "i'll collect", "self pickup",
+    "walk in", "come in", "i will pick", "i will come",
+    "2", "2️⃣",
+}
+
+def _detect_fulfillment(text: str) -> str | None:
+    """Returns 'delivery' | 'pickup' | None."""
+    t = text.lower().strip()
+    if t in _DELIVERY_TRIGGERS or any(w in t for w in ["deliver", "delivery"]):
+        return "delivery"
+    if t in _PICKUP_TRIGGERS or any(w in t for w in ["pickup", "pick up", "collect"]):
+        return "pickup"
+    return None
+
+
+# ── ETA / status contextual queries ──────────────────────────────────────────
+_STATUS_QUERY_PHRASES = [
+    "where is my order", "where's my order", "order status", "status update",
+    "eta", "how long", "when will", "when is", "is it ready",
+    "any update", "what's happening", "what happened",
+    "still preparing", "still waiting",
+]
+
+def _is_status_query(text: str) -> bool:
+    t = text.lower()
+    return any(p in t for p in _STATUS_QUERY_PHRASES)
+
 
 _DONE_EXACT = {
     "thank you", "thanks", "ty", "thx", "thank u",
@@ -1174,61 +1259,81 @@ def _process_payment(
             "error":     str(exc),
         }
 
-    # 3. Persist payment fields (including paypal_order_id if available)
+    # 3. Persist payment fields to DB
+    # CASH BUG FIX: cash orders are confirmed immediately — no proof needed.
+    # They must be marked payment_status="pending_cash" and status="confirmed",
+    # NOT "awaiting_payment". Only EcoCash/PayPal require payment verification.
     try:
         oid = order.get("id")
         if oid:
-            update = {
-                "payment_method":    method,
-                "payment_status":    "awaiting_payment" if not pay.get("error") else "payment_error",
-                "payment_reference": pay.get("reference", f"ORDER-{oid}"),
-            }
-            if pay.get("url"):
-                update["payment_url"] = pay["url"]
-            # Store PayPal's order ID so webhook can find this order later
-            if pay.get("paypal_order_id"):
-                update["paypal_order_id"] = pay["paypal_order_id"]
+            if method == "cash":
+                update = {
+                    "payment_method":    "cash",
+                    "payment_status":    "pending_cash",    # ← FIXED: was "awaiting_payment"
+                    "payment_reference": pay.get("reference", f"ORDER-{oid}"),
+                }
+            else:
+                update = {
+                    "payment_method":    method,
+                    "payment_status":    "awaiting_payment" if not pay.get("error") else "payment_error",
+                    "payment_reference": pay.get("reference", f"ORDER-{oid}"),
+                }
+                if pay.get("url"):
+                    update["payment_url"] = pay["url"]
+                if pay.get("paypal_order_id"):
+                    update["paypal_order_id"] = pay["paypal_order_id"]
             crud.update_order_payment(oid, business_id, update)
+            log.info("payment persisted  order=%s  method=%s  status=%s",
+                     oid, method, update["payment_status"])
     except Exception as exc:
         log.warning("update payment details failed: %s", exc)
 
-    # 4. Set state — depends on payment method and whether it's auto-verified
+    # 4. Update order status for cash (confirmed immediately)
+    if method == "cash":
+        try:
+            from order_lifecycle import update_order_status_supabase
+            update_order_status_supabase(order.get("id"), "pending_cash")
+            log.info("cash order confirmed immediately  order=%s", order.get("id"))
+        except Exception as exc:
+            log.warning("cash order status update failed: %s", exc)
+
+    # 5. Set conversation state — then ask fulfillment (delivery vs pickup)
     auto_verified = pay.get("auto_verified", False)
+    oid = order.get("id")
+    ref = pay.get("reference", f"ORDER-{oid}")
 
-    if method == "cash" or auto_verified:
-        # Cash = instant, PayPal API = webhook will confirm
-        # Both go to awaiting_payment (not awaiting_proof)
-        if method == "cash":
-            _reset_state(phone, business_id)
-        else:
-            # PayPal API: store paypal_order_id in session for status polling
-            _set_awaiting_payment(
-                phone, business_id,
-                order_id=order.get("id"),
-                method=method,
-                reference=pay.get("reference", f"ORDER-{order.get('id', '?')}"),
-            )
-            # Also stash paypal_order_id in state for quick lookup
-            _write_state_data(phone, business_id, {
-                "paypal_order_id": pay.get("paypal_order_id", "")
-            })
+    if method == "cash":
+        # Cash: go straight to fulfillment question (no payment wait)
+        _set_awaiting_fulfillment(phone, business_id, order_id=oid, reference=ref)
+    elif auto_verified:
+        # PayPal API: webhook confirms, ask fulfillment after payment prompt
+        _set_awaiting_payment(phone, business_id, order_id=oid, method=method, reference=ref)
+        _write_state_data(phone, business_id, {"paypal_order_id": pay.get("paypal_order_id", "")})
     else:
-        # Manual methods (EcoCash, PayPal email) — stay in awaiting_payment
-        # until customer says "paid", then move to awaiting_proof
-        _set_awaiting_payment(
-            phone, business_id,
-            order_id=order.get("id"),
-            method=method,
-            reference=pay.get("reference", f"ORDER-{order.get('id', '?')}"),
-        )
+        # EcoCash / PayPal email: wait for "paid" reply
+        _set_awaiting_payment(phone, business_id, order_id=oid, method=method, reference=ref)
 
-    # 5. Clear cart items (preserves state_data via UPSERT)
+    # 6. Clear cart items (preserves state_data via UPSERT — state survives)
     _update_order_history(phone, business_id, cart)
     crud.clear_cart(phone, business_id)
 
-    # 6. PDF invoice (non-blocking)
+    # 7. PDF invoice (non-blocking)
     _send_pdf_invoice(order, phone, business_id)
 
+    # 8. Return payment message OR fulfillment question for cash
+    if method == "cash":
+        total = float(order.get("total_price") or 0)
+        return (
+            f"✅ *Order confirmed!*\n\n"
+            f"📦 Order   : *{ref}*\n"
+            f"💰 Total   : *${total:.2f}*\n"
+            f"💵 Payment : *Cash on delivery/pickup*\n\n"
+            f"{'─' * 28}\n"
+            f"🚚 *How would you like to receive your order?*\n\n"
+            f"  1️⃣  *Delivery* — we bring it to you\n"
+            f"  2️⃣  *Pickup* — collect from us\n\n"
+            f"_Reply with *1* or *delivery* / *2* or *pickup*_"
+        )
     return pay.get("message", "Order placed! We'll be in touch. 🙏")
 
 
@@ -1585,6 +1690,99 @@ def generate_reply(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P0.3 — AWAITING FULFILLMENT (delivery vs pickup choice)
+    # Inserted right after payment — works for cash and confirmed orders
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "awaiting_fulfillment":
+        session  = _get_session(phone, business_id)
+        order_id = session.get("order_id")
+        reference = session.get("reference", f"ORDER-{order_id}")
+        choice = _detect_fulfillment(text)
+
+        if _is_cancel(text):
+            _reset_state(phone, business_id)
+            return "🚫 Cancelled. Type *menu* to start a new order."
+
+        if choice == "delivery":
+            _set_awaiting_address(phone, business_id, order_id=order_id, reference=reference)
+            return (
+                f"🚚 *Delivery selected!*\n\n"
+                f"Please send your *delivery address* so we can arrange your order.\n\n"
+                f"📦 Order: *{reference}*\n\n"
+                f"_Just type your full address (street, suburb, city)._"
+            )
+
+        if choice == "pickup":
+            # Save fulfillment method to DB
+            try:
+                crud.update_order_payment(order_id, business_id, {
+                    "fulfillment_method": "pickup",
+                })
+            except Exception as exc:
+                log.warning("pickup fulfillment save failed: %s", exc)
+            _reset_state(phone, business_id)
+            return (
+                f"🏪 *Pickup confirmed!*\n\n"
+                f"📦 Order  : *{reference}*\n\n"
+                f"Please come collect your order from us.\n"
+                f"We'll notify you when it's ready for collection. 😊\n\n"
+                f"_Any questions? Type *{reference.lower()}* to check status._"
+            )
+
+        # Unrecognised reply — re-ask
+        return (
+            f"🤔 Please choose how you'd like to receive *{reference}*:\n\n"
+            f"  1️⃣  *Delivery* — we bring it to you\n"
+            f"  2️⃣  *Pickup* — collect from us\n\n"
+            f"_Reply *1* / *delivery* or *2* / *pickup*_\n"
+            f"_Type *cancel* to cancel._"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P0.4 — AWAITING ADDRESS (customer sending delivery address)
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "awaiting_address":
+        session   = _get_session(phone, business_id)
+        order_id  = session.get("order_id")
+        reference = session.get("reference", f"ORDER-{order_id}")
+
+        if _is_cancel(text):
+            # Fallback to pickup if they cancel address entry
+            _reset_state(phone, business_id)
+            return (
+                "🚫 Address entry cancelled.\n\n"
+                "Your order is still confirmed — type *menu* or contact us "
+                "to arrange fulfillment."
+            )
+
+        address = text.strip()
+        if len(address) < 5:
+            return (
+                "⚠️ That address looks too short. Please send your full delivery address.\n\n"
+                f"_e.g. 42 Harare Street, Avondale, Harare_\n\n"
+                f"_Type *cancel* to skip._"
+            )
+
+        # Save delivery address + fulfillment method
+        try:
+            crud.update_order_payment(order_id, business_id, {
+                "fulfillment_method": "delivery",
+                "delivery_address":   address,
+            })
+            log.info("delivery address saved  order=%s  address=%r", order_id, address[:60])
+        except Exception as exc:
+            log.warning("delivery address save failed: %s", exc)
+
+        _reset_state(phone, business_id)
+        return (
+            f"📍 *Delivery address saved!*\n\n"
+            f"  Address : _{address}_\n"
+            f"  Order   : *{reference}*\n\n"
+            f"Our team will arrange delivery and notify you with an ETA. 🛵\n\n"
+            f"_Thank you for ordering from *{business_name}*! 🙏_"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P1 — AWAITING PROOF STATE
     # Customer has said "paid" — now waiting for transaction ID / screenshot
     # ══════════════════════════════════════════════════════════════════════════
@@ -1621,7 +1819,9 @@ def generate_reply(
             except Exception as exc:
                 log.warning("proof recording failed: %s", exc)
 
-            _reset_state(phone, business_id)
+            # Move to fulfillment question after proof is submitted
+            _set_awaiting_fulfillment(phone, business_id,
+                                      order_id=order_id, reference=reference)
 
             method_label = {"ecocash": "EcoCash", "paypal": "PayPal", "cash": "Cash"}.get(
                 method, method.title()
@@ -1637,10 +1837,13 @@ def generate_reply(
                 f"{proof_display}\n\n"
                 f"📦 Order   : *{reference}*\n"
                 f"💳 Method  : *{method_label}*\n\n"
-                f"🔍 *A human agent is now reviewing your payment proof.*\n"
-                f"You'll receive a confirmation message shortly.\n\n"
+                f"🔍 *A human agent is now reviewing your proof.*\n"
                 f"Typical verification time: *5–15 minutes* ⏱\n\n"
-                f"_Thank you for choosing *{business_name}*! We'll be in touch. 🙏_"
+                f"{'─' * 28}\n"
+                f"🚚 *While we verify — how would you like to receive your order?*\n\n"
+                f"  1️⃣  *Delivery* — we bring it to you\n"
+                f"  2️⃣  *Pickup* — collect from us\n\n"
+                f"_Reply *1* or *delivery* / *2* or *pickup*_"
             )
 
         # Message doesn't look like proof — ask again
@@ -1811,6 +2014,52 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     intent = _intent(text)
     log.info("intent=%s", intent)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P4.5 — REORDER ("repeat last order", "same order", "order again")
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_reorder_request(text):
+        mem = _get_memory(phone, business_id)
+        last_orders = mem.get("last_orders", [])
+        if not last_orders:
+            return (
+                "🛒 No previous orders found!\n\n"
+                "Type *menu* to browse and place your first order. 😊"
+            )
+        last_item_names = last_orders[-1]   # list of product names
+
+        # Rebuild cart from last order using current product prices
+        name_map = {p["name"].lower(): p for p in products}
+        rebuilt  = []
+        missing  = []
+        for name in last_item_names:
+            p = name_map.get(name.lower())
+            if p:
+                rebuilt.append({"name": p["name"], "qty": 1, "price": float(p["price"])})
+            else:
+                missing.append(name)
+
+        if not rebuilt:
+            unavail = ", ".join(missing)
+            return (
+                f"😔 Your previous items (*{unavail}*) are no longer available.\n\n"
+                "Type *menu* to see the current menu."
+            )
+
+        _save_cart(phone, business_id, rebuilt)
+        log.info("reorder  items=%d  phone=%s", len(rebuilt), phone)
+
+        cart_text = _format_cart(rebuilt)
+        note = ""
+        if missing:
+            note = f"\n\n⚠️ Some items were unavailable: *{', '.join(missing)}*"
+
+        return (
+            f"🔄 *Rebuilt your last order!*\n\n"
+            f"{cart_text}"
+            f"{note}\n\n"
+            f"_Type *checkout* to confirm, or *menu* to modify._"
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # P5 — CHECKOUT TRIGGER
@@ -2014,8 +2263,36 @@ def generate_reply(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P12 — FALLBACK (last resort — one more product match attempt)
+    # P10.5 — CONTEXTUAL ACTIVE ORDER QUERIES
+    # If the customer has an active order and types something order-related,
+    # show order info rather than falling through to the generic fallback.
     # ══════════════════════════════════════════════════════════════════════════
+    if _is_status_query(text):
+        active = _get_active_order(phone, business_id)
+        if active:
+            return _order_status_message(active["id"], phone, business_id)
+
+    # Contextual fulfillment queries on active order
+    t_lower = text.lower().strip()
+    if any(w in t_lower for w in ["delivery", "pickup", "collect", "address",
+                                    "eta", "when", "how long"]):
+        active = _get_active_order(phone, business_id)
+        if active:
+            fm = active.get("fulfillment_method", "")
+            da = active.get("delivery_address", "")
+            ref = f"ORDER-{active['id']}"
+            if "address" in t_lower and fm == "delivery":
+                addr_line = f"\n📍 Address: _{da}_" if da else "\n📍 No address saved yet."
+                return (
+                    f"📦 *{ref}* — Delivery{addr_line}\n\n"
+                    f"_Type *{ref.lower()}* for full status._"
+                )
+            return _order_status_message(active["id"], phone, business_id)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P12 — FALLBACK (context-aware — check cart/order before generic help)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Last product-match attempt
     product = _find_product(text, products)
     if product:
         return generate_reply(
@@ -2024,6 +2301,40 @@ def generate_reply(
             business_id=business_id,
             business_name=business_name,
             products=products,
+        )
+
+    # Check if customer has an active cart or order before giving generic help
+    active_order = _get_active_order(phone, business_id)
+
+    if cart and active_order:
+        ref = f"ORDER-{active_order['id']}"
+        hint = f"e.g. _{products[0]['name']}_" if products else ""
+        return (
+            f"🤔 I didn't catch that.\n\n"
+            f"📦 You have an active order: *{ref}*\n"
+            f"{_format_cart(cart) if cart else ''}\n\n"
+            f"  📋 *menu* — browse products {'| 🛍️ ' + hint if hint else ''}\n"
+            f"  🛒 *cart* — view your cart\n"
+            f"  ✅ *checkout* — place your order\n"
+            f"  🔍 *{ref}* — check order status\n"
+        )
+
+    if active_order:
+        ref = f"ORDER-{active_order['id']}"
+        return (
+            f"🤔 I didn't quite get that.\n\n"
+            f"You have an active order *{ref}* — type it to see the status.\n\n"
+            f"Or type *menu* to browse and add more items. 😊"
+        )
+
+    if cart:
+        hint = f"e.g. _{products[0]['name']}_" if products else ""
+        return (
+            f"🤔 I didn't catch that.\n\n"
+            f"{_format_cart(cart)}\n\n"
+            f"  ✅ *checkout* — place your order\n"
+            f"  📋 *menu* — browse more items {'| 🛍️ ' + hint if hint else ''}\n"
+            f"  🗑️ *remove [item]* — remove something\n"
         )
 
     hint = f"e.g. _{products[0]['name']}_" if products else "e.g. _Burger_"
@@ -2035,4 +2346,5 @@ def generate_reply(
         f"  🛒 *cart* — view your cart\n"
         f"  ✅ *checkout* — place your order\n"
         f"  🔍 *ORDER-9* — check order status\n"
+        f"  🔄 *repeat last order* — reorder quickly\n"
     )

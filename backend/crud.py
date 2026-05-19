@@ -1003,10 +1003,12 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
     """
     from order_lifecycle import _has_col
 
-    # All columns we are allowed to update (paypal_order_id is new)
+    # All columns we are allowed to update
     allowed = (
         "payment_method", "payment_status", "payment_reference",
         "payment_url", "paypal_order_id",
+        # Fulfillment columns (added in migration section 16)
+        "fulfillment_method", "delivery_address", "fulfillment_notes",
     )
     safe: dict = {}
     for col in allowed:

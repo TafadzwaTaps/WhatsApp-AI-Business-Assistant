@@ -987,6 +987,213 @@ async def push_lifecycle_update(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ADMIN ORDER MANAGEMENT — approve/reject/lifecycle controls for dashboard
+# ─────────────────────────────────────────────────────────────────────────────
+
+class OrderAdminAction(BaseModel):
+    note: Optional[str] = None         # optional admin note / rejection reason
+
+
+@app.post("/orders/{order_id}/approve-payment")
+async def admin_approve_payment(
+    order_id: int,
+    data: OrderAdminAction,
+    user=Depends(require_business),
+):
+    """
+    Approve a pending payment proof (EcoCash / manual PayPal).
+    Marks order as confirmed and sends a WhatsApp confirmation to the customer.
+    """
+    from order_lifecycle import get_order, update_order_status_supabase
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    # Mark payment as paid and order as confirmed
+    crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
+    try:
+        update_order_status_supabase(order_id, "confirmed")
+    except Exception as exc:
+        log.warning("approve_payment: status update failed: %s", exc)
+
+    ref   = f"ORDER-{order_id}"
+    phone = order.get("customer_phone", "")
+    total = float(order.get("total_price") or 0)
+    note_line = f"\n_Note: {data.note}_" if data.note else ""
+
+    await _notify_customer_payment(order, (
+        f"✅ *Payment Confirmed!*\n\n"
+        f"Your payment for *{ref}* has been verified.\n\n"
+        f"💰 Amount: ${total:.2f}\n"
+        f"📍 Status: *CONFIRMED*{note_line}\n\n"
+        f"We're now preparing your order! 🙌"
+    ))
+
+    # Trigger fulfillment question if not yet set
+    if phone and not order.get("fulfillment_method"):
+        try:
+            from ai import _set_awaiting_fulfillment, _get_state
+            if _get_state(phone, bid) == "browsing":
+                _set_awaiting_fulfillment(phone, bid, order_id=order_id, reference=ref)
+                biz      = crud.get_business_by_id(bid)
+                token    = crud.get_decrypted_token(biz) if biz else ""
+                phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+                if token and phone_id:
+                    send_whatsapp(phone_id, token, phone, (
+                        f"🚚 *One more step!*\n\n"
+                        f"How would you like to receive *{ref}*?\n\n"
+                        f"  1️⃣  *Delivery* — we bring it to you\n"
+                        f"  2️⃣  *Pickup* — collect from us\n\n"
+                        f"_Reply *1* or *delivery* / *2* or *pickup*_"
+                    ))
+        except Exception as exc:
+            log.warning("approve_payment: fulfillment trigger failed: %s", exc)
+
+    log.info("approve_payment  order=%s  by=%s", order_id, user["username"])
+    return {"ok": True, "order_id": order_id, "status": "confirmed",
+            "message": f"Payment for {ref} approved and customer notified."}
+
+
+@app.post("/orders/{order_id}/reject-proof")
+async def admin_reject_proof(
+    order_id: int,
+    data: OrderAdminAction,
+    user=Depends(require_business),
+):
+    """
+    Reject a payment proof — marks order as awaiting_payment again and
+    asks the customer to re-submit proof.
+    """
+    from order_lifecycle import get_order
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    crud.update_order_payment(order_id, bid, {"payment_status": "awaiting_payment"})
+
+    ref    = f"ORDER-{order_id}"
+    reason = data.note or "The proof was unclear or did not match the order amount."
+
+    await _notify_customer_payment(order, (
+        f"⚠️ *Payment Proof Not Accepted*\n\n"
+        f"We could not verify your payment for *{ref}*.\n\n"
+        f"Reason: _{reason}_\n\n"
+        f"Please send a clearer screenshot or the correct transaction ID.\n"
+        f"_Reply *paid* to submit new proof._"
+    ))
+
+    log.info("reject_proof  order=%s  reason=%r  by=%s", order_id, reason, user["username"])
+    return {"ok": True, "order_id": order_id, "message": "Proof rejected, customer notified."}
+
+
+@app.post("/orders/{order_id}/cancel")
+async def admin_cancel_order(
+    order_id: int,
+    data: OrderAdminAction,
+    user=Depends(require_business),
+):
+    """Cancel an order from the admin side."""
+    from order_lifecycle import get_order, update_order_status_supabase
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    try:
+        update_order_status_supabase(order_id, "cancelled")
+    except Exception as exc:
+        raise HTTPException(422, str(exc))
+
+    crud.update_order_payment(order_id, bid, {"payment_status": "cancelled"})
+
+    ref    = f"ORDER-{order_id}"
+    reason = data.note or "Your order has been cancelled."
+
+    await _notify_customer_payment(order, (
+        f"❌ *Order Cancelled*\n\n"
+        f"*{ref}* has been cancelled.\n\n"
+        f"_{reason}_\n\n"
+        f"Type *menu* to place a new order. 😊"
+    ))
+
+    log.info("admin_cancel_order  order=%s  by=%s", order_id, user["username"])
+    return {"ok": True, "order_id": order_id, "message": f"{ref} cancelled."}
+
+
+@app.post("/orders/{order_id}/refund")
+async def admin_refund_order(
+    order_id: int,
+    data: OrderAdminAction,
+    user=Depends(require_business),
+):
+    """Mark an order as refunded and notify the customer."""
+    from order_lifecycle import get_order, update_order_status_supabase
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    try:
+        update_order_status_supabase(order_id, "refunded")
+    except Exception as exc:
+        raise HTTPException(422, str(exc))
+
+    crud.update_order_payment(order_id, bid, {"payment_status": "refunded"})
+
+    ref   = f"ORDER-{order_id}"
+    note  = data.note or "Your refund has been processed."
+    total = float(order.get("total_price") or 0)
+
+    await _notify_customer_payment(order, (
+        f"💳 *Refund Processed*\n\n"
+        f"*{ref}* — ${total:.2f}\n\n"
+        f"_{note}_\n\n"
+        f"Please allow 3–5 business days for the refund to appear. 🙏"
+    ))
+
+    log.info("admin_refund  order=%s  by=%s", order_id, user["username"])
+    return {"ok": True, "order_id": order_id, "message": f"{ref} marked refunded."}
+
+
+@app.get("/orders/{order_id}/status")
+def get_order_status(order_id: int, user=Depends(require_business)):
+    """
+    Get full status details for an order — for dashboard display.
+    Returns status, payment_status, fulfillment_method, delivery_address, progress_bar.
+    """
+    from order_lifecycle import get_order, format_order_status, get_progress_bar, next_order_stage
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    status  = order.get("status", "pending")
+    payment = order.get("payment_status", "pending")
+
+    return {
+        "order_id":          order_id,
+        "status":            status,
+        "status_label":      format_order_status(status),
+        "payment_status":    payment,
+        "payment_label":     format_order_status(payment),
+        "progress_bar":      get_progress_bar(status),
+        "next_stage":        next_order_stage(status),
+        "fulfillment_method": order.get("fulfillment_method", ""),
+        "delivery_address":  order.get("delivery_address", ""),
+        "total_price":       float(order.get("total_price") or 0),
+        "customer_phone":    order.get("customer_phone", ""),
+        "created_at":        order.get("created_at", ""),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # ANALYTICS DASHBOARD
 # ─────────────────────────────────────────────────────────────────────────────
 

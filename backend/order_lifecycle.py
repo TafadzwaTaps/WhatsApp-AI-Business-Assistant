@@ -20,13 +20,38 @@ from inventory import reduce_stock_by_name
 
 log = logging.getLogger(__name__)
 
-VALID_STATUSES = ["pending", "confirmed", "paid", "delivered"]
+# Full production lifecycle statuses
+VALID_STATUSES = [
+    "pending",              # order placed, payment not yet received
+    "pending_cash",         # cash order confirmed — payment on delivery
+    "awaiting_payment",     # waiting for online payment
+    "payment_review",       # proof submitted, team reviewing
+    "confirmed",            # payment verified / cash confirmed
+    "preparing",            # kitchen/staff preparing
+    "ready",                # ready for pickup
+    "out_for_delivery",     # rider dispatched
+    "delivered",            # physically delivered
+    "completed",            # fully done
+    "cancelled",            # cancelled by customer or admin
+    "refunded",             # refund issued
+]
 
 VALID_TRANSITIONS = {
-    "pending":   ["confirmed", "paid", "delivered"],
-    "confirmed": ["paid", "delivered"],
-    "paid":      ["delivered"],
-    "delivered": [],
+    "pending":           ["pending_cash", "awaiting_payment", "payment_review",
+                          "confirmed", "cancelled"],
+    "pending_cash":      ["confirmed", "preparing", "ready",
+                          "out_for_delivery", "delivered", "completed", "cancelled"],
+    "awaiting_payment":  ["payment_review", "confirmed", "cancelled"],
+    "payment_review":    ["confirmed", "cancelled", "refunded"],
+    "confirmed":         ["preparing", "ready", "out_for_delivery",
+                          "delivered", "completed", "cancelled"],
+    "preparing":         ["ready", "out_for_delivery", "delivered", "completed", "cancelled"],
+    "ready":             ["out_for_delivery", "delivered", "completed", "cancelled"],
+    "out_for_delivery":  ["delivered", "completed", "cancelled"],
+    "delivered":         ["completed", "refunded"],
+    "completed":         ["refunded"],
+    "cancelled":         ["refunded"],
+    "refunded":          [],
 }
 
 # Process-level column cache — probed once on first order creation
@@ -134,6 +159,9 @@ def create_order_supabase(
     if _has_col("payment_reference"):
         row["payment_reference"] = None
 
+    if _has_col("paypal_order_id"):
+        row["paypal_order_id"] = None
+
     log.info(
         "create_order_supabase  columns=%s  total=%.2f",
         sorted(row.keys()), total,
@@ -161,6 +189,61 @@ def create_order_supabase(
         order.get("id", "?"), business_id, customer_phone, total,
     )
     return order
+
+
+def format_order_status(status: str) -> str:
+    """Return a human-readable label for an order status."""
+    labels = {
+        "pending":           "Pending",
+        "pending_cash":      "Confirmed (Cash)",
+        "awaiting_payment":  "Awaiting Payment",
+        "payment_review":    "Payment Under Review",
+        "confirmed":         "Confirmed",
+        "preparing":         "Preparing",
+        "ready":             "Ready",
+        "out_for_delivery":  "Out for Delivery",
+        "delivered":         "Delivered",
+        "completed":         "Completed",
+        "cancelled":         "Cancelled",
+        "refunded":          "Refunded",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
+def get_progress_bar(status: str) -> str:
+    """Return a 5-step emoji progress bar for an order status."""
+    s = status.lower()
+    if s in ("cancelled", "refunded"):
+        return "❌ Cancelled/Refunded"
+    if s in ("completed", "delivered"):
+        return "✅ ✅ ✅ ✅ ✅  Complete!"
+    if s == "out_for_delivery":
+        return "✅ ✅ ✅ ✅ ⬜  Out for delivery"
+    if s == "ready":
+        return "✅ ✅ ✅ ⬜ ⬜  Ready"
+    if s == "preparing":
+        return "✅ ✅ ⬜ ⬜ ⬜  Preparing"
+    if s in ("confirmed", "pending_cash"):
+        return "✅ ✅ ⬜ ⬜ ⬜  Confirmed"
+    if s == "payment_review":
+        return "✅ ⏳ ⬜ ⬜ ⬜  Verifying payment"
+    if s in ("awaiting_payment",):
+        return "✅ ⏳ ⬜ ⬜ ⬜  Awaiting payment"
+    return "✅ ⬜ ⬜ ⬜ ⬜  Order received"
+
+
+def next_order_stage(status: str) -> str:
+    """Return the typical next status in the normal flow (for UI hints)."""
+    flow = [
+        "pending", "awaiting_payment", "payment_review",
+        "confirmed", "preparing", "ready", "out_for_delivery",
+        "delivered", "completed",
+    ]
+    try:
+        idx = flow.index(status)
+        return flow[idx + 1] if idx + 1 < len(flow) else "completed"
+    except ValueError:
+        return "confirmed"
 
 
 def update_order_status_supabase(order_id: int, status: str) -> dict:
