@@ -317,6 +317,63 @@ def debug_env():
     }
 
 
+@app.get("/debug/supabase")
+def debug_supabase():
+    """
+    Test Supabase connectivity without requiring a login token.
+    Visit: https://wazibot-api-assistant.onrender.com/debug/supabase
+    Returns clear diagnostics if the connection is broken.
+    """
+    import os, re
+    url = os.getenv("SUPABASE_URL", "").strip()
+    key = os.getenv("SUPABASE_KEY", "").strip()
+
+    issues = []
+
+    if not url:
+        issues.append("SUPABASE_URL is not set")
+    elif "xxxx" in url.lower():
+        issues.append(f"SUPABASE_URL still contains placeholder: {url!r}")
+    elif not url.startswith("https://"):
+        issues.append(f"SUPABASE_URL must start with https://. Got: {url!r}")
+    elif not re.search(r"https://[a-z0-9]+\.supabase\.co", url.rstrip("/")):
+        issues.append(f"SUPABASE_URL format invalid: {url!r}")
+
+    if not key:
+        issues.append("SUPABASE_KEY is not set")
+    elif not key.startswith("eyJ"):
+        issues.append(f"SUPABASE_KEY does not look like a JWT (prefix: {key[:8]!r})")
+
+    if issues:
+        return {
+            "ok":     False,
+            "issues": issues,
+            "action": "Fix the above in Render → Your Service → Environment, then redeploy.",
+        }
+
+    # Try an actual query — select one row from businesses
+    try:
+        from db import supabase as _sb
+        res = _sb.table("businesses").select("id").limit(1).execute()
+        return {
+            "ok":      True,
+            "message": "Supabase connection working ✅",
+            "url":     url[:50] + "…",
+            "rows":    len(res.data),
+        }
+    except Exception as exc:
+        return {
+            "ok":     False,
+            "error":  str(exc),
+            "url":    url[:50] + "…",
+            "action": (
+                "Connection failed even though env vars look correct. "
+                "Check that your Supabase project is active (not paused) at "
+                "https://supabase.com/dashboard"
+            ),
+        }
+
+
 @app.get("/debug/token")
 def debug_token():
     from crypto import encrypt_token, decrypt_token
@@ -1437,6 +1494,198 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     })
 
     return {"ok": True, "message_id": msg["id"], "whatsapp_result": wa_result}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HUMAN HANDOFF MANAGEMENT
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.post("/chat/handoff/{customer_id}/request")
+async def request_human_handoff(customer_id: int, user=Depends(require_business)):
+    """
+    Manually flag a customer for human agent attention from the dashboard.
+    Sets state to human_handoff and notifies the customer.
+    """
+    from ai import _set_human_handoff
+    from human_handoff import notify_dashboard, handoff_acknowledgement
+
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    phone = customer["phone"]
+    business = crud.get_business_by_id(bid)
+    biz_name = business.get("name", "") if business else ""
+
+    _set_human_handoff(phone, bid)
+    notify_dashboard(phone, bid, biz_name)
+
+    # Notify customer via WhatsApp
+    try:
+        token    = crud.get_decrypted_token(business)
+        phone_id = business.get("whatsapp_phone_id", "")
+        if token and phone_id:
+            send_whatsapp(phone_id, token, phone, handoff_acknowledgement(biz_name))
+    except Exception as exc:
+        log.warning("handoff request: WA notify failed: %s", exc)
+
+    log.info("handoff requested  customer=%s  by=%s", customer_id, user["username"])
+    return {"ok": True, "customer_id": customer_id, "phone": phone,
+            "message": "Customer flagged for human support. AI is now paused."}
+
+
+@app.post("/chat/handoff/{customer_id}/release")
+async def release_human_handoff(customer_id: int, user=Depends(require_business)):
+    """
+    Return a customer to AI mode after human agent is done.
+    Clears human_handoff state and notifies customer.
+    """
+    from ai import _reset_state as ai_reset_state
+    from human_handoff import clear_handoff_flag, ai_resumed_message
+
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    phone = customer["phone"]
+    business = crud.get_business_by_id(bid)
+    biz_name = business.get("name", "") if business else ""
+
+    ai_reset_state(phone, bid)
+    clear_handoff_flag(phone, bid)
+
+    # Notify customer
+    try:
+        token    = crud.get_decrypted_token(business)
+        phone_id = business.get("whatsapp_phone_id", "")
+        if token and phone_id:
+            send_whatsapp(phone_id, token, phone, ai_resumed_message(biz_name))
+    except Exception as exc:
+        log.warning("handoff release: WA notify failed: %s", exc)
+
+    log.info("handoff released  customer=%s  by=%s", customer_id, user["username"])
+    return {"ok": True, "customer_id": customer_id, "phone": phone,
+            "message": "AI resumed. Customer will now interact with the AI assistant."}
+
+
+@app.get("/chat/handoff/pending")
+def list_pending_handoffs(user=Depends(require_business)):
+    """
+    List all customers currently in human_handoff mode for this business.
+    Returns customer details sorted by most recent.
+    """
+    from db import supabase as _sb
+
+    bid = user["business_id"]
+    try:
+        # Find carts with state_data.state == human_handoff for this business
+        res = (
+            _sb.table("carts")
+            .select("phone, state_data, updated_at")
+            .eq("business_id", bid)
+            .execute()
+        )
+        pending = []
+        for row in (res.data or []):
+            sd = row.get("state_data") or {}
+            if sd.get("state") == "human_handoff":
+                customer = None
+                try:
+                    cres = (
+                        _sb.table("customers")
+                        .select("id, phone, unread_count, last_seen")
+                        .eq("phone", row["phone"])
+                        .eq("business_id", bid)
+                        .limit(1)
+                        .execute()
+                    )
+                    customer = cres.data[0] if cres.data else None
+                except Exception:
+                    pass
+                pending.append({
+                    "phone":      row["phone"],
+                    "updated_at": row.get("updated_at"),
+                    "customer":   customer,
+                })
+        return {"count": len(pending), "pending": pending}
+    except Exception as exc:
+        log.error("list_pending_handoffs error: %s", exc)
+        raise HTTPException(500, "Failed to load pending handoffs")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HUMAN HANDOFF ADMIN ENDPOINTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/chat/handoff/pending")
+def handoff_pending(user=Depends(require_business)):
+    """
+    List all customers currently in human_handoff mode for this business.
+    Use in the dashboard to surface conversations that need a human reply.
+    """
+    from human_handoff import get_pending_handoffs
+    return get_pending_handoffs(user["business_id"])
+
+
+@app.post("/chat/handoff/{customer_id}/request")
+async def handoff_request(customer_id: int, user=Depends(require_business)):
+    """
+    Manually put a customer into human_handoff mode.
+    AI will pause for this customer until released.
+    """
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    from human_handoff import notify_dashboard
+    from ai import _set_human_handoff
+
+    phone     = customer["phone"]
+    biz       = crud.get_business_by_id(bid)
+    biz_name  = biz.get("name", "") if biz else ""
+
+    _set_human_handoff(phone, bid)
+    notify_dashboard(phone, bid, biz_name)
+
+    log.info("handoff requested  customer=%s  phone=%s  by=%s", customer_id, phone, user["username"])
+    return {"ok": True, "customer_id": customer_id, "phone": phone, "state": "human_handoff"}
+
+
+@app.post("/chat/handoff/{customer_id}/release")
+async def handoff_release(customer_id: int, user=Depends(require_business)):
+    """
+    Release a customer from human_handoff mode — AI resumes.
+    Sends a WhatsApp message to the customer informing them AI is back.
+    """
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    from human_handoff import clear_handoff_flag, ai_resumed_message
+    from ai import _reset_state
+
+    phone    = customer["phone"]
+    biz      = crud.get_business_by_id(bid)
+    biz_name = biz.get("name", "") if biz else ""
+
+    _reset_state(phone, bid)
+    clear_handoff_flag(phone, bid)
+
+    # Notify the customer via WhatsApp that AI is back
+    try:
+        token    = crud.get_decrypted_token(biz) if biz else ""
+        phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+        if token and phone_id:
+            send_whatsapp(phone_id, token, phone, ai_resumed_message(biz_name))
+    except Exception as exc:
+        log.warning("handoff_release: WA notification failed: %s", exc)
+
+    log.info("handoff released  customer=%s  phone=%s  by=%s", customer_id, phone, user["username"])
+    return {"ok": True, "customer_id": customer_id, "phone": phone, "state": "browsing"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

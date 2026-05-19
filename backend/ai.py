@@ -85,6 +85,23 @@ from difflib import get_close_matches
 from datetime import datetime, timezone
 import crud
 
+
+# ── Lazy module accessors — avoids circular imports at module level ───────────
+
+def _states():
+    import conversation_states
+    return conversation_states
+
+
+def _fuzzy():
+    import fuzzy_matcher
+    return fuzzy_matcher
+
+
+def _handoff_mod():
+    import human_handoff
+    return human_handoff
+
 log = logging.getLogger(__name__)
 
 
@@ -141,7 +158,8 @@ def _write_state_data(phone: str, business_id: int, patch: dict) -> None:
 
 
 def _get_state(phone: str, business_id: int) -> str:
-    return _read_state_data(phone, business_id).get("state", "browsing")
+    raw = _read_state_data(phone, business_id).get("state", "browsing")
+    return _states().normalize_state(raw)
 
 
 def _get_session(phone: str, business_id: int) -> dict:
@@ -163,6 +181,10 @@ def _set_state(phone: str, business_id: int, state: str, **extra) -> None:
 
 
 def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list) -> None:
+    from conversation_states import can_transition, STATE
+    current = _get_state(phone, business_id)
+    if not can_transition(current, STATE.CHECKOUT):
+        log.warning("_set_checkout_state: invalid transition %s→checkout  phone=%s", current, phone)
     _set_state(phone, business_id, "checkout",
                session={"cart_snapshot": cart_snapshot},
                pending_payment=None)
@@ -177,6 +199,10 @@ def _set_confirm_state(phone: str, business_id: int, cart_snapshot: list) -> Non
 
 def _set_awaiting_payment(phone: str, business_id: int,
                           order_id, method: str, reference: str) -> None:
+    from conversation_states import can_transition, STATE
+    current = _get_state(phone, business_id)
+    if not can_transition(current, STATE.AWAITING_PAYMENT):
+        log.warning("_set_awaiting_payment: invalid transition %s→awaiting_payment  phone=%s", current, phone)
     _set_state(phone, business_id, "awaiting_payment",
                session={},
                pending_payment={"order_id": order_id, "method": method, "reference": reference},
@@ -186,6 +212,10 @@ def _set_awaiting_payment(phone: str, business_id: int,
 def _set_awaiting_proof(phone: str, business_id: int,
                         order_id, method: str, reference: str) -> None:
     """Enter awaiting_proof state — customer must provide txn ID or image."""
+    from conversation_states import can_transition, STATE
+    current = _get_state(phone, business_id)
+    if not can_transition(current, STATE.AWAITING_PROOF):
+        log.warning("_set_awaiting_proof: invalid transition %s→awaiting_proof  phone=%s", current, phone)
     _set_state(phone, business_id, "awaiting_proof",
                session={},
                pending_payment=None,
@@ -200,6 +230,12 @@ def _reset_state(phone: str, business_id: int) -> None:
 def _set_survey_state(phone: str, business_id: int) -> None:
     """Enter survey state — awaiting satisfaction rating."""
     _set_state(phone, business_id, "survey", session={})
+
+
+def _set_human_handoff(phone: str, business_id: int) -> None:
+    """Pause AI and flag this customer for human agent attention."""
+    _set_state(phone, business_id, "human_handoff",
+               session={}, pending_payment=None, pending_proof=None)
 
 
 def _in_survey_state(phone: str, business_id: int) -> bool:
@@ -479,10 +515,28 @@ _CASH_TRIGGERS = {
 
 
 def _detect_payment_method(text: str) -> str | None:
+    """
+    Detect payment method from customer text.
+    Returns: 'ecocash' | 'paypal' | 'cash' | 'cancel' | None
+
+    Primary: uses fuzzy_matcher.normalize_payment_choice() for broad coverage.
+    Fallback: original set/substring matching.
+    """
     t = text.lower().strip()
 
+    # Cancel check always first
     if t in _CANCEL_EXACT or t.startswith("cancel"):
         return "cancel"
+
+    # Primary: fuzzy_matcher covers all variations
+    try:
+        result = _fuzzy().normalize_payment_choice(text)
+        if result:
+            return result
+    except Exception as exc:
+        log.warning("_detect_payment_method: fuzzy_matcher failed (%s) — using fallback", exc)
+
+    # Fallback: original matching
     if t in _ECOCASH_TRIGGERS:
         return "ecocash"
     if t in _PAYPAL_TRIGGERS:
@@ -627,9 +681,27 @@ def _is_proof_submission(text: str, message_has_image: bool = False) -> tuple[bo
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _find_product(text: str, products: list) -> dict | None:
+    """
+    Multi-strategy product matcher.
+
+    Primary: delegates to fuzzy_matcher.find_product() which uses rapidfuzz
+    (when installed) or difflib. Handles spelling mistakes, pluralization,
+    case differences, and intent prefixes automatically.
+
+    Fallback (if fuzzy_matcher unavailable): original difflib-based logic.
+    """
     if not products:
         return None
 
+    # ── Primary: fuzzy_matcher ────────────────────────────────────────────────
+    try:
+        result = _fuzzy().find_product(text, products)
+        if result:
+            return result
+    except Exception as exc:
+        log.warning("_find_product: fuzzy_matcher failed (%s) — using difflib", exc)
+
+    # ── Fallback: original difflib matching ───────────────────────────────────
     t        = text.lower().strip()
     name_map = {p["name"].lower(): p for p in products}
     names    = list(name_map.keys())
@@ -948,9 +1020,12 @@ def _parse_multi_items(text: str, products: list) -> list[tuple]:
 
     found = []
     for part in parts:
-        product = _find_product(part, products)
+        # Use fuzzy matcher for each part — handles spelling/case in multi-items
+        product, qty = _fuzzy().extract_product_and_quantity(part, products)
+        if product is None:
+            product = _find_product(part, products)
+            qty = _qty(part) if product else 1
         if product:
-            qty = _qty(part)
             found.append((product, qty))
 
     # Only return if we found ≥ 2 items (otherwise let normal path handle)
@@ -1212,6 +1287,26 @@ def generate_reply(
     cart          = _load_cart(phone, business_id)
 
     log.info("state=%s  cart=%d", current_state, len(cart))
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P-3 — HUMAN HANDOFF MODE (AI paused — only ack message, no AI responses)
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "human_handoff":
+        from conversation_states import is_ai_paused
+        # Safety: always re-check state with the canonical function
+        if is_ai_paused(current_state):
+            log.info("human_handoff: AI paused  phone=%s", phone)
+            return _handoff_mod().handoff_paused_reply()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P-2.5 — HUMAN HANDOFF REQUEST DETECTION
+    # Customer asks for a human agent — pause AI immediately
+    # ══════════════════════════════════════════════════════════════════════════
+    if _handoff_mod().is_handoff_request(text):
+        _set_human_handoff(phone, business_id)
+        _handoff_mod().notify_dashboard(phone, business_id, business_name)
+        log.info("human_handoff: triggered  phone=%s  biz=%s", phone, business_id)
+        return _handoff_mod().handoff_acknowledgement(business_name)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-2 — AGENT MESSAGE DETECTION (silence bot when staff posts status)
@@ -1801,8 +1896,14 @@ def generate_reply(
                 )
             # If none could be added (all blocked), fall through to single match
 
-        # ── Single item ───────────────────────────────────────────────────────
-        product = _find_product(text, products)
+        # ── Single item — use extract_product_and_quantity for best accuracy ──
+        product, qty = _fuzzy().extract_product_and_quantity(text, products)
+
+        if product is None:
+            # Fallback to legacy matcher if fuzzy returns nothing
+            product = _find_product(text, products)
+            if product:
+                qty = _qty(text)
 
         if product:
             try:
@@ -1812,7 +1913,6 @@ def generate_reply(
             except Exception as exc:
                 log.warning("stock refresh failed: %s", exc)
 
-            qty          = _qty(text)
             product_name = product["name"]
 
             available = product.get("stock")

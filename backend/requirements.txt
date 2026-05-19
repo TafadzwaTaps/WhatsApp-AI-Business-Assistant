@@ -1,10 +1,36 @@
-fastapi
-uvicorn[standard]
-supabase
-pydantic
-python-dotenv
-python-jose[cryptography]
-cryptography
-requests
-aiofiles
-reportlab
+# WaziBot — Python dependencies
+# Install: pip install -r requirements.txt
+
+# ── Web framework ──────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0         # ASGI server
+
+# ── Auth ───────────────────────────────────────────────────────
+python-jose[cryptography]>=3.3.0  # JWT
+passlib[bcrypt]>=1.7.4            # Password hashing
+
+# ── Database ───────────────────────────────────────────────────
+supabase>=2.4.0
+
+# ── File uploads ───────────────────────────────────────────────
+python-multipart>=0.0.9           # Required for UploadFile
+
+# ── HTTP client ─────────────────────────────────────────────────
+httpx>=0.27.0                     # Async HTTP (PayPal API, etc.)
+requests>=2.31.0                  # Sync HTTP (payments, PayPal OAuth)
+
+# ── PDF generation ─────────────────────────────────────────────
+reportlab>=4.1.0
+
+# ── Request validation ─────────────────────────────────────────
+pydantic>=2.7.0
+
+# ── Fuzzy product matching ─────────────────────────────────────
+rapidfuzz>=3.9.0                  # Fast fuzzy matching for product names
+                                  # Falls back to difflib if not installed
+
+# ── Encryption ─────────────────────────────────────────────────
+cryptography>=42.0.0              # Fernet token encryption
+
+# ── Local dev only ─────────────────────────────────────────────
+python-dotenv>=1.0.0              # Auto-loads .env in development
