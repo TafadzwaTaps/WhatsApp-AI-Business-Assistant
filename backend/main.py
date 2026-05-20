@@ -52,6 +52,13 @@ log = logging.getLogger("wazibot")
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN", "myverifytoken123")
 
+# ── Shared WhatsApp number platform config ─────────────────────────────────────
+# When SHARED_PHONE_NUMBER_ID is set, all businesses share ONE WhatsApp number.
+# The webhook routes messages to the correct business via customer session.
+SHARED_PHONE_NUMBER_ID = os.getenv("SHARED_PHONE_NUMBER_ID", "").strip()
+SHARED_WA_TOKEN        = os.getenv("SHARED_WA_TOKEN", "").strip()
+SHARED_WA_PHONE        = os.getenv("SHARED_WA_PHONE", "WaziBot").strip()
+
 # ── Static files ───────────────────────────────────────────────────────────────
 _BASE = os.path.dirname(os.path.abspath(__file__))
 _STATIC_CANDIDATES = [
@@ -164,6 +171,26 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> di
 
 
 # ── JWT token pair helper ──────────────────────────────────────────────────────
+
+def _send_direct(phone_number_id: str, token: str, to: str, message: str) -> None:
+    """
+    Send a WhatsApp message directly (bypassing the normal reply flow).
+    Used for the business picker, switch confirmations, etc.
+    Logs errors but never raises.
+    """
+    if not token:
+        log.warning("_send_direct: no token set — cannot send to %s", to)
+        return
+    try:
+        result = send_whatsapp(phone_number_id, token, to, message)
+        if "error" in result:
+            log.error("_send_direct error: %s", result["error"])
+        else:
+            log.info("_send_direct OK  to=%s", to)
+    except Exception as exc:
+        log.error("_send_direct exception: %s", exc)
+
+
 def _token_pair(sub: str, role: str, business_id: int | None = None) -> dict:
     data: dict = {"sub": sub, "role": role}
     if business_id is not None:
@@ -180,11 +207,15 @@ def _token_pair(sub: str, role: str, business_id: int | None = None) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class SignupRequest(BaseModel):
-    business_name: str
-    username: str
-    password: str
-    whatsapp_phone_id: str = ""
-    whatsapp_token: str = ""
+    business_name:      str
+    username:           str
+    password:           str
+    whatsapp_phone_id:  str = ""        # optional — leave empty to use shared number
+    whatsapp_token:     str = ""        # optional — leave empty to use shared number
+    # New optional onboarding fields
+    category:          str = ""        # e.g. "Food & Beverage", "Electronics"
+    contact_phone:     str = ""        # business contact number (not WhatsApp API)
+    use_shared_number: bool = True     # defaults to True — no Meta setup needed
 
     @validator("username")
     def username_valid(cls, v):
@@ -226,6 +257,10 @@ def signup(data: SignupRequest):
         owner_password    = data.password
         whatsapp_phone_id = phone_id
         whatsapp_token    = data.whatsapp_token.strip() or None
+        # New onboarding fields
+        category           = data.category.strip() if data.category else ""
+        contact_phone      = data.contact_phone.strip() if data.contact_phone else ""
+        use_shared_number  = data.use_shared_number
 
     biz = crud.create_business(_Payload())
     log.info("🆕 Signup: %s (@%s)", biz["name"], biz["owner_username"])
@@ -528,29 +563,79 @@ async def receive_message(request: Request):
         except Exception as exc:
             log.error("⚠️  Dedup check failed (will process anyway): %s", exc)
 
-    # ── STEP 2: Find business ─────────────────────────────────────────────
+    # ── STEP 2: Find business (shared-number-aware) ──────────────────────
     try:
-        business = crud.get_business_by_phone_id(phone_number_id)
-        if not business:
-            log.error("📋 STEP 2 FAIL — No business for phone_number_id=%s", phone_number_id)
-            return {"status": "ok"}
-        if not business.get("is_active", True):
-            return {"status": "ok"}
-        log.info("📋 STEP 2 OK  id=%s  name=%s", business["id"], business["name"])
+        from tenant_router import (
+            is_shared_number, resolve_business_for_shared_number,
+            is_switch_request,
+        )
+
+        if is_shared_number(phone_number_id):
+            # ── SHARED NUMBER PATH ────────────────────────────────────────────
+            log.info("📋 STEP 2 — shared number path  phone=%s", customer_phone)
+            active_businesses = crud.get_active_businesses()
+
+            business, direct_reply = resolve_business_for_shared_number(
+                phone=customer_phone,
+                text=text,
+                active_businesses=active_businesses,
+            )
+
+            if direct_reply:
+                # Send the picker or error message directly — no AI needed
+                _send_direct(phone_number_id, SHARED_WA_TOKEN, customer_phone, direct_reply)
+                # Save messages for inbox
+                try:
+                    cust_any = crud.get_or_create_customer(customer_phone, 0)
+                    crud.create_message(cust_any["id"], 0, text, "incoming",
+                                        wa_message_id=wa_message_id)
+                    crud.create_message(cust_any["id"], 0, direct_reply, "outgoing")
+                except Exception:
+                    pass
+                return {"status": "ok"}
+
+            if not business:
+                log.error("📋 STEP 2 — no business resolved for shared number")
+                return {"status": "ok"}
+
+            # Token for shared number is the platform token
+            token = SHARED_WA_TOKEN
+            log.info("📋 STEP 2 OK (shared)  biz_id=%s  name=%s", business["id"], business["name"])
+
+        else:
+            # ── PER-BUSINESS NUMBER PATH (existing logic, unchanged) ──────────
+            business = crud.get_business_by_phone_id(phone_number_id)
+            if not business:
+                log.error("📋 STEP 2 FAIL — No business for phone_number_id=%s", phone_number_id)
+                return {"status": "ok"}
+            if not business.get("is_active", True):
+                return {"status": "ok"}
+            log.info("📋 STEP 2 OK  id=%s  name=%s", business["id"], business["name"])
+
     except Exception as exc:
         log.exception("📋 STEP 2 FAIL: %s", exc)
         return {"status": "ok"}
 
     # ── STEP 3: Decrypt token ─────────────────────────────────────────────
-    token = ""
     try:
-        token = crud.get_decrypted_token(business)
-        if token:
-            log.info("🔑 STEP 3 OK  tail=…%s", token[-6:])
-        else:
-            log.warning("🔑 STEP 3 — No token for %s", business["name"])
-    except TokenDecryptionError as exc:
-        log.error("🔑 STEP 3 FAIL — %s: %s", business["name"], exc)
+        if not is_shared_number(phone_number_id):
+            # For per-business numbers, token was set in step 2 above only for shared.
+            # Load it now for per-business path.
+            token = ""
+        if "token" not in dir():
+            token = ""
+    except Exception:
+        token = ""
+
+    if not is_shared_number(phone_number_id):
+        try:
+            token = crud.get_decrypted_token(business)
+            if token:
+                log.info("🔑 STEP 3 OK  tail=…%s", token[-6:])
+            else:
+                log.warning("🔑 STEP 3 — No token for %s", business["name"])
+        except TokenDecryptionError as exc:
+            log.error("🔑 STEP 3 FAIL — %s: %s", business["name"], exc)
 
     # ── STEP 4: Get or create customer ────────────────────────────────────
     try:
@@ -1191,6 +1276,154 @@ def get_order_status(order_id: int, user=Depends(require_business)):
         "customer_phone":    order.get("customer_phone", ""),
         "created_at":        order.get("created_at", ""),
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PLATFORM / SUPER-ADMIN ENDPOINTS — multi-tenant management
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/platform/businesses")
+def platform_list_businesses(user=Depends(require_super_admin)):
+    """
+    Super admin: list all businesses on the platform.
+    Returns full details including status, shared-number flag.
+    """
+    businesses = crud.get_all_businesses()
+    return {
+        "count":       len(businesses),
+        "businesses":  businesses,
+    }
+
+
+@app.get("/platform/businesses/active")
+def platform_active_businesses():
+    """
+    Public: list active businesses for the business picker.
+    Returns minimal safe info (id, name, category).
+    """
+    businesses = crud.get_active_businesses()
+    return [
+        {"id": b["id"], "name": b["name"], "category": b.get("category", "")}
+        for b in businesses
+    ]
+
+
+class BusinessStatusUpdate(BaseModel):
+    is_active:      Optional[bool] = None
+    use_shared_number: Optional[bool] = None
+    display_order:  Optional[int]  = None
+    category:       Optional[str]  = None
+
+
+@app.patch("/platform/businesses/{business_id}")
+def platform_update_business(
+    business_id: int,
+    data: BusinessStatusUpdate,
+    user=Depends(require_super_admin),
+):
+    """
+    Super admin: update a business — approve, suspend, reorder, categorise.
+    """
+    biz = crud.get_business_by_id(business_id)
+    if not biz:
+        raise HTTPException(404, f"Business {business_id} not found")
+
+    updates: dict = {}
+    if data.is_active is not None:
+        updates["is_active"] = data.is_active
+    if data.use_shared_number is not None:
+        updates["use_shared_number"] = data.use_shared_number
+    if data.display_order is not None:
+        updates["display_order"] = data.display_order
+    if data.category is not None:
+        updates["category"] = data.category.strip()
+
+    if not updates:
+        raise HTTPException(422, "No fields to update")
+
+    class _D:
+        def dict(self, **_): return updates
+
+    updated = crud.update_business(business_id, _D())
+    log.info("platform_update_business  id=%s  fields=%s  by=%s",
+             business_id, list(updates.keys()), user.get("sub"))
+    return {"ok": True, "business_id": business_id, "updates": updates}
+
+
+@app.post("/platform/businesses/{business_id}/suspend")
+def platform_suspend_business(business_id: int, user=Depends(require_super_admin)):
+    """Super admin: suspend a business (is_active=False)."""
+    biz = crud.get_business_by_id(business_id)
+    if not biz:
+        raise HTTPException(404, f"Business {business_id} not found")
+    class _D:
+        def dict(self, **_): return {"is_active": False}
+    crud.update_business(business_id, _D())
+    log.info("business suspended  id=%s  by=%s", business_id, user.get("sub"))
+    return {"ok": True, "message": f"Business {business_id} suspended."}
+
+
+@app.post("/platform/businesses/{business_id}/activate")
+def platform_activate_business(business_id: int, user=Depends(require_super_admin)):
+    """Super admin: activate a suspended business."""
+    biz = crud.get_business_by_id(business_id)
+    if not biz:
+        raise HTTPException(404, f"Business {business_id} not found")
+    class _D:
+        def dict(self, **_): return {"is_active": True}
+    crud.update_business(business_id, _D())
+    log.info("business activated  id=%s  by=%s", business_id, user.get("sub"))
+    return {"ok": True, "message": f"Business {business_id} activated."}
+
+
+@app.get("/platform/stats")
+def platform_stats(user=Depends(require_super_admin)):
+    """Super admin: platform-wide statistics."""
+    try:
+        from db import supabase as _sb
+        businesses  = crud.get_all_businesses()
+        active_biz  = [b for b in businesses if b.get("is_active")]
+        orders_res  = _sb.table("orders").select("id,total_price,status,payment_status,business_id").execute()
+        orders      = orders_res.data or []
+        revenue     = sum(float(o.get("total_price") or 0) for o in orders if o.get("payment_status") == "paid")
+        customers_r = _sb.table("customers").select("id").execute()
+
+        return {
+            "total_businesses":  len(businesses),
+            "active_businesses": len(active_biz),
+            "total_orders":      len(orders),
+            "total_revenue":     round(revenue, 2),
+            "total_customers":   len(customers_r.data or []),
+            "shared_number_id":  SHARED_PHONE_NUMBER_ID or "not configured",
+        }
+    except Exception as exc:
+        log.error("platform_stats error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@app.get("/platform/customer/{phone}/session")
+def platform_customer_session(phone: str, user=Depends(require_super_admin)):
+    """
+    Super admin: inspect a customer's current business selection and state.
+    Useful for debugging routing issues.
+    """
+    from tenant_router import get_selected_business_id, get_selected_business_name
+    bid  = get_selected_business_id(phone)
+    name = get_selected_business_name(phone)
+    return {
+        "phone":                 phone,
+        "selected_business_id":  bid,
+        "selected_business_name": name,
+        "has_selection":         bid is not None,
+    }
+
+
+@app.delete("/platform/customer/{phone}/session")
+def platform_clear_customer_session(phone: str, user=Depends(require_super_admin)):
+    """Super admin: clear a customer's business selection (forces re-pick)."""
+    from tenant_router import clear_selected_business
+    clear_selected_business(phone)
+    return {"ok": True, "phone": phone, "message": "Session cleared."}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

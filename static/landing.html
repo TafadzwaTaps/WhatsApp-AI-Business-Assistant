@@ -427,6 +427,153 @@ footer {
   .cta-banner { padding: 40px 20px; margin: 0 16px 60px; }
   footer { flex-direction: column; text-align: center; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   MOBILE OPTIMISATIONS — do not change desktop styles
+═══════════════════════════════════════════════════════════ */
+
+/* Hamburger button — hidden on desktop */
+.nav-hamburger {
+  display: none;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 18px;
+  margin-left: auto;
+}
+
+/* Mobile nav drawer */
+.nav-mobile-open .nav-links {
+  display: flex !important;
+  flex-direction: column;
+  position: fixed;
+  top: 60px; left: 0; right: 0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px 24px;
+  gap: 16px;
+  z-index: 49;
+  animation: slideDown 0.2s ease;
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 768px) {
+  /* Nav */
+  nav { padding: 0 16px; }
+  .nav-hamburger { display: block; }
+  .nav-links {
+    display: none;
+  }
+  .nav-links.mobile-open {
+    display: flex !important;
+    flex-direction: column;
+    position: fixed;
+    top: 60px; left: 0; right: 0;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px 24px;
+    gap: 16px;
+    z-index: 49;
+  }
+  .nav-link, .nav-login, .nav-cta { font-size: 14px; padding: 10px 0; }
+
+  /* Hero */
+  .hero { padding: 80px 20px 60px; }
+  .hero-badge { font-size: 10px; padding: 5px 12px; }
+  .hero h1 { font-size: clamp(28px, 8vw, 52px); line-height: 1.15; }
+  .hero-sub { font-size: 14px; max-width: 100%; padding: 0 8px; }
+  .hero-cta { flex-direction: column; align-items: center; gap: 10px; }
+  .hero-cta a { width: 100%; max-width: 280px; text-align: center; font-size: 14px; padding: 13px 20px; }
+
+  /* Stats */
+  .hero-stats { gap: 20px; flex-wrap: wrap; justify-content: center; }
+  .stat-item { font-size: 13px; }
+  .stat-number { font-size: 22px; }
+
+  /* Features / cards */
+  .features-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px;
+  }
+  .feature-card { padding: 20px; }
+
+  /* How it works */
+  .steps {
+    flex-direction: column !important;
+    gap: 24px;
+  }
+  .step { padding: 20px; }
+
+  /* Pricing */
+  .pricing-grid {
+    grid-template-columns: 1fr !important;
+    gap: 16px;
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* Screenshots / demo */
+  .demo-grid, .screens-grid {
+    grid-template-columns: 1fr !important;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x mandatory;
+    display: flex !important;
+    gap: 14px;
+    padding-bottom: 12px;
+  }
+  .demo-grid > *, .screens-grid > * {
+    scroll-snap-align: start;
+    flex-shrink: 0;
+    width: 85vw;
+    max-width: 340px;
+  }
+
+  /* Typography */
+  .section-title { font-size: clamp(22px, 6vw, 38px); }
+  .section-sub { font-size: 13px; padding: 0 8px; }
+
+  /* CTA section */
+  .cta-section { padding: 60px 20px; }
+  .cta-section h2 { font-size: clamp(22px, 6vw, 36px); }
+  .cta-btns { flex-direction: column; align-items: center; gap: 10px; }
+  .cta-btns a { width: 100%; max-width: 280px; text-align: center; }
+
+  /* Footer */
+  .footer-grid {
+    grid-template-columns: 1fr !important;
+    gap: 28px;
+  }
+  .footer-links { gap: 10px; }
+
+  /* Prevent font zoom on iOS inputs */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Touch-friendly tap targets */
+  a, button { min-height: 44px; }
+
+  /* Smooth scroll */
+  html { scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+
+  /* Reduce motion for performance */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+}
+
+@media (max-width: 480px) {
+  .hero h1 { font-size: clamp(24px, 9vw, 36px); }
+  .hero-sub { font-size: 13px; }
+}
+
 </style>
 </head>
 <body>
@@ -441,6 +588,8 @@ footer {
     <a href="/dashboard" class="nav-login">Sign in</a>
     <a href="/signup" class="nav-cta">Get Started Free →</a>
   </div>
+
+        <button class="nav-hamburger" id="hamburger-btn" onclick="document.querySelector('.nav-links').classList.toggle('mobile-open');this.textContent=document.querySelector('.nav-links').classList.contains('mobile-open')?'✕':'☰'" aria-label="Toggle navigation">☰</button>
 </nav>
 
 <!-- HERO -->

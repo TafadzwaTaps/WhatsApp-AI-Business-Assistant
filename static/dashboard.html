@@ -60,8 +60,21 @@
                onkeydown="if(event.key==='Enter') doRegister()"/>
       </div>
       <div class="form-group">
-        <label>WhatsApp Phone Number ID <span style="color:var(--text-dim)">(optional — add later)</span></label>
-        <input type="text" id="reg-phoneid" placeholder="From Meta dashboard"/>
+        <label>Business Category <span style="color:var(--text-dim)">(optional)</span></label>
+        <select id="reg-category" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;">
+          <option value="">Select category…</option>
+          <option value="Food &amp; Beverage">Food &amp; Beverage</option>
+          <option value="Electronics">Electronics</option>
+          <option value="Fashion &amp; Clothing">Fashion &amp; Clothing</option>
+          <option value="Health &amp; Beauty">Health &amp; Beauty</option>
+          <option value="Services">Services</option>
+          <option value="Retail">Retail</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div style="background:var(--green-glow);border:1px solid rgba(34,197,94,0.2);border-radius:8px;padding:12px 14px;font-size:11px;font-family:var(--mono);color:var(--green);margin-bottom:14px;line-height:1.7;">
+        ✅ No WhatsApp setup needed!<br>
+        <span style="color:var(--text-dim)">Your store uses the WaziBot shared WhatsApp number automatically.</span>
       </div>
       <button class="btn-login" onclick="doRegister()">Create Account →</button>
     </div>
@@ -79,8 +92,18 @@
       <div class="form-group-inline"><label>Username</label><input type="text" id="b-username" placeholder="mamaskitchen"/></div>
       <div class="form-group-inline"><label>Password</label><input type="text" id="b-password" placeholder="Temporary password"/></div>
     </div>
-    <div class="form-group-inline"><label>WhatsApp Phone Number ID</label><input type="text" id="b-phone-id" placeholder="From Meta dashboard"/></div>
-    <div class="form-group-inline"><label>WhatsApp Access Token</label><input type="text" id="b-token" placeholder="EAAn..."/></div>
+    <div class="form-group-inline">
+      <label>Category</label>
+      <select id="b-category" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;">
+        <option value="">Select…</option>
+        <option value="Food &amp; Beverage">Food &amp; Beverage</option>
+        <option value="Electronics">Electronics</option>
+        <option value="Fashion &amp; Clothing">Fashion &amp; Clothing</option>
+        <option value="Services">Services</option>
+        <option value="Retail">Retail</option>
+        <option value="Other">Other</option>
+      </select>
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="createBusiness()">Create Business</button>
@@ -265,104 +288,291 @@
     </div>
   </div>
 
-  <!-- BUSINESS: SETTINGS -->
+  <!-- BUSINESS: SETTINGS (simplified — no Meta credentials) -->
   <div id="section-settings" class="section">
-    <div class="topbar"><div class="page-title">Account <span>Settings</span></div></div>
-    <div class="panels">
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">WhatsApp Credentials</div></div>
-        <div class="panel-body">
-          <div class="form-group"><label>Phone Number ID</label><input type="text" id="set-phone-id" placeholder="From Meta dashboard"/></div>
-          <div class="form-group"><label>Access Token</label><input type="text" id="set-token" placeholder="EAAn..."/><div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-top:4px;">Update when your token expires</div></div>
-          <button class="btn btn-primary" onclick="saveSettings()">Save Credentials</button>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Webhook Setup</div></div>
-        <div class="panel-body" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
-          <div style="margin-bottom:12px;">Set these in your Meta WhatsApp dashboard:</div>
-          <div style="margin-bottom:8px;"><span style="color:var(--text-dim);">Callback URL:</span></div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--green);margin-bottom:12px;" id="webhook-url">https://your-ngrok-url/webhook</div>
-          <div style="margin-bottom:8px;"><span style="color:var(--text-dim);">Verify Token:</span></div>
-          <div style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:10px 12px;color:var(--green);">myverifytoken123</div>
-          <div style="margin-top:16px;color:var(--text-dim);">Subscribe to: <span style="color:var(--text);">messages</span></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Business Name</div></div>
-        <div class="panel-body">
-          <div class="form-group"><label>Display Name</label><input type="text" id="set-biz-name" placeholder="Your business name"/></div>
-          <button class="btn btn-primary" onclick="saveBusinessName()">Update Name</button>
-        </div>
-      </div>
-      <!-- ── PAYMENT SETTINGS ─────────────────────────────── -->
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">💳 Payment Settings</div></div>
-        <div class="panel-body">
-          <p style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.6;">
-            These override the platform defaults. Each business can set their own numbers.
-          </p>
+    <div class="topbar"><div class="page-title">Store <span>Settings</span></div></div>
 
-          <!-- EcoCash -->
-          <div style="margin-bottom:20px;padding-bottom:18px;border-bottom:1px solid var(--border);">
-            <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">
-              💚 EcoCash
-            </div>
-            <div class="form-group">
-              <label>EcoCash Number <span style="color:var(--text-dim);font-weight:400;">(e.g. +263771234567)</span></label>
-              <input type="tel" id="set-ecocash-number" placeholder="+263771234567" autocomplete="off"/>
-            </div>
-            <div class="form-group">
-              <label>Registered Account Name</label>
-              <input type="text" id="set-ecocash-name" placeholder="e.g. Flavoury Foods (Pvt) Ltd" autocomplete="off"/>
-            </div>
-            <button class="btn btn-primary" onclick="saveEcoCashSettings()">Save EcoCash Details</button>
-          </div>
+    <!-- Settings tabs -->
+    <div class="settings-tabs" id="settings-tabs">
+      <button class="stab active" data-tab="profile"   onclick="switchSettingsTab('profile',this)">👤 Profile</button>
+      <button class="stab"         data-tab="payments"  onclick="switchSettingsTab('payments',this)">💳 Payments</button>
+      <button class="stab"         data-tab="delivery"  onclick="switchSettingsTab('delivery',this)">🚚 Delivery</button>
+      <button class="stab"         data-tab="ai"        onclick="switchSettingsTab('ai',this)">🤖 AI</button>
+      <button class="stab"         data-tab="store"     onclick="switchSettingsTab('store',this)">🏪 Store</button>
+      <button class="stab"         data-tab="appearance" onclick="switchSettingsTab('appearance',this)">🎨 Appearance</button>
+    </div>
 
-          <!-- PayPal -->
-          <div>
-            <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;">
-              🌍 PayPal
+    <!-- ── PROFILE TAB ────────────────────────────────────── -->
+    <div class="stab-content active" id="stab-profile">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Business Profile</div></div>
+          <div class="panel-body">
+            <div class="form-row">
+              <div class="form-group"><label>Business Name</label><input type="text" id="set-biz-name" placeholder="e.g. Flavoury Foods"/></div>
+              <div class="form-group"><label>Category</label>
+                <select id="set-category">
+                  <option value="">Select category…</option>
+                  <option value="Food &amp; Beverage">Food &amp; Beverage</option>
+                  <option value="Electronics">Electronics</option>
+                  <option value="Fashion &amp; Clothing">Fashion &amp; Clothing</option>
+                  <option value="Health &amp; Beauty">Health &amp; Beauty</option>
+                  <option value="Home &amp; Garden">Home &amp; Garden</option>
+                  <option value="Services">Services</option>
+                  <option value="Retail">Retail</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
             </div>
-            <div class="form-group">
-              <label>PayPal Email <span style="color:var(--text-dim);font-weight:400;">(real account email — money goes here)</span></label>
-              <input type="email" id="set-paypal-email" placeholder="payments@yourbusiness.com" autocomplete="off"/>
+            <div class="form-group"><label>Business Description</label>
+              <textarea id="set-description" placeholder="Tell customers about your business…" rows="3"></textarea>
             </div>
-            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.6;">
-              ℹ️ Customers will be instructed to send money directly to this email via the PayPal app.
-              This must be your <strong>real PayPal account email</strong>.
+            <div class="form-row">
+              <div class="form-group"><label>Support Phone</label><input type="tel" id="set-contact-phone" placeholder="+263771234567"/></div>
+              <div class="form-group"><label>Support Email</label><input type="email" id="set-support-email" placeholder="hello@yourbiz.com"/></div>
             </div>
-            <button class="btn btn-primary" onclick="savePayPalSettings()">Save PayPal Email</button>
-          </div>
-
-          <div id="payment-settings-status" style="margin-top:14px;font-size:11px;font-family:var(--mono);"></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Appearance</div></div>
-        <div class="panel-body">
-          <div class="form-group">
-            <label>Theme</label>
-            <div style="display:flex;gap:10px;margin-top:4px;">
-              <button class="btn btn-ghost" id="theme-dark-btn" style="color:var(--green);border-color:var(--green-dim);" onclick="setTheme('dark')">🌙 Dark</button>
-              <button class="btn btn-ghost" id="theme-light-btn" onclick="setTheme('light')">☀️ Light</button>
+            <div class="form-row">
+              <div class="form-group"><label>Physical Address</label><input type="text" id="set-address" placeholder="123 Main Street, Harare"/></div>
+              <div class="form-group"><label>City / Country</label><input type="text" id="set-city" placeholder="Harare, Zimbabwe"/></div>
+            </div>
+            <div class="form-group"><label>Business Hours</label><input type="text" id="set-hours" placeholder="Mon–Fri 8am–6pm, Sat 9am–3pm"/></div>
+            <div class="form-row">
+              <div class="form-group"><label>Instagram</label><input type="text" id="set-instagram" placeholder="@yourbiz"/></div>
+              <div class="form-group"><label>Facebook</label><input type="text" id="set-facebook" placeholder="facebook.com/yourbiz"/></div>
+            </div>
+            <div style="margin-top:8px;">
+              <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
             </div>
           </div>
-          <div class="form-group" style="margin-top:14px;">
-            <label>Font</label>
-            <select id="font-select" onchange="applyFont(this.value)" style="margin-top:4px;">
-              <option value="'Syne',sans-serif">Syne (Default)</option>
-              <option value="Arial,sans-serif">Arial</option>
-              <option value="'Segoe UI',sans-serif">Segoe UI</option>
-              <option value="'Roboto',sans-serif">Roboto</option>
-              <option value="Georgia,serif">Georgia</option>
-            </select>
+        </div>
+        <!-- WhatsApp status (read-only — managed by platform) -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">WhatsApp Status</div></div>
+          <div class="panel-body">
+            <div class="wa-status-card">
+              <div class="wa-status-icon">✅</div>
+              <div>
+                <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Connected to Shared Number</div>
+                <div style="font-size:12px;font-family:var(--mono);color:var(--text-dim);">Your store is powered by the WaziBot platform WhatsApp number. No setup needed.</div>
+              </div>
+            </div>
+            <div style="margin-top:16px;font-size:11px;font-family:var(--mono);color:var(--text-dim);line-height:1.8;">
+              🟢 WhatsApp: <strong style="color:var(--green)">Active</strong><br>
+              🟢 AI Ordering: <strong style="color:var(--green)">Enabled</strong><br>
+              🟢 Payments: <strong style="color:var(--green)">Ready</strong>
+            </div>
           </div>
         </div>
       </div>
     </div>
-  </div>
+
+    <!-- ── PAYMENTS TAB ───────────────────────────────────── -->
+    <div class="stab-content" id="stab-payments">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">💚 EcoCash</div></div>
+          <div class="panel-body">
+            <div class="form-row">
+              <div class="form-group"><label>EcoCash Number</label><input type="tel" id="set-ecocash-number" placeholder="+263771234567"/></div>
+              <div class="form-group"><label>Registered Name</label><input type="text" id="set-ecocash-name" placeholder="Flavoury Foods (Pvt) Ltd"/></div>
+            </div>
+            <button class="btn btn-primary" onclick="saveEcoCashSettings()">Save EcoCash</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">🌍 PayPal</div></div>
+          <div class="panel-body">
+            <div class="form-group"><label>PayPal Email <span style="color:var(--text-dim);font-weight:400">(real account — money goes here)</span></label>
+              <input type="email" id="set-paypal-email" placeholder="payments@yourbusiness.com"/>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.6;">
+              Customers send directly to this email via the PayPal app.
+            </div>
+            <button class="btn btn-primary" onclick="savePayPalSettings()">Save PayPal</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">💵 Cash &amp; Currency</div></div>
+          <div class="panel-body">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Currency</label>
+                <select id="set-currency">
+                  <option value="USD">USD — US Dollar</option>
+                  <option value="ZWL">ZWL — Zimbabwe Dollar</option>
+                  <option value="ZAR">ZAR — South African Rand</option>
+                  <option value="GBP">GBP — British Pound</option>
+                  <option value="EUR">EUR — Euro</option>
+                </select>
+              </div>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Cash on Delivery</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-cash-enabled" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Pickup Available</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-pickup-enabled" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <button class="btn btn-primary" onclick="savePaymentOptions()" style="margin-top:12px;">Save Options</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Status</div></div>
+          <div class="panel-body"><div id="payment-settings-status" style="font-size:12px;font-family:var(--mono);line-height:2;"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DELIVERY TAB ───────────────────────────────────── -->
+    <div class="stab-content" id="stab-delivery">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Delivery Settings</div></div>
+          <div class="panel-body">
+            <div class="toggle-row"><span class="toggle-label">Delivery Enabled</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-delivery-enabled" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="form-row" style="margin-top:14px;">
+              <div class="form-group"><label>Delivery Fee (USD)</label><input type="number" id="set-delivery-fee" placeholder="2.00" step="0.50" min="0"/></div>
+              <div class="form-group"><label>Est. Delivery Time</label><input type="text" id="set-delivery-time" placeholder="30–45 minutes"/></div>
+            </div>
+            <div class="form-group"><label>Order Preparation Time</label><input type="text" id="set-prep-time" placeholder="15–20 minutes"/></div>
+            <div class="form-group"><label>Delivery Zones</label>
+              <textarea id="set-delivery-zones" rows="3" placeholder="e.g. Avondale, Borrowdale, Highlands, Waterfalls"></textarea>
+            </div>
+            <div class="form-group"><label>Pickup Instructions</label>
+              <textarea id="set-pickup-notes" rows="2" placeholder="e.g. Collect at our shop: 42 Harare Street, Avondale"></textarea>
+            </div>
+            <div class="form-group"><label>Delivery Notes</label>
+              <textarea id="set-delivery-notes" rows="2" placeholder="Any special delivery instructions…"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="saveDeliverySettings()">Save Delivery</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── AI TAB ─────────────────────────────────────────── -->
+    <div class="stab-content" id="stab-ai">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">AI Assistant Settings</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label>AI Tone</label>
+              <div class="tone-pills" id="tone-pills">
+                <button class="tone-pill active" data-tone="friendly"      onclick="selectTone(this)">😊 Friendly</button>
+                <button class="tone-pill"         data-tone="professional"  onclick="selectTone(this)">💼 Professional</button>
+                <button class="tone-pill"         data-tone="sales"         onclick="selectTone(this)">🔥 Sales</button>
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:14px;"><label>Welcome Message</label>
+              <textarea id="set-welcome-msg" rows="3" placeholder="e.g. Hello! Welcome to Flavoury Foods 😊 Type menu to see what we have today!"></textarea>
+            </div>
+            <div class="form-group"><label>AI Response Length</label>
+              <select id="set-response-length">
+                <option value="concise">Concise — short and punchy</option>
+                <option value="normal" selected>Normal — balanced</option>
+                <option value="detailed">Detailed — full explanations</option>
+              </select>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Smart Recommendations</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-recommendations" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Upsell Suggestions</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-upsells" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Personalised Greetings</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-personalised" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <button class="btn btn-primary" onclick="saveAISettings()" style="margin-top:16px;">Save AI Settings</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Custom Footer</div></div>
+          <div class="panel-body">
+            <div class="form-group"><label>Custom Footer Message</label>
+              <textarea id="set-footer-msg" rows="2" placeholder="e.g. Thank you for choosing Flavoury Foods!"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="saveAISettings()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── STORE TAB ──────────────────────────────────────── -->
+    <div class="stab-content" id="stab-store">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Store Controls</div></div>
+          <div class="panel-body">
+            <div class="toggle-row">
+              <div><span class="toggle-label">Store Open</span><div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:2px;">Customers can browse and order</div></div>
+              <label class="toggle-switch"><input type="checkbox" id="set-store-open" checked onchange="saveStoreControl('store_open',this.checked)"/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="toggle-row">
+              <div><span class="toggle-label">Pause Orders</span><div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:2px;">Customers can browse but not order</div></div>
+              <label class="toggle-switch"><input type="checkbox" id="set-pause-orders" onchange="saveStoreControl('pause_orders',this.checked)"/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="toggle-row">
+              <div><span class="toggle-label">Vacation Mode</span><div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:2px;">Show out-of-office message</div></div>
+              <label class="toggle-switch"><input type="checkbox" id="set-vacation" onchange="saveStoreControl('vacation_mode',this.checked)"/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="form-group" style="margin-top:16px;"><label>Auto-reply while offline</label>
+              <textarea id="set-offline-msg" rows="2" placeholder="We're currently closed. We'll be back on [date]. Type menu to browse."></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="saveStoreSettings()">Save</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Notifications</div></div>
+          <div class="panel-body">
+            <div class="toggle-row"><span class="toggle-label">Email Order Alerts</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-email-alerts" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="form-group" style="margin-top:8px;margin-bottom:14px;"><label>Alert Email</label>
+              <input type="email" id="set-alert-email" placeholder="orders@yourbiz.com"/>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Low Stock Alerts</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-stock-alerts" checked/><span class="toggle-slider"></span></label>
+            </div>
+            <div class="toggle-row"><span class="toggle-label">Daily Sales Summary</span>
+              <label class="toggle-switch"><input type="checkbox" id="set-daily-summary"/><span class="toggle-slider"></span></label>
+            </div>
+            <button class="btn btn-primary" onclick="saveNotifSettings()" style="margin-top:16px;">Save Notifications</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── APPEARANCE TAB ─────────────────────────────────── -->
+    <div class="stab-content" id="stab-appearance">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Dashboard Appearance</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label>Theme</label>
+              <div style="display:flex;gap:10px;margin-top:4px;">
+                <button class="btn btn-ghost" id="theme-dark-btn" style="color:var(--green);border-color:var(--green-dim);" onclick="setTheme('dark')">🌙 Dark</button>
+                <button class="btn btn-ghost" id="theme-light-btn" onclick="setTheme('light')">☀️ Light</button>
+              </div>
+            </div>
+            <div class="form-group" style="margin-top:14px;">
+              <label>Font</label>
+              <select id="font-select" onchange="applyFont(this.value)" style="margin-top:4px;">
+                <option value="'Syne',sans-serif">Syne (Default)</option>
+                <option value="Arial,sans-serif">Arial</option>
+                <option value="'Segoe UI',sans-serif">Segoe UI</option>
+                <option value="'Roboto',sans-serif">Roboto</option>
+                <option value="Georgia,serif">Georgia</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /section-settings -->
 
 </main>
 <div class="toast" id="toast"></div>

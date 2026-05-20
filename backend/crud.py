@@ -34,7 +34,7 @@ def _one(table: str, res) -> Optional[dict]:
 
 def create_business(data) -> dict:
     raw_token = (data.whatsapp_token or "").strip()
-    row = {
+    row: dict = {
         "name":               data.name,
         "owner_username":     data.owner_username,
         "owner_password":     data.owner_password,
@@ -43,6 +43,14 @@ def create_business(data) -> dict:
         "is_active":          True,
         "created_at":         _now(),
     }
+    # Optional fields set during onboarding
+    if hasattr(data, "category") and data.category:
+        row["category"] = data.category.strip()
+    if hasattr(data, "use_shared_number"):
+        row["use_shared_number"] = bool(data.use_shared_number)
+    if hasattr(data, "contact_phone") and data.contact_phone:
+        row["contact_phone"] = data.contact_phone.strip()
+
     res = supabase.table("businesses").insert(row).execute()
     biz = _one("businesses", res)
     log.info("create_business OK  id=%s  name=%r", biz["id"], biz["name"])
@@ -74,6 +82,38 @@ def get_business_by_phone_id(phone_id: str) -> Optional[dict]:
 def get_all_businesses() -> list[dict]:
     res = supabase.table("businesses").select("*").order("id").execute()
     return res.data or []
+
+
+def get_active_businesses() -> list[dict]:
+    """
+    Return all active businesses for the shared-number business picker.
+    Only returns businesses that are active AND have products (avoids empty storefronts).
+    Falls back to all active if the join fails.
+    """
+    try:
+        res = (
+            supabase.table("businesses")
+            .select("id, name, category, is_active, ecocash_number, paypal_email")
+            .eq("is_active", True)
+            .order("display_order", desc=False, nullsfirst=True)
+            .order("id")
+            .execute()
+        )
+        return res.data or []
+    except Exception:
+        # display_order column may not exist yet — fall back
+        try:
+            res = (
+                supabase.table("businesses")
+                .select("id, name, category, is_active, ecocash_number, paypal_email")
+                .eq("is_active", True)
+                .order("id")
+                .execute()
+            )
+            return res.data or []
+        except Exception as exc:
+            log.error("get_active_businesses error: %s", exc)
+            return []
 
 
 def get_business_by_id(business_id: int) -> Optional[dict]:

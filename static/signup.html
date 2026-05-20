@@ -67,78 +67,23 @@
 </style>
 </head>
 <body>
-<div class="left">
-  <div class="logo">WaziBot</div>
-  <div class="tagline">WhatsApp automation for Zimbabwe businesses</div>
-  <div class="feature-list">
-    <div class="feature"><div class="feature-icon">🤖</div><div><div class="feature-title">AI Auto-Replies</div><div class="feature-desc">Bot answers customers 24/7 — menu, orders, questions. Never miss a sale.</div></div></div>
-    <div class="feature"><div class="feature-icon">📊</div><div><div class="feature-title">Live Dashboard</div><div class="feature-desc">See every order, customer, and chat in real time from any browser.</div></div></div>
-    <div class="feature"><div class="feature-icon">📢</div><div><div class="feature-title">Broadcast Messages</div><div class="feature-desc">Send promos to all customers at once with one click.</div></div></div>
-    <div class="feature"><div class="feature-icon">💸</div><div><div class="feature-title">No Twilio Fees</div><div class="feature-desc">Uses official Meta WhatsApp API directly. No per-message billing.</div></div></div>
-    <div class="feature"><div class="feature-icon">⚡</div><div><div class="feature-title">Ready in 2 Minutes</div><div class="feature-desc">Sign up, connect WhatsApp, and your bot is live immediately.</div></div></div>
-  </div>
-  <div class="left-footer">Already have an account? <a href="/">Sign in →</a></div>
-</div>
-
-<div class="right">
-  <div class="form-card">
-    <div class="progress-bar"><div class="progress-fill" id="progress" style="width:33%"></div></div>
-    <div class="steps">
-      <div class="step active" id="tab1"><span class="step-num">1</span>Account</div>
-      <div class="step" id="tab2"><span class="step-num">2</span>Business</div>
-      <div class="step" id="tab3"><span class="step-num">3</span>WhatsApp</div>
-    </div>
-    <div class="form-title" id="ftitle">Create your <span>account</span></div>
-    <div class="form-sub" id="fsub">Free to start. No credit card needed.</div>
-    <div class="error-banner" id="err-banner"></div>
-
-    <!-- STEP 1 -->
-    <div class="form-step active" id="step1">
-      <div class="form-row">
-        <div class="form-group">
-          <label>Username</label>
-          <input type="text" id="s-user" placeholder="mamaskitchen" autocomplete="username"/>
-          <div class="hint">Letters, numbers, - and _ only</div>
-          <div class="ferr" id="ferr-user"></div>
+<div class="form-group">
+          <label>Category <span style="opacity:0.6">(optional)</span></label>
+          <select id="category" name="category" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;">
+            <option value="">Select your category…</option>
+            <option>Food &amp; Beverage</option>
+            <option>Electronics</option>
+            <option>Fashion &amp; Clothing</option>
+            <option>Health &amp; Beauty</option>
+            <option>Services</option>
+            <option>Retail</option>
+            <option>Other</option>
+          </select>
         </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" id="s-pass" placeholder="Min 6 chars" autocomplete="new-password"/>
-          <div class="ferr" id="ferr-pass"></div>
+        <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:10px;padding:14px 16px;font-size:12px;font-family:var(--mono);color:var(--green);line-height:1.8;margin-bottom:8px;">
+          ✅ <strong>No WhatsApp setup needed!</strong><br>
+          <span style="color:var(--text-dim);">Your store instantly uses the WaziBot shared WhatsApp number.</span>
         </div>
-      </div>
-      <div class="form-group">
-        <label>Confirm Password</label>
-        <input type="password" id="s-pass2" placeholder="Repeat password"
-               onkeydown="if(event.key==='Enter')next(2)"/>
-        <div class="ferr" id="ferr-pass2"></div>
-      </div>
-      <button class="btn-next" onclick="next(2)">Continue →</button>
-    </div>
-
-    <!-- STEP 2 -->
-    <div class="form-step" id="step2">
-      <div class="form-group">
-        <label>Business Name</label>
-        <input type="text" id="s-biz" placeholder="e.g. Mama's Kitchen"
-               onkeydown="if(event.key==='Enter')next(3)"/>
-        <div class="hint">Customers will see this name in bot replies</div>
-        <div class="ferr" id="ferr-biz"></div>
-      </div>
-      <div class="btn-row">
-        <button class="btn-back" onclick="goTo(1)">← Back</button>
-        <button class="btn-next" style="flex:1" onclick="next(3)">Continue →</button>
-      </div>
-    </div>
-
-    <!-- STEP 3 -->
-    <div class="form-step" id="step3">
-      <div class="form-group">
-        <label>WhatsApp Phone Number ID</label>
-        <input type="text" id="s-pid" placeholder="e.g. 1088821460973757"/>
-        <div class="hint">Meta → WhatsApp → API Setup → Phone Number ID</div>
-        <div class="ferr" id="ferr-pid"></div>
-      </div>
       <div class="form-group">
         <label>WhatsApp Access Token</label>
         <input type="text" id="s-tok" placeholder="EAAn..."/>

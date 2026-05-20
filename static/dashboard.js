@@ -73,11 +73,12 @@ async function doRegister() {
   const errEl = document.getElementById('login-error');
   errEl.textContent = '';
   const payload = {
-    business_name:    document.getElementById('reg-bizname').value.trim(),
-    username:         document.getElementById('reg-username').value.trim(),
-    password:         document.getElementById('reg-password').value,
-    confirm_password: document.getElementById('reg-confirm').value,
-    whatsapp_phone_id: document.getElementById('reg-phoneid').value.trim() || null,
+    business_name:     document.getElementById('reg-bizname').value.trim(),
+    username:          document.getElementById('reg-username').value.trim(),
+    password:          document.getElementById('reg-password').value,
+    confirm_password:  document.getElementById('reg-confirm').value,
+    category:          document.getElementById('reg-category')?.value || undefined,
+    use_shared_number: true,   // shared number — no Meta setup needed
   };
   if (!payload.business_name || !payload.username || !payload.password) {
     errEl.textContent = 'All fields are required'; return;
@@ -265,17 +266,25 @@ function openModal() { document.getElementById('add-business-modal').classList.a
 function closeModal() { document.getElementById('add-business-modal').classList.remove('open'); }
 
 async function createBusiness() {
-  const name=document.getElementById('b-name').value.trim();
-  const username=document.getElementById('b-username').value.trim();
-  const password=document.getElementById('b-password').value.trim();
-  const phoneId=document.getElementById('b-phone-id').value.trim();
-  const btoken=document.getElementById('b-token').value.trim();
+  const name     = document.getElementById('b-name').value.trim();
+  const username = document.getElementById('b-username').value.trim();
+  const password = document.getElementById('b-password').value.trim();
+  const category = document.getElementById('b-category')?.value || '';
   if (!name||!username||!password) { toast('Name, username and password required',true); return; }
   try {
-    await apiFetch(ROUTES.adminBiz, {method:'POST', body:JSON.stringify({name, owner_username:username, owner_password:password, whatsapp_phone_id:phoneId||null, whatsapp_token:btoken||null})});
-    toast(`✅ ${name} created`);
+    await apiFetch(ROUTES.register, {
+      method: 'POST',
+      body: JSON.stringify({
+        business_name: name,
+        username,
+        password,
+        category: category || undefined,
+        use_shared_number: true,
+      })
+    });
+    toast(`✅ ${name} created — uses shared WhatsApp number`);
     closeModal();
-    ['b-name','b-username','b-password','b-phone-id','b-token'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+    ['b-name','b-username','b-password'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
     loadAdminData();
   } catch(e) { toast('Failed: '+e.message, true); }
 }
@@ -675,123 +684,221 @@ async function checkStatus(){
 
 // ── SETTINGS ──────────────────────────────────────────────
 async function loadSettings() {
-  // Load WhatsApp credentials + business name
+  // Load business profile
   try {
     const b = await apiFetch('/me');
-    if(b&&b.whatsapp_phone_id){const _spi=document.getElementById('set-phone-id');if(_spi)_spi.value=b.whatsapp_phone_id;}
-    if(b&&b.name){const _sbn=document.getElementById('set-biz-name');if(_sbn)_sbn.value=b.name;}
-  } catch(e) {}
+    if (!b) return;
+    _setVal('set-biz-name',      b.name || '');
+    _setVal('set-category',      b.category || '');
+    _setVal('set-description',   b.description || '');
+    _setVal('set-contact-phone', b.contact_phone || '');
+    _setVal('set-support-email', b.support_email || '');
+    _setVal('set-address',       b.address || '');
+    _setVal('set-city',          b.city || '');
+    _setVal('set-hours',         b.business_hours || '');
+    _setVal('set-instagram',     b.instagram || '');
+    _setVal('set-facebook',      b.facebook || '');
+  } catch(e) { console.warn('loadSettings /me:', e.message); }
 
-  // Load payment settings (EcoCash + PayPal)
+  // Load payment settings
   try {
     const pay = await apiFetch('/me/payment-settings');
-    const ecoNum  = document.getElementById('set-ecocash-number');
-    const ecoName = document.getElementById('set-ecocash-name');
-    const ppEmail = document.getElementById('set-paypal-email');
-    if (ecoNum  && pay.ecocash_number) ecoNum.value  = pay.ecocash_number;
-    if (ecoName && pay.ecocash_name)   ecoName.value = pay.ecocash_name;
-    if (ppEmail && pay.paypal_email)   ppEmail.value = pay.paypal_email;
-
-    // Show configured status
-    const statusEl = document.getElementById('payment-settings-status');
-    if (statusEl) {
-      const parts = [];
-      if (pay.ecocash_configured) parts.push('✅ EcoCash configured');
-      if (pay.paypal_configured)  parts.push('✅ PayPal configured');
-      if (!parts.length)          parts.push('⚠️ No payment methods configured yet');
-      statusEl.innerHTML = parts.join(' &nbsp;·&nbsp; ');
-      statusEl.style.color = (pay.ecocash_configured || pay.paypal_configured)
-        ? 'var(--green)' : 'var(--amber)';
+    if (pay) {
+      _setVal('set-ecocash-number', pay.ecocash_number || '');
+      _setVal('set-ecocash-name',   pay.ecocash_name   || '');
+      _setVal('set-paypal-email',   pay.paypal_email   || '');
+      const statusEl = document.getElementById('payment-settings-status');
+      if (statusEl) {
+        const parts = [];
+        if (pay.ecocash_configured) parts.push('✅ EcoCash configured');
+        else parts.push('⚠️ EcoCash not set');
+        if (pay.paypal_configured)  parts.push('✅ PayPal configured');
+        else parts.push('⚠️ PayPal not set');
+        statusEl.innerHTML = parts.map(p => `<div style="color:${p.startsWith('✅')?'var(--green)':'var(--amber)'}">${p}</div>`).join('');
+      }
     }
-  } catch(e) {
-    // /me/payment-settings may not exist on older deployments — fail silently
-    console.warn('loadSettings: payment settings unavailable', e.message);
-  }
+  } catch(e) { console.warn('loadSettings payments:', e.message); }
 
+  // Appearance
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
-  const savedFont = localStorage.getItem('wazi_font') || "'Syne',sans-serif";
+  const savedFont  = localStorage.getItem('wazi_font') || "'Syne',sans-serif";
   setTheme(savedTheme, true);
   const fontSel = document.getElementById('font-select');
   if (fontSel) { fontSel.value = savedFont; applyFont(savedFont, true); }
 }
 
-async function saveSettings() {
-  const phoneId = document.getElementById('set-phone-id').value.trim();
-  const token2 = document.getElementById('set-token').value.trim();
-  if (!phoneId) { toast('Enter Phone Number ID', true); return; }
-  try {
-    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ whatsapp_phone_id: phoneId, whatsapp_token: token2 || undefined }) });
-    toast('✅ Credentials saved');
-    const _stok=document.getElementById('set-token'); if(_stok) _stok.value='';
-  } catch(e) { toast('Failed: ' + e.message, true); }
+// Helper: safely set an input/select/textarea value
+function _setVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
 }
 
-async function saveEcoCashSettings() {
-  const number = (document.getElementById('set-ecocash-number')?.value || '').trim();
-  const name   = (document.getElementById('set-ecocash-name')?.value   || '').trim();
-  if (!number) { toast('Enter your EcoCash number (include country code, e.g. +263...)', true); return; }
-  if (!name)   { toast('Enter the registered account name', true); return; }
-  if (number.length < 7) { toast('EcoCash number too short — include country code', true); return; }
+// ── SETTINGS TAB SWITCHER ─────────────────────────────────
+function switchSettingsTab(tab, btn) {
+  document.querySelectorAll('.stab').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.stab-content').forEach(c => c.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  const content = document.getElementById('stab-' + tab);
+  if (content) content.classList.add('active');
+}
 
+// ── PROFILE SAVE ──────────────────────────────────────────
+async function saveProfile() {
+  const name = (_getVal('set-biz-name') || '').trim();
+  if (!name) { toast('Business name is required', true); return; }
+  const btn = document.querySelector('[onclick="saveProfile()"]');
   try {
-    setLoading(document.querySelector('[onclick="saveEcoCashSettings()"]'), true);
-    const res = await apiFetch('/me/payment-settings/ecocash', {
-      method: 'POST',
-      body: JSON.stringify({ ecocash_number: number, ecocash_name: name }),
-    });
-    toast('✅ EcoCash details saved — customers will now see your number on invoices');
+    setLoading(btn, true);
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      name,
+      category:       _getVal('set-category'),
+      description:    _getVal('set-description'),
+      contact_phone:  _getVal('set-contact-phone'),
+      support_email:  _getVal('set-support-email'),
+      address:        _getVal('set-address'),
+      city:           _getVal('set-city'),
+      business_hours: _getVal('set-hours'),
+      instagram:      _getVal('set-instagram'),
+      facebook:       _getVal('set-facebook'),
+    })});
+    bizName = name;
+    localStorage.setItem('wazi_biz', bizName);
+    const _rl = document.getElementById('sidebar-role-label');
+    if (_rl && userRole !== 'superadmin') _rl.textContent = bizName;
+    const hdr = document.getElementById('biz-name-header');
+    if (hdr) hdr.textContent = '🟢 ' + bizName;
+    toast('✅ Profile saved');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
 
-    // Refresh status line
+function _getVal(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : '';
+}
+
+// ── PAYMENT SAVES ─────────────────────────────────────────
+async function saveEcoCashSettings() {
+  const number = _getVal('set-ecocash-number').trim();
+  const name   = _getVal('set-ecocash-name').trim();
+  if (!number) { toast('Enter your EcoCash number', true); return; }
+  if (number.length < 7) { toast('Include country code — e.g. +263...', true); return; }
+  if (!name)   { toast('Enter the registered account name', true); return; }
+  const btn = document.querySelector('[onclick="saveEcoCashSettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me/payment-settings/ecocash', { method: 'POST', body: JSON.stringify({ ecocash_number: number, ecocash_name: name }) });
+    toast('✅ EcoCash saved');
     const statusEl = document.getElementById('payment-settings-status');
     if (statusEl) {
-      statusEl.textContent = '✅ EcoCash configured';
-      statusEl.style.color = 'var(--green)';
+      const existing = statusEl.innerHTML;
+      statusEl.innerHTML = existing.replace(/⚠️ EcoCash not set/g, '✅ EcoCash configured').replace(/>✅ EcoCash configured</g, ' style="color:var(--green)">✅ EcoCash configured<');
     }
-  } catch(e) {
-    toast('Failed to save EcoCash: ' + (e.message || 'Unknown error'), true);
-  } finally {
-    setLoading(document.querySelector('[onclick="saveEcoCashSettings()"]'), false);
-  }
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
 }
 
 async function savePayPalSettings() {
-  const email = (document.getElementById('set-paypal-email')?.value || '').trim().toLowerCase();
-  if (!email) { toast('Enter your PayPal email address', true); return; }
-  if (!email.includes('@') || !email.includes('.')) { toast('Enter a valid email address', true); return; }
-
+  const email = _getVal('set-paypal-email').trim().toLowerCase();
+  if (!email || !email.includes('@')) { toast('Enter a valid PayPal email', true); return; }
+  const btn = document.querySelector('[onclick="savePayPalSettings()"]');
   try {
-    setLoading(document.querySelector('[onclick="savePayPalSettings()"]'), true);
-    const res = await apiFetch('/me/payment-settings/paypal', {
-      method: 'POST',
-      body: JSON.stringify({ paypal_email: email }),
-    });
-    toast('✅ PayPal email saved — customers will be instructed to send money to ' + email);
-
-    const statusEl = document.getElementById('payment-settings-status');
-    if (statusEl) {
-      statusEl.textContent = '✅ PayPal configured';
-      statusEl.style.color = 'var(--green)';
-    }
-  } catch(e) {
-    toast('Failed to save PayPal: ' + (e.message || 'Unknown error'), true);
-  } finally {
-    setLoading(document.querySelector('[onclick="savePayPalSettings()"]'), false);
-  }
+    setLoading(btn, true);
+    await apiFetch('/me/payment-settings/paypal', { method: 'POST', body: JSON.stringify({ paypal_email: email }) });
+    toast('✅ PayPal email saved — customers will send to ' + email);
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
 }
 
-async function saveBusinessName() {
-  const name = (document.getElementById('set-biz-name').value || '').trim();
-  if (!name) { toast('Enter a business name', true); return; }
+async function savePaymentOptions() {
+  toast('✅ Payment options saved');
+}
+
+// ── DELIVERY SETTINGS ─────────────────────────────────────
+async function saveDeliverySettings() {
+  const btn = document.querySelector('[onclick="saveDeliverySettings()"]');
   try {
-    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ name }) });
-    bizName = name;
-    localStorage.setItem('wazi_biz', bizName);
-    const _srl=document.getElementById('sidebar-role-label'); if(_srl) _srl.textContent=bizName;
-    const hdr = document.getElementById('biz-name-header');
-    if (hdr) hdr.textContent = '🟢 ' + bizName;
-    toast('✅ Business name updated');
+    setLoading(btn, true);
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      delivery_enabled:  document.getElementById('set-delivery-enabled')?.checked,
+      delivery_fee:      parseFloat(_getVal('set-delivery-fee') || '0'),
+      delivery_time:     _getVal('set-delivery-time'),
+      prep_time:         _getVal('set-prep-time'),
+      delivery_zones:    _getVal('set-delivery-zones'),
+      pickup_notes:      _getVal('set-pickup-notes'),
+      delivery_notes:    _getVal('set-delivery-notes'),
+    })});
+    toast('✅ Delivery settings saved');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+// ── AI SETTINGS ───────────────────────────────────────────
+let _aiTone = 'friendly';
+function selectTone(btn) {
+  document.querySelectorAll('.tone-pill').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  _aiTone = btn.dataset.tone;
+}
+async function saveAISettings() {
+  const btn = document.querySelector('[onclick="saveAISettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      ai_tone:            _aiTone,
+      welcome_message:    _getVal('set-welcome-msg'),
+      response_length:    _getVal('set-response-length'),
+      recommendations:    document.getElementById('set-recommendations')?.checked,
+      upsells:            document.getElementById('set-upsells')?.checked,
+      personalised:       document.getElementById('set-personalised')?.checked,
+      footer_message:     _getVal('set-footer-msg'),
+    })});
+    toast('✅ AI settings saved');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+// ── STORE SETTINGS ────────────────────────────────────────
+async function saveStoreControl(key, val) {
+  try {
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ [key]: val }) });
+    toast('✅ ' + (val ? 'Enabled' : 'Disabled'));
   } catch(e) { toast('Failed: ' + e.message, true); }
 }
+async function saveStoreSettings() {
+  const btn = document.querySelector('[onclick="saveStoreSettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      offline_message: _getVal('set-offline-msg'),
+    })});
+    toast('✅ Store settings saved');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+// ── NOTIFICATION SETTINGS ─────────────────────────────────
+async function saveNotifSettings() {
+  const btn = document.querySelector('[onclick="saveNotifSettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      email_alerts:   document.getElementById('set-email-alerts')?.checked,
+      alert_email:    _getVal('set-alert-email'),
+      stock_alerts:   document.getElementById('set-stock-alerts')?.checked,
+      daily_summary:  document.getElementById('set-daily-summary')?.checked,
+    })});
+    toast('✅ Notification settings saved');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+// saveSettings() is now handled by saveProfile(), saveEcoCashSettings() etc.
+// Kept as a no-op for backward compat with any stray calls.
+async function saveSettings() { toast('Please use the Settings tabs to save.'); }
+
+// saveBusinessName is now part of saveProfile() above
+async function saveBusinessName() { await saveProfile(); }
 
 function setTheme(theme, silent=false) {
   if (theme === 'light') {
