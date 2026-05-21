@@ -1283,7 +1283,7 @@ def get_order_status(order_id: int, user=Depends(require_business)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/platform/businesses")
-def platform_list_businesses(user=Depends(require_super_admin)):
+def platform_list_businesses(user=Depends(require_superadmin)):
     """
     Super admin: list all businesses on the platform.
     Returns full details including status, shared-number flag.
@@ -1319,7 +1319,7 @@ class BusinessStatusUpdate(BaseModel):
 def platform_update_business(
     business_id: int,
     data: BusinessStatusUpdate,
-    user=Depends(require_super_admin),
+    user=Depends(require_superadmin),
 ):
     """
     Super admin: update a business — approve, suspend, reorder, categorise.
@@ -1351,7 +1351,7 @@ def platform_update_business(
 
 
 @app.post("/platform/businesses/{business_id}/suspend")
-def platform_suspend_business(business_id: int, user=Depends(require_super_admin)):
+def platform_suspend_business(business_id: int, user=Depends(require_superadmin)):
     """Super admin: suspend a business (is_active=False)."""
     biz = crud.get_business_by_id(business_id)
     if not biz:
@@ -1364,7 +1364,7 @@ def platform_suspend_business(business_id: int, user=Depends(require_super_admin
 
 
 @app.post("/platform/businesses/{business_id}/activate")
-def platform_activate_business(business_id: int, user=Depends(require_super_admin)):
+def platform_activate_business(business_id: int, user=Depends(require_superadmin)):
     """Super admin: activate a suspended business."""
     biz = crud.get_business_by_id(business_id)
     if not biz:
@@ -1377,7 +1377,7 @@ def platform_activate_business(business_id: int, user=Depends(require_super_admi
 
 
 @app.get("/platform/stats")
-def platform_stats(user=Depends(require_super_admin)):
+def platform_stats(user=Depends(require_superadmin)):
     """Super admin: platform-wide statistics."""
     try:
         from db import supabase as _sb
@@ -1402,7 +1402,7 @@ def platform_stats(user=Depends(require_super_admin)):
 
 
 @app.get("/platform/customer/{phone}/session")
-def platform_customer_session(phone: str, user=Depends(require_super_admin)):
+def platform_customer_session(phone: str, user=Depends(require_superadmin)):
     """
     Super admin: inspect a customer's current business selection and state.
     Useful for debugging routing issues.
@@ -1419,7 +1419,7 @@ def platform_customer_session(phone: str, user=Depends(require_super_admin)):
 
 
 @app.delete("/platform/customer/{phone}/session")
-def platform_clear_customer_session(phone: str, user=Depends(require_super_admin)):
+def platform_clear_customer_session(phone: str, user=Depends(require_superadmin)):
     """Super admin: clear a customer's business selection (forces re-pick)."""
     from tenant_router import clear_selected_business
     clear_selected_business(phone)
