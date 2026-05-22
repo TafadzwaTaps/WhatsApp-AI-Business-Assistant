@@ -345,13 +345,36 @@ function createBubble(msg) {
   const isBroadcast = text.startsWith('[BROADCAST]');
   const dir = rawDir.startsWith('in') ? 'incoming' : 'outgoing';
 
-  const div = document.createElement('div');
-  div.className = `msg ${dir}${isBroadcast ? ' broadcast' : ''}`;
-  div.dataset.msgId = msg.id || '';
+  // Determine sender type for visual differentiation
+  // sender_type: "ai" = bot reply, "agent" = human agent reply, undefined = customer
+  const senderType = msg.sender_type || (dir === 'outgoing' ? 'ai' : 'customer');
+  const isAgentMsg  = senderType === 'agent';
+  const isAiMsg     = senderType === 'ai';
 
-  const displayText = isBroadcast ? '📢 ' + escHtml(text.replace('[BROADCAST] ', '')) : escHtml(text);
+  const div = document.createElement('div');
+  div.className = [
+    'msg',
+    dir,
+    isBroadcast ? 'broadcast' : '',
+    isAgentMsg  ? 'msg-agent' : '',
+    isAiMsg     ? 'msg-ai'    : '',
+  ].filter(Boolean).join(' ');
+  div.dataset.msgId     = msg.id || '';
+  div.dataset.senderType = senderType;
+
+  const displayText = isBroadcast
+    ? '📢 ' + escHtml(text.replace('[BROADCAST] ', ''))
+    : escHtml(text);
+
+  // Sender label: shown above agent messages so staff can identify themselves
+  const senderLabel = isAgentMsg
+    ? `<div class="msg-sender-label">👤 ${escHtml(msg.sender_name || 'Agent')}</div>`
+    : isAiMsg && dir === 'outgoing'
+    ? `<div class="msg-sender-label msg-ai-label">🤖 AI</div>`
+    : '';
 
   div.innerHTML = `
+    ${senderLabel}
     <div class="bubble">${displayText}</div>
     <div class="msg-meta">
       <span class="msg-time">${formatTime(msg.created_at)}</span>
@@ -380,11 +403,13 @@ async function sendMessage() {
   input.style.height = 'auto';
   sendBtn.disabled = true;
 
-  // Optimistic render for snappy UX
+  // Optimistic render — mark as agent message so it shows agent badge immediately
   appendBubble({
     id: null,
     text,
-    direction: 'outgoing',
+    direction:   'outgoing',
+    sender_type: 'agent',     // human agent is typing this
+    sender_name: 'You',
     status: 'sent',
     created_at: new Date().toISOString(),
   });

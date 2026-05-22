@@ -929,3 +929,84 @@ body {
   .chat-messages { padding: 12px 10px; }
   .send-box { padding: 8px 10px; gap: 6px; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════
+   AGENT vs AI MESSAGE DIFFERENTIATION
+   ─────────────────────────────────────────────────────────────
+   AI messages (outgoing / bot):   subtle green tint, 🤖 badge
+   Agent messages (outgoing/human): amber/orange tint, 👤 badge
+   Customer messages (incoming):   unchanged
+══════════════════════════════════════════════════════════════ */
+
+/* Sender label above bubble */
+.msg-sender-label {
+  font-size: 9.5px;
+  font-family: var(--mono);
+  color: var(--text-muted);
+  margin-bottom: 2px;
+  padding: 0 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.msg-ai-label {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+/* Agent message — outgoing bubble with amber accent */
+.msg.msg-agent .bubble {
+  background: rgba(245, 158, 11, 0.10) !important;  /* amber tint */
+  border-color: rgba(245, 158, 11, 0.30) !important;
+  color: var(--bubble-out-text) !important;
+}
+
+.msg.msg-agent .msg-sender-label {
+  color: #f59e0b;   /* amber */
+}
+
+/* AI message — outgoing bubble (slightly different shade to distinguish) */
+.msg.msg-ai .bubble {
+  /* Keeps the default outgoing style — just adds the label */
+}
+
+.msg.msg-ai .msg-sender-label {
+  color: var(--text-muted);
+}
+
+/* Human handoff indicator in conversation list */
+.contact-item.handoff-active::before {
+  content: '🔴';
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 8px;
+}
+
+.contact-item.handoff-active {
+  position: relative;
+  border-left: 3px solid #f59e0b;  /* amber left border signals needs human */
+}
+
+/* Handoff mode banner inside chat window */
+.handoff-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: rgba(245, 158, 11, 0.08);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.20);
+  font-size: 11px;
+  font-family: var(--mono);
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.handoff-banner-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: pulse 1.5s infinite;
+}

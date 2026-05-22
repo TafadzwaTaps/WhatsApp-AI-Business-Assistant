@@ -49,12 +49,20 @@ _HANDOFF_EXACT = {
 }
 
 _HANDOFF_CONTAINS = [
-    "talk to human", "real person", "speak to",
+    # Human / person requests
+    "talk to human", "talk to a human", "talk to real",
+    "real person", "speak to a", "speak to someone",
     "human agent", "support agent", "contact agent",
+    "connect me to", "transfer me to",
+    # Agent / support
+    "want to speak", "want to talk", "would like to speak",
+    "would like to talk", "would like to talk to",
+    "talk to someone", "speak to manager",
+    # Help / complaints
     "phone number", "call me", "need help",
     "not happy", "very unhappy", "this is terrible",
     "i want to complain", "your service",
-    "want to speak", "want to talk",
+    "can i talk", "can i speak", "let me speak",
 ]
 
 
@@ -103,6 +111,61 @@ def handoff_paused_reply() -> str:
     )
 
 
+def handoff_customer_message(phone: str, business_id: int) -> str:
+    """
+    Called when a customer sends a message while in human_handoff mode.
+
+    Smart ack logic:
+    - First message after handoff: acknowledge once
+    - Subsequent messages: stay silent (return empty string)
+      so the human agent conversation is not interrupted by the bot.
+
+    Tracks message count in state_data.handoff_msg_count.
+    """
+    try:
+        from db import supabase
+        from datetime import datetime, timezone
+        res = (
+            supabase.table("carts")
+            .select("state_data")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        sd = {}
+        if res.data:
+            sd = res.data[0].get("state_data") or {}
+
+        count = sd.get("handoff_msg_count", 0)
+        sd["handoff_msg_count"] = count + 1
+
+        # Persist updated count
+        supabase.table("carts").upsert(
+            {
+                "phone":       phone,
+                "business_id": business_id,
+                "state_data":  sd,
+                "updated_at":  datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="phone,business_id",
+        ).execute()
+
+        if count == 0:
+            # First message — send one acknowledgement
+            return (
+                "⏳ *Your message has been received.*\n\n"
+                "Our team member will reply shortly. 🙏"
+            )
+        # Subsequent messages — silent. Human agent handles it.
+        return ""
+
+    except Exception as exc:
+        log.warning("handoff_customer_message error: %s", exc)
+        # On error, acknowledge once to be safe
+        return "⏳ Message received. A team member will respond shortly."
+
+
 # ── Crud helpers (imported lazily to avoid circular imports) ─────────────────
 
 def notify_dashboard(phone: str, business_id: int, business_name: str) -> None:
@@ -123,7 +186,34 @@ def notify_dashboard(phone: str, business_id: int, business_name: str) -> None:
 
 
 def clear_handoff_flag(phone: str, business_id: int) -> None:
-    """Clear the human-needed flag when AI is resumed."""
+    """Clear the human-needed flag and reset message counter when AI is resumed."""
+    # Reset handoff_msg_count in state_data so next handoff acks correctly
+    try:
+        from db import supabase
+        from datetime import datetime, timezone
+        res = (
+            supabase.table("carts")
+            .select("state_data")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        sd = {}
+        if res.data:
+            sd = res.data[0].get("state_data") or {}
+        sd.pop("handoff_msg_count", None)
+        supabase.table("carts").upsert(
+            {
+                "phone": phone, "business_id": business_id,
+                "state_data": sd,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="phone,business_id",
+        ).execute()
+    except Exception as exc:
+        log.warning("clear_handoff_flag: state_data reset failed: %s", exc)
+
     try:
         import crud
         mem = crud.get_user_memory(phone, business_id) or {}

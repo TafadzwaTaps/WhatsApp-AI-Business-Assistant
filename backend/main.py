@@ -680,6 +680,16 @@ async def receive_message(request: Request):
             or "image" in value.get("messages", [{}])[0]
         )
 
+        # Detect if this incoming message was sent by the agent/business owner
+        # (some WhatsApp setups echo outbound messages back through the webhook).
+        # We check: if message type is "outbound" or context shows it's from the biz number.
+        msg_context   = msg_obj.get("context", {})
+        forwarded_biz = value.get("statuses")   # delivery receipts — not customer messages
+        is_from_agent = bool(
+            forwarded_biz                          # status update, not a customer message
+            or msg_obj.get("from") == business.get("whatsapp_phone_id")  # echo
+        )
+
         reply = generate_reply(
             message=text,
             phone=customer_phone,
@@ -687,6 +697,7 @@ async def receive_message(request: Request):
             business_name=business["name"],
             products=products,
             message_has_image=message_has_image,
+            message_is_from_agent=is_from_agent,
         )
         log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
 
@@ -701,7 +712,10 @@ async def receive_message(request: Request):
     out_msg: dict = {}
     try:
         crud.log_message(business["id"], customer_phone, "out", reply)
-        out_msg = crud.create_message(customer["id"], business["id"], reply, "outgoing")
+        out_msg = crud.create_message(
+            customer["id"], business["id"], reply, "outgoing",
+            sender_type="ai",   # AI-generated — shown with AI badge in inbox
+        )
         log.info("💾 STEP 7 OK  id=%s", out_msg.get("id", "?") if out_msg else "?")
     except Exception as exc:
         log.exception("💾 STEP 7 FAIL: %s", exc)
@@ -1916,7 +1930,12 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     has_token    = bool(token)
 
     crud.log_message(bid, customer["phone"], "out", body.text)
-    msg = crud.create_message(customer["id"], bid, body.text, "outgoing")
+    # Mark as agent-sent so it can be visually differentiated from AI responses
+    msg = crud.create_message(
+        customer["id"], bid, body.text, "outgoing",
+        sender_type="agent",   # "agent" | "ai" — stored in messages table if col exists
+        sender_name=user.get("username", "Agent"),
+    )
 
     wa_result: dict = {}
     if has_token and has_phone_id:

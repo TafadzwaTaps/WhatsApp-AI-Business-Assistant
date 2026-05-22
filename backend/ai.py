@@ -536,6 +536,30 @@ def _is_agent_message(text: str) -> bool:
     return any(p in t for p in _AGENT_PHRASES)
 
 
+import re as _re
+
+# Patterns for requesting a human — catches "i would like to talk to a human"
+# and other natural language variants with articles/modifiers in between
+_HUMAN_REQUEST_PATTERNS = [
+    _re.compile(r"talk.*to.*(?:a\s+)?human", _re.I),
+    _re.compile(r"speak.*to.*(?:a\s+)?(?:human|person|agent|someone)", _re.I),
+    _re.compile(r"(?:want|would like|need).*(?:human|real person|agent|support)", _re.I),
+    _re.compile(r"(?:connect|transfer|escalate).*(?:human|agent|person)", _re.I),
+    _re.compile(r"(?:call|contact|reach).*(?:someone|team|you)", _re.I),
+    _re.compile(r"talk.*to.*(?:manager|supervisor|staff)", _re.I),
+    _re.compile(r"i would like.*(?:help|assistance|support)", _re.I),
+]
+
+
+def _is_human_request(text: str) -> bool:
+    """
+    Broader human-request detection using regex patterns.
+    Catches: "i would like to talk to a human", "can i speak to a real person",
+    "i need to talk to someone" etc. — variations that exact phrase matching misses.
+    """
+    return any(p.search(text) for p in _HUMAN_REQUEST_PATTERNS)
+
+
 # ── Payment confirmation ──────────────────────────────────────────────────
 
 _PAID_EXACT = {
@@ -809,10 +833,12 @@ def _find_product(text: str, products: list) -> dict | None:
         if m:
             return name_map[m[0]]
 
+    # Word-by-word fuzzy — 4 char minimum to prevent short acronyms (ETA, ETA, etc.)
+    # from accidentally matching unrelated products via substring scoring
     for word in t.split():
-        if len(word) < 3:
+        if len(word) < 4:
             continue
-        m = get_close_matches(word, names, n=1, cutoff=0.60)
+        m = get_close_matches(word, names, n=1, cutoff=0.65)
         if m:
             return name_map[m[0]]
 
@@ -1103,7 +1129,9 @@ def _parse_multi_items(text: str, products: list) -> list[tuple]:
         # Single item — let normal path handle it
         return []
 
-    found = []
+    found: list[tuple] = []
+    seen_names: set[str] = set()   # dedup — prevent same product matched twice
+
     for part in parts:
         # Use fuzzy matcher for each part — handles spelling/case in multi-items
         product, qty = _fuzzy().extract_product_and_quantity(part, products)
@@ -1111,9 +1139,20 @@ def _parse_multi_items(text: str, products: list) -> list[tuple]:
             product = _find_product(part, products)
             qty = _qty(part) if product else 1
         if product:
+            name = product["name"].lower()
+            if name in seen_names:
+                # Same product matched twice from different parts of the same phrase
+                # (e.g. "spaghetti and mince" split → "spaghetti" + "mince" → same product)
+                # Add qty to existing entry instead of duplicating
+                for i, (p, q) in enumerate(found):
+                    if p["name"].lower() == name:
+                        found[i] = (p, q + qty)
+                        break
+                continue
+            seen_names.add(name)
             found.append((product, qty))
 
-    # Only return if we found ≥ 2 items (otherwise let normal path handle)
+    # Only return multi-item result if we found ≥ 2 DISTINCT items
     return found if len(found) >= 2 else []
 
 
@@ -1377,6 +1416,7 @@ def generate_reply(
     business_name: str,
     products: list,
     message_has_image: bool = False,   # True when WhatsApp message contains an image
+    message_is_from_agent: bool = False,  # True when message sent by staff/agent
 ) -> str:
     """
     Single entry point called by the webhook for every incoming message.
@@ -1394,6 +1434,15 @@ def generate_reply(
     log.info("state=%s  cart=%d", current_state, len(cart))
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P-3.5 — AGENT-SENT MESSAGE (from dashboard or agent's own WhatsApp)
+    # When staff sends a message, the WhatsApp webhook may echo it back.
+    # Suppress any AI reply — the agent is handling the conversation.
+    # ══════════════════════════════════════════════════════════════════════════
+    if message_is_from_agent:
+        log.info("P-3.5: agent-sent message suppressed  phone=%s", phone)
+        return ""
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P-3 — HUMAN HANDOFF MODE (AI paused — only ack message, no AI responses)
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "human_handoff":
@@ -1401,13 +1450,15 @@ def generate_reply(
         # Safety: always re-check state with the canonical function
         if is_ai_paused(current_state):
             log.info("human_handoff: AI paused  phone=%s", phone)
-            return _handoff_mod().handoff_paused_reply()
+            # Don't spam "message received" on every customer message —
+            # only send the ack once, then stay silent so agent can reply naturally
+            return _handoff_mod().handoff_customer_message(phone, business_id)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-2.5 — HUMAN HANDOFF REQUEST DETECTION
     # Customer asks for a human agent — pause AI immediately
     # ══════════════════════════════════════════════════════════════════════════
-    if _handoff_mod().is_handoff_request(text):
+    if _handoff_mod().is_handoff_request(text) or _is_human_request(text):
         _set_human_handoff(phone, business_id)
         _handoff_mod().notify_dashboard(phone, business_id, business_name)
         log.info("human_handoff: triggered  phone=%s  biz=%s", phone, business_id)
@@ -1694,9 +1745,11 @@ def generate_reply(
     # Inserted right after payment — works for cash and confirmed orders
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "awaiting_fulfillment":
-        session  = _get_session(phone, business_id)
-        order_id = session.get("order_id")
-        reference = session.get("reference", f"ORDER-{order_id}")
+        # Re-read session fresh to guard against stale cache
+        session   = _read_state_data(phone, business_id).get("session") or {}
+        order_id  = session.get("order_id")
+        reference = session.get("reference", f"ORDER-{order_id}" if order_id else "your order")
+        log.info("awaiting_fulfillment  order=%s  ref=%s  text=%r", order_id, reference, text)
         choice = _detect_fulfillment(text)
 
         if _is_cancel(text):
