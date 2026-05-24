@@ -442,12 +442,37 @@ _PICKUP_TRIGGERS = {
 }
 
 def _detect_fulfillment(text: str) -> str | None:
-    """Returns 'delivery' | 'pickup' | None."""
+    """
+    Returns 'delivery' | 'pickup' | None.
+
+    Accepts:
+      Delivery: "1", "1️⃣", "delivery", "deliver", "ship", "bring it", "bring",
+                "home delivery", "door delivery", "deliver it", "deliver to me"
+      Pickup:   "2", "2️⃣", "pickup", "pick up", "collect", "i'll collect",
+                "self pickup", "walk in", "come in", "i will pick", "i will come"
+    """
     t = text.lower().strip()
-    if t in _DELIVERY_TRIGGERS or any(w in t for w in ["deliver", "delivery"]):
+
+    # Delivery check
+    if t in _DELIVERY_TRIGGERS:
+        log.debug("_detect_fulfillment: exact delivery match  text=%r", text)
         return "delivery"
-    if t in _PICKUP_TRIGGERS or any(w in t for w in ["pickup", "pick up", "collect"]):
+    # Additional delivery keywords not in the set
+    for kw in ["deliver", "delivery", "ship", "bring it", "bring me", "bring to"]:
+        if kw in t:
+            log.debug("_detect_fulfillment: delivery keyword=%r  text=%r", kw, text)
+            return "delivery"
+
+    # Pickup check
+    if t in _PICKUP_TRIGGERS:
+        log.debug("_detect_fulfillment: exact pickup match  text=%r", text)
         return "pickup"
+    for kw in ["pickup", "pick up", "collect", "i'll pick"]:
+        if kw in t:
+            log.debug("_detect_fulfillment: pickup keyword=%r  text=%r", kw, text)
+            return "pickup"
+
+    log.debug("_detect_fulfillment: no match  text=%r  t=%r", text, t)
     return None
 
 
@@ -1803,7 +1828,11 @@ def generate_reply(
                 f"_Any questions? Type *{reference.lower()}* to check status._"
             )
 
-        # Unrecognised reply — re-ask
+        # Unrecognised reply — re-ask with log so we can diagnose
+        log.warning(
+            "awaiting_fulfillment: unrecognised reply  text=%r  t_lower=%r  order=%s",
+            text, text.lower().strip(), order_id,
+        )
         return (
             f"🤔 Please choose how you'd like to receive *{reference}*:\n\n"
             f"  1️⃣  *Delivery* — we bring it to you\n"
@@ -2158,12 +2187,70 @@ def generate_reply(
     # P6 — REMOVE ITEM
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "remove":
-        t_lower = text.lower()
-        for item in list(cart):
+        t_lower = text.lower().strip()
+        # Strip "remove " prefix and similar intent words to get the search term
+        import re as _re
+        search_term = _re.sub(
+            r"^(remove|delete|take out|take off|drop|cancel)\s+",
+            "", t_lower, flags=_re.IGNORECASE
+        ).strip()
+        log.debug("remove: search_term=%r  cart_items=%s",
+                  search_term, [i["name"] for i in cart])
+
+        matched_item = None
+
+        # Strategy 1: full item name appears in the user's message (original check)
+        for item in cart:
             if item["name"].lower() in t_lower:
-                cart.remove(item)
-                _save_cart(phone, business_id, cart)
-                return f"🗑️ Removed *{item['name']}* from your cart.\n\n{_format_cart(cart)}"
+                matched_item = item
+                log.debug("remove: full-name match  item=%r", item["name"])
+                break
+
+        # Strategy 2: search term appears in item name (partial/substring)
+        # e.g. "spaghetti" matches "spaghetti and mince"
+        if not matched_item and search_term:
+            for item in cart:
+                if search_term in item["name"].lower():
+                    matched_item = item
+                    log.debug("remove: substring match  search=%r  item=%r",
+                              search_term, item["name"])
+                    break
+
+        # Strategy 3: all significant search words appear in item name
+        # e.g. search_term="fried calamari" → words ["fried","calamari"] all in item name
+        if not matched_item and search_term:
+            search_words = [w for w in search_term.split() if len(w) >= 3]
+            if search_words:
+                for item in cart:
+                    item_lower = item["name"].lower()
+                    if all(w in item_lower for w in search_words):
+                        matched_item = item
+                        log.debug("remove: all-words match  words=%s  item=%r",
+                                  search_words, item["name"])
+                        break
+
+        # Strategy 4: any significant word from search appears in item name
+        # More aggressive — only used as last resort with minimum word length 4
+        if not matched_item and search_term:
+            search_words = [w for w in search_term.split() if len(w) >= 4]
+            for word in search_words:
+                for item in cart:
+                    if word in item["name"].lower():
+                        matched_item = item
+                        log.debug("remove: single-word match  word=%r  item=%r",
+                                  word, item["name"])
+                        break
+                if matched_item:
+                    break
+
+        if matched_item:
+            cart.remove(matched_item)
+            _save_cart(phone, business_id, cart)
+            log.info("remove: removed  item=%r  phone=%s", matched_item["name"], phone)
+            return f"🗑️ Removed *{matched_item['name']}* from your cart.\n\n{_format_cart(cart)}"
+
+        log.info("remove: no match  search_term=%r  cart_items=%s",
+                 search_term, [i["name"] for i in cart])
         return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart)}"
 
     # ══════════════════════════════════════════════════════════════════════════

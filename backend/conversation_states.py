@@ -41,20 +41,23 @@ from typing import Optional
 class STATE:
     """String constants for all conversation states. Use these instead of
     raw string literals throughout the codebase to prevent typos."""
-    BROWSING          = "browsing"
-    CONFIRM_ORDER     = "confirm_order"
-    CHECKOUT          = "checkout"
-    AWAITING_PAYMENT  = "awaiting_payment"
-    AWAITING_PROOF    = "awaiting_proof"
-    MANUAL_REVIEW     = "manual_review"
-    HUMAN_HANDOFF     = "human_handoff"
-    SURVEY            = "survey"
-    COMPLETED         = "completed"
-    CANCELLED         = "cancelled"
+    BROWSING               = "browsing"
+    CONFIRM_ORDER          = "confirm_order"
+    CHECKOUT               = "checkout"
+    AWAITING_PAYMENT       = "awaiting_payment"
+    AWAITING_PROOF         = "awaiting_proof"
+    AWAITING_FULFILLMENT   = "awaiting_fulfillment"   # delivery vs pickup choice
+    AWAITING_ADDRESS       = "awaiting_address"        # customer typing delivery address
+    MANUAL_REVIEW          = "manual_review"
+    HUMAN_HANDOFF          = "human_handoff"
+    SURVEY                 = "survey"
+    COMPLETED              = "completed"
+    CANCELLED              = "cancelled"
 
     ALL = {
         BROWSING, CONFIRM_ORDER, CHECKOUT,
         AWAITING_PAYMENT, AWAITING_PROOF,
+        AWAITING_FULFILLMENT, AWAITING_ADDRESS,   # ← were missing; caused normalize_state fallback
         MANUAL_REVIEW, HUMAN_HANDOFF,
         SURVEY, COMPLETED, CANCELLED,
     }
@@ -65,9 +68,11 @@ _TRANSITIONS: dict[str, set[str]] = {
     STATE.BROWSING:         {STATE.CONFIRM_ORDER, STATE.CHECKOUT, STATE.HUMAN_HANDOFF},
     STATE.CONFIRM_ORDER:    {STATE.CHECKOUT, STATE.BROWSING, STATE.CANCELLED},
     STATE.CHECKOUT:         {STATE.AWAITING_PAYMENT, STATE.BROWSING, STATE.CANCELLED},
-    STATE.AWAITING_PAYMENT: {STATE.AWAITING_PROOF, STATE.COMPLETED, STATE.CANCELLED,
-                              STATE.MANUAL_REVIEW},
-    STATE.AWAITING_PROOF:   {STATE.MANUAL_REVIEW, STATE.CANCELLED},
+    STATE.AWAITING_PAYMENT: {STATE.AWAITING_PROOF, STATE.AWAITING_FULFILLMENT,
+                              STATE.COMPLETED, STATE.CANCELLED, STATE.MANUAL_REVIEW},
+    STATE.AWAITING_PROOF:   {STATE.AWAITING_FULFILLMENT, STATE.MANUAL_REVIEW, STATE.CANCELLED},
+    STATE.AWAITING_FULFILLMENT: {STATE.AWAITING_ADDRESS, STATE.BROWSING, STATE.CANCELLED},
+    STATE.AWAITING_ADDRESS:    {STATE.BROWSING, STATE.CANCELLED},
     STATE.MANUAL_REVIEW:    {STATE.COMPLETED, STATE.CANCELLED, STATE.BROWSING},
     STATE.HUMAN_HANDOFF:    {STATE.BROWSING},
     STATE.SURVEY:           {STATE.BROWSING},
@@ -85,7 +90,9 @@ _LABELS: dict[str, str] = {
     STATE.CONFIRM_ORDER:    "Confirming order",
     STATE.CHECKOUT:         "Selecting payment",
     STATE.AWAITING_PAYMENT: "Awaiting payment",
-    STATE.AWAITING_PROOF:   "Awaiting payment proof",
+    STATE.AWAITING_PROOF:         "Awaiting payment proof",
+    STATE.AWAITING_FULFILLMENT:   "Choosing delivery/pickup",
+    STATE.AWAITING_ADDRESS:       "Entering delivery address",
     STATE.MANUAL_REVIEW:    "Under manual review",
     STATE.HUMAN_HANDOFF:    "Human support mode",
     STATE.SURVEY:           "Satisfaction survey",
@@ -136,6 +143,8 @@ def is_active_order_state(state: str) -> bool:
         STATE.CHECKOUT,
         STATE.AWAITING_PAYMENT,
         STATE.AWAITING_PROOF,
+        STATE.AWAITING_FULFILLMENT,
+        STATE.AWAITING_ADDRESS,
         STATE.MANUAL_REVIEW,
     }
 
