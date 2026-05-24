@@ -1434,25 +1434,46 @@ def generate_reply(
     log.info("state=%s  cart=%d", current_state, len(cart))
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P-3.5 — AGENT-SENT MESSAGE (from dashboard or agent's own WhatsApp)
-    # When staff sends a message, the WhatsApp webhook may echo it back.
-    # Suppress any AI reply — the agent is handling the conversation.
+    # P-3.5 — AGENT-SENT MESSAGE (echoed back from WhatsApp API)
+    # Only suppress when explicitly flagged by the webhook — this flag is
+    # set when message originates from the business's own phone number ID,
+    # indicating an echo of a staff-sent message, not a customer message.
     # ══════════════════════════════════════════════════════════════════════════
     if message_is_from_agent:
-        log.info("P-3.5: agent-sent message suppressed  phone=%s", phone)
+        log.info(
+            "P-3.5: agent-echo suppressed  phone=%s  state=%s",
+            phone, current_state,
+        )
         return ""
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P-3 — HUMAN HANDOFF MODE (AI paused — only ack message, no AI responses)
+    # P-3 — HUMAN HANDOFF MODE (AI paused — with auto-resume support)
+    #
+    # handoff_customer_message() can return three things:
+    #   "__AUTO_RESUMED__" → state reset to browsing; re-run this message normally
+    #   ""                 → silent (agent handling); webhook skips sending
+    #   "⏳ ..."           → first ack message; send to customer once
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "human_handoff":
         from conversation_states import is_ai_paused
-        # Safety: always re-check state with the canonical function
         if is_ai_paused(current_state):
-            log.info("human_handoff: AI paused  phone=%s", phone)
-            # Don't spam "message received" on every customer message —
-            # only send the ack once, then stay silent so agent can reply naturally
-            return _handoff_mod().handoff_customer_message(phone, business_id)
+            log.info("human_handoff: AI paused — checking auto-resume  phone=%s", phone)
+            handoff_result = _handoff_mod().handoff_customer_message(
+                phone, business_id, text=text   # pass text for intent/timeout check
+            )
+
+            if handoff_result == "__AUTO_RESUMED__":
+                # State has been reset to browsing — re-run generate_reply normally
+                log.info(
+                    "human_handoff: auto-resumed — re-running generate_reply  phone=%s",
+                    phone,
+                )
+                # Reload state and continue — current_state is now "browsing"
+                current_state = _get_state(phone, business_id)
+                # Fall through to normal processing below
+            else:
+                # Either ack message or silent — return as-is
+                return handoff_result
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-2.5 — HUMAN HANDOFF REQUEST DETECTION

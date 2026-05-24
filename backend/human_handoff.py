@@ -31,9 +31,25 @@ ADMIN ENDPOINTS (added to main.py)
 """
 
 import logging
+import time
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+# ── Timeout configuration ─────────────────────────────────────────────────────
+# After this many seconds with no agent activity, the AI auto-resumes.
+# The timer resets whenever the agent sends a message from the dashboard.
+# Set to 0 to disable auto-resume entirely.
+HANDOFF_TIMEOUT_SECONDS = int(60 * 45)   # 45 minutes by default
+
+# Words that should always escape human_handoff and return to AI,
+# even if no agent has explicitly released the session.
+AUTO_RESUME_INTENTS = {
+    "hi", "hello", "hey", "hie", "yo", "start",
+    "menu", "order", "cart", "checkout",
+    "help", "back", "nevermind", "never mind",
+    "resume", "ai", "bot", "restart", "reset",
+}
 
 
 # ── Trigger detection ─────────────────────────────────────────────────────────
@@ -111,16 +127,139 @@ def handoff_paused_reply() -> str:
     )
 
 
-def handoff_customer_message(phone: str, business_id: int) -> str:
+def should_auto_resume(text: str, sd: dict) -> tuple[bool, str]:
+    """
+    Determine whether the AI should automatically resume from human_handoff.
+
+    Returns (should_resume: bool, reason: str).
+
+    Auto-resume triggers:
+    1. Customer types a restart intent ("menu", "hi", "cart" etc.)
+    2. HANDOFF_TIMEOUT_SECONDS has elapsed since handoff was set
+       and no agent has replied recently (last_agent_reply_at is old/absent)
+    """
+    # Trigger 1: restart intent keyword
+    t_lower = text.lower().strip()
+    if t_lower in AUTO_RESUME_INTENTS:
+        log.info("auto_resume: restart intent detected  word=%r", t_lower)
+        return True, f"customer restart intent: {t_lower!r}"
+
+    # Trigger 2: timeout elapsed
+    if HANDOFF_TIMEOUT_SECONDS > 0:
+        handoff_at = sd.get("handoff_started_at", 0)
+        if handoff_at:
+            elapsed = time.time() - float(handoff_at)
+            if elapsed > HANDOFF_TIMEOUT_SECONDS:
+                log.info(
+                    "auto_resume: timeout elapsed  elapsed=%.0fs  limit=%ds",
+                    elapsed, HANDOFF_TIMEOUT_SECONDS,
+                )
+                return True, f"timeout after {elapsed:.0f}s"
+
+    return False, ""
+
+
+def handoff_customer_message(phone: str, business_id: int, text: str = "") -> str:
     """
     Called when a customer sends a message while in human_handoff mode.
 
-    Smart ack logic:
-    - First message after handoff: acknowledge once
-    - Subsequent messages: stay silent (return empty string)
-      so the human agent conversation is not interrupted by the bot.
+    Logic:
+    1. Check auto-resume conditions (restart intent OR timeout elapsed).
+       If triggered → reset state to browsing and return "" so generate_reply
+       continues processing the message normally.
+    2. First message after handoff: acknowledge once.
+    3. Subsequent messages: stay silent so the human agent's conversation
+       is not interrupted by bot noise.
 
-    Tracks message count in state_data.handoff_msg_count.
+    Tracks:
+      state_data.handoff_msg_count    — number of customer messages since handoff
+      state_data.handoff_started_at   — Unix timestamp when handoff was activated
+      state_data.last_agent_reply_at  — Unix timestamp of last agent reply
+    """
+    try:
+        from db import supabase
+        from datetime import datetime, timezone
+
+        res = (
+            supabase.table("carts")
+            .select("state_data")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        sd = {}
+        if res.data:
+            sd = res.data[0].get("state_data") or {}
+
+        # ── Auto-resume check ─────────────────────────────────────────────────
+        resume, reason = should_auto_resume(text, sd)
+        if resume:
+            log.info(
+                "handoff auto-resume  phone=%s  biz=%s  reason=%s",
+                phone, business_id, reason,
+            )
+            # Reset to browsing — let generate_reply handle this message normally
+            sd["state"]              = "browsing"
+            sd["handoff_msg_count"]  = 0
+            sd.pop("handoff_started_at",  None)
+            sd.pop("last_agent_reply_at", None)
+            supabase.table("carts").upsert(
+                {
+                    "phone":       phone,
+                    "business_id": business_id,
+                    "state_data":  sd,
+                    "updated_at":  datetime.now(timezone.utc).isoformat(),
+                },
+                on_conflict="phone,business_id",
+            ).execute()
+            # Return special sentinel so ai.py knows to re-run generate_reply
+            return "__AUTO_RESUMED__"
+
+        # ── Normal handoff handling ───────────────────────────────────────────
+        count = sd.get("handoff_msg_count", 0)
+        sd["handoff_msg_count"] = count + 1
+
+        supabase.table("carts").upsert(
+            {
+                "phone":       phone,
+                "business_id": business_id,
+                "state_data":  sd,
+                "updated_at":  datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="phone,business_id",
+        ).execute()
+
+        if count == 0:
+            # First message after handoff — acknowledge once
+            log.info(
+                "handoff first ack  phone=%s  biz=%s",
+                phone, business_id,
+            )
+            return (
+                "⏳ *Your message has been received.*\n\n"
+                "Our team member will reply shortly. 🙏\n\n"
+                "_To return to the AI assistant, type *menu* or *hi* at any time._"
+            )
+
+        # Subsequent messages — stay silent, agent handles it
+        log.debug(
+            "handoff silent  phone=%s  biz=%s  msg_count=%d",
+            phone, business_id, count,
+        )
+        return ""
+
+    except Exception as exc:
+        log.warning("handoff_customer_message error: %s  — returning safe fallback", exc)
+        # On any DB error, acknowledge rather than silently dropping
+        return "⏳ Message received. A team member will respond shortly."
+
+
+def record_agent_reply(phone: str, business_id: int) -> None:
+    """
+    Record that a human agent has replied to this customer.
+    Called from /chat/send endpoint so the timeout knows activity is ongoing.
+    Stores a Unix timestamp in state_data.last_agent_reply_at.
     """
     try:
         from db import supabase
@@ -136,44 +275,62 @@ def handoff_customer_message(phone: str, business_id: int) -> str:
         sd = {}
         if res.data:
             sd = res.data[0].get("state_data") or {}
-
-        count = sd.get("handoff_msg_count", 0)
-        sd["handoff_msg_count"] = count + 1
-
-        # Persist updated count
+        sd["last_agent_reply_at"] = time.time()
         supabase.table("carts").upsert(
             {
-                "phone":       phone,
-                "business_id": business_id,
-                "state_data":  sd,
-                "updated_at":  datetime.now(timezone.utc).isoformat(),
+                "phone": phone, "business_id": business_id,
+                "state_data": sd,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             },
             on_conflict="phone,business_id",
         ).execute()
-
-        if count == 0:
-            # First message — send one acknowledgement
-            return (
-                "⏳ *Your message has been received.*\n\n"
-                "Our team member will reply shortly. 🙏"
-            )
-        # Subsequent messages — silent. Human agent handles it.
-        return ""
-
+        log.debug("record_agent_reply  phone=%s  biz=%s", phone, business_id)
     except Exception as exc:
-        log.warning("handoff_customer_message error: %s", exc)
-        # On error, acknowledge once to be safe
-        return "⏳ Message received. A team member will respond shortly."
+        log.warning("record_agent_reply error: %s", exc)
 
 
 # ── Crud helpers (imported lazily to avoid circular imports) ─────────────────
 
 def notify_dashboard(phone: str, business_id: int, business_name: str) -> None:
     """
-    Flag this customer as needing human attention in the database.
-    Stores a marker in user_memory so the dashboard can surface it.
+    Flag this customer as needing human attention.
+    Stores a marker in user_memory AND records handoff_started_at timestamp
+    in state_data so the auto-resume timeout has a reference point.
     Safe to call even if crud is unavailable.
     """
+    # Store handoff start timestamp in state_data for timeout tracking
+    try:
+        from db import supabase
+        from datetime import datetime, timezone
+        res = (
+            supabase.table("carts")
+            .select("state_data")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        sd = {}
+        if res.data:
+            sd = res.data[0].get("state_data") or {}
+        sd["handoff_started_at"] = time.time()   # Unix timestamp for timeout calc
+        sd["handoff_msg_count"]  = 0              # Reset ack counter
+        supabase.table("carts").upsert(
+            {
+                "phone": phone, "business_id": business_id,
+                "state_data": sd,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            on_conflict="phone,business_id",
+        ).execute()
+        log.info(
+            "handoff: started_at stamped  phone=%s  biz=%s  timeout=%ds",
+            phone, business_id, HANDOFF_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        log.warning("handoff: timestamp stamp failed: %s", exc)
+
+    # Store needs_human flag in user_memory for dashboard surfacing
     try:
         import crud
         mem = crud.get_user_memory(phone, business_id) or {}

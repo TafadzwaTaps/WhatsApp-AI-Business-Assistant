@@ -501,6 +501,25 @@ async def verify_webhook(request: Request):
 
 
 @app.post("/webhook")
+def _get_customer_state_for_log(phone: str, business_id: int) -> str:
+    """Lightweight state read for logging — never raises."""
+    try:
+        from db import supabase as _sb
+        res = (
+            _sb.table("carts")
+            .select("state_data")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            return (res.data[0].get("state_data") or {}).get("state", "unknown")
+    except Exception:
+        pass
+    return "unknown"
+
+
 async def receive_message(request: Request):
     data = await request.json()
 
@@ -680,15 +699,25 @@ async def receive_message(request: Request):
             or "image" in value.get("messages", [{}])[0]
         )
 
-        # Detect if this incoming message was sent by the agent/business owner
-        # (some WhatsApp setups echo outbound messages back through the webhook).
-        # We check: if message type is "outbound" or context shows it's from the biz number.
-        msg_context   = msg_obj.get("context", {})
-        forwarded_biz = value.get("statuses")   # delivery receipts — not customer messages
-        is_from_agent = bool(
-            forwarded_biz                          # status update, not a customer message
-            or msg_obj.get("from") == business.get("whatsapp_phone_id")  # echo
+        # Detect agent-echo messages.
+        # Meta webhooks already filter delivery `statuses` events at line 519,
+        # so by the time we get here all messages are genuine customer-sent.
+        # message_is_from_agent=True only when the message `from` field exactly
+        # matches the business's registered WhatsApp phone_number_id — this
+        # happens when an agent sends directly from the business WhatsApp account
+        # and Meta echoes it back through the webhook.
+        business_phone_id = business.get("whatsapp_phone_id", "")
+        msg_from          = msg_obj.get("from", "")
+        is_from_agent     = bool(
+            business_phone_id
+            and msg_from
+            and msg_from == business_phone_id
         )
+        if is_from_agent:
+            log.info(
+                "📩 STEP 6 — agent-echo detected  from=%s  biz_phone_id=%s",
+                msg_from, business_phone_id,
+            )
 
         reply = generate_reply(
             message=text,
@@ -729,9 +758,16 @@ async def receive_message(request: Request):
         pass
 
     # ── STEP 8: Send via WhatsApp API ─────────────────────────────────────
-    # Empty reply means the message was an agent status update — do not send
+    # Empty reply handling
     if not reply:
-        log.info("📤 STEP 8 SKIP — empty reply (agent message suppressed)  phone=%s", customer_phone)
+        # Log the suppression with state context for debugging
+        log.info(
+            "📤 STEP 8 SKIP — empty reply  phone=%s  state=%s  is_from_agent=%s  "
+            "reason=agent_echo_or_handoff_silent",
+            customer_phone,
+            _get_customer_state_for_log(customer_phone, business["id"]),
+            is_from_agent,
+        )
         return {"status": "ok"}
 
     if token:
@@ -1940,10 +1976,20 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     wa_result: dict = {}
     if has_token and has_phone_id:
         wa_result = send_whatsapp(business["whatsapp_phone_id"], token, customer["phone"], body.text)
+    elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+        # Shared number path
+        wa_result = send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, customer["phone"], body.text)
     else:
         missing = [k for k, v in {"phone_number_id": has_phone_id, "token": has_token}.items() if not v]
         log.warning("chat_send: WhatsApp NOT sent — missing: %s", missing)
         wa_result = {"error": f"credentials missing: {missing}"}
+
+    # Record agent activity so auto-resume timeout resets correctly
+    try:
+        from human_handoff import record_agent_reply
+        record_agent_reply(customer["phone"], bid)
+    except Exception as exc:
+        log.debug("record_agent_reply skipped: %s", exc)
 
     await manager.broadcast(bid, {
         "event":       "new_message",
