@@ -500,7 +500,6 @@ async def verify_webhook(request: Request):
     raise HTTPException(403, "Webhook verification failed — token mismatch")
 
 
-@app.post("/webhook")
 def _get_customer_state_for_log(phone: str, business_id: int) -> str:
     """Lightweight state read for logging — never raises."""
     try:
@@ -520,6 +519,7 @@ def _get_customer_state_for_log(phone: str, business_id: int) -> str:
     return "unknown"
 
 
+@app.post("/webhook")
 async def receive_message(request: Request):
     data = await request.json()
 
