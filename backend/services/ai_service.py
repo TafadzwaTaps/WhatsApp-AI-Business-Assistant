@@ -104,9 +104,27 @@ def _order_parser():
         from services.order_parser_service import parse_order, build_order_preview
         return parse_order, build_order_preview
     except ImportError:
-        # Fallback: try root-level import path
         from order_parser_service import parse_order, build_order_preview
         return parse_order, build_order_preview
+
+
+def _sales_ai():
+    """Lazy import of sales_ai_service to avoid circular imports."""
+    try:
+        from services.sales_ai_service import (
+            get_suggestions, get_basket_suggestions,
+            get_upsell, format_suggestion_text,
+        )
+        return get_suggestions, get_basket_suggestions, get_upsell, format_suggestion_text
+    except ImportError:
+        try:
+            from sales_ai_service import (
+                get_suggestions, get_basket_suggestions,
+                get_upsell, format_suggestion_text,
+            )
+            return get_suggestions, get_basket_suggestions, get_upsell, format_suggestion_text
+        except ImportError:
+            return None, None, None, None
 
 
 def _handoff_mod():
@@ -979,15 +997,43 @@ def _qty(text: str) -> int:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _recommend(phone: str, business_id: int, products: list, exclude: str = "") -> list:
+    """
+    Return up to 2 recommended products.
+
+    Uses sales_ai_service when available (personalised cross-sell scoring).
+    Falls back to frequency-sorted list (original behaviour) if unavailable.
+    """
     try:
         mem  = _get_memory(phone, business_id)
+
+        # Attempt to use sales_ai for better personalisation
+        _get_sugg, _, _, _ = _sales_ai()
+        if _get_sugg:
+            # Build a minimal "added_product" placeholder using exclude name
+            placeholder = {"name": exclude, "price": 0} if exclude else {}
+            if placeholder:
+                # Fake cart entry so exclude is respected
+                fake_cart = [{"name": exclude, "qty": 1, "price": 0}]
+                suggestions = _get_sugg(placeholder, fake_cart, products, mem, max_results=2)
+            else:
+                suggestions = _get_sugg({"name": "", "price": 0}, [], products, mem, max_results=2)
+            if suggestions:
+                return suggestions
+
+        # Fallback: original frequency-sorted logic
         freq = mem.get("frequent_items", {})
         recs = [p for p in products if p["name"].lower() != exclude.lower()]
         if freq:
             recs.sort(key=lambda p: freq.get(p["name"], 0), reverse=True)
         return recs[:2]
+
     except Exception:
-        return []
+        # Hard fallback — never crash the parent call
+        try:
+            recs = [p for p in products if p.get("name", "").lower() != exclude.lower()]
+            return recs[:2]
+        except Exception:
+            return []
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1897,15 +1943,31 @@ def generate_reply(
             _reset_state(phone, business_id)
             log.info("order_preview: confirmed  items=%d  phone=%s", len(preview), phone)
 
-            recs = _recommend(phone, business_id, products)
-            rec_text = ""
-            if recs:
-                rec_text = "\n\n💡 You might also like " + " or ".join(
-                    f"*{r['name']}*" for r in recs) + "."
+            # Sales AI: basket-completion suggestions after multi-item confirm
+            sugg_text = ""
+            try:
+                _, _get_basket, _, _fmt = _sales_ai()
+                if _get_basket:
+                    mem         = _get_memory(phone, business_id)
+                    basket_sugg = _get_basket(cart, products, mem)
+                    sugg_text   = _fmt(basket_sugg, style="compact") if basket_sugg else ""
+                    log.debug("sales_ai: basket suggestions  count=%d  phone=%s",
+                              len(basket_sugg), phone)
+            except Exception as _exc:
+                log.debug("sales_ai basket skipped (%s)", _exc)
+
+            if not sugg_text:
+                # Fallback to original _recommend
+                recs = _recommend(phone, business_id, products)
+                if recs:
+                    sugg_text = "💡 You might also like " + " or ".join(
+                        f"*{r['name']}*" for r in recs) + "."
+
+            rec_block = ("\n\n" + sugg_text) if sugg_text else ""
             return (
                 f"✅ *Added to your cart!*\n\n"
                 f"{_format_cart(cart)}"
-                f"{rec_text}\n\n"
+                f"{rec_block}\n\n"
                 f"_Type *checkout* when you're ready to order._"
             )
 
@@ -2526,14 +2588,37 @@ def generate_reply(
             _save_cart(phone, business_id, cart)
             log.info("added  %s ×%d  phone=%s", product_name, qty, phone)
 
-            recs      = _recommend(phone, business_id, products, exclude=product_name)
             qty_label = f" ×{qty}" if qty > 1 else ""
-            msg       = (
+            msg = (
                 f"👍 Nice choice! Added *{product_name}*{qty_label} to your cart.\n\n"
                 f"{_format_cart(cart)}"
             )
-            if recs:
-                msg += "\n\n💡 You might also like " + " or ".join(f"*{r['name']}*" for r in recs) + "."
+
+            # Sales AI: cross-sell + upsell suggestions
+            try:
+                _get_sugg, _, _get_upsell, _fmt = _sales_ai()
+                if _get_sugg:
+                    mem         = _get_memory(phone, business_id)
+                    suggestions = _get_sugg(product, cart, products, mem)
+                    upsell      = _get_upsell(product, products, cart)
+                    sugg_text   = _fmt(suggestions, upsell=upsell, style="compact")
+                    if sugg_text:
+                        msg += "\n\n" + sugg_text
+                        log.debug("sales_ai: suggestions shown  product=%r  phone=%s",
+                                  product_name, phone)
+                else:
+                    # Fallback to original _recommend when sales_ai unavailable
+                    recs = _recommend(phone, business_id, products, exclude=product_name)
+                    if recs:
+                        msg += "\n\n💡 You might also like " + " or ".join(
+                            f"*{r['name']}*" for r in recs) + "."
+            except Exception as _exc:
+                log.debug("sales_ai skipped (%s) — using _recommend fallback", _exc)
+                recs = _recommend(phone, business_id, products, exclude=product_name)
+                if recs:
+                    msg += "\n\n💡 You might also like " + " or ".join(
+                        f"*{r['name']}*" for r in recs) + "."
+
             msg += "\n\n_Type *checkout* when you're ready to order._"
             return msg
 

@@ -1282,3 +1282,113 @@ def get_business_stats(business_id: int) -> dict:
             "pending_orders": 0, "active_customers": 0,
             "ai_handled": 0, "human_handled": 0,
         }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT REMINDER HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_stale_payment_orders(
+    business_id: int,
+    older_than_hours: float = 1.0,
+    statuses: list[str] | None = None,
+) -> list[dict]:
+    """
+    Return orders stuck in awaiting_payment / payment_review longer than
+    `older_than_hours` hours, so the business can send reminder nudges.
+
+    Parameters
+    ──────────
+    business_id       Filter to one business (tenant isolation).
+    older_than_hours  Minimum age in hours before an order is "stale".
+    statuses          Payment statuses to check (default: awaiting_payment).
+
+    Returns list of full order dicts, oldest first.
+    Never raises — returns [] on any error.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if statuses is None:
+        statuses = ["awaiting_payment", "payment_review"]
+
+    try:
+        res = (
+            supabase.table("orders")
+            .select(
+                "id, business_id, customer_phone, total_price, "
+                "payment_method, payment_status, payment_reference, "
+                "status, created_at, items"
+            )
+            .eq("business_id", business_id)
+            .in_("payment_status", statuses)
+            .order("created_at", desc=False)          # oldest first
+            .execute()
+        )
+        rows = res.data or []
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+        stale  = []
+        for row in rows:
+            created_raw = row.get("created_at") or ""
+            try:
+                # Handle both "2024-01-01T10:00:00+00:00" and "2024-01-01T10:00:00Z"
+                created_raw = created_raw.replace("Z", "+00:00")
+                created_at  = datetime.fromisoformat(created_raw)
+                if created_at <= cutoff:
+                    stale.append(row)
+            except (ValueError, TypeError):
+                # Unparseable timestamp — include it to be safe (better to remind too early)
+                stale.append(row)
+
+        log.debug(
+            "get_stale_payment_orders  biz=%s  checked=%d  stale=%d  cutoff_h=%.1f",
+            business_id, len(rows), len(stale), older_than_hours,
+        )
+        return stale
+
+    except Exception as exc:
+        log.error("get_stale_payment_orders error: %s", exc)
+        return []
+
+
+def get_stale_payment_orders_all_businesses(
+    older_than_hours: float = 1.0,
+    statuses: list[str] | None = None,
+) -> list[dict]:
+    """
+    Platform-wide version — used by the super-admin reminder endpoint.
+    Returns stale orders across ALL active businesses.
+    """
+    from datetime import datetime, timezone, timedelta
+
+    if statuses is None:
+        statuses = ["awaiting_payment", "payment_review"]
+
+    try:
+        res = (
+            supabase.table("orders")
+            .select(
+                "id, business_id, customer_phone, total_price, "
+                "payment_method, payment_status, payment_reference, "
+                "status, created_at"
+            )
+            .in_("payment_status", statuses)
+            .order("created_at", desc=False)
+            .execute()
+        )
+        rows = res.data or []
+
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=older_than_hours)
+        stale  = []
+        for row in rows:
+            created_raw = (row.get("created_at") or "").replace("Z", "+00:00")
+            try:
+                if datetime.fromisoformat(created_raw) <= cutoff:
+                    stale.append(row)
+            except (ValueError, TypeError):
+                stale.append(row)
+
+        return stale
+    except Exception as exc:
+        log.error("get_stale_payment_orders_all_businesses error: %s", exc)
+        return []

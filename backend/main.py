@@ -1546,6 +1546,148 @@ def platform_clear_customer_session(phone: str, user=Depends(require_superadmin)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# PAYMENT REMINDER ENDPOINTS (Phase 6)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/payments/reminders/pending")
+def reminders_pending(user=Depends(require_business)):
+    """
+    Return all stale payment orders for this business.
+    Used by the dashboard to show a badge count and order list.
+
+    Query stale orders using the FIRST_REMINDER_HOURS threshold so the
+    dashboard reflects exactly which orders a reminder run would target.
+    """
+    from workflows.payment_reminder import FIRST_REMINDER_HOURS, get_reminder_tier
+    bid   = user["business_id"]
+    stale = crud.get_stale_payment_orders(bid, older_than_hours=FIRST_REMINDER_HOURS)
+
+    enriched = []
+    for order in stale:
+        tier = get_reminder_tier(order)
+        enriched.append({
+            "order_id":        order.get("id"),
+            "customer_phone":  order.get("customer_phone"),
+            "total_price":     float(order.get("total_price") or 0),
+            "payment_method":  order.get("payment_method", ""),
+            "payment_status":  order.get("payment_status", ""),
+            "payment_reference": order.get("payment_reference", ""),
+            "created_at":      order.get("created_at", ""),
+            "reminder_tier":   tier,          # 1 | 2 | 3 | None
+        })
+
+    return {
+        "count":  len(enriched),
+        "orders": enriched,
+    }
+
+
+@app.post("/payments/reminders/send")
+async def reminders_send(
+    dry_run: bool = False,
+    user=Depends(require_business),
+):
+    """
+    Send payment reminders to all stale-payment customers for this business.
+
+    Set dry_run=true to preview messages without sending.
+
+    Designed to be called:
+      - Manually from the dashboard (business owner clicks "Send Reminders")
+      - By a Render cron job: curl -X POST .../payments/reminders/send
+        with the Authorization header set
+
+    Rate-limited per order by COOLDOWN_MINUTES (default 55 min) so calling
+    this endpoint multiple times in quick succession is safe.
+    """
+    from workflows.payment_reminder import run_reminders_for_business
+    bid    = user["business_id"]
+    result = run_reminders_for_business(bid, dry_run=dry_run)
+    log.info(
+        "reminders_send  biz=%s  sent=%s  failed=%s  dry=%s",
+        bid, result.get("sent"), result.get("failed"), dry_run,
+    )
+    return result
+
+
+@app.post("/payments/reminders/{order_id}/nudge")
+async def reminder_nudge(
+    order_id: int,
+    dry_run:  bool = False,
+    user=Depends(require_business),
+):
+    """
+    Re-send a payment reminder for one specific order.
+
+    Use this from the dashboard order detail view — business owner can
+    manually nudge a specific customer without triggering bulk reminders.
+
+    Bypasses the in-process cooldown (allows intentional re-send).
+    """
+    from workflows.payment_reminder import (
+        send_reminder, get_reminder_tier, build_reminder_message,
+        FIRST_REMINDER_HOURS,
+    )
+    from workflows.order_lifecycle import get_order
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    pstatus = order.get("payment_status", "")
+    if pstatus not in ("awaiting_payment", "payment_review", "pending_cash"):
+        raise HTTPException(
+            422,
+            f"Order {order_id} has payment_status={pstatus!r}. "
+            "Reminders only apply to awaiting_payment or payment_review orders.",
+        )
+
+    business = crud.get_business_by_id(bid)
+    if not business:
+        raise HTTPException(404, "Business not found")
+
+    # For manual nudge: use tier based on age, default to tier 1 for very new orders
+    tier = get_reminder_tier(order) or 1
+
+    # Clear cooldown for this specific nudge (intentional manual action)
+    from workflows.payment_reminder import _last_reminder_sent
+    _last_reminder_sent.pop(order_id, None)
+
+    result = send_reminder(order, business, tier, dry_run=dry_run)
+    return result
+
+
+@app.get("/payments/reminders/{order_id}/preview")
+def reminder_preview(order_id: int, user=Depends(require_business)):
+    """
+    Preview the reminder message that would be sent for an order,
+    without actually sending it. Useful for the dashboard.
+    """
+    from workflows.payment_reminder import (
+        build_reminder_message, get_reminder_tier,
+    )
+    from workflows.order_lifecycle import get_order
+
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+
+    business = crud.get_business_by_id(bid)
+    biz_name = business.get("name", "WaziBot") if business else "WaziBot"
+    tier     = get_reminder_tier(order) or 1
+
+    return {
+        "order_id":      order_id,
+        "tier":          tier,
+        "customer_phone": order.get("customer_phone", ""),
+        "payment_status": order.get("payment_status", ""),
+        "preview_message": build_reminder_message(order, biz_name, tier),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BUSINESS INTELLIGENCE ENDPOINTS
 # ─────────────────────────────────────────────────────────────────────────────
 
