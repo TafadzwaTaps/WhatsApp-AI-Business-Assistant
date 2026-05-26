@@ -5,6 +5,10 @@ All DB access goes through crud.py which uses the supabase-py client.
 No SQLAlchemy, no database.py, no Session dependency.
 """
 
+import sys
+import os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+
 import os
 import json
 import logging
@@ -23,25 +27,48 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 
 import crud
-from crypto import TokenDecryptionError
-from ai import generate_reply
-from auth import (
+from core.crypto import TokenDecryptionError
+from services.ai_service import generate_reply
+from core.auth import (
     verify_password,
     create_access_token, create_refresh_token,
     decode_token,
     get_current_user, require_superadmin, require_business,
     SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
 )
-from order_lifecycle import (
+from workflows.order_lifecycle import (
     create_order_supabase,
     update_order_status_supabase,
     get_order,
     VALID_STATUSES,
 )
-from invoice import generate_invoice_text
+from services.invoice_service import generate_invoice_text
 # payments.py — see payments.py for available functions
 
 load_dotenv()
+
+# ── Event logger (non-blocking, structured) ───────────────────────────────────
+# Used to record AI requests, WhatsApp events, and payment events.
+# Import is lazy inside functions to avoid circular import with services/.
+def _log_event(event_type: str, **fields) -> None:
+    """
+    Log a structured business event.  Never raises — observability must
+    not affect the main request path.  Fields are logged as key=value pairs.
+
+    event_type examples:
+      "wa.sent"        — WhatsApp message successfully sent
+      "wa.failed"      — WhatsApp send failure
+      "ai.request"     — AI generate_reply called
+      "ai.suppressed"  — AI returned empty reply (intentional)
+      "payment.event"  — Payment status change
+      "order.event"    — Order lifecycle change
+    """
+    try:
+        kv = "  ".join(f"{k}={v!r}" for k, v in fields.items())
+        log.info("EVENT %s  %s", event_type, kv)
+    except Exception:
+        pass   # logging must never crash the caller
+
 
 logging.basicConfig(
     level=logging.INFO,
@@ -140,6 +167,7 @@ manager = ConnectionManager()
 
 # ── WhatsApp sender ────────────────────────────────────────────────────────────
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
+    # Note: event logging happens at the call sites (STEP 8) to include context.
     if not phone_number_id or not token:
         missing = [k for k, v in {"phone_number_id": phone_number_id, "token": token}.items() if not v]
         log.error("send_whatsapp: ABORTED — missing %s", missing)
@@ -388,7 +416,7 @@ def debug_supabase():
 
     # Try an actual query — select one row from businesses
     try:
-        from db import supabase as _sb
+        from core.db import supabase as _sb
         res = _sb.table("businesses").select("id").limit(1).execute()
         return {
             "ok":      True,
@@ -411,7 +439,7 @@ def debug_supabase():
 
 @app.get("/debug/token")
 def debug_token():
-    from crypto import encrypt_token, decrypt_token
+    from core.crypto import encrypt_token, decrypt_token
     test = "wazibot-test-12345"
     try:
         ct = encrypt_token(test)
@@ -503,7 +531,7 @@ async def verify_webhook(request: Request):
 def _get_customer_state_for_log(phone: str, business_id: int) -> str:
     """Lightweight state read for logging — never raises."""
     try:
-        from db import supabase as _sb
+        from core.db import supabase as _sb
         res = (
             _sb.table("carts")
             .select("state_data")
@@ -584,7 +612,7 @@ async def receive_message(request: Request):
 
     # ── STEP 2: Find business (shared-number-aware) ──────────────────────
     try:
-        from tenant_router import (
+        from services.tenant_service import (
             is_shared_number, resolve_business_for_shared_number,
             is_switch_request,
         )
@@ -729,6 +757,13 @@ async def receive_message(request: Request):
             message_is_from_agent=is_from_agent,
         )
         log.info("🤖 STEP 6 — AI reply generated  len=%d", len(reply))
+        _log_event(
+            "ai.request" if reply else "ai.suppressed",
+            phone=customer_phone,
+            biz=business["id"],
+            msg_len=len(text),
+            reply_len=len(reply),
+        )
 
     except Exception as exc:
         log.exception("📦 STEP 6 FAIL: %s", exc)
@@ -774,9 +809,13 @@ async def receive_message(request: Request):
         result = send_whatsapp(phone_number_id, token, customer_phone, reply)
         if "error" in result:
             log.error("📤 STEP 8 FAIL — WhatsApp error: %s", result["error"])
+            _log_event("wa.failed", phone=customer_phone, biz=business["id"],
+                       error=result["error"])
         else:
-            log.info("📤 STEP 8 OK  msg_id=%s",
-                     (result.get("messages") or [{}])[0].get("id", "?"))
+            msg_id = (result.get("messages") or [{}])[0].get("id", "?")
+            log.info("📤 STEP 8 OK  msg_id=%s", msg_id)
+            _log_event("wa.sent", phone=customer_phone, biz=business["id"],
+                       msg_id=msg_id, reply_len=len(reply))
     else:
         log.error(
             "📤 STEP 8 FAIL — No token for '%s' (id=%s). "
@@ -804,7 +843,7 @@ async def payment_webhook(data: PaymentConfirmRequest):
 
     Payload: { "reference": "ORDER-12", "amount": 10.00 }
     """
-    from order_lifecycle import get_order
+    from workflows.order_lifecycle import get_order
 
     reference = (data.reference or "").strip().upper()
     if not reference.startswith("ORDER-"):
@@ -835,7 +874,7 @@ async def payment_webhook(data: PaymentConfirmRequest):
         "payment_reference": reference,
     })
     try:
-        from order_lifecycle import update_order_status_supabase
+        from workflows.order_lifecycle import update_order_status_supabase
         update_order_status_supabase(order_id, "paid")
     except Exception:
         pass
@@ -885,7 +924,7 @@ def download_invoice(order_id: int, user=Depends(require_business)):
         try:
             business = crud.get_business_by_id(user["business_id"])
             order["business_name"] = business.get("name", "") if business else ""
-            from pdf_invoice import generate_pdf_invoice
+            from services.pdf_invoice import generate_pdf_invoice
             pdf_path = generate_pdf_invoice(order)
         except Exception as exc:
             log.exception("download_invoice: PDF generation failed — %s", exc)
@@ -1024,7 +1063,7 @@ async def push_lifecycle_update(
 
     Status values: preparing | ready | out_for_delivery | delivered | completed
     """
-    from order_lifecycle import get_order
+    from workflows.order_lifecycle import get_order
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1058,7 +1097,7 @@ async def push_lifecycle_update(
     }
     db_status = status_map.get(new_status, "confirmed")
     try:
-        from order_lifecycle import update_order_status_supabase
+        from workflows.order_lifecycle import update_order_status_supabase
         update_order_status_supabase(order_id, db_status)
     except Exception as exc:
         log.warning("lifecycle: db status update failed: %s", exc)
@@ -1105,7 +1144,7 @@ async def push_lifecycle_update(
     # ── Trigger survey if order is complete ───────────────────────────────────
     if new_status in ("delivered", "completed") and phone:
         try:
-            from ai import _set_survey_state
+            from services.ai_service import _set_survey_state
             _set_survey_state(phone, bid)
             log.info("lifecycle: survey triggered  phone=%s", phone)
         except Exception as exc:
@@ -1139,7 +1178,7 @@ async def admin_approve_payment(
     Approve a pending payment proof (EcoCash / manual PayPal).
     Marks order as confirmed and sends a WhatsApp confirmation to the customer.
     """
-    from order_lifecycle import get_order, update_order_status_supabase
+    from workflows.order_lifecycle import get_order, update_order_status_supabase
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1169,7 +1208,7 @@ async def admin_approve_payment(
     # Trigger fulfillment question if not yet set
     if phone and not order.get("fulfillment_method"):
         try:
-            from ai import _set_awaiting_fulfillment, _get_state
+            from services.ai_service import _set_awaiting_fulfillment, _get_state
             if _get_state(phone, bid) == "browsing":
                 _set_awaiting_fulfillment(phone, bid, order_id=order_id, reference=ref)
                 biz      = crud.get_business_by_id(bid)
@@ -1201,7 +1240,7 @@ async def admin_reject_proof(
     Reject a payment proof — marks order as awaiting_payment again and
     asks the customer to re-submit proof.
     """
-    from order_lifecycle import get_order
+    from workflows.order_lifecycle import get_order
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1232,7 +1271,7 @@ async def admin_cancel_order(
     user=Depends(require_business),
 ):
     """Cancel an order from the admin side."""
-    from order_lifecycle import get_order, update_order_status_supabase
+    from workflows.order_lifecycle import get_order, update_order_status_supabase
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1267,7 +1306,7 @@ async def admin_refund_order(
     user=Depends(require_business),
 ):
     """Mark an order as refunded and notify the customer."""
-    from order_lifecycle import get_order, update_order_status_supabase
+    from workflows.order_lifecycle import get_order, update_order_status_supabase
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1302,7 +1341,7 @@ def get_order_status(order_id: int, user=Depends(require_business)):
     Get full status details for an order — for dashboard display.
     Returns status, payment_status, fulfillment_method, delivery_address, progress_bar.
     """
-    from order_lifecycle import get_order, format_order_status, get_progress_bar, next_order_stage
+    from workflows.order_lifecycle import get_order, format_order_status, get_progress_bar, next_order_stage
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1430,7 +1469,7 @@ def platform_activate_business(business_id: int, user=Depends(require_superadmin
 def platform_stats(user=Depends(require_superadmin)):
     """Super admin: platform-wide statistics."""
     try:
-        from db import supabase as _sb
+        from core.db import supabase as _sb
         businesses  = crud.get_all_businesses()
         active_biz  = [b for b in businesses if b.get("is_active")]
         orders_res  = _sb.table("orders").select("id,total_price,status,payment_status,business_id").execute()
@@ -1457,7 +1496,7 @@ def platform_customer_session(phone: str, user=Depends(require_superadmin)):
     Super admin: inspect a customer's current business selection and state.
     Useful for debugging routing issues.
     """
-    from tenant_router import get_selected_business_id, get_selected_business_name
+    from services.tenant_service import get_selected_business_id, get_selected_business_name
     bid  = get_selected_business_id(phone)
     name = get_selected_business_name(phone)
     return {
@@ -1471,7 +1510,7 @@ def platform_customer_session(phone: str, user=Depends(require_superadmin)):
 @app.delete("/platform/customer/{phone}/session")
 def platform_clear_customer_session(phone: str, user=Depends(require_superadmin)):
     """Super admin: clear a customer's business selection (forces re-pick)."""
-    from tenant_router import clear_selected_business
+    from services.tenant_service import clear_selected_business
     clear_selected_business(phone)
     return {"ok": True, "phone": phone, "message": "Session cleared."}
 
@@ -1856,7 +1895,7 @@ def chat_messages_by_phone(
     from urllib.parse import unquote
     phone = unquote(phone)
 
-    from db import supabase as _supa
+    from core.db import supabase as _supa
     customer = (
         _supa.table("customers")
         .select("*")
@@ -1986,7 +2025,7 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 
     # Record agent activity so auto-resume timeout resets correctly
     try:
-        from human_handoff import record_agent_reply
+        from workflows.human_handoff import record_agent_reply
         record_agent_reply(customer["phone"], bid)
     except Exception as exc:
         log.debug("record_agent_reply skipped: %s", exc)
@@ -2011,8 +2050,8 @@ async def request_human_handoff(customer_id: int, user=Depends(require_business)
     Manually flag a customer for human agent attention from the dashboard.
     Sets state to human_handoff and notifies the customer.
     """
-    from ai import _set_human_handoff
-    from human_handoff import notify_dashboard, handoff_acknowledgement
+    from services.ai_service import _set_human_handoff
+    from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
 
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
@@ -2046,8 +2085,8 @@ async def release_human_handoff(customer_id: int, user=Depends(require_business)
     Return a customer to AI mode after human agent is done.
     Clears human_handoff state and notifies customer.
     """
-    from ai import _reset_state as ai_reset_state
-    from human_handoff import clear_handoff_flag, ai_resumed_message
+    from services.ai_service import _reset_state as ai_reset_state
+    from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
 
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
@@ -2081,7 +2120,7 @@ def list_pending_handoffs(user=Depends(require_business)):
     List all customers currently in human_handoff mode for this business.
     Returns customer details sorted by most recent.
     """
-    from db import supabase as _sb
+    from core.db import supabase as _sb
 
     bid = user["business_id"]
     try:
@@ -2130,7 +2169,7 @@ def handoff_pending(user=Depends(require_business)):
     List all customers currently in human_handoff mode for this business.
     Use in the dashboard to surface conversations that need a human reply.
     """
-    from human_handoff import get_pending_handoffs
+    from workflows.human_handoff import get_pending_handoffs
     return get_pending_handoffs(user["business_id"])
 
 
@@ -2145,8 +2184,8 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     if not customer:
         raise HTTPException(404, "Customer not found")
 
-    from human_handoff import notify_dashboard
-    from ai import _set_human_handoff
+    from workflows.human_handoff import notify_dashboard
+    from services.ai_service import _set_human_handoff
 
     phone     = customer["phone"]
     biz       = crud.get_business_by_id(bid)
@@ -2170,8 +2209,8 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
     if not customer:
         raise HTTPException(404, "Customer not found")
 
-    from human_handoff import clear_handoff_flag, ai_resumed_message
-    from ai import _reset_state
+    from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
+    from services.ai_service import _reset_state
 
     phone    = customer["phone"]
     biz      = crud.get_business_by_id(bid)
@@ -2219,7 +2258,7 @@ def debug_schema(user=Depends(require_business)):
     Show which optional columns exist in the orders table.
     Useful to confirm whether MIGRATION.sql has been run.
     """
-    from order_lifecycle import _get_orders_columns, _invalidate_column_cache
+    from workflows.order_lifecycle import _get_orders_columns, _invalidate_column_cache
     _invalidate_column_cache()   # force re-probe
     cols = _get_orders_columns()
     optional = ["items", "payment_status", "payment_reference"]
@@ -2537,8 +2576,8 @@ async def paypal_success(
     NOTE: The PayPal webhook (/payments/paypal/webhook) is the primary
     confirmation path. This endpoint is a fallback for browser users.
     """
-    from payments import capture_paypal_order
-    from order_lifecycle import get_order
+    from services.payment_service import capture_paypal_order
+    from workflows.order_lifecycle import get_order
 
     log.info("paypal_success  token=%s  reference=%s  PayerID=%s", token, reference, PayerID)
 
@@ -2647,8 +2686,8 @@ async def paypal_webhook(request: Request):
     Required ENV var:
       PAYPAL_WEBHOOK_ID — the Webhook ID from PayPal Developer Dashboard
     """
-    from payments import verify_paypal_webhook_signature
-    from order_lifecycle import get_order
+    from services.payment_service import verify_paypal_webhook_signature
+    from workflows.order_lifecycle import get_order
 
     WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
 
@@ -2751,7 +2790,7 @@ async def paypal_webhook(request: Request):
                 "paypal_order_id":   paypal_order_id,
             })
             try:
-                from order_lifecycle import update_order_status_supabase
+                from workflows.order_lifecycle import update_order_status_supabase
                 update_order_status_supabase(order_id, "paid")
             except Exception as exc:
                 log.warning("paypal_webhook: status update failed: %s", exc)
@@ -2761,7 +2800,7 @@ async def paypal_webhook(request: Request):
             if customer_phone:
                 try:
                     # Import ai state functions to reset the customer's flow
-                    from ai import _reset_state as ai_reset_state
+                    from services.ai_service import _reset_state as ai_reset_state
                     ai_reset_state(customer_phone, biz_id)
                 except Exception as exc:
                     log.warning("paypal_webhook: state reset failed: %s", exc)
@@ -2822,7 +2861,7 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
 
     Body: { "order_id": 42, "reference": "ORDER-42", "amount": 10.50 }
     """
-    from order_lifecycle import get_order, update_order_status_supabase
+    from workflows.order_lifecycle import get_order, update_order_status_supabase
 
     body = await request.json()
     order_id  = int(body.get("order_id", 0))

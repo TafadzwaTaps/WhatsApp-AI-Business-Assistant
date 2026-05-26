@@ -2,7 +2,7 @@ from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, UniqueConstraint, Index, Numeric, Text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from database import Base
+from core.database import Base
 
 
 class Business(Base):

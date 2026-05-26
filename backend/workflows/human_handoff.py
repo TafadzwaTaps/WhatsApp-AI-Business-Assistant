@@ -177,7 +177,7 @@ def handoff_customer_message(phone: str, business_id: int, text: str = "") -> st
       state_data.last_agent_reply_at  — Unix timestamp of last agent reply
     """
     try:
-        from db import supabase
+        from core.db import supabase
         from datetime import datetime, timezone
 
         res = (
@@ -262,7 +262,7 @@ def record_agent_reply(phone: str, business_id: int) -> None:
     Stores a Unix timestamp in state_data.last_agent_reply_at.
     """
     try:
-        from db import supabase
+        from core.db import supabase
         from datetime import datetime, timezone
         res = (
             supabase.table("carts")
@@ -300,7 +300,7 @@ def notify_dashboard(phone: str, business_id: int, business_name: str) -> None:
     """
     # Store handoff start timestamp in state_data for timeout tracking
     try:
-        from db import supabase
+        from core.db import supabase
         from datetime import datetime, timezone
         res = (
             supabase.table("carts")
@@ -346,7 +346,7 @@ def clear_handoff_flag(phone: str, business_id: int) -> None:
     """Clear the human-needed flag and reset message counter when AI is resumed."""
     # Reset handoff_msg_count in state_data so next handoff acks correctly
     try:
-        from db import supabase
+        from core.db import supabase
         from datetime import datetime, timezone
         res = (
             supabase.table("carts")
@@ -388,7 +388,7 @@ def get_pending_handoffs(business_id: int) -> list[dict]:
     This is the authoritative source — state is stored per-phone per-business.
     """
     try:
-        from db import supabase
+        from core.db import supabase
         # Fetch all cart rows for this business that have state_data
         res = (
             supabase.table("carts")

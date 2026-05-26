@@ -13,8 +13,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from db import supabase
-from crypto import encrypt_token, decrypt_token, TokenDecryptionError
+from core.db import supabase
+from core.crypto import encrypt_token, decrypt_token, TokenDecryptionError
 
 log = logging.getLogger(__name__)
 
@@ -1078,7 +1078,7 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
       payment_method, payment_status, payment_reference, payment_url,
       paypal_order_id   ← NEW: stores PayPal's order ID for webhook lookup
     """
-    from order_lifecycle import _has_col
+    from workflows.order_lifecycle import _has_col
 
     # All columns we are allowed to update
     allowed = (

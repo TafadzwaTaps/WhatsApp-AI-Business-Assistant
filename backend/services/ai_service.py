@@ -116,7 +116,7 @@ def _now_iso() -> str:
 def _read_state_data(phone: str, business_id: int) -> dict:
     """Read state_data from carts table. Never raises."""
     try:
-        from db import supabase
+        from core.db import supabase
         res = (
             supabase.table("carts")
             .select("state_data")
@@ -140,7 +140,7 @@ def _write_state_data(phone: str, business_id: int, patch: dict) -> None:
     Never raises.
     """
     try:
-        from db import supabase
+        from core.db import supabase
         existing = _read_state_data(phone, business_id)
         existing.update(patch)
         supabase.table("carts").upsert(
@@ -181,7 +181,7 @@ def _set_state(phone: str, business_id: int, state: str, **extra) -> None:
 
 
 def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list) -> None:
-    from conversation_states import can_transition, STATE
+    from services.conversation_service import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.CHECKOUT):
         log.warning("_set_checkout_state: invalid transition %s→checkout  phone=%s", current, phone)
@@ -199,7 +199,7 @@ def _set_confirm_state(phone: str, business_id: int, cart_snapshot: list) -> Non
 
 def _set_awaiting_payment(phone: str, business_id: int,
                           order_id, method: str, reference: str) -> None:
-    from conversation_states import can_transition, STATE
+    from services.conversation_service import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.AWAITING_PAYMENT):
         log.warning("_set_awaiting_payment: invalid transition %s→awaiting_payment  phone=%s", current, phone)
@@ -212,7 +212,7 @@ def _set_awaiting_payment(phone: str, business_id: int,
 def _set_awaiting_proof(phone: str, business_id: int,
                         order_id, method: str, reference: str) -> None:
     """Enter awaiting_proof state — customer must provide txn ID or image."""
-    from conversation_states import can_transition, STATE
+    from services.conversation_service import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.AWAITING_PROOF):
         log.warning("_set_awaiting_proof: invalid transition %s→awaiting_proof  phone=%s", current, phone)
@@ -254,7 +254,7 @@ def _get_active_order(phone: str, business_id: int) -> dict | None:
     Returns the order dict or None.
     """
     try:
-        from db import supabase as _sb
+        from core.db import supabase as _sb
         res = (
             _sb.table("orders")
             .select("*")
@@ -938,7 +938,7 @@ def _format_cart(cart: list) -> str:
 
 def _build_payment_menu(cart: list, business_id: int) -> str:
     """Payment method selection message. business_id required for per-business settings."""
-    from payments import available_methods
+    from services.payment_service import available_methods
     try:
         pay_settings = crud.get_business_payment_settings(business_id)
     except Exception:
@@ -981,7 +981,7 @@ def _build_confirm_prompt(cart: list) -> str:
 
 def _build_payment_instructions(pending: dict, business_id: int, business_name: str) -> str:
     """Re-generate payment instructions from stored pending_payment session."""
-    from payments import (
+    from services.payment_service import (
         generate_ecocash_instructions,
         paypal_payment,
         generate_cash_instructions,
@@ -999,7 +999,7 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
     # Look up the actual total from DB
     total = 0.0
     try:
-        from order_lifecycle import get_order
+        from workflows.order_lifecycle import get_order
         ord_row = get_order(order_id)
         if ord_row:
             total = float(ord_row.get("total_price") or 0)
@@ -1053,7 +1053,7 @@ _LIFECYCLE_ICONS = {
 def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
     """Look up an order and return a rich formatted status message."""
     try:
-        from order_lifecycle import get_order
+        from workflows.order_lifecycle import get_order
         order = get_order(order_id)
         if not order:
             return (
@@ -1198,7 +1198,7 @@ def _handle_paypal_paid_message(
       3b. If pending → tell user we're verifying (webhook will fire soon)
       3c. No paypal_order_id → fall back to manual proof flow
     """
-    from payments import get_paypal_order_details
+    from services.payment_service import get_paypal_order_details
 
     # Get the PayPal order ID we stored when creating the checkout
     state_data     = _read_state_data(phone, business_id)
@@ -1267,8 +1267,8 @@ def _process_payment(
     business_id: int,
     business_name: str,
 ) -> str:
-    from order_lifecycle import create_order_supabase
-    from payments import (
+    from workflows.order_lifecycle import create_order_supabase
+    from services.payment_service import (
         generate_ecocash_instructions,
         paypal_payment,
         generate_cash_instructions,
@@ -1355,7 +1355,7 @@ def _process_payment(
     # 4. Update order status for cash (confirmed immediately)
     if method == "cash":
         try:
-            from order_lifecycle import update_order_status_supabase
+            from workflows.order_lifecycle import update_order_status_supabase
             update_order_status_supabase(order.get("id"), "pending_cash")
             log.info("cash order confirmed immediately  order=%s", order.get("id"))
         except Exception as exc:
@@ -1407,7 +1407,7 @@ def _process_payment(
 
 def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
     try:
-        from pdf_invoice import generate_pdf_invoice
+        from services.pdf_invoice import generate_pdf_invoice
         pdf_path = generate_pdf_invoice(order)
     except Exception as exc:
         log.error("PDF generation failed: %s", exc)
@@ -1418,7 +1418,7 @@ def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
         if not token or not phone_id:
             return
-        from whatsapp import send_whatsapp_document
+        from integrations.whatsapp import send_whatsapp_document
         result = send_whatsapp_document(
             phone=phone, file_path=pdf_path,
             access_token=token, phone_number_id=phone_id,
@@ -1480,7 +1480,7 @@ def generate_reply(
     #   "⏳ ..."           → first ack message; send to customer once
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "human_handoff":
-        from conversation_states import is_ai_paused
+        from services.conversation_service import is_ai_paused
         if is_ai_paused(current_state):
             log.info("human_handoff: AI paused — checking auto-resume  phone=%s", phone)
             handoff_result = _handoff_mod().handoff_customer_message(
@@ -1584,7 +1584,7 @@ def generate_reply(
             if order_ref_id or any(w in t_lower for w in ["cancel order", "cancel my order"]):
                 # Try to find a recent pending order for this customer
                 try:
-                    from db import supabase as _sb
+                    from core.db import supabase as _sb
                     res = (
                         _sb.table("orders")
                         .select("id,status,payment_status,total_price")
@@ -1634,7 +1634,7 @@ def generate_reply(
                         crud.update_order_payment(order_id, business_id, {
                             "payment_status": "cancelled",
                         })
-                        from order_lifecycle import update_order_status_supabase
+                        from workflows.order_lifecycle import update_order_status_supabase
                         try:
                             update_order_status_supabase(order_id, "pending")
                         except Exception:
@@ -1670,7 +1670,7 @@ def generate_reply(
         # Look up the customer's most recent order
         recent_order = None
         try:
-            from db import supabase as _sb
+            from core.db import supabase as _sb
             res = (
                 _sb.table("orders")
                 .select("id,status,payment_status,total_price,created_at")
@@ -1714,7 +1714,7 @@ def generate_reply(
         # Check if they have a recent completed order — personalise the goodbye
         recent_ref = ""
         try:
-            from db import supabase as _sb
+            from core.db import supabase as _sb
             res = (
                 _sb.table("orders")
                 .select("id,status")
@@ -1753,7 +1753,7 @@ def generate_reply(
         # Check if they have a recent active order
         active_order = None
         try:
-            from db import supabase as _sb
+            from core.db import supabase as _sb
             res = (
                 _sb.table("orders")
                 .select("id,status,payment_status,total_price")
@@ -2092,7 +2092,7 @@ def generate_reply(
             )
 
         # Not a valid method
-        from payments import available_methods
+        from services.payment_service import available_methods
         try:
             pay_settings = crud.get_business_payment_settings(business_id)
         except Exception:

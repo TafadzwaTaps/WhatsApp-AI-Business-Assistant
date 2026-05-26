@@ -6,10 +6,22 @@
 <title>WaziBot — Get Started Free</title>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
-  :root{--bg:#0a0f0d;--surface:#111a15;--surface2:#172010;--border:#1f3025;--green:#22c55e;--green-dim:#16a34a;--green-glow:rgba(34,197,94,0.15);--red:#ef4444;--text:#e8f5e9;--text-dim:#6b8f71;--mono:'DM Mono',monospace;--sans:'Syne',sans-serif;}
+  :root{
+    --bg:#0a0f0d;--surface:#111a15;--surface2:#172010;
+    --border:#1f3025;--green:#22c55e;--green-dim:#16a34a;
+    --green-glow:rgba(34,197,94,0.15);--red:#ef4444;
+    --text:#e8f5e9;--text-dim:#6b8f71;
+    --mono:'DM Mono',monospace;--sans:'Syne',sans-serif;
+  }
   *{box-sizing:border-box;margin:0;padding:0;}
   body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;display:flex;}
-  .left{width:400px;min-height:100vh;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:48px 40px;position:sticky;top:0;height:100vh;}
+
+  /* ── Left panel ─────────────────────────────────── */
+  .left{
+    width:400px;min-height:100vh;background:var(--surface);
+    border-right:1px solid var(--border);display:flex;flex-direction:column;
+    padding:48px 40px;position:sticky;top:0;height:100vh;overflow-y:auto;
+  }
   .logo{font-size:26px;font-weight:800;color:var(--green);margin-bottom:4px;}
   .tagline{font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:48px;}
   .feature-list{display:flex;flex-direction:column;gap:22px;flex:1;}
@@ -17,87 +29,263 @@
   .feature-icon{font-size:20px;width:32px;flex-shrink:0;margin-top:2px;}
   .feature-title{font-size:14px;font-weight:700;margin-bottom:3px;}
   .feature-desc{font-size:12px;color:var(--text-dim);font-family:var(--mono);line-height:1.5;}
-  .left-footer{margin-top:auto;padding-top:24px;border-top:1px solid var(--border);font-size:12px;font-family:var(--mono);color:var(--text-dim);}
+  .left-footer{
+    margin-top:auto;padding-top:24px;border-top:1px solid var(--border);
+    font-size:12px;font-family:var(--mono);color:var(--text-dim);
+  }
   .left-footer a{color:var(--green);text-decoration:none;font-weight:600;}
+
+  /* ── Right panel (form) ─────────────────────────── */
   .right{flex:1;display:flex;align-items:center;justify-content:center;padding:48px 40px;}
   .form-card{width:100%;max-width:460px;}
+
+  /* Progress */
   .progress-bar{height:3px;background:var(--border);border-radius:2px;margin-bottom:28px;overflow:hidden;}
   .progress-fill{height:100%;background:var(--green);border-radius:2px;transition:width 0.4s ease;}
+
+  /* Step tabs */
   .steps{display:flex;gap:0;margin-bottom:28px;border:1px solid var(--border);border-radius:8px;overflow:hidden;}
-  .step{flex:1;padding:10px 6px;text-align:center;font-size:10px;font-family:var(--mono);color:var(--text-dim);border-right:1px solid var(--border);}
+  .step{
+    flex:1;padding:10px 6px;text-align:center;font-size:10px;
+    font-family:var(--mono);color:var(--text-dim);border-right:1px solid var(--border);
+  }
   .step:last-child{border-right:none;}
   .step.active{background:var(--green-glow);color:var(--green);}
   .step.done{background:var(--surface2);}
   .step-num{display:block;font-size:15px;font-weight:800;margin-bottom:1px;}
+
+  /* Form header */
   .form-title{font-size:24px;font-weight:800;margin-bottom:4px;}
   .form-title span{color:var(--green);}
   .form-sub{font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:28px;}
+
+  /* Steps */
   .form-step{display:none;}
   .form-step.active{display:block;}
+
+  /* Fields */
   .form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:16px;}
   .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px;}
   label{font-size:10px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;}
-  input{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;transition:all 0.15s;width:100%;}
-  input:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
+  input,select{
+    background:var(--surface);border:1px solid var(--border);border-radius:8px;
+    padding:11px 14px;color:var(--text);font-family:var(--mono);font-size:13px;
+    outline:none;transition:all 0.15s;width:100%;
+  }
+  input:focus,select:focus{border-color:var(--green);box-shadow:0 0 0 3px var(--green-glow);}
   input.err{border-color:var(--red);}
-  .hint{font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:3px;}
+  .hint{font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:3px;line-height:1.5;}
   .ferr{font-size:11px;font-family:var(--mono);color:var(--red);margin-top:3px;min-height:15px;}
-  .btn-next{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;transition:all 0.15s;margin-top:4px;}
+
+  /* Buttons */
+  .btn-next{
+    width:100%;padding:13px;background:var(--green);color:#000;border:none;
+    border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;
+    cursor:pointer;transition:all 0.15s;margin-top:4px;
+  }
   .btn-next:hover{background:var(--green-dim);}
   .btn-next:disabled{opacity:0.5;cursor:not-allowed;}
   .btn-row{display:flex;gap:8px;margin-top:4px;}
-  .btn-back{background:transparent;border:1px solid var(--border);color:var(--text-dim);padding:11px 18px;border-radius:8px;font-family:var(--sans);font-size:13px;cursor:pointer;}
+  .btn-back{
+    background:transparent;border:1px solid var(--border);color:var(--text-dim);
+    padding:11px 18px;border-radius:8px;font-family:var(--sans);font-size:13px;cursor:pointer;
+  }
   .btn-back:hover{border-color:var(--text-dim);}
   .skip-hint{text-align:center;margin-top:12px;font-size:12px;font-family:var(--mono);color:var(--text-dim);}
   .skip-link{color:var(--green);cursor:pointer;text-decoration:underline;}
-  .error-banner{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:11px 14px;font-family:var(--mono);font-size:12px;color:var(--red);margin-bottom:14px;display:none;}
+
+  /* Notices */
+  .notice-box{
+    background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);
+    border-radius:8px;padding:12px 14px;font-size:12px;
+    font-family:var(--mono);color:var(--green);line-height:1.8;margin-bottom:14px;
+  }
+  .notice-box span{color:var(--text-dim);}
+  .error-banner{
+    background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);
+    border-radius:8px;padding:11px 14px;font-family:var(--mono);
+    font-size:12px;color:var(--red);margin-bottom:14px;display:none;
+  }
+
+  /* Success */
   .success-screen{display:none;text-align:center;}
   .success-icon{font-size:56px;margin-bottom:12px;}
   .success-title{font-size:24px;font-weight:800;margin-bottom:6px;}
   .success-title span{color:var(--green);}
   .success-sub{font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:24px;line-height:1.6;}
-  .creds-box{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;margin-bottom:20px;text-align:left;}
-  .cred-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;}
+  .creds-box{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:10px;padding:18px;margin-bottom:20px;text-align:left;
+  }
+  .cred-row{
+    display:flex;justify-content:space-between;padding:7px 0;
+    border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;
+  }
   .cred-row:last-child{border-bottom:none;}
   .cred-label{color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;}
   .cred-value{color:var(--green);font-weight:600;}
-  .btn-go{width:100%;padding:13px;background:var(--green);color:#000;border:none;border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;cursor:pointer;transition:all 0.15s;}
+  .btn-go{
+    width:100%;padding:13px;background:var(--green);color:#000;border:none;
+    border-radius:8px;font-family:var(--sans);font-weight:800;font-size:14px;
+    cursor:pointer;transition:all 0.15s;
+  }
   .btn-go:hover{background:var(--green-dim);}
-  @media(max-width:768px){body{flex-direction:column;}.left{width:100%;min-height:auto;height:auto;position:static;padding:28px 24px;}.feature-list{display:grid;grid-template-columns:1fr 1fr;gap:14px;}.right{padding:28px 24px;}.form-row{grid-template-columns:1fr;}}
+
+  /* Mobile */
+  @media(max-width:768px){
+    body{flex-direction:column;}
+    .left{width:100%;min-height:auto;height:auto;position:static;padding:28px 24px;}
+    .feature-list{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+    .right{padding:28px 24px;}
+    .form-row{grid-template-columns:1fr;}
+  }
 </style>
 </head>
 <body>
-<div class="form-group">
-          <label>Category <span style="opacity:0.6">(optional)</span></label>
-          <select id="category" name="category" style="width:100%;background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:14px 16px;color:var(--text);font-family:var(--mono);font-size:13px;outline:none;">
-            <option value="">Select your category…</option>
-            <option>Food &amp; Beverage</option>
-            <option>Electronics</option>
-            <option>Fashion &amp; Clothing</option>
-            <option>Health &amp; Beauty</option>
-            <option>Services</option>
-            <option>Retail</option>
-            <option>Other</option>
-          </select>
-        </div>
-        <div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.2);border-radius:10px;padding:14px 16px;font-size:12px;font-family:var(--mono);color:var(--green);line-height:1.8;margin-bottom:8px;">
-          ✅ <strong>No WhatsApp setup needed!</strong><br>
-          <span style="color:var(--text-dim);">Your store instantly uses the WaziBot shared WhatsApp number.</span>
-        </div>
-      <div class="form-group">
-        <label>WhatsApp Access Token</label>
-        <input type="text" id="s-tok" placeholder="EAAn..."/>
-        <div class="hint">Meta → WhatsApp → API Setup → Access Token</div>
-        <div class="ferr" id="ferr-tok"></div>
+
+<!-- ── LEFT PANEL ────────────────────────────────────── -->
+<div class="left">
+  <div class="logo">WaziBot</div>
+  <div class="tagline">WhatsApp AI Business Assistant</div>
+
+  <div class="feature-list">
+    <div class="feature">
+      <div class="feature-icon">🤖</div>
+      <div>
+        <div class="feature-title">AI Ordering Assistant</div>
+        <div class="feature-desc">Handles menu, cart, checkout and payments automatically via WhatsApp.</div>
       </div>
-      <div class="skip-hint">No WhatsApp yet? <span class="skip-link" onclick="submit(true)">Skip for now →</span></div>
-      <div class="btn-row" style="margin-top:14px;">
-        <button class="btn-back" onclick="goTo(2)">← Back</button>
-        <button class="btn-next" style="flex:1" id="submit-btn" onclick="submit(false)">🚀 Create Account</button>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">📦</div>
+      <div>
+        <div class="feature-title">Order Management</div>
+        <div class="feature-desc">Real-time order tracking, lifecycle updates and customer notifications.</div>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">💳</div>
+      <div>
+        <div class="feature-title">Payments Built-in</div>
+        <div class="feature-desc">EcoCash, PayPal and Cash on Delivery — configured from your dashboard.</div>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">📊</div>
+      <div>
+        <div class="feature-title">Dashboard &amp; CRM</div>
+        <div class="feature-desc">Products, orders, customer inbox and analytics in one place.</div>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">🏪</div>
+      <div>
+        <div class="feature-title">Multi-Tenant SaaS</div>
+        <div class="feature-desc">One shared WhatsApp number powers many independent businesses.</div>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-icon">🚀</div>
+      <div>
+        <div class="feature-title">No WhatsApp Setup</div>
+        <div class="feature-desc">Your store is live instantly — no Meta app or webhook configuration needed.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="left-footer">
+    Already have an account? <a href="/dashboard">Sign in →</a>
+  </div>
+</div>
+
+<!-- ── RIGHT PANEL (form) ────────────────────────────── -->
+<div class="right">
+  <div class="form-card">
+
+    <!-- Progress bar -->
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress" style="width:33%"></div>
+    </div>
+
+    <!-- Step tabs -->
+    <div class="steps">
+      <div class="step active" id="tab1"><span class="step-num">1</span>Account</div>
+      <div class="step"        id="tab2"><span class="step-num">2</span>Business</div>
+      <div class="step"        id="tab3"><span class="step-num">3</span>Finish</div>
+    </div>
+
+    <!-- Title + sub -->
+    <div class="form-title" id="ftitle">Create your <span>account</span></div>
+    <div class="form-sub"   id="fsub">Free to start. No credit card needed.</div>
+
+    <!-- Error banner (shared) -->
+    <div class="error-banner" id="err-banner"></div>
+
+    <!-- ── STEP 1: credentials ─────────────────────── -->
+    <div class="form-step active" id="step1">
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="s-user" placeholder="e.g. flavoury_foods" autocomplete="username" autocapitalize="none"/>
+        <div class="ferr" id="ferr-user"></div>
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="s-pass" placeholder="At least 6 characters" autocomplete="new-password"/>
+        <div class="ferr" id="ferr-pass"></div>
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input type="password" id="s-pass2" placeholder="Repeat password" autocomplete="new-password"/>
+        <div class="ferr" id="ferr-pass2"></div>
+      </div>
+      <button class="btn-next" onclick="next(2)">Continue →</button>
+    </div>
+
+    <!-- ── STEP 2: business info ───────────────────── -->
+    <div class="form-step" id="step2">
+      <div class="form-group">
+        <label>Business Name</label>
+        <input type="text" id="s-biz" placeholder="e.g. Flavoury Foods" autocomplete="organization"/>
+        <div class="ferr" id="ferr-biz"></div>
+      </div>
+      <div class="form-group">
+        <label>Category <span style="opacity:0.6;font-size:9px;text-transform:none;">(optional)</span></label>
+        <select id="s-category">
+          <option value="">Select category…</option>
+          <option value="Food &amp; Beverage">Food &amp; Beverage</option>
+          <option value="Electronics">Electronics</option>
+          <option value="Fashion &amp; Clothing">Fashion &amp; Clothing</option>
+          <option value="Health &amp; Beauty">Health &amp; Beauty</option>
+          <option value="Services">Services</option>
+          <option value="Retail">Retail</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+      <div class="btn-row">
+        <button class="btn-back" onclick="goTo(1)">← Back</button>
+        <button class="btn-next" style="flex:1" onclick="next(3)">Continue →</button>
       </div>
     </div>
 
-    <!-- SUCCESS -->
+    <!-- ── STEP 3: finish / no WhatsApp setup needed ── -->
+    <div class="form-step" id="step3">
+      <div class="notice-box">
+        ✅ <strong>No WhatsApp setup needed!</strong><br>
+        <span>Your store instantly uses the WaziBot shared WhatsApp number. Customers can order via WhatsApp right away.</span>
+      </div>
+      <div class="form-group">
+        <label>Confirm Username</label>
+        <input type="text" id="s-user-confirm" placeholder="Re-enter username" autocapitalize="none"/>
+        <div class="hint">Just confirm your username from step 1.</div>
+        <div class="ferr" id="ferr-confirm"></div>
+      </div>
+      <div class="btn-row" style="margin-top:14px;">
+        <button class="btn-back" onclick="goTo(2)">← Back</button>
+        <button class="btn-next" style="flex:1" id="submit-btn" onclick="submitForm()">🚀 Create Account</button>
+      </div>
+    </div>
+
+    <!-- ── SUCCESS ─────────────────────────────────── -->
     <div class="success-screen" id="success">
       <div class="success-icon">🎉</div>
       <div class="success-title">You're <span>live!</span></div>
@@ -105,104 +293,57 @@
       <div class="creds-box" id="success-creds"></div>
       <button class="btn-go" onclick="window.location.href='/'">Open My Dashboard →</button>
     </div>
-  </div>
-</div>
+
+  </div><!-- /form-card -->
+</div><!-- /right -->
 
 <script>
+// ── Config ────────────────────────────────────────────────
 const API = 'https://wazibot-api-assistant.onrender.com';
-const TITLES = ['Create your <span>account</span>', 'Your <span>business</span>', 'Connect <span>WhatsApp</span>'];
-const SUBS = ['Free to start. No credit card needed.', 'Customers will see this name.', 'You can add these later in Settings.'];
 
+const TITLES = [
+  'Create your <span>account</span>',
+  'Your <span>business</span>',
+  'You\'re almost <span>there</span>',
+];
+const SUBS = [
+  'Free to start. No credit card needed.',
+  'Customers will see this name on WhatsApp.',
+  'Review and create your account.',
+];
+
+// ── Navigation ────────────────────────────────────────────
 function goTo(n) {
   [1,2,3].forEach(i => {
-    document.getElementById(`step${i}`).classList.toggle('active', i===n);
+    document.getElementById(`step${i}`).classList.toggle('active', i === n);
     const tab = document.getElementById(`tab${i}`);
-    tab.className = 'step' + (i===n?' active':i<n?' done':'');
+    tab.className = 'step' + (i === n ? ' active' : i < n ? ' done' : '');
   });
-  document.getElementById('progress').style.width = `${Math.round(n/3*100)}%`;
-  document.getElementById('ftitle').innerHTML = TITLES[n-1];
-  document.getElementById('fsub').textContent = SUBS[n-1];
+  document.getElementById('progress').style.width = `${Math.round(n / 3 * 100)}%`;
+  document.getElementById('ftitle').innerHTML = TITLES[n - 1];
+  document.getElementById('fsub').textContent  = SUBS[n - 1];
+  document.getElementById('err-banner').style.display = 'none';
+  clearErr();
+
+  // Pre-fill the confirm field on step 3
+  if (n === 3) {
+    const u = document.getElementById('s-user').value.trim();
+    document.getElementById('s-user-confirm').value = u;
+  }
+}
+
+// ── Validation helpers ────────────────────────────────────
+function clearErr() {
+  document.querySelectorAll('.ferr').forEach(e => e.textContent = '');
+  document.querySelectorAll('input').forEach(i => i.classList.remove('err'));
   document.getElementById('err-banner').style.display = 'none';
 }
 
-function clearErr() {
-  document.querySelectorAll('.ferr').forEach(e=>e.textContent='');
-  document.querySelectorAll('input').forEach(i=>i.classList.remove('err'));
-  document.getElementById('err-banner').style.display='none';
-}
-
 function fieldErr(inputId, errId, msg) {
-  document.getElementById(inputId).classList.add('err');
-  document.getElementById(errId).textContent = msg;
-}
-
-function next(to) {
-  clearErr();
-  if (to===2) {
-    const u = document.getElementById('s-user').value.trim();
-    const p = document.getElementById('s-pass').value;
-    const p2 = document.getElementById('s-pass2').value;
-    let ok = true;
-    if (u.length < 3) { fieldErr('s-user','ferr-user','At least 3 characters'); ok=false; }
-    else if (/\s/.test(u)) { fieldErr('s-user','ferr-user','No spaces allowed'); ok=false; }
-    if (p.length < 6) { fieldErr('s-pass','ferr-pass','At least 6 characters'); ok=false; }
-    if (p !== p2) { fieldErr('s-pass2','ferr-pass2','Passwords do not match'); ok=false; }
-    if (!ok) return;
-  }
-  if (to===3) {
-    const b = document.getElementById('s-biz').value.trim();
-    if (b.length < 2) { fieldErr('s-biz','ferr-biz','Enter your business name'); return; }
-  }
-  goTo(to);
-}
-
-async function submit(skip) {
-  clearErr();
-  const btn = document.getElementById('submit-btn');
-  btn.disabled = true;
-  btn.textContent = 'Creating...';
-
-  const payload = {
-    business_name: document.getElementById('s-biz').value.trim(),
-    username: document.getElementById('s-user').value.trim().toLowerCase(),
-    password: document.getElementById('s-pass').value,
-    whatsapp_phone_id: skip ? '' : document.getElementById('s-pid').value.trim(),
-    whatsapp_token: skip ? '' : document.getElementById('s-tok').value.trim(),
-  };
-
-  try {
-    const res = await fetch(`${API}/auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      // Handle pydantic validation errors
-      let msg = data.detail;
-      if (Array.isArray(msg)) msg = msg.map(e=>e.msg).join(', ');
-      showBanner(msg || 'Signup failed');
-      btn.disabled = false;
-      btn.textContent = '🚀 Create Account';
-      return;
-    }
-
-    // Save session
-    localStorage.setItem('wazi_token', data.access_token);
-    localStorage.setItem('wazi_refresh', data.refresh_token || '');
-    localStorage.setItem('wazi_role', data.role);
-    localStorage.setItem('wazi_user', payload.username);
-    localStorage.setItem('wazi_biz', data.business_name);
-    if (data.business_id) localStorage.setItem('wazi_business_id', data.business_id);
-
-    showSuccess(payload, data);
-
-  } catch(e) {
-    showBanner('Cannot reach server. Is the backend running?');
-    btn.disabled = false;
-    btn.textContent = '🚀 Create Account';
-  }
+  const el = document.getElementById(inputId);
+  if (el) el.classList.add('err');
+  const er = document.getElementById(errId);
+  if (er) er.textContent = msg;
 }
 
 function showBanner(msg) {
@@ -211,24 +352,124 @@ function showBanner(msg) {
   b.style.display = 'block';
 }
 
-function showSuccess(payload, data) {
-  document.querySelectorAll('.form-step,.steps,.progress-bar').forEach(el=>el.style.display='none');
-  document.getElementById('ftitle').style.display='none';
-  document.getElementById('fsub').style.display='none';
-  document.getElementById('err-banner').style.display='none';
-  document.getElementById('success').style.display='block';
+// ── Step advance with validation ─────────────────────────
+function next(to) {
+  clearErr();
 
-  const hasWA = payload.whatsapp_phone_id && payload.whatsapp_token;
-  document.getElementById('success-msg').innerHTML = hasWA
-    ? `<strong>${data.business_name}</strong> is ready. Your bot is live!`
-    : `<strong>${data.business_name}</strong> is ready. Add WhatsApp credentials in ⚙️ Settings to activate your bot.`;
+  if (to === 2) {
+    const u  = document.getElementById('s-user').value.trim();
+    const p  = document.getElementById('s-pass').value;
+    const p2 = document.getElementById('s-pass2').value;
+    let ok = true;
+    if (u.length < 3)      { fieldErr('s-user',  'ferr-user',  'At least 3 characters'); ok = false; }
+    else if (/\s/.test(u)) { fieldErr('s-user',  'ferr-user',  'No spaces allowed');      ok = false; }
+    if (p.length < 6)      { fieldErr('s-pass',  'ferr-pass',  'At least 6 characters'); ok = false; }
+    if (p !== p2)          { fieldErr('s-pass2', 'ferr-pass2', 'Passwords do not match'); ok = false; }
+    if (!ok) return;
+  }
+
+  if (to === 3) {
+    const b = document.getElementById('s-biz').value.trim();
+    if (b.length < 2) { fieldErr('s-biz', 'ferr-biz', 'Enter your business name'); return; }
+  }
+
+  goTo(to);
+}
+
+// ── Form submission ───────────────────────────────────────
+async function submitForm() {
+  clearErr();
+
+  // Validate confirm field
+  const username  = document.getElementById('s-user').value.trim().toLowerCase();
+  const confirmed = document.getElementById('s-user-confirm').value.trim().toLowerCase();
+  if (confirmed !== username) {
+    fieldErr('s-user-confirm', 'ferr-confirm', 'Username does not match step 1');
+    return;
+  }
+
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+
+  const payload = {
+    business_name:     document.getElementById('s-biz').value.trim(),
+    username:          username,
+    password:          document.getElementById('s-pass').value,
+    category:          document.getElementById('s-category').value || undefined,
+    use_shared_number: true,   // no Meta setup needed
+  };
+
+  try {
+    const res  = await fetch(`${API}/auth/signup`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      let msg = data.detail;
+      if (Array.isArray(msg)) msg = msg.map(e => e.msg).join(', ');
+      showBanner(msg || 'Signup failed — please try again.');
+      btn.disabled = false;
+      btn.textContent = '🚀 Create Account';
+      return;
+    }
+
+    // Persist session
+    localStorage.setItem('wazi_token',       data.access_token);
+    localStorage.setItem('wazi_refresh',     data.refresh_token || '');
+    localStorage.setItem('wazi_role',        data.role);
+    localStorage.setItem('wazi_user',        payload.username);
+    localStorage.setItem('wazi_biz',         data.business_name);
+    if (data.business_id) {
+      localStorage.setItem('wazi_business_id', String(data.business_id));
+    }
+
+    showSuccess(payload, data);
+
+  } catch (e) {
+    showBanner('Cannot reach server. Please check your connection.');
+    btn.disabled = false;
+    btn.textContent = '🚀 Create Account';
+  }
+}
+
+// ── Success screen ────────────────────────────────────────
+function showSuccess(payload, data) {
+  document.querySelectorAll('.form-step, .steps, .progress-bar')
+    .forEach(el => el.style.display = 'none');
+  document.getElementById('ftitle').style.display  = 'none';
+  document.getElementById('fsub').style.display    = 'none';
+  document.getElementById('err-banner').style.display = 'none';
+  document.getElementById('success').style.display = 'block';
+
+  document.getElementById('success-msg').innerHTML =
+    `<strong>${data.business_name}</strong> is ready. Your AI ordering bot is live on WhatsApp! 🎉`;
 
   document.getElementById('success-creds').innerHTML = `
-    <div class="cred-row"><span class="cred-label">Business</span><span class="cred-value">${data.business_name}</span></div>
-    <div class="cred-row"><span class="cred-label">Username</span><span class="cred-value">${payload.username}</span></div>
-    <div class="cred-row"><span class="cred-label">Status</span><span class="cred-value">✅ Active</span></div>
-    <div class="cred-row"><span class="cred-label">WhatsApp</span><span class="cred-value">${hasWA?'🟢 Connected':'⚙️ Setup needed'}</span></div>`;
+    <div class="cred-row">
+      <span class="cred-label">Business</span>
+      <span class="cred-value">${data.business_name}</span>
+    </div>
+    <div class="cred-row">
+      <span class="cred-label">Username</span>
+      <span class="cred-value">${payload.username}</span>
+    </div>
+    <div class="cred-row">
+      <span class="cred-label">Status</span>
+      <span class="cred-value">✅ Active</span>
+    </div>
+    <div class="cred-row">
+      <span class="cred-label">WhatsApp</span>
+      <span class="cred-value">🟢 Shared number connected</span>
+    </div>`;
 }
+
+// ── Init ──────────────────────────────────────────────────
+goTo(1);
 </script>
+
 </body>
 </html>

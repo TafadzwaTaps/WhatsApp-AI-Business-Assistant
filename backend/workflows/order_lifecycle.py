@@ -15,8 +15,8 @@ Status flow: pending → confirmed → paid → delivered
 import json
 import logging
 from datetime import datetime, timezone
-from db import supabase
-from inventory import reduce_stock_by_name
+from core.db import supabase
+from services.inventory_service import reduce_stock_by_name
 
 log = logging.getLogger(__name__)
 

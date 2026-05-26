@@ -4,7 +4,7 @@ Inventory management — pure Supabase, no SQLAlchemy.
 """
 
 import logging
-from db import supabase
+from core.db import supabase
 
 log = logging.getLogger(__name__)
 

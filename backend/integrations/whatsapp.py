@@ -9,7 +9,7 @@ import requests
 
 from fastapi import APIRouter, Request
 import crud
-from ai import generate_reply
+from services.ai_service import generate_reply
 
 log = logging.getLogger(__name__)
 router = APIRouter()

@@ -77,7 +77,7 @@ _PLATFORM_BIZ_ID = 0
 def _read_platform_state(phone: str) -> dict:
     """Read platform-level state_data for this phone (business_id=0 row)."""
     try:
-        from db import supabase
+        from core.db import supabase
         res = (
             supabase.table("carts")
             .select("state_data")
@@ -97,7 +97,7 @@ def _read_platform_state(phone: str) -> dict:
 def _write_platform_state(phone: str, patch: dict) -> None:
     """Write platform-level state_data for this phone."""
     try:
-        from db import supabase
+        from core.db import supabase
         from datetime import datetime, timezone
         existing = _read_platform_state(phone)
         existing.update(patch)
