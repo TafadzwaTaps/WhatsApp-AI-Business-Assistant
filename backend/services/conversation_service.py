@@ -54,10 +54,13 @@ class STATE:
     COMPLETED              = "completed"
     CANCELLED              = "cancelled"
 
+    ORDER_PREVIEW          = "order_preview"    # parser showed preview, waiting for yes/no
+
     ALL = {
         BROWSING, CONFIRM_ORDER, CHECKOUT,
         AWAITING_PAYMENT, AWAITING_PROOF,
-        AWAITING_FULFILLMENT, AWAITING_ADDRESS,   # ← were missing; caused normalize_state fallback
+        AWAITING_FULFILLMENT, AWAITING_ADDRESS,
+        ORDER_PREVIEW,
         MANUAL_REVIEW, HUMAN_HANDOFF,
         SURVEY, COMPLETED, CANCELLED,
     }

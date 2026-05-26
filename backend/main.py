@@ -5,10 +5,6 @@ All DB access goes through crud.py which uses the supabase-py client.
 No SQLAlchemy, no database.py, no Session dependency.
 """
 
-import sys
-import os as _os
-sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
-
 import os
 import json
 import logging
@@ -27,22 +23,22 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 
 import crud
-from core.crypto import TokenDecryptionError
-from services.ai_service import generate_reply
-from core.auth import (
+from crypto import TokenDecryptionError
+from ai import generate_reply
+from auth import (
     verify_password,
     create_access_token, create_refresh_token,
     decode_token,
     get_current_user, require_superadmin, require_business,
     SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
 )
-from workflows.order_lifecycle import (
+from order_lifecycle import (
     create_order_supabase,
     update_order_status_supabase,
     get_order,
     VALID_STATUSES,
 )
-from services.invoice_service import generate_invoice_text
+from invoice import generate_invoice_text
 # payments.py — see payments.py for available functions
 
 load_dotenv()
@@ -416,7 +412,7 @@ def debug_supabase():
 
     # Try an actual query — select one row from businesses
     try:
-        from core.db import supabase as _sb
+        from db import supabase as _sb
         res = _sb.table("businesses").select("id").limit(1).execute()
         return {
             "ok":      True,
@@ -439,7 +435,7 @@ def debug_supabase():
 
 @app.get("/debug/token")
 def debug_token():
-    from core.crypto import encrypt_token, decrypt_token
+    from crypto import encrypt_token, decrypt_token
     test = "wazibot-test-12345"
     try:
         ct = encrypt_token(test)
@@ -531,7 +527,7 @@ async def verify_webhook(request: Request):
 def _get_customer_state_for_log(phone: str, business_id: int) -> str:
     """Lightweight state read for logging — never raises."""
     try:
-        from core.db import supabase as _sb
+        from db import supabase as _sb
         res = (
             _sb.table("carts")
             .select("state_data")
@@ -572,17 +568,27 @@ async def receive_message(request: Request):
         msg_obj  = value["messages"][0]
         msg_type = msg_obj.get("type", "")
 
-        # For image/document messages in awaiting_proof state, we still need to process
-        # them (customer is sending payment screenshot). For all other non-text, skip.
-        if msg_type not in ("text", "image", "document", "sticker"):
-            log.info("Webhook: skipping non-text/image message  type=%s", msg_type)
+        # Supported message types
+        SUPPORTED_TYPES = ("text", "image", "document", "sticker", "audio")
+        if msg_type not in SUPPORTED_TYPES:
+            log.info("Webhook: skipping unsupported message type=%s", msg_type)
             return {"status": "ok"}
 
-        # For image messages with no text body, use a placeholder
+        # Handle image/document — customer may be sending payment proof
         if msg_type in ("image", "document", "sticker"):
-            # Extract caption if present, otherwise use placeholder
             img_obj = msg_obj.get(msg_type, {})
             text = img_obj.get("caption", "").strip() or "[image]"
+
+        # Handle audio / voice notes — architecture hook for future Whisper integration
+        elif msg_type == "audio":
+            audio_obj = msg_obj.get("audio", {})
+            audio_id  = audio_obj.get("id", "")
+            log.info("Webhook: voice note received  audio_id=%s  from=%s", audio_id, customer_phone)
+            # For now: acknowledge the voice note gracefully.
+            # When OPENAI_API_KEY is set, POST to /voice/transcribe to process.
+            # The customer gets a friendly reply asking them to type their order.
+            text = "[voice_note]"
+
         elif msg_type != "text":
             return {"status": "ok"}
 
@@ -612,7 +618,7 @@ async def receive_message(request: Request):
 
     # ── STEP 2: Find business (shared-number-aware) ──────────────────────
     try:
-        from services.tenant_service import (
+        from tenant_router import (
             is_shared_number, resolve_business_for_shared_number,
             is_switch_request,
         )
@@ -726,6 +732,30 @@ async def receive_message(request: Request):
             msg_type in ("image", "document", "sticker")
             or "image" in value.get("messages", [{}])[0]
         )
+        # Detect voice notes — special handling
+        is_voice_note = (msg_type == "audio")
+        if is_voice_note and text == "[voice_note]":
+            # Return a friendly voice note response without calling generate_reply
+            # (Full Whisper integration available via /voice/transcribe endpoint)
+            reply = (
+                "🎤 I heard your voice note! Unfortunately I can't process audio yet.\n\n"
+                "Could you type your order instead? Type *menu* to get started! 😊"
+            )
+            log.info("📤 voice note fallback sent  phone=%s", customer_phone)
+            # Skip to STEP 7 (save outgoing) and STEP 8 (send)
+            # We set products=[] so we can skip straight to send
+            try:
+                out_msg = crud.create_message(
+                    customer["id"], business["id"], reply, "outgoing",
+                    sender_type="ai",
+                )
+                log.info("💾 STEP 7 voice-note-reply  id=%s", out_msg.get("id", "?"))
+            except Exception as exc:
+                log.warning("STEP 7 voice-note-reply failed: %s", exc)
+            if token:
+                _r = send_whatsapp(phone_number_id, token, customer_phone, reply)
+                _log_event("wa.voice_reply", phone=customer_phone, biz=business["id"])
+            return {"status": "ok"}
 
         # Detect agent-echo messages.
         # Meta webhooks already filter delivery `statuses` events at line 519,
@@ -843,7 +873,7 @@ async def payment_webhook(data: PaymentConfirmRequest):
 
     Payload: { "reference": "ORDER-12", "amount": 10.00 }
     """
-    from workflows.order_lifecycle import get_order
+    from order_lifecycle import get_order
 
     reference = (data.reference or "").strip().upper()
     if not reference.startswith("ORDER-"):
@@ -874,7 +904,7 @@ async def payment_webhook(data: PaymentConfirmRequest):
         "payment_reference": reference,
     })
     try:
-        from workflows.order_lifecycle import update_order_status_supabase
+        from order_lifecycle import update_order_status_supabase
         update_order_status_supabase(order_id, "paid")
     except Exception:
         pass
@@ -924,7 +954,7 @@ def download_invoice(order_id: int, user=Depends(require_business)):
         try:
             business = crud.get_business_by_id(user["business_id"])
             order["business_name"] = business.get("name", "") if business else ""
-            from services.pdf_invoice import generate_pdf_invoice
+            from pdf_invoice import generate_pdf_invoice
             pdf_path = generate_pdf_invoice(order)
         except Exception as exc:
             log.exception("download_invoice: PDF generation failed — %s", exc)
@@ -1063,7 +1093,7 @@ async def push_lifecycle_update(
 
     Status values: preparing | ready | out_for_delivery | delivered | completed
     """
-    from workflows.order_lifecycle import get_order
+    from order_lifecycle import get_order
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1097,7 +1127,7 @@ async def push_lifecycle_update(
     }
     db_status = status_map.get(new_status, "confirmed")
     try:
-        from workflows.order_lifecycle import update_order_status_supabase
+        from order_lifecycle import update_order_status_supabase
         update_order_status_supabase(order_id, db_status)
     except Exception as exc:
         log.warning("lifecycle: db status update failed: %s", exc)
@@ -1144,7 +1174,7 @@ async def push_lifecycle_update(
     # ── Trigger survey if order is complete ───────────────────────────────────
     if new_status in ("delivered", "completed") and phone:
         try:
-            from services.ai_service import _set_survey_state
+            from ai import _set_survey_state
             _set_survey_state(phone, bid)
             log.info("lifecycle: survey triggered  phone=%s", phone)
         except Exception as exc:
@@ -1178,7 +1208,7 @@ async def admin_approve_payment(
     Approve a pending payment proof (EcoCash / manual PayPal).
     Marks order as confirmed and sends a WhatsApp confirmation to the customer.
     """
-    from workflows.order_lifecycle import get_order, update_order_status_supabase
+    from order_lifecycle import get_order, update_order_status_supabase
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1208,7 +1238,7 @@ async def admin_approve_payment(
     # Trigger fulfillment question if not yet set
     if phone and not order.get("fulfillment_method"):
         try:
-            from services.ai_service import _set_awaiting_fulfillment, _get_state
+            from ai import _set_awaiting_fulfillment, _get_state
             if _get_state(phone, bid) == "browsing":
                 _set_awaiting_fulfillment(phone, bid, order_id=order_id, reference=ref)
                 biz      = crud.get_business_by_id(bid)
@@ -1240,7 +1270,7 @@ async def admin_reject_proof(
     Reject a payment proof — marks order as awaiting_payment again and
     asks the customer to re-submit proof.
     """
-    from workflows.order_lifecycle import get_order
+    from order_lifecycle import get_order
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1271,7 +1301,7 @@ async def admin_cancel_order(
     user=Depends(require_business),
 ):
     """Cancel an order from the admin side."""
-    from workflows.order_lifecycle import get_order, update_order_status_supabase
+    from order_lifecycle import get_order, update_order_status_supabase
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1306,7 +1336,7 @@ async def admin_refund_order(
     user=Depends(require_business),
 ):
     """Mark an order as refunded and notify the customer."""
-    from workflows.order_lifecycle import get_order, update_order_status_supabase
+    from order_lifecycle import get_order, update_order_status_supabase
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1341,7 +1371,7 @@ def get_order_status(order_id: int, user=Depends(require_business)):
     Get full status details for an order — for dashboard display.
     Returns status, payment_status, fulfillment_method, delivery_address, progress_bar.
     """
-    from workflows.order_lifecycle import get_order, format_order_status, get_progress_bar, next_order_stage
+    from order_lifecycle import get_order, format_order_status, get_progress_bar, next_order_stage
 
     bid   = user["business_id"]
     order = get_order(order_id)
@@ -1469,7 +1499,7 @@ def platform_activate_business(business_id: int, user=Depends(require_superadmin
 def platform_stats(user=Depends(require_superadmin)):
     """Super admin: platform-wide statistics."""
     try:
-        from core.db import supabase as _sb
+        from db import supabase as _sb
         businesses  = crud.get_all_businesses()
         active_biz  = [b for b in businesses if b.get("is_active")]
         orders_res  = _sb.table("orders").select("id,total_price,status,payment_status,business_id").execute()
@@ -1496,7 +1526,7 @@ def platform_customer_session(phone: str, user=Depends(require_superadmin)):
     Super admin: inspect a customer's current business selection and state.
     Useful for debugging routing issues.
     """
-    from services.tenant_service import get_selected_business_id, get_selected_business_name
+    from tenant_router import get_selected_business_id, get_selected_business_name
     bid  = get_selected_business_id(phone)
     name = get_selected_business_name(phone)
     return {
@@ -1510,9 +1540,177 @@ def platform_customer_session(phone: str, user=Depends(require_superadmin)):
 @app.delete("/platform/customer/{phone}/session")
 def platform_clear_customer_session(phone: str, user=Depends(require_superadmin)):
     """Super admin: clear a customer's business selection (forces re-pick)."""
-    from services.tenant_service import clear_selected_business
+    from tenant_router import clear_selected_business
     clear_selected_business(phone)
     return {"ok": True, "phone": phone, "message": "Session cleared."}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUSINESS INTELLIGENCE ENDPOINTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/analytics/stats")
+def analytics_stats(user=Depends(require_business)):
+    """
+    Lightweight business stats for the dashboard analytics cards.
+    Returns: total_orders, paid_orders, total_revenue, pending_orders,
+             active_customers, ai_handled, human_handled.
+    """
+    return crud.get_business_stats(user["business_id"])
+
+
+@app.get("/analytics/top-customers")
+def analytics_top_customers(limit: int = 10, user=Depends(require_business)):
+    """Top customers by order count from user_memory."""
+    return crud.get_top_customers(user["business_id"], limit=limit)
+
+
+@app.get("/analytics/low-stock")
+def analytics_low_stock(user=Depends(require_business)):
+    """
+    Products at or below their low_stock_threshold.
+    Used for dashboard alert badges and business-owner notifications.
+    """
+    return crud.get_low_stock_products(user["business_id"])
+
+
+@app.post("/analytics/notify-low-stock")
+async def notify_low_stock_to_owner(user=Depends(require_business)):
+    """
+    Send a WhatsApp message to the business owner listing low-stock products.
+    Business owner must have a contact_phone set in their profile.
+    """
+    bid  = user["business_id"]
+    biz  = crud.get_business_by_id(bid)
+    if not biz:
+        raise HTTPException(404, "Business not found")
+
+    owner_phone = biz.get("contact_phone", "").strip()
+    if not owner_phone:
+        return {"ok": False, "message": "No contact_phone set for this business."}
+
+    low = crud.get_low_stock_products(bid)
+    if not low:
+        return {"ok": True, "message": "All products are well-stocked! ✅"}
+
+    lines = [f"  • *{p['name']}* — {p.get('stock', 0)} left" for p in low]
+    msg = (
+        f"⚠️ *Low Stock Alert — {biz.get('name', 'Your Store')}*\n\n"
+        + "\n".join(lines)
+        + "\n\n_Please restock soon to avoid lost sales._"
+    )
+
+    try:
+        token    = crud.get_decrypted_token(biz)
+        phone_id = biz.get("whatsapp_phone_id", "")
+        if not token or not phone_id:
+            # Try shared number
+            if SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+                token, phone_id = SHARED_WA_TOKEN, SHARED_PHONE_NUMBER_ID
+            else:
+                return {"ok": False, "message": "No WhatsApp token configured."}
+        result = send_whatsapp(phone_id, token, owner_phone, msg)
+        ok = "error" not in result
+        log.info("notify_low_stock  biz=%s  sent=%s  products=%d", bid, ok, len(low))
+        return {"ok": ok, "products_alerted": len(low)}
+    except Exception as exc:
+        log.error("notify_low_stock error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VOICE NOTE PROCESSING (architecture hook — Whisper integration ready)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class VoiceTranscribeRequest(BaseModel):
+    """
+    Request to process a voice note.
+    In production, `audio_url` points to the WhatsApp media URL.
+    The backend downloads it, calls the transcription provider (Whisper or
+    another STT), then feeds the transcript to generate_reply().
+    """
+    customer_id:  int
+    audio_url:    str
+    phone:        str
+    language:     str = "en"   # "en", "sn" (Shona), "auto"
+
+
+@app.post("/voice/transcribe")
+async def voice_transcribe(body: VoiceTranscribeRequest, user=Depends(require_business)):
+    """
+    Architecture hook for voice note processing.
+
+    Current implementation:
+      - Downloads the audio from WhatsApp media URL
+      - Returns a placeholder (Whisper integration pending)
+
+    To activate Whisper:
+      - Set OPENAI_API_KEY in Render env vars
+      - Uncomment the OpenAI section below
+
+    This endpoint is called by the webhook when msg_type == "audio".
+    """
+    import os
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(body.customer_id, bid)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
+
+    transcript = None
+
+    if openai_key:
+        try:
+            import httpx, tempfile, pathlib
+            biz   = crud.get_business_by_id(bid)
+            token = crud.get_decrypted_token(biz) if biz else ""
+
+            # Download audio from WhatsApp
+            async with httpx.AsyncClient() as client:
+                headers = {"Authorization": f"Bearer {token}"}
+                r = await client.get(body.audio_url, headers=headers, timeout=30)
+                r.raise_for_status()
+                audio_bytes = r.content
+
+            # Call Whisper API
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/audio/transcriptions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    files={"file": ("voice.ogg", audio_bytes, "audio/ogg")},
+                    data={"model": "whisper-1", "language": body.language if body.language != "auto" else ""},
+                    timeout=60,
+                )
+                resp.raise_for_status()
+                transcript = resp.json().get("text", "").strip()
+                log.info("voice_transcribe OK  phone=%s  transcript=%r", body.phone, transcript[:60])
+
+        except Exception as exc:
+            log.warning("voice_transcribe whisper error: %s", exc)
+            transcript = None
+
+    if not transcript:
+        # Graceful fallback — ask customer to type their order
+        log.info("voice_transcribe: no transcript  phone=%s", body.phone)
+        return {
+            "ok":         False,
+            "transcript": None,
+            "reply":      "🎤 Sorry, I couldn't process your voice note. Could you type your order instead? Type *menu* to get started! 😊",
+        }
+
+    # Process the transcript as a normal text message
+    biz      = crud.get_business_by_id(bid)
+    products = crud.get_products(bid)
+    reply    = generate_reply(
+        message=transcript,
+        phone=body.phone,
+        business_id=bid,
+        business_name=biz.get("name", "") if biz else "",
+        products=products,
+        voice_transcript=transcript,
+    )
+    return {"ok": True, "transcript": transcript, "reply": reply}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1895,7 +2093,7 @@ def chat_messages_by_phone(
     from urllib.parse import unquote
     phone = unquote(phone)
 
-    from core.db import supabase as _supa
+    from db import supabase as _supa
     customer = (
         _supa.table("customers")
         .select("*")
@@ -2025,7 +2223,7 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 
     # Record agent activity so auto-resume timeout resets correctly
     try:
-        from workflows.human_handoff import record_agent_reply
+        from human_handoff import record_agent_reply
         record_agent_reply(customer["phone"], bid)
     except Exception as exc:
         log.debug("record_agent_reply skipped: %s", exc)
@@ -2050,8 +2248,8 @@ async def request_human_handoff(customer_id: int, user=Depends(require_business)
     Manually flag a customer for human agent attention from the dashboard.
     Sets state to human_handoff and notifies the customer.
     """
-    from services.ai_service import _set_human_handoff
-    from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
+    from ai import _set_human_handoff
+    from human_handoff import notify_dashboard, handoff_acknowledgement
 
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
@@ -2085,8 +2283,8 @@ async def release_human_handoff(customer_id: int, user=Depends(require_business)
     Return a customer to AI mode after human agent is done.
     Clears human_handoff state and notifies customer.
     """
-    from services.ai_service import _reset_state as ai_reset_state
-    from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
+    from ai import _reset_state as ai_reset_state
+    from human_handoff import clear_handoff_flag, ai_resumed_message
 
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
@@ -2120,7 +2318,7 @@ def list_pending_handoffs(user=Depends(require_business)):
     List all customers currently in human_handoff mode for this business.
     Returns customer details sorted by most recent.
     """
-    from core.db import supabase as _sb
+    from db import supabase as _sb
 
     bid = user["business_id"]
     try:
@@ -2169,7 +2367,7 @@ def handoff_pending(user=Depends(require_business)):
     List all customers currently in human_handoff mode for this business.
     Use in the dashboard to surface conversations that need a human reply.
     """
-    from workflows.human_handoff import get_pending_handoffs
+    from human_handoff import get_pending_handoffs
     return get_pending_handoffs(user["business_id"])
 
 
@@ -2184,8 +2382,8 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     if not customer:
         raise HTTPException(404, "Customer not found")
 
-    from workflows.human_handoff import notify_dashboard
-    from services.ai_service import _set_human_handoff
+    from human_handoff import notify_dashboard
+    from ai import _set_human_handoff
 
     phone     = customer["phone"]
     biz       = crud.get_business_by_id(bid)
@@ -2209,8 +2407,8 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
     if not customer:
         raise HTTPException(404, "Customer not found")
 
-    from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
-    from services.ai_service import _reset_state
+    from human_handoff import clear_handoff_flag, ai_resumed_message
+    from ai import _reset_state
 
     phone    = customer["phone"]
     biz      = crud.get_business_by_id(bid)
@@ -2258,7 +2456,7 @@ def debug_schema(user=Depends(require_business)):
     Show which optional columns exist in the orders table.
     Useful to confirm whether MIGRATION.sql has been run.
     """
-    from workflows.order_lifecycle import _get_orders_columns, _invalidate_column_cache
+    from order_lifecycle import _get_orders_columns, _invalidate_column_cache
     _invalidate_column_cache()   # force re-probe
     cols = _get_orders_columns()
     optional = ["items", "payment_status", "payment_reference"]
@@ -2576,8 +2774,8 @@ async def paypal_success(
     NOTE: The PayPal webhook (/payments/paypal/webhook) is the primary
     confirmation path. This endpoint is a fallback for browser users.
     """
-    from services.payment_service import capture_paypal_order
-    from workflows.order_lifecycle import get_order
+    from payments import capture_paypal_order
+    from order_lifecycle import get_order
 
     log.info("paypal_success  token=%s  reference=%s  PayerID=%s", token, reference, PayerID)
 
@@ -2686,8 +2884,8 @@ async def paypal_webhook(request: Request):
     Required ENV var:
       PAYPAL_WEBHOOK_ID — the Webhook ID from PayPal Developer Dashboard
     """
-    from services.payment_service import verify_paypal_webhook_signature
-    from workflows.order_lifecycle import get_order
+    from payments import verify_paypal_webhook_signature
+    from order_lifecycle import get_order
 
     WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
 
@@ -2790,7 +2988,7 @@ async def paypal_webhook(request: Request):
                 "paypal_order_id":   paypal_order_id,
             })
             try:
-                from workflows.order_lifecycle import update_order_status_supabase
+                from order_lifecycle import update_order_status_supabase
                 update_order_status_supabase(order_id, "paid")
             except Exception as exc:
                 log.warning("paypal_webhook: status update failed: %s", exc)
@@ -2800,7 +2998,7 @@ async def paypal_webhook(request: Request):
             if customer_phone:
                 try:
                     # Import ai state functions to reset the customer's flow
-                    from services.ai_service import _reset_state as ai_reset_state
+                    from ai import _reset_state as ai_reset_state
                     ai_reset_state(customer_phone, biz_id)
                 except Exception as exc:
                     log.warning("paypal_webhook: state reset failed: %s", exc)
@@ -2861,7 +3059,7 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
 
     Body: { "order_id": 42, "reference": "ORDER-42", "amount": 10.50 }
     """
-    from workflows.order_lifecycle import get_order, update_order_status_supabase
+    from order_lifecycle import get_order, update_order_status_supabase
 
     body = await request.json()
     order_id  = int(body.get("order_id", 0))

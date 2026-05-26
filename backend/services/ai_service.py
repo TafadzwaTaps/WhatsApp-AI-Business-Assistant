@@ -98,6 +98,17 @@ def _fuzzy():
     return fuzzy_matcher
 
 
+def _order_parser():
+    """Lazy import of order_parser_service to avoid circular imports."""
+    try:
+        from services.order_parser_service import parse_order, build_order_preview
+        return parse_order, build_order_preview
+    except ImportError:
+        # Fallback: try root-level import path
+        from order_parser_service import parse_order, build_order_preview
+        return parse_order, build_order_preview
+
+
 def _handoff_mod():
     import human_handoff
     return human_handoff
@@ -116,7 +127,7 @@ def _now_iso() -> str:
 def _read_state_data(phone: str, business_id: int) -> dict:
     """Read state_data from carts table. Never raises."""
     try:
-        from core.db import supabase
+        from db import supabase
         res = (
             supabase.table("carts")
             .select("state_data")
@@ -140,7 +151,7 @@ def _write_state_data(phone: str, business_id: int, patch: dict) -> None:
     Never raises.
     """
     try:
-        from core.db import supabase
+        from db import supabase
         existing = _read_state_data(phone, business_id)
         existing.update(patch)
         supabase.table("carts").upsert(
@@ -181,7 +192,7 @@ def _set_state(phone: str, business_id: int, state: str, **extra) -> None:
 
 
 def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list) -> None:
-    from services.conversation_service import can_transition, STATE
+    from conversation_states import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.CHECKOUT):
         log.warning("_set_checkout_state: invalid transition %s→checkout  phone=%s", current, phone)
@@ -199,7 +210,7 @@ def _set_confirm_state(phone: str, business_id: int, cart_snapshot: list) -> Non
 
 def _set_awaiting_payment(phone: str, business_id: int,
                           order_id, method: str, reference: str) -> None:
-    from services.conversation_service import can_transition, STATE
+    from conversation_states import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.AWAITING_PAYMENT):
         log.warning("_set_awaiting_payment: invalid transition %s→awaiting_payment  phone=%s", current, phone)
@@ -212,7 +223,7 @@ def _set_awaiting_payment(phone: str, business_id: int,
 def _set_awaiting_proof(phone: str, business_id: int,
                         order_id, method: str, reference: str) -> None:
     """Enter awaiting_proof state — customer must provide txn ID or image."""
-    from services.conversation_service import can_transition, STATE
+    from conversation_states import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.AWAITING_PROOF):
         log.warning("_set_awaiting_proof: invalid transition %s→awaiting_proof  phone=%s", current, phone)
@@ -230,6 +241,17 @@ def _reset_state(phone: str, business_id: int) -> None:
 def _set_survey_state(phone: str, business_id: int) -> None:
     """Enter survey state — awaiting satisfaction rating."""
     _set_state(phone, business_id, "survey", session={})
+
+
+def _set_order_preview_state(phone: str, business_id: int,
+                              cart_lines: list) -> None:
+    """
+    Enter order_preview state: customer has been shown a parsed order
+    and must reply 'yes' to add it to their cart.
+    cart_lines: the ParsedOrder.cart_lines() result.
+    """
+    _set_state(phone, business_id, "order_preview",
+               session={"preview_cart": cart_lines})
 
 
 def _set_awaiting_fulfillment(phone: str, business_id: int,
@@ -254,7 +276,7 @@ def _get_active_order(phone: str, business_id: int) -> dict | None:
     Returns the order dict or None.
     """
     try:
-        from core.db import supabase as _sb
+        from db import supabase as _sb
         res = (
             _sb.table("orders")
             .select("*")
@@ -327,24 +349,51 @@ def _rate_limit_message() -> str:
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _get_memory(phone: str, business_id: int) -> dict:
+    """Return customer memory. Falls back to a safe default on any error."""
     try:
-        return crud.get_user_memory(phone, business_id) or {
-            "frequent_items": {}, "last_orders": [],
-        }
+        mem = crud.get_user_memory(phone, business_id) or {}
+        # Ensure all expected keys exist (backward compat with old rows)
+        mem.setdefault("frequent_items", {})
+        mem.setdefault("last_orders",    [])
+        mem.setdefault("customer_name",  "")
+        mem.setdefault("total_spent",    0.0)
+        mem.setdefault("order_count",    0)
+        mem.setdefault("last_seen",      "")
+        mem.setdefault("last_rating",    "")
+        return mem
     except Exception as exc:
         log.warning("_get_memory failed: %s", exc)
-        return {"frequent_items": {}, "last_orders": []}
+        return {"frequent_items": {}, "last_orders": [], "customer_name": "",
+                "total_spent": 0.0, "order_count": 0}
 
 
 def _update_order_history(phone: str, business_id: int, cart: list) -> None:
+    """
+    Update customer memory after a successful order.
+    Tracks: frequent items, order history, total spent, order count, last seen.
+    """
     try:
+        from datetime import datetime, timezone
         mem = _get_memory(phone, business_id)
+
+        # Frequency map
         for item in cart:
             name = item["name"]
             mem["frequent_items"][name] = mem["frequent_items"].get(name, 0) + item["qty"]
+
+        # Order history (keep last 10)
         mem["last_orders"].append([i["name"] for i in cart])
         mem["last_orders"] = mem["last_orders"][-10:]
+
+        # Spend / count tracking
+        order_total = sum(i["qty"] * float(i["price"]) for i in cart)
+        mem["total_spent"]  = round(float(mem.get("total_spent", 0) or 0) + order_total, 2)
+        mem["order_count"]  = int(mem.get("order_count", 0) or 0) + 1
+        mem["last_seen"]    = datetime.now(timezone.utc).isoformat()
+
         crud.save_user_memory(phone, business_id, mem)
+        log.debug("_update_order_history  phone=%s  spent=%.2f  orders=%d",
+                  phone, mem["total_spent"], mem["order_count"])
     except Exception as exc:
         log.warning("_update_order_history failed: %s", exc)
 
@@ -487,6 +536,27 @@ _STATUS_QUERY_PHRASES = [
 def _is_status_query(text: str) -> bool:
     t = text.lower()
     return any(p in t for p in _STATUS_QUERY_PHRASES)
+
+
+# ── Customer name detection ───────────────────────────────────────────────────
+import re as _name_re
+
+_NAME_PATTERNS = [
+    _name_re.compile(r"(?:my name is|i'm|i am|call me|it's|its)\s+([A-Za-z]{2,20})", _name_re.I),
+    _name_re.compile(r"(?:this is)\s+([A-Za-z]{2,20})\s*[,.]", _name_re.I),
+]
+
+def _extract_name(text: str) -> str | None:
+    """Extract a first name from an introduction phrase. Returns None if not found."""
+    for pat in _NAME_PATTERNS:
+        m = pat.search(text)
+        if m:
+            name = m.group(1).strip().title()
+            # Reject common false positives
+            if name.lower() not in {"ok", "hi", "hey", "yes", "no", "not", "done",
+                                     "fine", "good", "just", "here", "there", "all"}:
+                return name
+    return None
 
 
 _DONE_EXACT = {
@@ -938,7 +1008,7 @@ def _format_cart(cart: list) -> str:
 
 def _build_payment_menu(cart: list, business_id: int) -> str:
     """Payment method selection message. business_id required for per-business settings."""
-    from services.payment_service import available_methods
+    from payments import available_methods
     try:
         pay_settings = crud.get_business_payment_settings(business_id)
     except Exception:
@@ -981,7 +1051,7 @@ def _build_confirm_prompt(cart: list) -> str:
 
 def _build_payment_instructions(pending: dict, business_id: int, business_name: str) -> str:
     """Re-generate payment instructions from stored pending_payment session."""
-    from services.payment_service import (
+    from payments import (
         generate_ecocash_instructions,
         paypal_payment,
         generate_cash_instructions,
@@ -999,7 +1069,7 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
     # Look up the actual total from DB
     total = 0.0
     try:
-        from workflows.order_lifecycle import get_order
+        from order_lifecycle import get_order
         ord_row = get_order(order_id)
         if ord_row:
             total = float(ord_row.get("total_price") or 0)
@@ -1053,7 +1123,7 @@ _LIFECYCLE_ICONS = {
 def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
     """Look up an order and return a rich formatted status message."""
     try:
-        from workflows.order_lifecycle import get_order
+        from order_lifecycle import get_order
         order = get_order(order_id)
         if not order:
             return (
@@ -1198,7 +1268,7 @@ def _handle_paypal_paid_message(
       3b. If pending → tell user we're verifying (webhook will fire soon)
       3c. No paypal_order_id → fall back to manual proof flow
     """
-    from services.payment_service import get_paypal_order_details
+    from payments import get_paypal_order_details
 
     # Get the PayPal order ID we stored when creating the checkout
     state_data     = _read_state_data(phone, business_id)
@@ -1267,8 +1337,8 @@ def _process_payment(
     business_id: int,
     business_name: str,
 ) -> str:
-    from workflows.order_lifecycle import create_order_supabase
-    from services.payment_service import (
+    from order_lifecycle import create_order_supabase
+    from payments import (
         generate_ecocash_instructions,
         paypal_payment,
         generate_cash_instructions,
@@ -1355,7 +1425,7 @@ def _process_payment(
     # 4. Update order status for cash (confirmed immediately)
     if method == "cash":
         try:
-            from workflows.order_lifecycle import update_order_status_supabase
+            from order_lifecycle import update_order_status_supabase
             update_order_status_supabase(order.get("id"), "pending_cash")
             log.info("cash order confirmed immediately  order=%s", order.get("id"))
         except Exception as exc:
@@ -1407,7 +1477,7 @@ def _process_payment(
 
 def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
     try:
-        from services.pdf_invoice import generate_pdf_invoice
+        from pdf_invoice import generate_pdf_invoice
         pdf_path = generate_pdf_invoice(order)
     except Exception as exc:
         log.error("PDF generation failed: %s", exc)
@@ -1418,7 +1488,7 @@ def _send_pdf_invoice(order: dict, phone: str, business_id: int) -> None:
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
         if not token or not phone_id:
             return
-        from integrations.whatsapp import send_whatsapp_document
+        from whatsapp import send_whatsapp_document
         result = send_whatsapp_document(
             phone=phone, file_path=pdf_path,
             access_token=token, phone_number_id=phone_id,
@@ -1440,18 +1510,24 @@ def generate_reply(
     business_id: int,
     business_name: str,
     products: list,
-    message_has_image: bool = False,   # True when WhatsApp message contains an image
-    message_is_from_agent: bool = False,  # True when message sent by staff/agent
+    message_has_image: bool = False,       # True when WhatsApp message contains an image
+    message_is_from_agent: bool = False,   # True when message sent by staff/agent
+    voice_transcript: str | None = None,   # Pre-transcribed voice note text (future: Whisper)
 ) -> str:
     """
     Single entry point called by the webhook for every incoming message.
     message_has_image=True signals that the customer sent a photo (payment proof).
     Returns a WhatsApp-formatted reply string.
     """
-    text = message.strip()
-
-    log.info("▶ msg  phone=%s  biz=%s  img=%s  text=%r",
-             phone, business_id, message_has_image, text[:80])
+    # Voice note support — if a transcript is provided use it as the message
+    # (Future: webhook extracts audio, calls Whisper API, passes transcript here)
+    if voice_transcript:
+        text = voice_transcript.strip()
+        log.info("▶ voice  phone=%s  biz=%s  transcript=%r", phone, business_id, text[:80])
+    else:
+        text = message.strip()
+        log.info("▶ msg  phone=%s  biz=%s  img=%s  text=%r",
+                 phone, business_id, message_has_image, text[:80])
 
     current_state = _get_state(phone, business_id)
     cart          = _load_cart(phone, business_id)
@@ -1480,7 +1556,7 @@ def generate_reply(
     #   "⏳ ..."           → first ack message; send to customer once
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "human_handoff":
-        from services.conversation_service import is_ai_paused
+        from conversation_states import is_ai_paused
         if is_ai_paused(current_state):
             log.info("human_handoff: AI paused — checking auto-resume  phone=%s", phone)
             handoff_result = _handoff_mod().handoff_customer_message(
@@ -1584,7 +1660,7 @@ def generate_reply(
             if order_ref_id or any(w in t_lower for w in ["cancel order", "cancel my order"]):
                 # Try to find a recent pending order for this customer
                 try:
-                    from core.db import supabase as _sb
+                    from db import supabase as _sb
                     res = (
                         _sb.table("orders")
                         .select("id,status,payment_status,total_price")
@@ -1634,7 +1710,7 @@ def generate_reply(
                         crud.update_order_payment(order_id, business_id, {
                             "payment_status": "cancelled",
                         })
-                        from workflows.order_lifecycle import update_order_status_supabase
+                        from order_lifecycle import update_order_status_supabase
                         try:
                             update_order_status_supabase(order_id, "pending")
                         except Exception:
@@ -1670,7 +1746,7 @@ def generate_reply(
         # Look up the customer's most recent order
         recent_order = None
         try:
-            from core.db import supabase as _sb
+            from db import supabase as _sb
             res = (
                 _sb.table("orders")
                 .select("id,status,payment_status,total_price,created_at")
@@ -1714,7 +1790,7 @@ def generate_reply(
         # Check if they have a recent completed order — personalise the goodbye
         recent_ref = ""
         try:
-            from core.db import supabase as _sb
+            from db import supabase as _sb
             res = (
                 _sb.table("orders")
                 .select("id,status")
@@ -1753,7 +1829,7 @@ def generate_reply(
         # Check if they have a recent active order
         active_order = None
         try:
-            from core.db import supabase as _sb
+            from db import supabase as _sb
             res = (
                 _sb.table("orders")
                 .select("id,status,payment_status,total_price")
@@ -1784,6 +1860,59 @@ def generate_reply(
             f"⏳ We're sorry you're waiting!\n\n"
             f"Please share your *order reference* (e.g. *ORDER-12*) "
             f"and we'll check the status for you right away. 🙏"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P0.2 — ORDER PREVIEW STATE
+    # Customer was shown a parsed multi-item order and must confirm with "yes"
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "order_preview":
+        session     = _read_state_data(phone, business_id).get("session") or {}
+        preview     = session.get("preview_cart", [])
+
+        if _is_cancel(text):
+            _reset_state(phone, business_id)
+            return "🚫 Order preview cancelled. Type *menu* to start fresh. 😊"
+
+        if _is_yes(text):
+            if not preview:
+                _reset_state(phone, business_id)
+                return "⚠️ Preview expired. Please type your order again."
+
+            # Add all preview items to the live cart
+            for line in preview:
+                name  = line["name"]
+                qty   = line["qty"]
+                price = float(line["price"])
+                found = False
+                for item in cart:
+                    if item["name"] == name:
+                        item["qty"] += qty
+                        found = True
+                        break
+                if not found:
+                    cart.append({"name": name, "qty": qty, "price": price})
+
+            _save_cart(phone, business_id, cart)
+            _reset_state(phone, business_id)
+            log.info("order_preview: confirmed  items=%d  phone=%s", len(preview), phone)
+
+            recs = _recommend(phone, business_id, products)
+            rec_text = ""
+            if recs:
+                rec_text = "\n\n💡 You might also like " + " or ".join(
+                    f"*{r['name']}*" for r in recs) + "."
+            return (
+                f"✅ *Added to your cart!*\n\n"
+                f"{_format_cart(cart)}"
+                f"{rec_text}\n\n"
+                f"_Type *checkout* when you're ready to order._"
+            )
+
+        # Any other reply — keep showing preview, ask again
+        return (
+            f"Please reply *yes* to confirm, or *cancel* to start over.\n\n"
+            + (f"{_format_cart(preview)}" if preview else "")
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -2092,7 +2221,7 @@ def generate_reply(
             )
 
         # Not a valid method
-        from services.payment_service import available_methods
+        from payments import available_methods
         try:
             pay_settings = crud.get_business_payment_settings(business_id)
         except Exception:
@@ -2254,11 +2383,57 @@ def generate_reply(
         return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart)}"
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P7 — ADD TO CART (NLP product match + multi-item parsing)
+    # P7 — ADD TO CART (order parser → multi-item → single item)
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "order":
 
-        # ── Multi-item check first ("Pizza and ice cream") ────────────────────
+        # ── P7a: Order Parser — handles complex / multilingual sentences ──────
+        # "Boss ndoda 2 drinks ne bread and 3 sadza please"
+        # Only invoke for messages that look like multi-product orders
+        # (4+ words with connectors or quantities). Simple "Sadza" goes straight
+        # to the existing single-item path below.
+        _text_words = text.split()
+        _has_connector = any(w.lower() in {"and","ne","na","&","+",",","futi","zvakare"}
+                             for w in _text_words)
+        _has_quantity = bool(re.search(
+            r"\b[2-9]\d*\b|\b(?:two|three|four|five|six|seven|eight|nine|ten)\b",
+            text, re.IGNORECASE,
+        ))
+
+        if (len(_text_words) >= 4 or
+                (_has_connector and _has_quantity) or
+                (len(_text_words) >= 2 and _has_connector)):
+            try:
+                _parse_fn, _preview_fn = _order_parser()
+                _parsed = _parse_fn(text, products, existing_cart=cart)
+
+                if _parsed.is_confident and len(_parsed.items) >= 2:
+                    # Multi-item confident parse → show preview for confirmation
+                    preview_msg = _preview_fn(_parsed, business_name)
+                    if preview_msg:
+                        _set_order_preview_state(phone, business_id, _parsed.cart_lines())
+                        log.info(
+                            "order_parser: showing preview  items=%d  conf=%.2f  phone=%s",
+                            len(_parsed.items), _parsed.confidence, phone,
+                        )
+                        return preview_msg
+
+                elif _parsed.is_confident and len(_parsed.items) == 1:
+                    # Single item from parser — let it fall through to the
+                    # existing single-item path which has stock checks and
+                    # recommendation logic already
+                    pass
+
+                elif _parsed.unrecognised and not _parsed.has_items:
+                    # Parser found nothing — log and fall through to existing path
+                    log.debug(
+                        "order_parser: no matches, falling through  text=%r", text[:60]
+                    )
+
+            except Exception as exc:
+                log.warning("order_parser invocation failed (%s) — using existing path", exc)
+
+        # ── P7b: Multi-item check (existing logic, preserved) ─────────────────
         multi = _parse_multi_items(text, products)
         if multi:
             added_names = []
@@ -2372,7 +2547,7 @@ def generate_reply(
         return reply
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P9 — BROWSE MENU
+    # P9 — BROWSE MENU (with personalised greeting for returning customers)
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "browse":
         if not products:
@@ -2391,7 +2566,18 @@ def generate_reply(
         if recs:
             rec_text = "\n\n⭐ *You usually order:*\n" + "\n".join(f"  • {r['name']}" for r in recs)
 
+        # Personalised greeting for repeat customers
+        mem        = _get_memory(phone, business_id)
+        order_count = int(mem.get("order_count", 0) or 0)
+        cust_name   = (mem.get("customer_name") or "").strip()
+        greeting    = ""
+        if order_count >= 2 and cust_name:
+            greeting = f"👋 Welcome back, *{cust_name}*! Great to see you again.\n\n"
+        elif order_count >= 2:
+            greeting = f"👋 Welcome back! You've ordered *{order_count} times* from us. 🙏\n\n"
+
         return (
+            f"{greeting}"
             f"📋 *{business_name} Menu*\n\n"
             + "\n".join(lines)
             + rec_text
@@ -2406,12 +2592,29 @@ def generate_reply(
         return _order_status_message(ref_id, phone, business_id)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P11 — HELP / GREETING
+    # P11 — HELP / GREETING (personalised for repeat customers)
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "help":
-        hint = f"*{products[0]['name']}*" if products else "an item"
+        hint       = f"*{products[0]['name']}*" if products else "an item"
+        mem        = _get_memory(phone, business_id)
+        order_count = int(mem.get("order_count", 0) or 0)
+        cust_name   = (mem.get("customer_name") or "").strip()
+        total_spent = float(mem.get("total_spent", 0) or 0)
+
+        if order_count >= 5 and cust_name:
+            greeting = (
+                f"👋 Hey *{cust_name}*! Great to have you back — "
+                f"you've ordered *{order_count} times* with us! 🏆\n\n"
+            )
+        elif order_count >= 2 and cust_name:
+            greeting = f"👋 Welcome back, *{cust_name}*!\n\n"
+        elif order_count >= 2:
+            greeting = f"👋 Welcome back! Glad to see you again 😊\n\n"
+        else:
+            greeting = f"👋 Hey! Welcome to *{business_name}*!\n\n"
+
         return (
-            f"👋 Hey! Welcome to *{business_name}*!\n\n"
+            f"{greeting}"
             f"Here's how to order:\n"
             f"  📋 *menu* — see everything we offer\n"
             f"  🛍️ Type a name — e.g. _{hint}_\n"
@@ -2419,9 +2622,23 @@ def generate_reply(
             f"  ✅ *checkout* — place your order\n"
             f"  ❌ *remove [item]* — remove from cart\n"
             f"  🔍 *ORDER-9* — check an order status\n"
-            f"  🚫 *cancel* — cancel checkout at any time\n\n"
+            f"  🚫 *cancel* — cancel checkout at any time\n"
+            f"  🔄 *repeat last order* — reorder quickly\n\n"
             f"What can I get you today? 😊"
         )
+
+    # ── Name capture (runs early, non-blocking) ──────────────────────────────
+    # If customer introduces themselves, store name in memory
+    detected_name = _extract_name(text)
+    if detected_name:
+        try:
+            _mem = _get_memory(phone, business_id)
+            if not _mem.get("customer_name"):
+                _mem["customer_name"] = detected_name
+                crud.save_user_memory(phone, business_id, _mem)
+                log.info("customer name captured  name=%r  phone=%s", detected_name, phone)
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════════════
     # P10.5 — CONTEXTUAL ACTIVE ORDER QUERIES

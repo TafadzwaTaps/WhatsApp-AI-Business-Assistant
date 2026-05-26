@@ -13,8 +13,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from core.db import supabase
-from core.crypto import encrypt_token, decrypt_token, TokenDecryptionError
+from db import supabase
+from crypto import encrypt_token, decrypt_token, TokenDecryptionError
 
 log = logging.getLogger(__name__)
 
@@ -984,21 +984,58 @@ def get_user_memory(phone: str, business_id: int) -> dict:
 
 
 def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
+    """
+    Persist full customer memory.  Only sends columns that exist in the schema
+    (safe on both old and new deployments via the _has_product_col pattern).
+
+    Core columns (always present): frequent_items, last_orders
+    Extended columns (added by migration 19):
+      customer_name, total_spent, order_count, last_seen, last_rating
+    """
+    row: dict = {
+        "phone":          phone,
+        "business_id":    business_id,
+        "frequent_items": memory.get("frequent_items", {}),
+        "last_orders":    memory.get("last_orders", []),
+        "updated_at":     _now(),
+    }
+    # Extended fields — stored only when present in schema
+    _MEMORY_EXTENDED = {
+        "customer_name": memory.get("customer_name", ""),
+        "total_spent":   float(memory.get("total_spent", 0) or 0),
+        "order_count":   int(memory.get("order_count", 0) or 0),
+        "last_seen":     memory.get("last_seen") or _now(),
+        "last_rating":   memory.get("last_rating", ""),
+        "last_suggestion": memory.get("last_suggestion", ""),
+    }
+    for col, val in _MEMORY_EXTENDED.items():
+        if _has_memory_col(col):
+            row[col] = val
+
     res = (
         supabase.table("user_memory")
-        .upsert(
-            {
-                "phone":          phone,
-                "business_id":    business_id,
-                "frequent_items": memory.get("frequent_items", {}),
-                "last_orders":    memory.get("last_orders", []),
-                "updated_at":     _now(),
-            },
-            on_conflict="phone,business_id",
-        )
+        .upsert(row, on_conflict="phone,business_id")
         .execute()
     )
     return _one("user_memory", res)
+
+
+# Cache for user_memory columns (same pattern as products)
+_memory_columns: set | None = None
+
+def _has_memory_col(col: str) -> bool:
+    global _memory_columns
+    if _memory_columns is None:
+        try:
+            res = supabase.table("user_memory").select("*").limit(1).execute()
+            if res.data:
+                _memory_columns = set(res.data[0].keys())
+            else:
+                _memory_columns = {"id", "phone", "business_id",
+                                   "frequent_items", "last_orders", "updated_at"}
+        except Exception:
+            _memory_columns = set()
+    return col in _memory_columns
 
 
 # ── Message delete / clear ────────────────────────────────────────────────────
@@ -1078,7 +1115,7 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
       payment_method, payment_status, payment_reference, payment_url,
       paypal_order_id   ← NEW: stores PayPal's order ID for webhook lookup
     """
-    from workflows.order_lifecycle import _has_col
+    from order_lifecycle import _has_col
 
     # All columns we are allowed to update
     allowed = (
@@ -1135,3 +1172,113 @@ def get_order_by_paypal_id(paypal_order_id: str) -> Optional[dict]:
     except Exception as exc:
         log.error("get_order_by_paypal_id error  paypal_id=%s  exc=%s", paypal_order_id, exc)
         return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ANALYTICS HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_top_customers(business_id: int, limit: int = 10) -> list[dict]:
+    """
+    Return top customers by order count from user_memory.
+    Falls back to counting orders table if user_memory lacks order_count.
+    """
+    try:
+        res = (
+            supabase.table("user_memory")
+            .select("phone, customer_name, total_spent, order_count, last_seen")
+            .eq("business_id", business_id)
+            .order("order_count", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        log.warning("get_top_customers error: %s", exc)
+        return []
+
+
+def get_low_stock_products(business_id: int) -> list[dict]:
+    """
+    Return products where stock <= low_stock_threshold.
+    Used for dashboard alerts and business-owner WhatsApp notifications.
+    """
+    try:
+        res = (
+            supabase.table("products")
+            .select("id, name, stock, low_stock_threshold")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        products = res.data or []
+        low = []
+        for p in products:
+            stock = p.get("stock")
+            threshold = p.get("low_stock_threshold") or 5
+            if stock is not None and stock <= threshold:
+                low.append(p)
+        return sorted(low, key=lambda x: x.get("stock", 0))
+    except Exception as exc:
+        log.warning("get_low_stock_products error: %s", exc)
+        return []
+
+
+def get_business_stats(business_id: int) -> dict:
+    """
+    Lightweight stats aggregation for the analytics dashboard card.
+    Returns: total_orders, paid_orders, total_revenue, active_customers,
+             pending_orders, ai_handled, human_handled.
+    """
+    try:
+        orders_res = (
+            supabase.table("orders")
+            .select("id, total_price, payment_status, status")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        orders = orders_res.data or []
+
+        total_orders   = len(orders)
+        paid_orders    = sum(1 for o in orders if o.get("payment_status") == "paid")
+        total_revenue  = sum(float(o.get("total_price") or 0)
+                            for o in orders if o.get("payment_status") == "paid")
+        pending_orders = sum(1 for o in orders
+                            if o.get("status") in ("pending", "confirmed", "pending_cash"))
+
+        # Customer count
+        cust_res = (
+            supabase.table("customers")
+            .select("id")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        active_customers = len(cust_res.data or [])
+
+        # AI vs human messages
+        msgs_res = (
+            supabase.table("messages")
+            .select("sender_type")
+            .eq("business_id", business_id)
+            .eq("direction", "outgoing")
+            .execute()
+        )
+        msgs = msgs_res.data or []
+        ai_handled    = sum(1 for m in msgs if m.get("sender_type") == "ai")
+        human_handled = sum(1 for m in msgs if m.get("sender_type") == "agent")
+
+        return {
+            "total_orders":      total_orders,
+            "paid_orders":       paid_orders,
+            "total_revenue":     round(total_revenue, 2),
+            "pending_orders":    pending_orders,
+            "active_customers":  active_customers,
+            "ai_handled":        ai_handled,
+            "human_handled":     human_handled,
+        }
+    except Exception as exc:
+        log.warning("get_business_stats error: %s", exc)
+        return {
+            "total_orders": 0, "paid_orders": 0, "total_revenue": 0.0,
+            "pending_orders": 0, "active_customers": 0,
+            "ai_handled": 0, "human_handled": 0,
+        }
