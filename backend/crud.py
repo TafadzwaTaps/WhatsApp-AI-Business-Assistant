@@ -13,8 +13,17 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from db import supabase
-from crypto import encrypt_token, decrypt_token, TokenDecryptionError
+# Import supabase client — try flat (backend/db.py) then core/ path
+try:
+    from db import supabase
+except ModuleNotFoundError:
+    from core.db import supabase  # refactored layout
+
+# Import crypto helpers — same dual-path pattern
+try:
+    from crypto import encrypt_token, decrypt_token, TokenDecryptionError
+except ModuleNotFoundError:
+    from core.crypto import encrypt_token, decrypt_token, TokenDecryptionError
 
 log = logging.getLogger(__name__)
 
