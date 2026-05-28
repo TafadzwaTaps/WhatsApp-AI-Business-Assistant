@@ -22,17 +22,27 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 
-# ── sys.path: add backend/ so package imports (core.*, services.*, etc.) work ─
-# All local imports use full package paths (e.g. from core.db import supabase)
-# so Python only needs to know where backend/ is — not any subdirectory.
+# ── sys.path setup ────────────────────────────────────────────────────────────
+# Render runs: uvicorn main:app  (cwd = /opt/render/project/src/)
+# __file__   = /opt/render/project/src/backend/main.py
+# We need    /opt/render/project/src/backend  on sys.path so that
+# "from services.ai import ..." resolves to backend/services/ai_service.py
 import sys as _sys, os as _os
-_BACKEND = _os.path.dirname(_os.path.abspath(__file__))
+
+_BACKEND = _os.path.dirname(_os.path.abspath(__file__))  # always backend/
+
+# Insert at position 0 — beats any other entry that might shadow our packages
 if _BACKEND not in _sys.path:
     _sys.path.insert(0, _BACKEND)
 
+# Belt-and-suspenders: also try cwd/backend in case __file__ is relative
+_cwd_backend = _os.path.join(_os.getcwd(), 'backend')
+if _os.path.isdir(_cwd_backend) and _cwd_backend not in _sys.path:
+    _sys.path.insert(0, _cwd_backend)
+
 import crud
 from core.crypto import TokenDecryptionError
-from services.ai_service import generate_reply
+from services.ai import generate_reply
 from core.auth import (
     verify_password,
     create_access_token, create_refresh_token,
@@ -626,7 +636,7 @@ async def receive_message(request: Request):
 
     # ── STEP 2: Find business (shared-number-aware) ──────────────────────
     try:
-        from services.tenant_service import (
+        from services.tenant_router import (
             is_shared_number, resolve_business_for_shared_number,
             is_switch_request,
         )
@@ -1182,7 +1192,7 @@ async def push_lifecycle_update(
     # ── Trigger survey if order is complete ───────────────────────────────────
     if new_status in ("delivered", "completed") and phone:
         try:
-            from services.ai_service import _set_survey_state
+            from services.ai import _set_survey_state
             _set_survey_state(phone, bid)
             log.info("lifecycle: survey triggered  phone=%s", phone)
         except Exception as exc:
@@ -1246,7 +1256,7 @@ async def admin_approve_payment(
     # Trigger fulfillment question if not yet set
     if phone and not order.get("fulfillment_method"):
         try:
-            from services.ai_service import _set_awaiting_fulfillment, _get_state
+            from services.ai import _set_awaiting_fulfillment, _get_state
             if _get_state(phone, bid) == "browsing":
                 _set_awaiting_fulfillment(phone, bid, order_id=order_id, reference=ref)
                 biz      = crud.get_business_by_id(bid)
@@ -1534,7 +1544,7 @@ def platform_customer_session(phone: str, user=Depends(require_superadmin)):
     Super admin: inspect a customer's current business selection and state.
     Useful for debugging routing issues.
     """
-    from services.tenant_service import get_selected_business_id, get_selected_business_name
+    from services.tenant_router import get_selected_business_id, get_selected_business_name
     bid  = get_selected_business_id(phone)
     name = get_selected_business_name(phone)
     return {
@@ -1548,7 +1558,7 @@ def platform_customer_session(phone: str, user=Depends(require_superadmin)):
 @app.delete("/platform/customer/{phone}/session")
 def platform_clear_customer_session(phone: str, user=Depends(require_superadmin)):
     """Super admin: clear a customer's business selection (forces re-pick)."""
-    from services.tenant_service import clear_selected_business
+    from services.tenant_router import clear_selected_business
     clear_selected_business(phone)
     return {"ok": True, "phone": phone, "message": "Session cleared."}
 
@@ -2416,7 +2426,7 @@ async def request_human_handoff(customer_id: int, user=Depends(require_business)
     Manually flag a customer for human agent attention from the dashboard.
     Sets state to human_handoff and notifies the customer.
     """
-    from services.ai_service import _set_human_handoff
+    from services.ai import _set_human_handoff
     from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
 
     bid      = user["business_id"]
@@ -2451,7 +2461,7 @@ async def release_human_handoff(customer_id: int, user=Depends(require_business)
     Return a customer to AI mode after human agent is done.
     Clears human_handoff state and notifies customer.
     """
-    from services.ai_service import _reset_state as ai_reset_state
+    from services.ai import _reset_state as ai_reset_state
     from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
 
     bid      = user["business_id"]
@@ -2578,7 +2588,7 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
         raise HTTPException(404, "Customer not found")
 
     from workflows.human_handoff import notify_dashboard
-    from services.ai_service import _set_human_handoff
+    from services.ai import _set_human_handoff
 
     phone     = customer["phone"]
     biz       = crud.get_business_by_id(bid)
@@ -2603,7 +2613,7 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
         raise HTTPException(404, "Customer not found")
 
     from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
-    from services.ai_service import _reset_state
+    from services.ai import _reset_state
 
     phone    = customer["phone"]
     biz      = crud.get_business_by_id(bid)
@@ -3193,7 +3203,7 @@ async def paypal_webhook(request: Request):
             if customer_phone:
                 try:
                     # Import ai state functions to reset the customer's flow
-                    from services.ai_service import _reset_state as ai_reset_state
+                    from services.ai import _reset_state as ai_reset_state
                     ai_reset_state(customer_phone, biz_id)
                 except Exception as exc:
                     log.warning("paypal_webhook: state reset failed: %s", exc)

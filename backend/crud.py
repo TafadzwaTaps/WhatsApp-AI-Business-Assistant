@@ -1115,7 +1115,7 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
       payment_method, payment_status, payment_reference, payment_url,
       paypal_order_id   ← NEW: stores PayPal's order ID for webhook lookup
     """
-    from order_lifecycle import _has_col
+    from workflows.order_lifecycle import _has_col
 
     # All columns we are allowed to update
     allowed = (

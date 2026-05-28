@@ -287,12 +287,9 @@ def parse_order(
     try:
         from utils.fuzzy_matcher import extract_product_and_quantity
     except ImportError:
-        try:
-            from fuzzy_matcher import extract_product_and_quantity
-        except ImportError:
-            log.error("order_parser: fuzzy_matcher not available")
-            result.intent = "unclear"
-            return result
+        log.error("order_parser: fuzzy_matcher not available")
+        result.intent = "unclear"
+        return result
 
     # Build a cart-quantity lookup for stock checks
     cart_qtys: dict[str, int] = {}

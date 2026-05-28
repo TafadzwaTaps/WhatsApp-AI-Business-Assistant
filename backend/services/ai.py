@@ -89,7 +89,7 @@ import crud
 # ── Lazy module accessors — avoids circular imports at module level ───────────
 
 def _states():
-    import conversation_states
+    from services import conversation_service as conversation_states
     return conversation_states
 
 
@@ -128,7 +128,7 @@ def _sales_ai():
 
 
 def _handoff_mod():
-    import human_handoff
+    from workflows import human_handoff
     return human_handoff
 
 log = logging.getLogger(__name__)

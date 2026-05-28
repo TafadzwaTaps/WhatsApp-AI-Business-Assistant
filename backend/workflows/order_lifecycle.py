@@ -16,7 +16,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from core.db import supabase
-from services.inventory_service import reduce_stock_by_name
+from services.inventory import reduce_stock_by_name
 
 log = logging.getLogger(__name__)
 
