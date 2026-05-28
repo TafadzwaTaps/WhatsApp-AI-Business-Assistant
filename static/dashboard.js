@@ -614,17 +614,112 @@ function autoResizeDashboard(el) {
 }
 
 // ── BROADCAST ─────────────────────────────────────────────
-async function loadCustomers(){
-  try{
-    const data=await apiFetch(ROUTES.customers);
-    if(!data)return;
-    customerPhones = Array.isArray(data.phones) ? data.phones.filter(Boolean)
+// Broadcast state
+let allCustomerData = [];
+let selectedPhones  = new Set();
+let lastBroadcastAt = null;
+
+async function loadCustomers() {
+  try {
+    const data = await apiFetch(ROUTES.customers);
+    if (!data) return;
+    const phones = Array.isArray(data.phones) ? data.phones.filter(Boolean)
       : Array.isArray(data) ? data.filter(Boolean) : [];
-    const _rc=document.getElementById('recipient-count');
-    if(_rc) _rc.textContent=customerPhones.length?`Will send to ${customerPhones.length} customer${customerPhones.length>1?'s':''}`:'No customers yet';
-    const _rl=document.getElementById('recipient-list');
-    if(_rl) _rl.innerHTML=customerPhones.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;">${customerPhones.map(p=>`<span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${escHtml(p)}</span>`).join('')}</div>`:'<div class="empty">No customers yet.</div>';
-  } catch(e){ const _rle=document.getElementById('recipient-list'); if(_rle) _rle.innerHTML=`<div class="empty">⚠ ${e.message}</div>`; }
+    customerPhones = phones;
+
+    // Try to enrich with order count from analytics
+    try {
+      const top = await apiFetch('/analytics/top-customers?limit=500');
+      const topMap = {};
+      (Array.isArray(top) ? top : []).forEach(c => { topMap[c.phone] = c; });
+      allCustomerData = phones.map(p => ({
+        phone:       p,
+        order_count: (topMap[p] || {}).order_count || 0,
+        total_spent: (topMap[p] || {}).total_spent || 0,
+        last_seen:   (topMap[p] || {}).last_seen   || null,
+      }));
+    } catch (_) {
+      allCustomerData = phones.map(p => ({ phone: p, order_count: 0, total_spent: 0, last_seen: null }));
+    }
+
+    selectedPhones = new Set(phones);
+    applyRecipientFilter();
+    const statTotal = document.getElementById('stat-total');
+    if (statTotal) statTotal.textContent = phones.length;
+  } catch (e) {
+    const rl = document.getElementById('recipient-list');
+    if (rl) rl.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
+  }
+}
+
+function applyRecipientFilter() {
+  const filter = (document.getElementById('recipient-filter') || {}).value || 'all';
+  const now = Date.now();
+  let filtered = allCustomerData;
+  switch (filter) {
+    case 'recent':
+      filtered = allCustomerData.filter(c => c.last_seen && (now - new Date(c.last_seen).getTime()) < 7*24*3600*1000);
+      break;
+    case 'ordered':
+      filtered = allCustomerData.filter(c => c.order_count >= 1);
+      break;
+    case 'top':
+      filtered = allCustomerData.filter(c => c.order_count >= 3);
+      break;
+    case 'pending_payment':
+      filtered = allCustomerData.filter(c => c.order_count >= 1);
+      break;
+    default:
+      filtered = allCustomerData;
+  }
+  if (filter !== 'custom') selectedPhones = new Set(filtered.map(c => c.phone));
+  renderRecipientList(filtered, filter === 'custom');
+  updateBroadcastStats();
+}
+
+function renderRecipientList(customers, showCheckboxes) {
+  const rl = document.getElementById('recipient-list');
+  if (!rl) return;
+  if (!customers.length) {
+    rl.innerHTML = '<div class="empty" style="padding:10px;font-family:var(--mono);font-size:12px;color:var(--text-dim);">No customers match this filter.</div>';
+    updateBroadcastStats();
+    return;
+  }
+  const items = customers.map(c => {
+    const isChecked = selectedPhones.has(c.phone);
+    const label = c.order_count > 0 ? ` · ${c.order_count} orders` : '';
+    if (showCheckboxes) {
+      return `<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;border-bottom:1px solid var(--border);">
+        <input type="checkbox" ${isChecked ? 'checked' : ''} data-phone="${escHtml(c.phone)}"
+          onchange="toggleRecipient('${escHtml(c.phone)}',this.checked)"
+          style="accent-color:var(--green);cursor:pointer;width:14px;height:14px;flex-shrink:0;"/>
+        <span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${escHtml(c.phone)}${label}</span>
+      </label>`;
+    }
+    return `<span style="display:inline-flex;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:3px 8px;font-family:var(--mono);font-size:11px;color:var(--text-dim);margin:2px;">📱 ${escHtml(c.phone)}${label}</span>`;
+  }).join('');
+  rl.innerHTML = showCheckboxes ? `<div style="max-height:200px;overflow-y:auto;">${items}</div>` : `<div style="display:flex;flex-wrap:wrap;gap:4px;max-height:160px;overflow-y:auto;">${items}</div>`;
+  updateBroadcastStats();
+}
+
+function toggleRecipient(phone, checked) {
+  if (checked) selectedPhones.add(phone); else selectedPhones.delete(phone);
+  updateBroadcastStats();
+}
+
+function toggleSelectAll() {
+  const cbs = [...document.querySelectorAll('#recipient-list input[type=checkbox]')];
+  const allChk = cbs.every(cb => cb.checked);
+  cbs.forEach(cb => { cb.checked = !allChk; toggleRecipient(cb.dataset.phone, !allChk); });
+  updateBroadcastStats();
+}
+
+function updateBroadcastStats() {
+  const count = selectedPhones.size;
+  const rc = document.getElementById('recipient-count');
+  const ss = document.getElementById('stat-selected');
+  if (rc) rc.textContent = `${count} recipient${count !== 1 ? 's' : ''} selected`;
+  if (ss) ss.textContent = count;
 }
 
 function updatePreview(){
@@ -637,37 +732,62 @@ function updatePreview(){
 }
 function setTpl(t){const _bm=document.getElementById('broadcast-msg');if(_bm)_bm.value=t;updatePreview();}
 
-async function sendBroadcast(){
-  const _bm=document.getElementById('broadcast-msg');
-  const msg=(_bm?_bm.value:'').trim();
-  if(!msg){toast('Write a message first',true);return;}
-  if(!customerPhones.length){toast('No customers to send to',true);return;}
-  if(!confirm(`Send to ${customerPhones.length} customer(s)?`))return;
-  const btn=document.getElementById('send-btn');
-  const result=document.getElementById('broadcast-result');
-  if(btn) btn.disabled=true;
-  if(result) result.style.display='none';
-  try{
-    const data=await apiFetch(ROUTES.broadcast,{method:'POST',body:JSON.stringify({message:msg})});
-    if(!data) return;
-    if(result){
-      result.style.display='block';
-      if(data.failed===0){
-        result.className='broadcast-result success';
-        result.textContent=`✅ Sent to ${data.sent} customer${data.sent>1?'s':''}!`;
-        toast(`📢 Broadcast sent to ${data.sent}!`);
-        if(_bm) _bm.value='';
-        updatePreview();
-      } else {
-        result.className='broadcast-result error';
-        result.textContent=`Sent: ${data.sent} | Failed: ${data.failed}`;
-      }
+async function sendBroadcast() {
+  const _bm  = document.getElementById('broadcast-msg');
+  const msg  = (_bm ? _bm.value : '').trim();
+  const result = document.getElementById('broadcast-result');
+
+  if (!msg) { toast('Write a message first', true); return; }
+  if (!selectedPhones.size) { toast('No recipients selected', true); return; }
+  if (!confirm(`Send to ${selectedPhones.size} customer${selectedPhones.size !== 1 ? 's' : ''}?
+
+This will send a WhatsApp message to each selected recipient.`)) return;
+
+  const btn = document.getElementById('broadcast-send-btn');
+  if (btn) btn.disabled = true;
+  if (result) result.style.display = 'none';
+
+  try {
+    const phones = [...selectedPhones];
+    const data = await apiFetch(ROUTES.broadcast, {
+      method: 'POST',
+      body: JSON.stringify({
+        message:     msg,
+        phone_filter: phones,   // send only to selected phones
+      }),
+    });
+
+    if (!data) return;
+    const ok = data.failed === 0;
+
+    if (result) {
+      result.style.display = 'block';
+      result.className = 'broadcast-result ' + (ok ? 'success' : 'error');
+      result.innerHTML = ok
+        ? `✅ Sent to <strong>${data.sent}</strong> customer${data.sent !== 1 ? 's' : ''}!`
+        : `Sent: <strong>${data.sent}</strong>  |  Failed: <strong>${data.failed}</strong>` +
+          (data.failed_numbers && data.failed_numbers.length
+            ? `<div style="font-size:10px;margin-top:6px;opacity:0.7;">Failed: ${data.failed_numbers.slice(0,5).join(', ')}${data.failed_numbers.length > 5 ? '…' : ''}</div>`
+            : '');
     }
-  } catch(e){
-    if(result){result.style.display='block';result.className='broadcast-result error';result.textContent=`❌ ${e.message}`;}
-    toast(e.message,true);
+
+    if (ok) {
+      toast(`📢 Broadcast sent to ${data.sent}!`);
+      if (_bm) _bm.value = '';
+      updatePreview();
+      // Update last broadcast time
+      const statLast = document.getElementById('stat-last');
+      if (statLast) statLast.textContent = 'Just now';
+      lastBroadcastAt = new Date();
+    } else {
+      toast(`Sent ${data.sent}, failed ${data.failed}`, !ok);
+    }
+
+  } catch (e) {
+    if (result) { result.style.display = 'block'; result.className = 'broadcast-result error'; result.textContent = `❌ ${e.message}`; }
+    toast(e.message, true);
   } finally {
-    if(btn) btn.disabled=false;
+    if (btn) btn.disabled = false;
   }
 }
 

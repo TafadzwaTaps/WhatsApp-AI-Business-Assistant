@@ -24,6 +24,7 @@
     <a href="/" class="topbar-logo">WaziBot</a>
     <div class="topbar-divider"></div>
     <span class="topbar-title">Inbox</span>
+    <span class="topbar-unread-badge" id="topbar-unread" style="display:none"></span>
   </div>
 
   <div class="topbar-center"></div>
@@ -58,7 +59,7 @@
           class="search-input"
           id="search-input"
           type="search"
-          placeholder="Search by phone…"
+          placeholder="Search phone, name, message…"
           oninput="filterContacts(this.value)"
           autocomplete="off"
         />
@@ -66,9 +67,10 @@
 
       <!-- Filters -->
       <div class="filter-row">
-        <button class="filter-btn active" id="filter-all"    onclick="setFilter('all')">All</button>
-        <button class="filter-btn"        id="filter-unread" onclick="setFilter('unread')">Unread</button>
-        <button class="filter-btn"        id="filter-recent" onclick="setFilter('recent')">Recent</button>
+        <button class="filter-btn active" id="filter-all"      onclick="setFilter('all')">All</button>
+        <button class="filter-btn"        id="filter-unread"  onclick="setFilter('unread')">Unread</button>
+        <button class="filter-btn"        id="filter-recent"  onclick="setFilter('recent')">Recent</button>
+        <button class="filter-btn"        id="filter-handoff" onclick="setFilter('handoff')">🔴 Handoff</button>
       </div>
     </div>
 
@@ -128,9 +130,20 @@
         </div>
 
         <div class="chat-actions">
+          <button class="icon-btn" id="handoff-btn"
+                  onclick="toggleHandoff()"
+                  title="Toggle AI / Human agent mode">🤖 AI</button>
           <button class="icon-btn" onclick="markRead()"                               title="Mark as read">✓ Read</button>
           <button class="icon-btn" onclick="loadMessages(currentCustomerId, true)"    title="Refresh">↻</button>
+          <button class="icon-btn icon-btn-danger" onclick="confirmDeleteConversation()" title="Delete conversation">🗑</button>
         </div>
+      </div>
+
+      <!-- Handoff banner — shown when conversation is in human_handoff mode -->
+      <div class="handoff-banner" id="handoff-banner" style="display:none">
+        <div class="handoff-banner-dot"></div>
+        <span id="handoff-banner-text">🔴 Human agent mode — AI is paused. You are in control.</span>
+        <button class="handoff-banner-btn" onclick="toggleHandoff()">Switch to AI 🤖</button>
       </div>
 
       <!-- Messages -->

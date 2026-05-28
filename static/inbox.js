@@ -187,15 +187,48 @@ function renderContacts(convos) {
   const list = document.getElementById('contact-list');
   if (!list) return;
 
-  const search = searchEl ? searchEl.value.trim().toLowerCase() : '';
-  const safe   = Array.isArray(convos) ? convos : [];
+  const q    = searchEl ? searchEl.value.trim().toLowerCase() : '';
+  const safe = Array.isArray(convos) ? convos : [];
+
+  // Update topbar unread badge on every render
+  const totalUnread = safe.reduce((s, c) => s + (c.unread_count || 0), 0);
+  const badge = document.getElementById('topbar-unread');
+  if (badge) {
+    if (totalUnread > 0) {
+      badge.textContent = totalUnread > 99 ? '99+' : String(totalUnread);
+      badge.style.display = 'inline-flex';
+    } else {
+      badge.style.display = 'none';
+    }
+    document.title = totalUnread > 0 ? `(${totalUnread}) WaziBot — Inbox` : 'WaziBot — Inbox';
+  }
 
   let filtered = safe;
-  if (search) filtered = safe.filter(c => (c.phone || '').includes(search));
-  if (activeFilter === 'recent') filtered = filtered.slice(0, 20);
+  // Handoff filter
+  if (activeFilter === 'handoff') {
+    filtered = safe.filter(c => c.in_handoff || c.handoff_state === 'human_handoff');
+  } else if (activeFilter === 'unread') {
+    filtered = safe.filter(c => (c.unread_count || 0) > 0);
+  } else if (activeFilter === 'recent') {
+    filtered = filtered.slice(0, 20);
+  }
+  // Full-text search: phone + customer_name + last_message
+  const search = q;
+  if (search) {
+    filtered = filtered.filter(c =>
+      (c.phone         || '').toLowerCase().includes(search) ||
+      (c.customer_name || '').toLowerCase().includes(search) ||
+      (c.last_message  || '').toLowerCase().includes(search)
+    );
+  }
 
   if (!filtered.length) {
-    list.innerHTML = `<div class="empty-state">${search ? 'No results for "' + escHtml(search) + '"' : 'No conversations yet'}</div>`;
+    const emptyMsg = search
+      ? `No results for "<strong>${escHtml(search)}</strong>"`
+      : activeFilter === 'handoff' ? '🟢 No conversations in handoff mode'
+      : activeFilter === 'unread'  ? '✅ All caught up — no unread messages'
+      : 'No conversations yet';
+    list.innerHTML = `<div class="empty-state">${emptyMsg}</div>`;
     return;
   }
 
@@ -206,15 +239,28 @@ function renderContacts(convos) {
     div.className = 'contact-item' + (c.customer_id === currentCustomerId ? ' active' : '');
     div.dataset.customerId = c.customer_id;
     div.onclick = () => openChat(c.customer_id, c.phone || '', c.last_seen || '');
+    const isHandoff = c.in_handoff || c.handoff_state === 'human_handoff';
+    div.className = ['contact-item',
+      c.customer_id === currentCustomerId ? 'active' : '',
+      isHandoff ? 'handoff-active' : '',
+    ].filter(Boolean).join(' ');
+
+    // Highlight search match in phone display
+    const rawPhone = c.phone || '—';
+    const displayPhone = search
+      ? rawPhone.replace(new RegExp('(' + search.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi'),
+          '<mark style="background:rgba(34,197,94,0.25);border-radius:2px;color:inherit;">$1</mark>')
+      : escHtml(rawPhone);
+
     div.innerHTML = `
-      <div class="contact-avatar">👤</div>
+      <div class="contact-avatar">${isHandoff ? '🔴' : '👤'}</div>
       <div class="contact-info">
-        <div class="contact-phone">${escHtml(c.phone || '—')}</div>
+        <div class="contact-phone">${displayPhone}</div>
         <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(safeText(c.last_message))}</div>
       </div>
       <div class="contact-meta">
         <div class="contact-time">${formatTime(c.last_message_at)}</div>
-        ${(c.unread_count || 0) > 0 ? `<div class="unread-badge">${c.unread_count}</div>` : ''}
+        ${(c.unread_count || 0) > 0 ? `<div class="unread-badge">${(c.unread_count||0) > 99 ? '99+' : c.unread_count}</div>` : ''}
       </div>`;
     frag.appendChild(div);
   });
@@ -279,6 +325,98 @@ async function openChat(customerId, phone, lastSeen) {
 
   await loadMessages(customerId, true);
   await markRead();
+  // Load handoff state for this customer
+  await loadHandoffState(customerId);
+}
+
+/* ── HANDOFF STATE ───────────────────────────────────────── */
+let currentHandoffState = false;
+
+async function loadHandoffState(customerId) {
+  if (!customerId) return;
+  try {
+    const data = await apiFetch('/chat/handoff/pending');
+    const pending = Array.isArray(data)
+      ? data
+      : (data && Array.isArray(data.data) ? data.data : []);
+    const ids = pending.map(h => h.customer_id || h.id);
+    currentHandoffState = ids.includes(customerId);
+  } catch (_) {
+    currentHandoffState = false;
+  }
+  updateHandoffUI(currentHandoffState);
+}
+
+function updateHandoffUI(isHandoff) {
+  const btn     = document.getElementById('handoff-btn');
+  const banner  = document.getElementById('handoff-banner');
+  const bannerT = document.getElementById('handoff-banner-text');
+  const bannerB = document.querySelector('.handoff-banner-btn');
+  const input   = document.getElementById('send-input');
+  const sbtn    = document.getElementById('send-btn');
+
+  if (btn) {
+    btn.textContent = isHandoff ? '👤 Agent' : '🤖 AI';
+    btn.title       = isHandoff ? 'Switch back to AI mode' : 'Pause AI — take over';
+    btn.style.color           = isHandoff ? 'var(--amber, #f59e0b)' : '';
+    btn.style.borderColor     = isHandoff ? 'var(--amber, #f59e0b)' : '';
+  }
+  if (banner)  banner.style.display = isHandoff ? 'flex' : 'none';
+  if (bannerT) bannerT.textContent  = isHandoff
+    ? '🔴 Human agent mode — AI is paused. You are replying directly to the customer.'
+    : '';
+  if (bannerB) bannerB.textContent  = isHandoff ? '▶ Resume AI' : '⏸ Pause AI';
+  if (input)   input.style.borderColor  = isHandoff ? 'rgba(245,158,11,0.6)' : '';
+  if (sbtn)    sbtn.style.background    = isHandoff ? '#f59e0b' : '';
+}
+
+async function toggleHandoff() {
+  if (!currentCustomerId) return;
+  const btn = document.getElementById('handoff-btn');
+  if (btn) btn.disabled = true;
+  try {
+    if (currentHandoffState) {
+      await apiFetch(`/chat/handoff/${currentCustomerId}/release`, { method: 'POST' });
+      currentHandoffState = false;
+      showToast('✅ AI mode resumed — bot is handling replies again');
+    } else {
+      await apiFetch(`/chat/handoff/${currentCustomerId}/request`, { method: 'POST' });
+      currentHandoffState = true;
+      showToast('👤 Agent mode — AI paused. You are in control.');
+    }
+    updateHandoffUI(currentHandoffState);
+    loadConversations(false).catch(() => {});
+  } catch (e) {
+    showToast('Handoff toggle failed: ' + e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+/* ── DELETE CONVERSATION (CRUD) ──────────────────────────── */
+function confirmDeleteConversation() {
+  if (!currentCustomerId || !currentPhone) return;
+  if (!confirm(`Delete all messages with ${currentPhone}?
+
+This removes the conversation from your inbox. Cannot be undone.`)) return;
+  deleteConversation(currentCustomerId);
+}
+
+async function deleteConversation(customerId) {
+  try {
+    await apiFetch(`/chat/conversations/${customerId}`, { method: 'DELETE' });
+    showToast('🗑 Conversation deleted');
+    allConversations = allConversations.filter(c => c.customer_id !== customerId);
+    renderContacts(allConversations);
+    currentCustomerId = null;
+    currentPhone      = null;
+    const noSel = document.getElementById('no-selection');
+    const ac    = document.getElementById('active-chat');
+    if (noSel) noSel.style.display = 'flex';
+    if (ac)    ac.style.display    = 'none';
+  } catch (e) {
+    showToast('Delete failed: ' + e.message, true);
+  }
 }
 
 /* ── LOAD MESSAGES ──────────────────────────────────────── */

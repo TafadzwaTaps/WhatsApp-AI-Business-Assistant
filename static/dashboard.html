@@ -255,36 +255,85 @@
   <div id="section-broadcast" class="section">
     <div class="topbar"><div class="page-title">📢 <span>Broadcast</span></div></div>
     <div class="broadcast-layout">
-      <div class="panel">
-        <div class="panel-header"><div class="panel-title">Compose</div></div>
-        <div class="panel-body">
-          <div class="form-group-inline">
-            <label>Message</label>
-            <textarea id="broadcast-msg" placeholder="Type your message..." oninput="updatePreview()"></textarea>
-            <div class="char-count" id="char-count">0 / 1024</div>
+
+      <!-- LEFT: Compose + Recipients selector -->
+      <div style="display:flex;flex-direction:column;gap:16px;">
+
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Compose Message</div></div>
+          <div class="panel-body">
+            <div class="form-group-inline">
+              <label>Message</label>
+              <textarea id="broadcast-msg" placeholder="Type your message..." oninput="updatePreview()"></textarea>
+              <div class="char-count" id="char-count">0 / 1024</div>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🔥 Special offer today! Reply menu to order.')">🔥 Promo</button>
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('📦 Back in stock! Reply menu to see what\'s available.')">📦 Restock</button>
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🙏 Thank you for your support! Reply menu to order anytime.')">🙏 Thanks</button>
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('⏰ Your order is waiting for payment. Reply paid to complete it.')">⏳ Reminder</button>
+            </div>
           </div>
-          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
-            <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🔥 Special offer today! Reply menu to order.')">🔥 Promo</button>
-            <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('📦 Back in stock! Reply menu to see what\'s available.')">📦 Restock</button>
-            <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🙏 Thank you for your support! Reply menu to order anytime.')">🙏 Thanks</button>
+        </div>
+
+        <!-- Recipient Selector -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">Recipients</div>
+            <button class="panel-action" onclick="loadCustomers()">↻ Refresh</button>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <button class="btn btn-primary" id="send-btn" onclick="sendBroadcast()">📢 Send to All</button>
-            <span id="recipient-count" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">Loading...</span>
+          <div class="panel-body">
+
+            <!-- Filter mode -->
+            <div class="form-group" style="margin-bottom:12px;">
+              <label>Send to</label>
+              <select id="recipient-filter" onchange="applyRecipientFilter()" style="width:100%;margin-top:4px;">
+                <option value="all">All customers</option>
+                <option value="recent">Active in last 7 days</option>
+                <option value="ordered">Customers who ordered (≥1 order)</option>
+                <option value="top">Top customers (≥3 orders)</option>
+                <option value="pending_payment">Pending payment customers</option>
+                <option value="custom">Custom selection (check below)</option>
+              </select>
+            </div>
+
+            <!-- Recipient count display -->
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <span id="recipient-count" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">Loading...</span>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="toggleSelectAll()">Toggle All</button>
+            </div>
+
+            <!-- Recipient list with checkboxes -->
+            <div id="recipient-list" style="max-height:220px;overflow-y:auto;"></div>
+
+            <div style="margin-top:14px;">
+              <button class="btn btn-primary" id="broadcast-send-btn" onclick="sendBroadcast()">
+                📢 Send Broadcast
+              </button>
+              <div class="broadcast-result" id="broadcast-result" style="margin-top:12px;"></div>
+            </div>
           </div>
-          <div class="broadcast-result" id="broadcast-result"></div>
         </div>
       </div>
+
+      <!-- RIGHT: Preview -->
       <div style="display:flex;flex-direction:column;gap:16px;">
         <div class="panel">
-          <div class="panel-header"><div class="panel-title">Preview</div></div>
-          <div class="panel-body"><div class="preview-box" id="preview-box" style="color:var(--text-dim);font-style:italic;">Message preview...</div></div>
+          <div class="panel-header"><div class="panel-title">Message Preview</div></div>
+          <div class="panel-body">
+            <div class="preview-box" id="preview-box" style="color:var(--text-dim);font-style:italic;">Message preview...</div>
+          </div>
         </div>
         <div class="panel">
-          <div class="panel-header"><div class="panel-title">Recipients</div><button class="panel-action" onclick="loadCustomers()">↻</button></div>
-          <div class="panel-body"><div id="recipient-list"><div class="empty">Loading...</div></div></div>
+          <div class="panel-header"><div class="panel-title">Broadcast Stats</div></div>
+          <div class="panel-body" id="broadcast-stats" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
+            <div>📱 Total customers: <span id="stat-total">—</span></div>
+            <div>✅ Selected: <span id="stat-selected" style="color:var(--green);">—</span></div>
+            <div>📬 Last broadcast: <span id="stat-last">Never</span></div>
+          </div>
         </div>
       </div>
+
     </div>
   </div>
 

@@ -2150,7 +2150,9 @@ def get_chat(phone: str, user=Depends(require_business)):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class BroadcastRequest(BaseModel):
-    message: str
+    message:      str
+    phone_filter: list[str] | None = None   # If set, send ONLY to these phones.
+                                             # If None/empty, send to ALL customers.
 
     @validator("message")
     def msg_valid(cls, v):
@@ -2176,9 +2178,25 @@ def broadcast(body: BroadcastRequest, user=Depends(require_business)):
     if not business.get("whatsapp_phone_id"):
         raise HTTPException(400, "WhatsApp Phone Number ID not configured. Go to Settings.")
 
-    phones = crud.get_all_customer_phones(bid)
-    if not phones:
+    all_phones = crud.get_all_customer_phones(bid)
+    if not all_phones:
         return {"sent": 0, "failed": 0, "total": 0, "message": "No customers found"}
+
+    # Apply phone_filter if provided — only send to the selected subset
+    if body.phone_filter:
+        # Normalise both sides for comparison (strip spaces, remove +)
+        filter_set = {p.strip().lstrip("+") for p in body.phone_filter if p}
+        phones     = [p for p in all_phones if p.strip().lstrip("+") in filter_set]
+        log.info(
+            "📢 Broadcast filtered  total=%d  selected=%d  business=%s",
+            len(all_phones), len(phones), business["name"],
+        )
+    else:
+        phones = all_phones
+
+    if not phones:
+        return {"sent": 0, "failed": 0, "total": len(all_phones),
+                "message": "No recipients matched the filter"}
 
     log.info("📢 Broadcast start  recipients=%d  business=%s", len(phones), business["name"])
     sent, failed, failed_phones = 0, 0, []
@@ -2452,6 +2470,33 @@ async def release_human_handoff(customer_id: int, user=Depends(require_business)
     log.info("handoff released  customer=%s  by=%s", customer_id, user["username"])
     return {"ok": True, "customer_id": customer_id, "phone": phone,
             "message": "AI resumed. Customer will now interact with the AI assistant."}
+
+
+@app.delete("/chat/conversations/{customer_id}")
+async def delete_conversation(customer_id: int, user=Depends(require_business)):
+    """
+    Delete all messages for a customer conversation.
+    The customer and order records are preserved — only messages are removed.
+    Used by the inbox Delete button.
+    """
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer:
+        raise HTTPException(404, f"Customer {customer_id} not found")
+
+    try:
+        from db import supabase as _sb
+        # Delete from both messages tables
+        _sb.table("messages").delete().eq("customer_id", customer_id).eq("business_id", bid).execute()
+        try:
+            _sb.table("chat_messages").delete().eq("customer_id", customer_id).eq("business_id", bid).execute()
+        except Exception:
+            pass  # chat_messages may not exist in all deployments
+        log.info("delete_conversation  customer=%s  biz=%s  by=%s", customer_id, bid, user.get("username"))
+        return {"ok": True, "customer_id": customer_id, "message": "Conversation deleted"}
+    except Exception as exc:
+        log.error("delete_conversation error: %s", exc)
+        raise HTTPException(500, str(exc))
 
 
 @app.get("/chat/handoff/pending")

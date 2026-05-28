@@ -1010,3 +1010,112 @@ body {
   background: #f59e0b;
   animation: pulse 1.5s infinite;
 }
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 8 ADDITIONS — unread badge, handoff, search, delete
+══════════════════════════════════════════════════════════ */
+
+/* Topbar unread total badge */
+.topbar-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  background: var(--red, #ef4444);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 10px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Handoff banner above chat messages */
+.handoff-banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(245,158,11,0.08);
+  border-bottom: 1px solid rgba(245,158,11,0.25);
+  font-size: 11px;
+  font-family: var(--mono);
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.handoff-banner-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  animation: pulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.handoff-banner-btn {
+  margin-left: auto;
+  background: rgba(245,158,11,0.15);
+  border: 1px solid rgba(245,158,11,0.35);
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: #f59e0b;
+  font-family: var(--mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  white-space: nowrap;
+}
+.handoff-banner-btn:hover { background: rgba(245,158,11,0.25); }
+
+/* Handoff active button state */
+.icon-btn.btn-handoff-active {
+  color: #f59e0b !important;
+  border-color: rgba(245,158,11,0.5) !important;
+}
+
+/* Danger icon button (delete) */
+.icon-btn-danger {
+  color: var(--red, #ef4444) !important;
+  border-color: transparent !important;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+}
+.icon-btn-danger:hover { opacity: 1; border-color: var(--red, #ef4444) !important; }
+
+/* Contact item handoff indicator */
+.contact-item.handoff-active {
+  border-left: 3px solid #f59e0b;
+}
+.contact-item.handoff-active .contact-avatar {
+  font-size: 16px;
+}
+
+/* Handoff sidebar dot */
+.handoff-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  margin-top: 2px;
+}
+
+/* Search highlight */
+.contact-phone mark {
+  background: rgba(34,197,94,0.25);
+  border-radius: 2px;
+  color: inherit;
+  padding: 0 1px;
+}
+
+/* Handoff filter button */
+#filter-handoff.active {
+  background: rgba(245,158,11,0.12);
+  color: #f59e0b;
+  border-color: rgba(245,158,11,0.35);
+}
+
+/* Amber CSS variable fallback */
+:root { --amber: #f59e0b; }
+
