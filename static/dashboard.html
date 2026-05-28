@@ -176,18 +176,126 @@
       <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
       <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
     </div>
+    <!-- Phase 6: Analytics chart panel -->
+    <div class="panel full" style="margin-bottom:0;">
+      <div class="panel-header">
+        <div class="panel-title">📊 Top Customers by Orders</div>
+        <button class="panel-action" onclick="loadAnalyticsCharts()">↻</button>
+      </div>
+      <div class="panel-body">
+        <div id="analytics-top-customers" style="padding:4px 0;">
+          <div class="empty">Loading analytics…</div>
+        </div>
+      </div>
+    </div>
+    <!-- Phase 1: CRM + Reminders row -->
+    <div class="panels" style="margin-bottom:0;">
+
+      <!-- CRM Segment Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">👥 Customer Segments</div>
+          <button class="panel-action" onclick="showSection('crm',this);closeSidebar()">View CRM →</button>
+        </div>
+        <div class="panel-body" id="crm-segment-card">
+          <div class="crm-segments-grid">
+            <div class="crm-seg-item vip">
+              <div class="crm-seg-count" id="seg-vip">—</div>
+              <div class="crm-seg-label">⭐ VIP</div>
+            </div>
+            <div class="crm-seg-item loyal">
+              <div class="crm-seg-count" id="seg-loyal">—</div>
+              <div class="crm-seg-label">💚 Loyal</div>
+            </div>
+            <div class="crm-seg-item regular">
+              <div class="crm-seg-count" id="seg-regular">—</div>
+              <div class="crm-seg-label">👍 Regular</div>
+            </div>
+            <div class="crm-seg-item new">
+              <div class="crm-seg-count" id="seg-new">—</div>
+              <div class="crm-seg-label">👋 New</div>
+            </div>
+          </div>
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);font-family:var(--mono);font-size:11px;color:var(--text-dim);">
+            Total customers: <span id="seg-total" style="color:var(--green);">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Payment Reminders Card -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">⏳ Pending Payments</div>
+          <button class="panel-action" onclick="showSection('reminders',this);closeSidebar()">View All →</button>
+        </div>
+        <div class="panel-body">
+          <div id="reminders-summary">
+            <div class="crm-segments-grid">
+              <div class="crm-seg-item" style="border-color:rgba(245,158,11,0.3);">
+                <div class="crm-seg-count" id="rem-tier1" style="color:var(--amber);">—</div>
+                <div class="crm-seg-label">⏱ 1h+</div>
+              </div>
+              <div class="crm-seg-item" style="border-color:rgba(239,100,44,0.3);">
+                <div class="crm-seg-count" id="rem-tier2" style="color:#f97316;">—</div>
+                <div class="crm-seg-label">⏰ 3h+</div>
+              </div>
+              <div class="crm-seg-item" style="border-color:rgba(239,68,68,0.3);">
+                <div class="crm-seg-count" id="rem-tier3" style="color:var(--red);">—</div>
+                <div class="crm-seg-label">🚨 6h+</div>
+              </div>
+              <div class="crm-seg-item">
+                <div class="crm-seg-count" id="rem-total" style="color:var(--green);">—</div>
+                <div class="crm-seg-label">Total</div>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-ghost" style="width:100%;margin-top:12px;font-size:12px;" onclick="sendAllReminders()">
+            📨 Send All Reminders
+          </button>
+        </div>
+      </div>
+
+    </div>
+
     <div class="panel full">
       <div class="panel-header"><div class="panel-title">Recent Orders</div><button class="panel-action" onclick="showSection('orders',null)">View All →</button></div>
       <div class="panel-body"><table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Time</th></tr></thead><tbody id="recent-orders-body"></tbody></table></div>
     </div>
   </div>
 
-  <!-- ORDERS -->
+  <!-- ORDERS (Phase 5: with Kanban toggle) -->
   <div id="section-orders" class="section">
-    <div class="topbar"><div class="page-title">All <span>Orders</span></div></div>
-    <div class="panel full">
+    <div class="topbar">
+      <div class="page-title">All <span>Orders</span></div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <select id="order-status-filter" onchange="filterOrdersByStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
+          <option value="all">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="pending_cash">Confirmed (Cash)</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="preparing">Preparing</option>
+          <option value="ready">Ready</option>
+          <option value="out_for_delivery">Out for Delivery</option>
+          <option value="delivered">Delivered</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+        </select>
+        <button class="btn btn-ghost" id="orders-view-list" onclick="setOrderView('list')" style="font-size:11px;padding:6px 10px;opacity:1;" title="List view">☰</button>
+        <button class="btn btn-ghost" id="orders-view-kanban" onclick="setOrderView('kanban')" style="font-size:11px;padding:6px 10px;opacity:0.4;" title="Kanban view">⬛</button>
+      </div>
+    </div>
+
+    <!-- LIST VIEW -->
+    <div id="orders-list-view" class="panel full">
       <div class="panel-header"><div class="panel-title">Order History</div><button class="panel-action" onclick="loadOrders()">↻ Refresh</button></div>
       <div class="panel-body"><table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Time</th></tr></thead><tbody id="orders-body"></tbody></table></div>
+    </div>
+
+    <!-- KANBAN VIEW (Phase 5) -->
+    <div id="orders-kanban-view" style="display:none;">
+      <div class="kanban-board" id="kanban-board">
+        <!-- Columns rendered by JS -->
+      </div>
     </div>
   </div>
 
@@ -252,84 +360,79 @@
   </div>
 
   <!-- BROADCAST -->
+  <!-- BROADCAST / CAMPAIGN BUILDER (Phase 2) -->
   <div id="section-broadcast" class="section">
-    <div class="topbar"><div class="page-title">📢 <span>Broadcast</span></div></div>
+    <div class="topbar">
+      <div class="page-title">📢 <span>Campaign Builder</span></div>
+    </div>
     <div class="broadcast-layout">
 
-      <!-- LEFT: Compose + Recipients selector -->
+      <!-- LEFT: Compose -->
       <div style="display:flex;flex-direction:column;gap:16px;">
 
         <div class="panel">
           <div class="panel-header"><div class="panel-title">Compose Message</div></div>
           <div class="panel-body">
-            <div class="form-group-inline">
-              <label>Message</label>
-              <textarea id="broadcast-msg" placeholder="Type your message..." oninput="updatePreview()"></textarea>
-              <div class="char-count" id="char-count">0 / 1024</div>
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;">
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🔥 Special offer today! Reply menu to order.')">🔥 Promo</button>
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('📦 Back in stock! Reply menu to see what\'s available.')">📦 Restock</button>
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('🙏 Thank you for your support! Reply menu to order anytime.')">🙏 Thanks</button>
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);" onclick="setTpl('⏰ Your order is waiting for payment. Reply paid to complete it.')">⏳ Reminder</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Recipient Selector -->
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">Recipients</div>
-            <button class="panel-action" onclick="loadCustomers()">↻ Refresh</button>
-          </div>
-          <div class="panel-body">
-
-            <!-- Filter mode -->
-            <div class="form-group" style="margin-bottom:12px;">
-              <label>Send to</label>
-              <select id="recipient-filter" onchange="applyRecipientFilter()" style="width:100%;margin-top:4px;">
-                <option value="all">All customers</option>
-                <option value="recent">Active in last 7 days</option>
-                <option value="ordered">Customers who ordered (≥1 order)</option>
-                <option value="top">Top customers (≥3 orders)</option>
-                <option value="pending_payment">Pending payment customers</option>
-                <option value="custom">Custom selection (check below)</option>
+            <div class="form-group-inline" style="margin-bottom:10px;">
+              <label>Audience</label>
+              <select id="campaign-audience" onchange="onAudienceChange()" style="width:100%;margin-top:4px;">
+                <option value="all">📱 All Customers</option>
+                <option value="vip">⭐ VIP Customers (10+ orders or $50+ spent)</option>
+                <option value="loyal">💚 Loyal Customers (5+ orders or $20+ spent)</option>
+                <option value="regular">👍 Regular Customers (2–4 orders)</option>
+                <option value="new">👋 New Customers (1 order)</option>
+                <option value="inactive_7d">😴 Inactive 7 days</option>
+                <option value="inactive_14d">😴 Inactive 14 days</option>
+                <option value="inactive_30d">🔴 Inactive 30 days</option>
+                <option value="high_spenders">💰 High Spenders ($30+ spent)</option>
+                <option value="unpaid">⏳ Unpaid Orders</option>
               </select>
             </div>
 
-            <!-- Recipient count display -->
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-              <span id="recipient-count" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);">Loading...</span>
-              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="toggleSelectAll()">Toggle All</button>
+            <div class="form-group-inline">
+              <label>Message <span style="font-size:10px;color:var(--text-dim);">— use {name} {business} {orders} {spent}</span></label>
+              <textarea id="broadcast-msg" placeholder="Hi {name}! Special offer at {business} today..." oninput="updatePreview()" style="min-height:100px;"></textarea>
+              <div class="char-count" id="char-count">0 / 1024</div>
             </div>
 
-            <!-- Recipient list with checkboxes -->
-            <div id="recipient-list" style="max-height:220px;overflow-y:auto;"></div>
+            <!-- Template suggestions -->
+            <div id="campaign-templates" style="margin-bottom:14px;"></div>
 
-            <div style="margin-top:14px;">
-              <button class="btn btn-primary" id="broadcast-send-btn" onclick="sendBroadcast()">
-                📢 Send Broadcast
-              </button>
-              <div class="broadcast-result" id="broadcast-result" style="margin-top:12px;"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('🔥 Special offer today at {business}! Reply menu to order.')">🔥 Promo</button>
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('📦 Back in stock at {business}! Reply menu to see what\'s available.')">📦 Restock</button>
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('👋 Hi {name}, we miss you at {business}! Come back and order today.')">😴 Win-back</button>
+              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('⭐ Hey {name}, thank you for your {orders} orders at {business}! You are a valued customer. 🙏')">⭐ VIP</button>
             </div>
+
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <button class="btn btn-ghost" style="font-size:12px;" onclick="previewCampaign()">👁 Preview</button>
+              <button class="btn btn-primary" id="broadcast-send-btn" onclick="sendCampaign()">📢 Send Campaign</button>
+            </div>
+            <div class="broadcast-result" id="broadcast-result" style="margin-top:12px;"></div>
           </div>
         </div>
       </div>
 
-      <!-- RIGHT: Preview -->
+      <!-- RIGHT: Preview + Stats -->
       <div style="display:flex;flex-direction:column;gap:16px;">
         <div class="panel">
-          <div class="panel-header"><div class="panel-title">Message Preview</div></div>
+          <div class="panel-header"><div class="panel-title">Preview</div><span id="preview-audience-label" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);"></span></div>
           <div class="panel-body">
-            <div class="preview-box" id="preview-box" style="color:var(--text-dim);font-style:italic;">Message preview...</div>
+            <div class="preview-box" id="preview-box" style="color:var(--text-dim);font-style:italic;white-space:pre-wrap;">Message preview...</div>
+            <div id="preview-samples" style="margin-top:12px;display:none;">
+              <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Personalised samples:</div>
+              <div id="preview-samples-list"></div>
+            </div>
           </div>
         </div>
+
         <div class="panel">
-          <div class="panel-header"><div class="panel-title">Broadcast Stats</div></div>
-          <div class="panel-body" id="broadcast-stats" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
+          <div class="panel-header"><div class="panel-title">Campaign Stats</div></div>
+          <div class="panel-body" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2.2;">
+            <div>👥 Audience size: <span id="stat-selected" style="color:var(--green);font-weight:700;">—</span></div>
             <div>📱 Total customers: <span id="stat-total">—</span></div>
-            <div>✅ Selected: <span id="stat-selected" style="color:var(--green);">—</span></div>
-            <div>📬 Last broadcast: <span id="stat-last">Never</span></div>
+            <div>📬 Last campaign: <span id="stat-last">Never</span></div>
           </div>
         </div>
       </div>
@@ -587,6 +690,15 @@
             <div class="toggle-row"><span class="toggle-label">Daily Sales Summary</span>
               <label class="toggle-switch"><input type="checkbox" id="set-daily-summary"/><span class="toggle-slider"></span></label>
             </div>
+
+            <!-- Phase 7: Business Template Picker -->
+            <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+              <div style="font-size:12px;font-family:var(--mono);color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;">Business Type / Template</div>
+              <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;">Improves AI cross-sell suggestions and campaign templates.</div>
+              <div id="template-picker-options" style="display:flex;flex-wrap:wrap;gap:8px;" class="template-picker">
+                <div style="color:var(--text-dim);font-family:var(--mono);font-size:12px;">Loading templates…</div>
+              </div>
+            </div>
             <button class="btn btn-primary" onclick="saveNotifSettings()" style="margin-top:16px;">Save Notifications</button>
           </div>
         </div>
@@ -622,6 +734,165 @@
     </div>
 
   </div><!-- /section-settings -->
+
+  <!-- CRM SECTION (Phase 3) -->
+  <div id="section-crm" class="section">
+    <div class="topbar">
+      <div class="page-title">👥 <span>Customer CRM</span></div>
+    </div>
+
+    <!-- Segment overview cards -->
+    <div class="stats-grid" style="margin-bottom:16px;">
+      <div class="stat-card" style="cursor:pointer;border-color:rgba(245,158,11,0.4);" onclick="loadCrmSegment('vip')">
+        <div class="stat-label">⭐ VIP</div>
+        <div class="stat-value" id="crm-count-vip" style="color:var(--amber);">—</div>
+        <div class="stat-sub">10+ orders or $50+ spent</div>
+      </div>
+      <div class="stat-card" style="cursor:pointer;" onclick="loadCrmSegment('loyal')">
+        <div class="stat-label">💚 Loyal</div>
+        <div class="stat-value" id="crm-count-loyal">—</div>
+        <div class="stat-sub">5+ orders or $20+ spent</div>
+      </div>
+      <div class="stat-card" style="cursor:pointer;" onclick="loadCrmSegment('regular')">
+        <div class="stat-label">👍 Regular</div>
+        <div class="stat-value" id="crm-count-regular">—</div>
+        <div class="stat-sub">2–4 orders placed</div>
+      </div>
+      <div class="stat-card" style="cursor:pointer;" onclick="loadCrmSegment('new')">
+        <div class="stat-label">👋 New</div>
+        <div class="stat-value" id="crm-count-new">—</div>
+        <div class="stat-sub">First-time buyers</div>
+      </div>
+    </div>
+
+    <div class="panels">
+      <div class="panel" style="flex:2;">
+        <div class="panel-header">
+          <div class="panel-title" id="crm-table-title">All Customers</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <select id="crm-segment-filter" onchange="loadCrmSegment(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:6px;">
+              <option value="all">All</option>
+              <option value="vip">⭐ VIP</option>
+              <option value="loyal">💚 Loyal</option>
+              <option value="regular">👍 Regular</option>
+              <option value="new">👋 New</option>
+              <option value="inactive_30d">😴 Inactive 30d</option>
+            </select>
+            <button class="panel-action" onclick="loadCrmSegment(document.getElementById('crm-segment-filter').value)">↻</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Phone</th><th>Name</th><th>Segment</th><th>Orders</th><th>Spent</th><th>Last Seen</th><th>Action</th></tr></thead>
+            <tbody id="crm-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Inactive customers quick panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">😴 Inactive</div>
+          <select id="crm-inactive-days" onchange="loadInactive(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:6px;">
+            <option value="7">7 days</option>
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="60">60 days</option>
+          </select>
+        </div>
+        <div class="panel-body">
+          <div id="crm-inactive-list" style="font-family:var(--mono);font-size:12px;"></div>
+          <button class="btn btn-ghost" style="width:100%;margin-top:10px;font-size:12px;" onclick="campaignInactive()">
+            📢 Send Win-back Campaign
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- PAYMENT REMINDERS SECTION (Phase 4) -->
+  <div id="section-reminders" class="section">
+    <div class="topbar">
+      <div class="page-title">⏳ <span>Payment Reminders</span></div>
+      <button class="btn btn-primary" onclick="sendAllReminders()">📨 Send All Reminders</button>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:16px;">
+      <div class="stat-card" style="border-color:rgba(245,158,11,0.4);">
+        <div class="stat-label">⏱ Tier 1 (1h+)</div>
+        <div class="stat-value" id="rem-t1-count" style="color:var(--amber);">—</div>
+        <div class="stat-sub">Gentle nudge</div>
+      </div>
+      <div class="stat-card" style="border-color:rgba(249,115,22,0.4);">
+        <div class="stat-label">⏰ Tier 2 (3h+)</div>
+        <div class="stat-value" id="rem-t2-count" style="color:#f97316;">—</div>
+        <div class="stat-sub">Firm reminder</div>
+      </div>
+      <div class="stat-card" style="border-color:rgba(239,68,68,0.4);">
+        <div class="stat-label">🚨 Tier 3 (6h+)</div>
+        <div class="stat-value" id="rem-t3-count" style="color:var(--red);">—</div>
+        <div class="stat-sub">Final warning</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">📋 Total Pending</div>
+        <div class="stat-value" id="rem-all-count">—</div>
+        <div class="stat-sub">Awaiting payment</div>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <div class="panel-header">
+        <div class="panel-title">Stale Payment Orders</div>
+        <button class="panel-action" onclick="loadReminders()">↻ Refresh</button>
+      </div>
+      <div class="panel-body">
+        <table>
+          <thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Method</th><th>Tier</th><th>Age</th><th>Actions</th></tr></thead>
+          <tbody id="reminders-table-body"></tbody>
+        </table>
+        <div id="reminders-result" style="margin-top:10px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ORDER KANBAN (Phase 5 - inside orders section, toggled by view button) -->
+  <!-- Kanban view is added as a toggle to the existing orders section -->
+
+  <!-- CUSTOMER PROFILE DRAWER (Phase 4) -->
+  <div id="customer-drawer" class="customer-drawer">
+    <div class="customer-drawer-header">
+      <div>
+        <div class="customer-drawer-title" id="drawer-phone">—</div>
+        <div class="customer-drawer-seg" id="drawer-segment">—</div>
+      </div>
+      <button class="customer-drawer-close" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="customer-drawer-body">
+      <div class="customer-drawer-stats">
+        <div class="drawer-stat">
+          <div class="drawer-stat-val" id="drawer-orders">—</div>
+          <div class="drawer-stat-lbl">Orders</div>
+        </div>
+        <div class="drawer-stat">
+          <div class="drawer-stat-val" id="drawer-spent">—</div>
+          <div class="drawer-stat-lbl">Spent</div>
+        </div>
+        <div class="drawer-stat">
+          <div class="drawer-stat-val" id="drawer-last">—</div>
+          <div class="drawer-stat-lbl">Last Seen</div>
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" style="font-size:12px;flex:1;" onclick="openInboxForDrawer()">💬 Open Chat</button>
+        <button class="btn btn-ghost" style="font-size:12px;flex:1;color:var(--green);border-color:var(--green-dim);" onclick="quickCampaignDrawer()">📢 Send Message</button>
+      </div>
+      <div style="margin-top:16px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Recent Orders</div>
+        <div id="drawer-orders-list"></div>
+      </div>
+    </div>
+  </div>
+  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
 
 </main>
 <div class="toast" id="toast"></div>

@@ -10,6 +10,17 @@ const ROUTES = {
   conversations: '/chat/conversations',
   customers:     '/customers',
   broadcast:     '/broadcast',
+  // Phase 1-7 additions
+  crmSegments:   '/crm/segments',
+  crmInactive:   '/crm/inactive',
+  campaigns:     '/campaigns/send',
+  campaignPrev:  '/campaigns/preview',
+  campaignAuds:  '/campaigns/audiences',
+  templates:     '/templates',
+  reminders:     '/payments/reminders/pending',
+  remindersSend: '/payments/reminders/send',
+  analyticsStats:'/analytics/stats',
+  analyticsTop:  '/analytics/top-customers',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -195,9 +206,11 @@ function buildSidebar() {
       <button class="nav-item active" onclick="showSection('overview',this);closeSidebar()"><span class="icon">📊</span> Overview <span class="status-dot"></span></button>
       <button class="nav-item" onclick="showSection('orders',this);closeSidebar()"><span class="icon">🛒</span> Orders</button>
       <button class="nav-item" onclick="showSection('products',this);closeSidebar()"><span class="icon">📦</span> Products</button>
+      <button class="nav-item" onclick="showSection('crm',this);closeSidebar()"><span class="icon">👥</span> Customers <span id="nav-crm-badge" class="nav-badge" style="display:none"></span></button>
+      <button class="nav-item" onclick="showSection('reminders',this);closeSidebar()"><span class="icon">⏳</span> Reminders <span id="nav-rem-badge" class="nav-badge nav-badge-amber" style="display:none"></span></button>
       <button class="nav-item" onclick="showSection('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
       <button class="nav-item" onclick="window.open('/inbox','_blank');closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
-      <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Broadcast</button>
+      <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
       <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>`;
   }
 }
@@ -211,8 +224,10 @@ function showSection(name, btn) {
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
-  if (name==='broadcast') loadCustomers();
-  if (name==='settings') loadSettings();
+  if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
+  if (name==='settings') { loadSettings(); loadTemplates(); }
+  if (name==='crm') loadCrm();
+  if (name==='reminders') loadReminders();
 }
 
 // ── TOAST ─────────────────────────────────────────────────
@@ -1102,3 +1117,589 @@ function setLoading(el, state=true) {
   el.style.opacity = state ? "0.5" : "1";
   el.style.pointerEvents = state ? "none" : "auto";
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 1 — CRM SEGMENT CARD (overview) + REMINDERS BADGE
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadOverviewExtras() {
+  // CRM segments
+  try {
+    const seg = await apiFetch(ROUTES.crmSegments);
+    if (seg) {
+      ['vip','loyal','regular','new'].forEach(s => {
+        const el = document.getElementById('seg-' + s);
+        if (el) el.textContent = seg[s] ?? '0';
+      });
+      const tot = document.getElementById('seg-total');
+      if (tot) tot.textContent = seg.total ?? '—';
+    }
+  } catch (_) {}
+
+  // Payment reminders badge
+  try {
+    const rem = await apiFetch(ROUTES.reminders);
+    const orders = rem && rem.orders ? rem.orders : [];
+    const count  = orders.length;
+    ['rem-tier1','rem-tier2','rem-tier3'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.textContent = '—';
+    });
+    let t1=0,t2=0,t3=0;
+    orders.forEach(o => {
+      if (o.reminder_tier===3) t3++;
+      else if (o.reminder_tier===2) t2++;
+      else t1++;
+    });
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+    set('rem-tier1', t1); set('rem-tier2', t2); set('rem-tier3', t3);
+    set('rem-total', count);
+    // Nav badge
+    const nb = document.getElementById('nav-rem-badge');
+    if (nb) { nb.textContent = count; nb.style.display = count > 0 ? 'inline-flex' : 'none'; }
+  } catch (_) {}
+}
+
+// Hook into the overview load
+const _origLoadOrders = loadOrders;
+async function loadOrders() {
+  await _origLoadOrders();
+  loadOverviewExtras();
+}
+
+async function sendAllReminders() {
+  const btn = event && event.target;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await apiFetch(ROUTES.remindersSend + '?dry_run=false', { method: 'POST' });
+    toast(`📨 Sent ${r.sent || 0} reminders (${r.failed || 0} failed)`);
+    loadReminders();
+    loadOverviewExtras();
+  } catch (e) {
+    toast('Send failed: ' + e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 2 — CAMPAIGN BUILDER
+// ════════════════════════════════════════════════════════════════════════════
+
+let _campaignAudiences = {};
+
+async function loadCampaignAudiences() {
+  try {
+    const auds = await apiFetch(ROUTES.campaignAuds);
+    _campaignAudiences = auds || {};
+    const lbl = document.getElementById('preview-audience-label');
+    if (lbl) updateAudienceLabel();
+  } catch (_) {}
+}
+
+function onAudienceChange() {
+  updateAudienceLabel();
+  updatePreview();
+  loadCampaignTemplateSuggestions();
+}
+
+function updateAudienceLabel() {
+  const sel  = document.getElementById('campaign-audience');
+  const lbl  = document.getElementById('preview-audience-label');
+  if (!sel || !lbl) return;
+  const aud  = _campaignAudiences[sel.value];
+  lbl.textContent = aud ? aud.desc : '';
+}
+
+async function loadCampaignTemplateSuggestions() {
+  const container = document.getElementById('campaign-templates');
+  if (!container) return;
+  // Show audience-relevant template suggestions if available
+  const audience = (document.getElementById('campaign-audience') || {}).value || 'all';
+  const suggestions = {
+    inactive_30d: "Hi {name}, we miss you at {business}! Come back today 🙏 Type menu to order.",
+    inactive_14d: "Hi {name}! It's been a while at {business}. New items just arrived — type menu to browse.",
+    vip:          "Hey {name}! ⭐ You've placed {orders} orders with us — you're amazing! Special thanks from {business} 🙏",
+    new:          "Hi {name}! Thank you for your first order at {business} 🎉 We hope you loved it. Type menu to order again!",
+    high_spenders:"Hey {name}! 💰 You're one of our best customers. {business} has something special for you — type menu!",
+  };
+  if (suggestions[audience]) {
+    container.innerHTML = `<div style="background:rgba(34,197,94,0.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:10px;cursor:pointer;" onclick="document.getElementById('broadcast-msg').value=this.dataset.msg;updatePreview();" data-msg="${escHtml(suggestions[audience])}">
+      💡 Suggested: <em style="color:var(--text);">${escHtml(suggestions[audience].slice(0,80))}...</em>
+    </div>`;
+  } else {
+    container.innerHTML = '';
+  }
+}
+
+async function previewCampaign() {
+  const msg = (document.getElementById('broadcast-msg') || {}).value || '';
+  const audience = (document.getElementById('campaign-audience') || {}).value || 'all';
+  if (!msg.trim()) { toast('Write a message first', true); return; }
+  try {
+    const r = await apiFetch(ROUTES.campaignPrev, {
+      method: 'POST',
+      body: JSON.stringify({ audience, message: msg, dry_run: true })
+    });
+    const samples = document.getElementById('preview-samples');
+    const list    = document.getElementById('preview-samples-list');
+    if (samples && list && r && r.previews) {
+      list.innerHTML = r.previews.map(p =>
+        `<div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:6px;font-family:var(--mono);font-size:11px;">
+          <div style="color:var(--text-dim);margin-bottom:4px;">📱 ${escHtml(p.phone)}</div>
+          <div style="white-space:pre-wrap;">${escHtml(p.message)}</div>
+        </div>`
+      ).join('');
+      samples.style.display = 'block';
+      const statSel = document.getElementById('stat-selected');
+      if (statSel) statSel.textContent = r.total + ' recipients';
+    }
+  } catch (e) { toast('Preview failed: ' + e.message, true); }
+}
+
+async function sendCampaign() {
+  const msg      = (document.getElementById('broadcast-msg') || {}).value || '';
+  const audience = (document.getElementById('campaign-audience') || {}).value || 'all';
+  const result   = document.getElementById('broadcast-result');
+  if (!msg.trim()) { toast('Write a message first', true); return; }
+  if (!confirm(`Send to "${audience}" audience?`)) return;
+  const btn = document.getElementById('broadcast-send-btn');
+  if (btn) btn.disabled = true;
+  if (result) result.style.display = 'none';
+  try {
+    const r = await apiFetch(ROUTES.campaigns, {
+      method: 'POST',
+      body: JSON.stringify({ audience, message: msg, dry_run: false })
+    });
+    if (result) {
+      result.style.display = 'block';
+      result.className = 'broadcast-result ' + (r.failed === 0 ? 'success' : 'error');
+      result.innerHTML = `✅ Sent <strong>${r.sent}</strong> | Failed <strong>${r.failed}</strong> | Total <strong>${r.total}</strong>`;
+    }
+    toast(`📢 Campaign sent to ${r.sent} customers!`);
+    if (document.getElementById('stat-last')) document.getElementById('stat-last').textContent = 'Just now';
+  } catch (e) {
+    if (result) { result.style.display='block'; result.className='broadcast-result error'; result.textContent='❌ '+e.message; }
+    toast(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 3 — CRM SECTION
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadCrm() {
+  // Load segment counts
+  try {
+    const seg = await apiFetch(ROUTES.crmSegments);
+    if (seg) {
+      ['vip','loyal','regular','new'].forEach(s => {
+        const el = document.getElementById('crm-count-' + s);
+        if (el) el.textContent = seg[s] ?? '0';
+      });
+    }
+  } catch (_) {}
+  loadCrmSegment('all');
+  loadInactive(30);
+}
+
+async function loadCrmSegment(segment) {
+  const tbody = document.getElementById('crm-table-body');
+  const title = document.getElementById('crm-table-title');
+  const sel   = document.getElementById('crm-segment-filter');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="7"><div class="empty">Loading…</div></td></tr>';
+  if (title) title.textContent = segment === 'all' ? 'All Customers' : segment.charAt(0).toUpperCase() + segment.slice(1) + ' Customers';
+  if (sel && sel.value !== segment) sel.value = segment;
+  try {
+    const endpoint = segment.startsWith('inactive_')
+      ? ROUTES.crmInactive + '?days=' + segment.replace('inactive_','').replace('d','')
+      : ROUTES.crmSegments + '/' + segment;
+    const rows = await apiFetch(endpoint);
+    const data = Array.isArray(rows) ? rows : [];
+    if (!tbody) return;
+    if (!data.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty">No customers in this segment.</div></td></tr>'; return; }
+    tbody.innerHTML = data.map(c => {
+      const seg = getSegmentLabel(c.order_count || 0, c.total_spent || 0);
+      return `<tr>
+        <td><span style="font-family:var(--mono);font-size:11px;">${escHtml(c.phone||'—')}</span></td>
+        <td>${escHtml(c.customer_name||'—')}</td>
+        <td><span class="badge ${seg.cls}">${seg.label}</span></td>
+        <td>${c.order_count||0}</td>
+        <td>$${parseFloat(c.total_spent||0).toFixed(2)}</td>
+        <td style="font-family:var(--mono);font-size:11px;">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
+        <td><button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="openCustomerDrawer(${JSON.stringify(c)})">View</button></td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+  }
+}
+
+function getSegmentLabel(orders, spent) {
+  orders = parseInt(orders) || 0; spent = parseFloat(spent) || 0;
+  if (orders >= 10 || spent >= 50) return { label: '⭐ VIP',     cls: 'badge-amber' };
+  if (orders >= 5  || spent >= 20) return { label: '💚 Loyal',   cls: 'badge-green' };
+  if (orders >= 2)                  return { label: '👍 Regular', cls: 'badge-green' };
+  if (orders >= 1)                  return { label: '👋 New',     cls: 'badge-blue'  };
+  return                                   { label: '🔍 Prospect',cls: ''            };
+}
+
+async function loadInactive(days) {
+  const list = document.getElementById('crm-inactive-list');
+  if (!list) return;
+  list.innerHTML = '<div style="color:var(--text-dim);font-size:11px;">Loading…</div>';
+  try {
+    const rows = await apiFetch(ROUTES.crmInactive + '?days=' + days);
+    const data = Array.isArray(rows) ? rows : [];
+    if (!data.length) { list.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:8px 0;">No inactive customers 🎉</div>'; return; }
+    list.innerHTML = data.slice(0,8).map(c =>
+      `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:11px;">
+        <span>${escHtml(c.phone||'—')}</span>
+        <span style="color:var(--text-dim);">${c.order_count||0} orders</span>
+      </div>`
+    ).join('') + (data.length > 8 ? `<div style="color:var(--text-dim);font-size:10px;padding-top:6px;">+${data.length-8} more</div>` : '');
+  } catch (e) {
+    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${e.message}</div>`;
+  }
+}
+
+async function campaignInactive() {
+  const days = document.getElementById('crm-inactive-days') ? document.getElementById('crm-inactive-days').value : '30';
+  const msg  = prompt(`Message to send to inactive customers (${days} days):\nTip: use {name} and {business}`,
+    `Hi {name}! We miss you at {business}. Come back today — type menu to order! 😊`);
+  if (!msg) return;
+  try {
+    const r = await apiFetch(ROUTES.campaigns, {
+      method: 'POST',
+      body: JSON.stringify({ audience: 'inactive_' + days + 'd', message: msg })
+    });
+    toast(`📢 Sent to ${r.sent} inactive customers`);
+  } catch (e) { toast(e.message, true); }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 4 — CUSTOMER PROFILE DRAWER
+// ════════════════════════════════════════════════════════════════════════════
+
+let _drawerCustomer = null;
+
+function openCustomerDrawer(customer) {
+  _drawerCustomer = customer;
+  const phone = customer.phone || '—';
+  const seg   = getSegmentLabel(customer.order_count, customer.total_spent);
+  document.getElementById('drawer-phone').textContent    = phone;
+  document.getElementById('drawer-segment').textContent  = seg.label;
+  document.getElementById('drawer-orders').textContent   = customer.order_count || 0;
+  document.getElementById('drawer-spent').textContent    = '$' + parseFloat(customer.total_spent||0).toFixed(2);
+  document.getElementById('drawer-last').textContent     = customer.last_seen ? fmtTime(customer.last_seen) : '—';
+  document.getElementById('drawer-orders-list').innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;">Loading orders…</div>';
+  document.getElementById('customer-drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+  loadDrawerOrders(phone);
+}
+
+async function loadDrawerOrders(phone) {
+  const list = document.getElementById('drawer-orders-list');
+  try {
+    const all = await apiFetch(ROUTES.orders);
+    const orders = (Array.isArray(all) ? all : (all && all.data ? all.data : []))
+      .filter(o => o.customer_phone === phone)
+      .slice(0, 5);
+    if (!orders.length) { list.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">No orders yet.</div>'; return; }
+    list.innerHTML = orders.map(o =>
+      `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px;">
+        <span><span class="badge badge-amber" style="font-size:10px;">#${o.id}</span></span>
+        <span style="color:var(--text-dim);">${escHtml(o.product_name||'—')}</span>
+        <span style="color:var(--green);">$${parseFloat(o.total_price||0).toFixed(2)}</span>
+        <span style="color:var(--text-dim);">${fmtTime(o.created_at)}</span>
+      </div>`
+    ).join('');
+  } catch (e) {
+    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
+  }
+}
+
+function closeDrawer() {
+  document.getElementById('customer-drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+  _drawerCustomer = null;
+}
+
+function openInboxForDrawer() {
+  if (_drawerCustomer && _drawerCustomer.phone) {
+    window.open('/inbox', '_blank');
+  }
+  closeDrawer();
+}
+
+async function quickCampaignDrawer() {
+  if (!_drawerCustomer) return;
+  const msg = prompt(`Message to ${_drawerCustomer.phone}:\nTip: use {name} and {business}`,
+    `Hi {name}! A quick message from {business} 😊`);
+  if (!msg) return;
+  try {
+    const r = await apiFetch(ROUTES.campaigns, {
+      method: 'POST',
+      body: JSON.stringify({ audience: 'custom', message: msg, phone_list: [_drawerCustomer.phone] })
+    });
+    toast(r.sent ? '✅ Message sent!' : '⚠ Failed to send', r.sent === 0);
+  } catch (e) { toast(e.message, true); }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 4 (cont.) — PAYMENT REMINDERS SECTION
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadReminders() {
+  const tbody = document.getElementById('reminders-table-body');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="7"><div class="empty">Loading…</div></td></tr>';
+  try {
+    const data = await apiFetch(ROUTES.reminders);
+    const orders = data && data.orders ? data.orders : [];
+    let t1=0, t2=0, t3=0;
+    orders.forEach(o => { if(o.reminder_tier===3)t3++; else if(o.reminder_tier===2)t2++; else t1++; });
+    ['t1','t2','t3'].forEach((t,i) => {
+      const el = document.getElementById(`rem-${t}-count`);
+      if (el) el.textContent = [t1,t2,t3][i];
+    });
+    const allEl = document.getElementById('rem-all-count');
+    if (allEl) allEl.textContent = orders.length;
+    // Nav badge
+    const nb = document.getElementById('nav-rem-badge');
+    if (nb) { nb.textContent = orders.length; nb.style.display = orders.length > 0 ? 'inline-flex' : 'none'; }
+
+    if (!tbody) return;
+    if (!orders.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty">✅ No pending payments.</div></td></tr>'; return; }
+    const tierColor = { 1:'var(--amber)', 2:'#f97316', 3:'var(--red)' };
+    tbody.innerHTML = orders.map(o => {
+      const tier = o.reminder_tier || 1;
+      const age  = o.created_at ? Math.round((Date.now() - new Date(o.created_at).getTime()) / 3600000) : '?';
+      return `<tr>
+        <td><span class="badge badge-amber">#${o.order_id||'—'}</span></td>
+        <td style="font-family:var(--mono);font-size:11px;">${escHtml(o.customer_phone||'—')}</td>
+        <td><span class="badge badge-green">$${parseFloat(o.total_price||0).toFixed(2)}</span></td>
+        <td style="font-family:var(--mono);font-size:11px;">${escHtml(o.payment_method||'—')}</td>
+        <td><span style="color:${tierColor[tier]||'var(--text)'};font-family:var(--mono);font-size:11px;font-weight:700;">Tier ${tier}</span></td>
+        <td style="font-family:var(--mono);font-size:11px;">${age}h ago</td>
+        <td>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="nudgeOrder(${o.order_id})">📨 Nudge</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;margin-left:4px;" onclick="previewReminder(${o.order_id})">👁</button>
+        </td>
+      </tr>`;
+    }).join('');
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+  }
+}
+
+async function nudgeOrder(orderId) {
+  try {
+    const r = await apiFetch(`/payments/reminders/${orderId}/nudge`, { method: 'POST' });
+    toast(r.ok ? '📨 Reminder sent!' : ('Failed: ' + r.error), !r.ok);
+    loadReminders();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function previewReminder(orderId) {
+  try {
+    const r = await apiFetch(`/payments/reminders/${orderId}/preview`);
+    if (r && r.preview_message) alert(r.preview_message);
+  } catch (e) { toast(e.message, true); }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 5 — ORDER KANBAN VIEW
+// ════════════════════════════════════════════════════════════════════════════
+
+let _ordersData = [];
+let _ordersView = 'list';
+let _orderStatusFilter = 'all';
+
+function setOrderView(mode) {
+  _ordersView = mode;
+  const listV   = document.getElementById('orders-list-view');
+  const kanbanV = document.getElementById('orders-kanban-view');
+  const listBtn = document.getElementById('orders-view-list');
+  const kanbanBtn = document.getElementById('orders-view-kanban');
+  if (listV)   listV.style.display   = mode === 'list'   ? '' : 'none';
+  if (kanbanV) kanbanV.style.display = mode === 'kanban' ? '' : 'none';
+  if (listBtn) listBtn.style.opacity   = mode === 'list'   ? '1' : '0.4';
+  if (kanbanBtn) kanbanBtn.style.opacity = mode === 'kanban' ? '1' : '0.4';
+  if (mode === 'kanban' && _ordersData.length) renderKanban(_ordersData);
+}
+
+function filterOrdersByStatus(status) {
+  _orderStatusFilter = status;
+  const filtered = status === 'all' ? _ordersData : _ordersData.filter(o => o.status === status);
+  renderOrders(filtered, 'orders-body', true);
+  if (_ordersView === 'kanban') renderKanban(_ordersData);
+}
+
+const _KANBAN_COLS = [
+  { key: 'pending',          label: 'Pending',       color: 'var(--amber)' },
+  { key: 'pending_cash',     label: 'Confirmed/Cash', color: '#84cc16' },
+  { key: 'confirmed',        label: 'Confirmed',      color: 'var(--green)' },
+  { key: 'preparing',        label: 'Preparing',      color: 'var(--blue)' },
+  { key: 'ready',            label: 'Ready',          color: '#a78bfa' },
+  { key: 'out_for_delivery', label: 'Delivering',     color: '#f97316' },
+  { key: 'completed',        label: 'Completed',      color: 'var(--text-dim)' },
+];
+
+function renderKanban(orders) {
+  const board = document.getElementById('kanban-board');
+  if (!board) return;
+  board.innerHTML = _KANBAN_COLS.map(col => {
+    const colOrders = orders.filter(o => (o.status||'pending') === col.key);
+    const cards = colOrders.length
+      ? colOrders.map(o => `
+        <div class="kanban-card" onclick="updateOrderStatus(${o.id})">
+          <div class="kanban-card-id">#${o.id}</div>
+          <div class="kanban-card-name">${escHtml(o.customer_phone||'—')}</div>
+          <div class="kanban-card-total">$${parseFloat(o.total_price||0).toFixed(2)}</div>
+          <div class="kanban-card-time">${fmtTime(o.created_at)}</div>
+        </div>`).join('')
+      : '<div class="kanban-empty">—</div>';
+    return `
+      <div class="kanban-col">
+        <div class="kanban-col-header" style="border-top-color:${col.color};">
+          <span>${col.label}</span>
+          <span class="kanban-col-count">${colOrders.length}</span>
+        </div>
+        <div class="kanban-col-body">${cards}</div>
+      </div>`;
+  }).join('');
+}
+
+async function updateOrderStatus(orderId) {
+  const order = _ordersData.find(o => o.id === orderId);
+  if (!order) return;
+  const statuses = ['pending','pending_cash','confirmed','preparing','ready','out_for_delivery','delivered','completed','cancelled'];
+  const cur  = order.status || 'pending';
+  const opts = statuses.map(s => `${s === cur ? '▶ ' : '  '}${s}`).join('\n');
+  const pick = prompt(`Update status for ORDER #${orderId}\n\nCurrent: ${cur}\n\nPick new status:\n${opts}\n\nType new status:`);
+  if (!pick || pick === cur) return;
+  if (!statuses.includes(pick)) { toast('Invalid status', true); return; }
+  try {
+    await apiFetch(`/orders/${orderId}/status`, { method: 'PATCH', body: JSON.stringify({ status: pick }) });
+    toast(`✅ ORDER-${orderId} → ${pick}`);
+    await loadOrders();
+  } catch (e) { toast('Update failed: ' + e.message, true); }
+}
+
+// Patch loadOrders to capture data for kanban + filter
+const _origLoadOrdersPhase5 = loadOrders;
+loadOrders = async function() {
+  try {
+    const raw = await apiFetch(ROUTES.orders);
+    if (!raw) return;
+    _ordersData = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
+    const filtered = _orderStatusFilter === 'all' ? _ordersData : _ordersData.filter(o => o.status === _orderStatusFilter);
+    renderOrders(filtered, 'orders-body', true);
+    renderOrders(_ordersData.slice(0,5), 'recent-orders-body', false);
+    const statO = document.getElementById('stat-orders');
+    const statR = document.getElementById('stat-revenue');
+    if (statO) statO.textContent = _ordersData.length;
+    if (statR) statR.textContent = '$' + _ordersData.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
+    if (_ordersView === 'kanban') renderKanban(_ordersData);
+    loadOverviewExtras();
+  } catch(e) {
+    ['orders-body','recent-orders-body'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    });
+  }
+};
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 6 — ANALYTICS CHARTS
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadAnalyticsCharts() {
+  try {
+    const [stats, topCust] = await Promise.all([
+      apiFetch(ROUTES.analyticsStats),
+      apiFetch(ROUTES.analyticsTop + '?limit=5'),
+    ]);
+
+    // Update stat cards if present
+    if (stats) {
+      const map = {
+        'stat-orders':    stats.total_orders,
+        'stat-revenue':   stats.total_revenue != null ? '$' + parseFloat(stats.total_revenue).toFixed(2) : null,
+        'stat-ai':        stats.ai_handled,
+        'stat-pending':   stats.pending_orders,
+      };
+      Object.entries(map).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if (el && val != null) el.textContent = val;
+      });
+    }
+
+    // Top customers mini-chart (horizontal bar using CSS)
+    const chartEl = document.getElementById('analytics-top-customers');
+    if (chartEl && Array.isArray(topCust) && topCust.length) {
+      const max = Math.max(...topCust.map(c => c.order_count || 0), 1);
+      chartEl.innerHTML = topCust.map(c => {
+        const pct = Math.round(((c.order_count||0) / max) * 100);
+        return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(c.phone||'—')}</span>
+          <div style="flex:1;background:var(--surface2);border-radius:4px;height:8px;overflow:hidden;">
+            <div style="width:${pct}%;background:var(--green);height:100%;border-radius:4px;transition:width 0.5s;"></div>
+          </div>
+          <span style="font-family:var(--mono);font-size:10px;color:var(--green);width:20px;text-align:right;">${c.order_count||0}</span>
+        </div>`;
+      }).join('');
+    }
+  } catch (_) {}
+}
+
+// Hook analytics load into overview
+document.addEventListener('DOMContentLoaded', () => {
+  setTimeout(loadAnalyticsCharts, 500);
+});
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 7 — TEMPLATE PICKER IN SETTINGS
+// ════════════════════════════════════════════════════════════════════════════
+
+async function loadTemplates() {
+  const container = document.getElementById('template-picker-options');
+  if (!container) return;
+  try {
+    const tpls = await apiFetch(ROUTES.templates);
+    if (!Array.isArray(tpls)) return;
+    container.innerHTML = tpls.map(t =>
+      `<div class="template-card" data-id="${escHtml(t.id)}" onclick="selectTemplate('${escHtml(t.id)}', this)">
+        <div class="template-icon">${t.icon || '🏪'}</div>
+        <div class="template-name">${escHtml(t.name)}</div>
+      </div>`
+    ).join('') +
+    `<div class="template-card" data-id="default" onclick="selectTemplate('default', this)">
+      <div class="template-icon">🏪</div>
+      <div class="template-name">General</div>
+    </div>`;
+
+    // Highlight saved template
+    const saved = localStorage.getItem('wazi_template_id');
+    if (saved) {
+      const card = container.querySelector(`[data-id="${saved}"]`);
+      if (card) card.classList.add('selected');
+    }
+  } catch (_) {}
+}
+
+function selectTemplate(id, el) {
+  document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+  if (el) el.classList.add('selected');
+  localStorage.setItem('wazi_template_id', id);
+  toast('✅ Template saved — AI will use category suggestions for this business type.');
+}
+

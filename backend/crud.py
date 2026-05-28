@@ -1392,3 +1392,142 @@ def get_stale_payment_orders_all_businesses(
     except Exception as exc:
         log.error("get_stale_payment_orders_all_businesses error: %s", exc)
         return []
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CRM — CUSTOMER SEGMENTATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_customer_segment(memory: dict) -> str:
+    """
+    Classify a customer into a segment based on their memory profile.
+
+    Segments
+    ────────
+    "vip"      — order_count ≥ 10  OR  total_spent ≥ 50
+    "loyal"    — order_count ≥ 5   OR  total_spent ≥ 20
+    "regular"  — order_count ≥ 2
+    "new"      — order_count == 1
+    "prospect" — order_count == 0  (visited but never ordered)
+
+    Returns one of the segment strings above. Pure function — no DB calls.
+    """
+    count  = int(memory.get("order_count", 0) or 0)
+    spent  = float(memory.get("total_spent", 0) or 0)
+
+    if count >= 10 or spent >= 50:
+        return "vip"
+    if count >= 5 or spent >= 20:
+        return "loyal"
+    if count >= 2:
+        return "regular"
+    if count == 1:
+        return "new"
+    return "prospect"
+
+
+def get_segment_label(segment: str) -> str:
+    """Human-readable label for a segment (used in dashboard/messages)."""
+    return {
+        "vip":      "⭐ VIP Customer",
+        "loyal":    "💚 Loyal Customer",
+        "regular":  "👍 Regular Customer",
+        "new":      "👋 New Customer",
+        "prospect": "🔍 Prospect",
+    }.get(segment, "Customer")
+
+
+def get_customers_by_segment(
+    business_id: int,
+    segment:     str,
+) -> list[dict]:
+    """
+    Return customers in a given segment.
+    Segment is computed from user_memory columns.
+
+    Parameters
+    ──────────
+    business_id   Tenant filter.
+    segment       One of: "vip", "loyal", "regular", "new", "prospect", "all"
+
+    Returns list of dicts: {phone, customer_name, order_count, total_spent, last_seen}
+    """
+    try:
+        res = (
+            supabase.table("user_memory")
+            .select("phone, customer_name, order_count, total_spent, last_seen")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        rows = res.data or []
+
+        if segment == "all":
+            return rows
+
+        result = []
+        for row in rows:
+            seg = get_customer_segment(row)
+            if seg == segment:
+                result.append(row)
+
+        return sorted(result, key=lambda r: float(r.get("total_spent") or 0), reverse=True)
+
+    except Exception as exc:
+        log.warning("get_customers_by_segment error: %s", exc)
+        return []
+
+
+def get_inactive_customers(
+    business_id:      int,
+    inactive_days:    int = 30,
+    min_order_count:  int = 1,
+) -> list[dict]:
+    """
+    Return customers who have not been seen in `inactive_days` days.
+    Only returns customers who have placed at least `min_order_count` orders
+    (i.e. real customers, not zero-interaction prospects).
+
+    Used by the campaign engine to target win-back messages.
+    """
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=inactive_days)).isoformat()
+    try:
+        res = (
+            supabase.table("user_memory")
+            .select("phone, customer_name, order_count, total_spent, last_seen")
+            .eq("business_id", business_id)
+            .lt("last_seen", cutoff)          # last_seen before cutoff
+            .gte("order_count", min_order_count)
+            .order("last_seen", desc=False)   # oldest inactive first
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        log.warning("get_inactive_customers error: %s", exc)
+        return []
+
+
+def get_segment_summary(business_id: int) -> dict:
+    """
+    Return a count breakdown of all customer segments for a business.
+    Used by the dashboard CRM card.
+
+    Returns: {vip: N, loyal: N, regular: N, new: N, prospect: N, total: N}
+    """
+    try:
+        res = (
+            supabase.table("user_memory")
+            .select("order_count, total_spent")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        rows = res.data or []
+        counts = {"vip": 0, "loyal": 0, "regular": 0, "new": 0, "prospect": 0}
+        for row in rows:
+            seg = get_customer_segment(row)
+            counts[seg] = counts.get(seg, 0) + 1
+        counts["total"] = len(rows)
+        return counts
+    except Exception as exc:
+        log.warning("get_segment_summary error: %s", exc)
+        return {"vip": 0, "loyal": 0, "regular": 0, "new": 0, "prospect": 0, "total": 0}

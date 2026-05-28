@@ -1564,6 +1564,139 @@ def platform_clear_customer_session(phone: str, user=Depends(require_superadmin)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CRM — CUSTOMER SEGMENTATION ENDPOINTS (Phase 3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/crm/segments")
+def crm_segments(user=Depends(require_business)):
+    """Return segment count summary for this business (VIP, loyal, regular, new, prospect)."""
+    return crud.get_segment_summary(user["business_id"])
+
+
+@app.get("/crm/segments/{segment}")
+def crm_segment_customers(segment: str, user=Depends(require_business)):
+    """
+    Return customers in a specific segment.
+    segment: vip | loyal | regular | new | prospect | all
+    """
+    valid = {"vip", "loyal", "regular", "new", "prospect", "all"}
+    if segment not in valid:
+        raise HTTPException(400, f"Invalid segment. Use one of: {', '.join(sorted(valid))}")
+    return crud.get_customers_by_segment(user["business_id"], segment)
+
+
+@app.get("/crm/inactive")
+def crm_inactive(days: int = 30, user=Depends(require_business)):
+    """Return customers inactive for at least `days` days who have ordered before."""
+    if days < 1 or days > 365:
+        raise HTTPException(400, "days must be between 1 and 365")
+    return crud.get_inactive_customers(user["business_id"], inactive_days=days)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CAMPAIGN ENGINE ENDPOINTS (Phase 4)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class CampaignRequest(BaseModel):
+    audience:        str              # audience key — see campaign_service.AUDIENCE_INFO
+    message:         str              # message text — supports {name} {business} {orders} {spent}
+    phone_list:      list[str] | None = None   # for "custom" audience only
+    personalise_msg: bool = True      # replace {name} etc. per recipient
+    dry_run:         bool = False     # preview without sending
+
+
+@app.post("/campaigns/send")
+async def campaign_send(body: CampaignRequest, user=Depends(require_business)):
+    """
+    Send a targeted campaign to a specific audience.
+
+    Audience options:
+      all, vip, loyal, regular, new
+      inactive_7d, inactive_14d, inactive_30d
+      high_spenders, unpaid, custom
+    """
+    from services.campaign_service import CampaignService, AUDIENCE_INFO
+
+    bid = user["business_id"]
+
+    if body.audience not in AUDIENCE_INFO:
+        raise HTTPException(400, f"Unknown audience. Valid: {list(AUDIENCE_INFO.keys())}")
+
+    if len(body.message.strip()) < 3:
+        raise HTTPException(400, "Message too short")
+    if len(body.message) > 1024:
+        raise HTTPException(400, "Message too long (max 1024 chars)")
+
+    result = CampaignService.run(
+        business_id=bid,
+        audience=body.audience,
+        message=body.message,
+        phone_list=body.phone_list,
+        personalise_msg=body.personalise_msg,
+        dry_run=body.dry_run,
+    )
+
+    # Emit event (non-blocking)
+    if not body.dry_run and result.get("sent", 0) > 0:
+        try:
+            from services.events import Events
+            Events.emit("broadcast_sent", {
+                "business_id": bid,
+                "audience":    body.audience,
+                "sent":        result["sent"],
+                "failed":      result.get("failed", 0),
+            })
+        except Exception:
+            pass
+
+    log.info("campaign_send  biz=%s  audience=%s  sent=%s  dry=%s",
+             bid, body.audience, result.get("sent"), body.dry_run)
+    return result
+
+
+@app.get("/campaigns/audiences")
+def campaign_audiences():
+    """Return all available campaign audiences with labels and descriptions."""
+    from services.campaign_service import AUDIENCE_INFO
+    return AUDIENCE_INFO
+
+
+@app.post("/campaigns/preview")
+async def campaign_preview(body: CampaignRequest, user=Depends(require_business)):
+    """Preview a campaign message for first 3 recipients without sending."""
+    from services.campaign_service import CampaignService
+    body.dry_run = True   # force dry run regardless of what was sent
+    return CampaignService.run(
+        business_id=user["business_id"],
+        audience=body.audience,
+        message=body.message,
+        phone_list=body.phone_list,
+        personalise_msg=body.personalise_msg,
+        dry_run=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INDUSTRY TEMPLATES ENDPOINTS (Phase 2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get("/templates")
+def list_templates():
+    """Return all available industry templates for the dashboard template picker."""
+    from services.templates import list_templates as _list
+    return _list()
+
+
+@app.get("/templates/{template_id}")
+def get_template(template_id: str):
+    """Return a specific industry template including campaign suggestions."""
+    from services.templates import get_template as _get, TEMPLATES
+    if template_id not in TEMPLATES:
+        raise HTTPException(404, f"Template '{template_id}' not found")
+    return _get(template_id).to_dict()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PAYMENT REMINDER ENDPOINTS (Phase 6)
 # ─────────────────────────────────────────────────────────────────────────────
 

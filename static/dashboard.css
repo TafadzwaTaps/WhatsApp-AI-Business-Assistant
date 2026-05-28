@@ -540,3 +540,248 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   nav { padding: 0 16px; gap: 12px; }
   .nav-links .nav-link:not(:last-child):not(.nav-cta):not(.nav-login) { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   UI PHASES 1–7 — CRM, Kanban, Drawer, Campaign, Templates
+═══════════════════════════════════════════════════════════ */
+
+/* ── Nav badges ─────────────────────────────────────────── */
+.nav-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: var(--red);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  border-radius: 9px;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+.nav-badge-amber { background: var(--amber); }
+
+/* ── Phase 1: CRM segment card ──────────────────────────── */
+.crm-segments-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.crm-seg-item {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 10px;
+  text-align: center;
+}
+.crm-seg-item.vip    { border-color: rgba(245,158,11,0.4); }
+.crm-seg-item.loyal  { border-color: rgba(34,197,94,0.3);  }
+.crm-seg-count {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--green);
+  margin-bottom: 3px;
+}
+.crm-seg-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+/* ── Phase 3: CRM table ─────────────────────────────────── */
+.badge-blue {
+  background: rgba(56,189,248,0.1);
+  color: var(--blue);
+  border: 1px solid rgba(56,189,248,0.3);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+/* ── Phase 4: Customer profile drawer ───────────────────── */
+.customer-drawer {
+  position: fixed;
+  top: 0; right: -400px;
+  width: 380px;
+  max-width: 92vw;
+  height: 100vh;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+}
+.customer-drawer.open { right: 0; }
+
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 199;
+  display: none;
+}
+.drawer-overlay.open { display: block; }
+
+.customer-drawer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.customer-drawer-title {
+  font-size: 16px;
+  font-weight: 700;
+  font-family: var(--mono);
+  color: var(--text);
+}
+.customer-drawer-seg {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  margin-top: 3px;
+}
+.customer-drawer-close {
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  width: 28px; height: 28px;
+  cursor: pointer;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.customer-drawer-close:hover { color: var(--text); border-color: var(--text-dim); }
+
+.customer-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+.customer-drawer-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 0;
+}
+.drawer-stat {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 8px;
+  text-align: center;
+}
+.drawer-stat-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--green);
+  margin-bottom: 2px;
+}
+.drawer-stat-lbl {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* ── Phase 5: Kanban board ──────────────────────────────── */
+.kanban-board {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 4px 0 16px;
+  min-height: 400px;
+}
+.kanban-col {
+  min-width: 180px;
+  max-width: 220px;
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.kanban-col-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-top: 3px solid var(--green);
+  font-size: 12px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+}
+.kanban-col-count {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  background: var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.kanban-col-body {
+  padding: 8px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.kanban-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 10px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.kanban-card:hover {
+  border-color: var(--green);
+  transform: translateY(-1px);
+}
+.kanban-card-id    { font-family: var(--mono); font-size: 10px; color: var(--amber); font-weight: 700; margin-bottom: 3px; }
+.kanban-card-name  { font-size: 11px; color: var(--text); margin-bottom: 3px; }
+.kanban-card-total { font-family: var(--mono); font-size: 11px; color: var(--green); margin-bottom: 2px; }
+.kanban-card-time  { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.kanban-empty      { color: var(--text-dim); font-size: 11px; text-align: center; padding: 16px 0; font-family: var(--mono); }
+
+/* ── Phase 7: Template picker ───────────────────────────── */
+.template-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.template-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+  min-width: 90px;
+}
+.template-card:hover  { border-color: var(--green); }
+.template-card.selected {
+  border-color: var(--green);
+  background: var(--green-glow);
+}
+.template-icon { font-size: 22px; margin-bottom: 4px; }
+.template-name { font-family: var(--mono); font-size: 10px; color: var(--text-dim); }
+.template-card.selected .template-name { color: var(--green); }
+
+/* ── Mobile tweaks ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  .kanban-board { gap: 8px; }
+  .kanban-col   { min-width: 150px; }
+  .customer-drawer { width: 100vw; right: -100vw; }
+  .crm-segments-grid { grid-template-columns: 1fr 1fr; }
+}
+
