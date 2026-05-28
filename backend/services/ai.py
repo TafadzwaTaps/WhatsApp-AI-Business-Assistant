@@ -287,6 +287,23 @@ def _set_awaiting_address(phone: str, business_id: int,
                session={"order_id": order_id, "reference": reference})
 
 
+def _friendly_payment_status(status: str) -> str:
+    """Convert raw DB payment_status to a human-readable label."""
+    labels = {
+        "pending":             "Pending",
+        "pending_cash":        "Confirmed (Cash)",
+        "awaiting_payment":    "Awaiting Payment",
+        "awaiting_proof":      "Awaiting Proof",
+        "payment_review":      "Under Review",
+        "paid":                "Paid ✅",
+        "confirmed":           "Confirmed",
+        "cancelled":           "Cancelled",
+        "refunded":            "Refunded",
+        "payment_error":       "Payment Error",
+    }
+    return labels.get(status, status.replace("_", " ").title())
+
+
 def _get_active_order(phone: str, business_id: int) -> dict | None:
     """
     Find the most recent active (non-completed, non-cancelled) order for
@@ -586,6 +603,11 @@ _DONE_EXACT = {
     "cheers", "cool thanks", "perfect thanks", "great thanks",
     "awesome thanks", "sorted thanks", "sorted",
     "we're done", "we are done", "that will be all",
+    # End-of-conversation phrases (were falling through to product fuzzy-match)
+    "end", "end conversation", "end chat", "stop", "done", "finish",
+    "finished", "close", "exit", "quit", "that's it", "thats it",
+    "that's enough", "thats enough", "all done", "i'm good", "im good",
+    "we're done here", "nothing more", "no more", "that will do",
 }
 
 def _is_conversation_done(text: str) -> bool:
@@ -620,6 +642,12 @@ _URGENCY_PHRASES = [
     "where is", "still waiting", "taking long", "taking too long",
     "late", "delayed", "not arrived", "hasn't arrived", "not here yet",
     "cold", "hungry", "starving",
+    # Delivery status queries (previously fell through to product fuzzy-match)
+    "delivery update", "any delivery update", "any update",
+    "update on my order", "order update", "status of my order",
+    "status of my delivery", "delivery status", "order status",
+    "when will it", "when will my", "has it been",
+    "eta", "estimated time", "how soon", "any news",
 ]
 
 def _is_urgency_message(text: str) -> bool:
@@ -1229,7 +1257,7 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
             f"  Total   : *${total:.2f}*\n"
             f"{'─' * 26}\n"
             f"{icon} {label}\n"
-            f"{pay_icon} Payment : *{payment_status.replace('_', ' ').upper()}*\n"
+            f"{pay_icon} Payment : *{_friendly_payment_status(payment_status)}*\n"
             f"{'─' * 26}\n"
             f"📊 {progress}"
             f"{agent_note}\n"
