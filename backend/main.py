@@ -22,6 +22,15 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, validator
 
+# ── Ensure the backend folder is on sys.path so sibling modules resolve ───────
+# Required whether running as:  python main.py  OR  uvicorn main:app
+# Render runs:  uvicorn main:app --host 0.0.0.0 --port $PORT
+# from inside the backend/ directory, so __file__ points there correctly.
+import sys as _sys, os as _os
+_HERE = _os.path.dirname(_os.path.abspath(__file__))
+if _HERE not in _sys.path:
+    _sys.path.insert(0, _HERE)
+
 import crud
 from crypto import TokenDecryptionError
 from ai import generate_reply
