@@ -42,6 +42,17 @@ if _os.path.isdir(_cwd_backend) and _cwd_backend not in _sys.path:
 
 import crud
 from core.crypto import TokenDecryptionError
+
+# ── Security layer ─────────────────────────────────────────────────────────
+from services.security import (
+    RateLimitExceeded, check as _rate_check,
+    record_failed_login, is_login_locked, clear_failed_logins,
+    verify_meta_signature, is_duplicate_message,
+    check_password_strength, validate_upload,
+)
+
+# WhatsApp App Secret for webhook signature verification (set in Render env vars)
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "").strip()
 from services.ai import generate_reply
 from core.auth import (
     verify_password,
@@ -128,6 +139,52 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Security headers middleware (Phase 9) ──────────────────────────────────
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import Response as _StarletteResponse
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Adds HTTP security headers to every response.
+    CSP allows the scripts/styles used by the dashboard and inbox.
+    """
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        # Only add to HTML/API responses — not static assets where headers are redundant
+        response.headers["X-Content-Type-Options"]  = "nosniff"
+        response.headers["X-Frame-Options"]          = "SAMEORIGIN"
+        response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"]        = "camera=(), microphone=(), geolocation=()"
+        response.headers["X-XSS-Protection"]          = "1; mode=block"
+        # HSTS — only on HTTPS (Render always serves HTTPS in production)
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # CSP: allows Google Fonts, self-hosted scripts, inline styles (needed by dashboard)
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com data:; "
+            "img-src 'self' data: blob: https:; "
+            "connect-src 'self' https://wazibot-api-assistant.onrender.com wss:; "
+            "frame-ancestors 'self'; "
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# ── Global rate limit exception handler ────────────────────────────────────
+from fastapi.responses import JSONResponse as _JSONResponse
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request, exc: RateLimitExceeded):
+    log.warning("rate_limit_exceeded  endpoint=%s  ip=%s", request.url.path,
+                request.headers.get("x-forwarded-for", getattr(request.client, "host", "?")))
+    return _JSONResponse(
+        status_code=429,
+        content={"detail": f"Too many requests. Please wait and try again."},
+        headers={"Retry-After": str(exc.retry_after)},
+    )
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
@@ -149,6 +206,12 @@ def inbox():      return _html("inbox.html")
 
 @app.get("/signup")
 def signup_page(): return _html("signup.html")
+
+@app.get("/privacy")
+def privacy_page(): return _html("privacy.html")
+
+@app.get("/terms")
+def terms_page(): return _html("terms.html")
 
 
 # ── WebSocket manager ──────────────────────────────────────────────────────────
@@ -279,7 +342,11 @@ class SignupRequest(BaseModel):
 
 
 @app.post("/auth/signup")
-def signup(data: SignupRequest):
+def signup(data: SignupRequest, request: Request):
+    _rate_check("signup", request)
+    pw_ok, pw_msg = check_password_strength(data.password)
+    if not pw_ok:
+        raise HTTPException(400, pw_msg)
     if data.username == SUPER_ADMIN_USERNAME.lower():
         raise HTTPException(400, "Username not available")
     if crud.get_business_by_username(data.username):
@@ -320,20 +387,31 @@ class LoginRequest(BaseModel):
 
 
 @app.post("/auth/login")
-def login(data: LoginRequest):
+def login(data: LoginRequest, request: Request):
+    # Phase 2: rate limiting + Phase 8: lockout + failed-login tracking
+    _rate_check("login", request)
+    ip = request.headers.get("x-forwarded-for", getattr(request.client, "host", "unknown")).split(",")[0].strip()
+    if is_login_locked(ip, data.username):
+        log.warning("login_locked  ip=%s  username=%s", ip, data.username)
+        raise HTTPException(429, "Too many failed login attempts. Please try again in 5 minutes.")
+
     username = data.username.strip().lower()
 
     if username == SUPER_ADMIN_USERNAME.lower():
         if not verify_password(data.password, SUPER_ADMIN_PASSWORD):
+            record_failed_login(ip, username)
             raise HTTPException(401, "Invalid credentials")
+        clear_failed_logins(ip, username)
         return {**_token_pair(SUPER_ADMIN_USERNAME, "superadmin"), "role": "superadmin"}
 
     biz = crud.get_business_by_username(username)
     if not biz or not verify_password(data.password, biz["owner_password"]):
+        record_failed_login(ip, username)
         raise HTTPException(401, "Invalid credentials")
     if not biz.get("is_active", True):
         raise HTTPException(403, "Account suspended. Contact support.")
 
+    clear_failed_logins(ip, username)
     log.info("🔑 Login: %s", biz["owner_username"])
     return {
         **_token_pair(biz["owner_username"], "business", biz["id"]),
@@ -391,6 +469,18 @@ def debug_env():
         "SUPABASE_URL": f"{supa_url[:30]}…" if supa_url else "❌ NOT SET",
         "SUPABASE_KEY": f"{supa_key[:8]}…({len(supa_key)} chars)" if supa_key else "❌ NOT SET",
         "VERIFY_TOKEN": "✅ set" if os.getenv("VERIFY_TOKEN") else "⚠ using default",
+    }
+
+
+@app.get("/debug/security")
+def debug_security():
+    """Security configuration status — useful for verifying env var setup."""
+    return {
+        "webhook_signature_verification": "enabled" if WHATSAPP_APP_SECRET else "disabled (WHATSAPP_APP_SECRET not set)",
+        "rate_limiting":                  "enabled",
+        "security_headers":               "enabled",
+        "password_policy":                "min 8 chars, letter+digit required",
+        "note":                           "Set WHATSAPP_APP_SECRET in Render env vars to enable webhook signature verification",
     }
 
 
@@ -563,7 +653,19 @@ def _get_customer_state_for_log(phone: str, business_id: int) -> str:
 
 @app.post("/webhook")
 async def receive_message(request: Request):
-    data = await request.json()
+    # ── Phase 4: Meta webhook signature verification ──────────────────────
+    raw_body = await request.body()
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    if not verify_meta_signature(raw_body, sig_header, WHATSAPP_APP_SECRET):
+        log.error("webhook: INVALID signature — rejecting request  ip=%s",
+                  request.headers.get("x-forwarded-for", "?"))
+        raise HTTPException(403, "Invalid webhook signature")
+
+    try:
+        import json as _json
+        data = _json.loads(raw_body)
+    except Exception:
+        return {"status": "ok"}
 
     # ── STEP 1: Parse Meta payload ────────────────────────────────────────
     try:
@@ -1606,7 +1708,7 @@ class CampaignRequest(BaseModel):
 
 
 @app.post("/campaigns/send")
-async def campaign_send(body: CampaignRequest, user=Depends(require_business)):
+async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business)):
     """
     Send a targeted campaign to a specific audience.
 
@@ -1615,6 +1717,7 @@ async def campaign_send(body: CampaignRequest, user=Depends(require_business)):
       inactive_7d, inactive_14d, inactive_30d
       high_spenders, unpaid, custom
     """
+    _rate_check("campaign", request)
     from services.campaign_service import CampaignService, AUDIENCE_INFO
 
     bid = user["business_id"]
@@ -2314,7 +2417,8 @@ class BroadcastRequest(BaseModel):
 
 
 @app.post("/broadcast")
-def broadcast(body: BroadcastRequest, user=Depends(require_business)):
+def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business)):
+    _rate_check("broadcast", request)
     bid      = user["business_id"]
     business = crud.get_business_by_id(bid)
 
