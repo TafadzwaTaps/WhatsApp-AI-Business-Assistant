@@ -72,6 +72,16 @@
         <button class="filter-btn"        id="filter-recent"  onclick="setFilter('recent')">Recent</button>
         <button class="filter-btn"        id="filter-handoff" onclick="setFilter('handoff')">🔴 Handoff</button>
       </div>
+
+      <!-- Clear actions -->
+      <div class="clear-row">
+        <button class="clear-btn" onclick="clearReadChats()" title="Remove all read conversations from inbox">
+          ✓ Clear Read
+        </button>
+        <button class="clear-btn clear-btn-danger" onclick="confirmClearAll()" title="Clear all conversations">
+          🗑 Clear All
+        </button>
+      </div>
     </div>
 
     <!-- Contact list (rendered by JS) -->

@@ -1292,50 +1292,55 @@ async function sendCampaign() {
 // ════════════════════════════════════════════════════════════════════════════
 
 async function loadCrm() {
-  // Load segment counts
+  // Load segment counts for the 4 cards
   try {
     const seg = await apiFetch(ROUTES.crmSegments);
     if (seg) {
-      ['vip','loyal','regular','new'].forEach(s => {
+      ['vip','loyal','new'].forEach(s => {
         const el = document.getElementById('crm-count-' + s);
         if (el) el.textContent = seg[s] ?? '0';
       });
     }
   } catch (_) {}
-  loadCrmSegment('all');
-  loadInactive(30);
-}
 
-async function loadCrmSegment(segment) {
-  const tbody = document.getElementById('crm-table-body');
-  const title = document.getElementById('crm-table-title');
-  const sel   = document.getElementById('crm-segment-filter');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="7"><div class="empty">Loading…</div></td></tr>';
-  if (title) title.textContent = segment === 'all' ? 'All Customers' : segment.charAt(0).toUpperCase() + segment.slice(1) + ' Customers';
-  if (sel && sel.value !== segment) sel.value = segment;
+  // Load inactive count (30d) for the 4th card
   try {
-    const endpoint = segment.startsWith('inactive_')
-      ? ROUTES.crmInactive + '?days=' + segment.replace('inactive_','').replace('d','')
-      : ROUTES.crmSegments + '/' + segment;
-    const rows = await apiFetch(endpoint);
+    const inactive = await apiFetch(ROUTES.crmInactive + '?days=30');
+    const el = document.getElementById('crm-count-inactive');
+    if (el) el.textContent = Array.isArray(inactive) ? inactive.length : '—';
+  } catch (_) {}
+
+  // Load simple customer list
+  const tbody = document.getElementById('crm-table-body');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6"><div class="empty">Loading…</div></td></tr>';
+  try {
+    const rows = await apiFetch(ROUTES.crmSegments + '/all');
     const data = Array.isArray(rows) ? rows : [];
-    if (!tbody) return;
-    if (!data.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty">No customers in this segment.</div></td></tr>'; return; }
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty">No customers yet.</div></td></tr>';
+      return;
+    }
     tbody.innerHTML = data.map(c => {
       const seg = getSegmentLabel(c.order_count || 0, c.total_spent || 0);
       return `<tr>
-        <td><span style="font-family:var(--mono);font-size:11px;">${escHtml(c.phone||'—')}</span></td>
-        <td>${escHtml(c.customer_name||'—')}</td>
-        <td><span class="badge ${seg.cls}">${seg.label}</span></td>
-        <td>${c.order_count||0}</td>
-        <td>$${parseFloat(c.total_spent||0).toFixed(2)}</td>
-        <td style="font-family:var(--mono);font-size:11px;">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
-        <td><button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="openCustomerDrawer(${JSON.stringify(c)})">View</button></td>
+        <td style="font-family:var(--mono);font-size:12px;">${escHtml(c.phone || '—')}</td>
+        <td>${escHtml(c.customer_name || '—')}</td>
+        <td>${c.order_count || 0}</td>
+        <td style="color:var(--green);">$${parseFloat(c.total_spent || 0).toFixed(2)}</td>
+        <td style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
+        <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="openCustomerDrawer(${JSON.stringify(c)})">View</button></td>
       </tr>`;
     }).join('');
   } catch (e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="6"><div class="empty">⚠ ${e.message}</div></td></tr>`;
   }
+}
+
+// kept for compatibility (called by overview card click)
+async function loadCrmSegment(segment) {
+  showSection('crm', null);
+  loadCrm();
 }
 
 function getSegmentLabel(orders, spent) {
@@ -1701,5 +1706,99 @@ function selectTemplate(id, el) {
   if (el) el.classList.add('selected');
   localStorage.setItem('wazi_template_id', id);
   toast('✅ Template saved — AI will use category suggestions for this business type.');
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════
+// SIMPLE BROADCAST (replaces complex campaign builder)
+// ════════════════════════════════════════════════════════════════════════════
+
+const _QUICK_TPLS = {
+  promo:    '🔥 Special offer today! Reply *menu* to see what\'s on. Don\'t miss out!',
+  restock:  '📦 New stock just arrived! Type *menu* to see what\'s available now.',
+  winback:  '😊 Hey! We haven\'t seen you in a while. We\'d love to have you back — type *menu* to order!',
+  thankyou: '🙏 Thank you so much for your support! You mean a lot to us. Type *menu* to order anytime.',
+};
+
+function quickTpl(key) {
+  const ta = document.getElementById('broadcast-msg');
+  if (ta) { ta.value = _QUICK_TPLS[key] || ''; updatePreview(); }
+}
+
+function onBcAudienceChange() {
+  const sel  = document.querySelector('input[name="bc-audience"]:checked');
+  const val  = sel ? sel.value : 'all';
+  const lbl  = document.getElementById('bc-audience-count');
+  const map  = {
+    all:          'all customers',
+    inactive_30d: 'customers inactive 30+ days',
+    vip:          'VIP customers only',
+    new:          'new customers only',
+    unpaid:       'customers with unpaid orders',
+  };
+  if (lbl) lbl.textContent = map[val] || val;
+  updatePreview();
+}
+
+async function sendBroadcastSimple() {
+  const ta  = document.getElementById('broadcast-msg');
+  const msg = ta ? ta.value.trim() : '';
+  if (!msg) { toast('Write a message first', true); return; }
+
+  const sel      = document.querySelector('input[name="bc-audience"]:checked');
+  const audience = sel ? sel.value : 'all';
+  const result   = document.getElementById('broadcast-result');
+  const btn      = document.getElementById('broadcast-send-btn');
+
+  const audienceLabels = {
+    all:          'all customers',
+    inactive_30d: 'customers inactive for 30+ days',
+    vip:          'VIP customers',
+    new:          'new customers',
+    unpaid:       'customers with unpaid orders',
+  };
+
+  if (!confirm(`Send to ${audienceLabels[audience] || audience}?`)) return;
+
+  if (btn) btn.disabled = true;
+  if (result) result.style.display = 'none';
+
+  try {
+    // Use campaign API for audience targeting, fall back to broadcast for "all"
+    let r;
+    if (audience === 'all') {
+      r = await apiFetch(ROUTES.broadcast, {
+        method: 'POST',
+        body: JSON.stringify({ message: msg }),
+      });
+    } else {
+      r = await apiFetch(ROUTES.campaigns, {
+        method: 'POST',
+        body: JSON.stringify({ audience, message: msg, dry_run: false }),
+      });
+    }
+
+    if (result) {
+      result.style.display = 'block';
+      const ok = (r.failed || 0) === 0;
+      result.className = 'broadcast-result ' + (ok ? 'success' : 'error');
+      result.innerHTML = ok
+        ? `✅ Sent to <strong>${r.sent}</strong> customer${r.sent !== 1 ? 's' : ''}!`
+        : `Sent: <strong>${r.sent}</strong> &nbsp; Failed: <strong>${r.failed}</strong>`;
+    }
+    toast(`📢 Message sent to ${r.sent || 0} customers!`);
+    const statLast = document.getElementById('stat-last');
+    if (statLast) statLast.textContent = 'Just now';
+    if (ta) ta.value = '';
+    updatePreview();
+    // reset audience to all
+    const allRadio = document.querySelector('input[name="bc-audience"][value="all"]');
+    if (allRadio) { allRadio.checked = true; onBcAudienceChange(); }
+  } catch (e) {
+    if (result) { result.style.display='block'; result.className='broadcast-result error'; result.textContent='❌ '+e.message; }
+    toast(e.message, true);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 

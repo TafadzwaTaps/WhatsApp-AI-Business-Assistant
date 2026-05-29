@@ -785,3 +785,49 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   .crm-segments-grid { grid-template-columns: 1fr 1fr; }
 }
 
+
+/* ── Simple broadcast UI ────────────────────────────────── */
+.quick-tpl-btn {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  transition: border-color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.quick-tpl-btn:hover {
+  border-color: var(--green);
+  background: var(--green-glow);
+}
+.quick-tpl-btn strong { font-weight: 700; flex-shrink: 0; }
+.quick-tpl-btn span   { font-size: 11px; color: var(--text-dim); font-family: var(--mono); }
+
+/* Audience radio chips */
+.audience-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  transition: all 0.15s;
+}
+.audience-chip:has(input:checked) {
+  border-color: var(--green);
+  background: var(--green-glow);
+  color: var(--green);
+}
+.audience-chip input[type="radio"] { display: none; }

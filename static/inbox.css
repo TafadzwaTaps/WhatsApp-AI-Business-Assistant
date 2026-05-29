@@ -1119,3 +1119,25 @@ body {
 /* Amber CSS variable fallback */
 :root { --amber: #f59e0b; }
 
+
+/* ── Clear inbox row ─────────────────────────────────────── */
+.clear-row {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.clear-btn {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.clear-btn:hover { border-color: var(--text-dim); color: var(--text); }
+.clear-btn-danger:hover { border-color: var(--red); color: var(--red); }

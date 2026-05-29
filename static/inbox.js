@@ -693,3 +693,74 @@ document.addEventListener('DOMContentLoaded', () => {
   // Fallback poll every 30s
   setInterval(() => loadConversations(false).catch(() => {}), 30000);
 });
+
+
+/* ══════════════════════════════════════════════════════════
+   CLEAR INBOX — clear read chats or all chats
+══════════════════════════════════════════════════════════ */
+
+async function clearReadChats() {
+  // Find all conversations with unread_count === 0 and delete them
+  const readConvos = allConversations.filter(c => (c.unread_count || 0) === 0);
+  if (!readConvos.length) {
+    showToast('No read conversations to clear.');
+    return;
+  }
+  if (!confirm(`Clear ${readConvos.length} read conversation${readConvos.length !== 1 ? 's' : ''}? Messages will be removed from the inbox.`)) return;
+
+  let cleared = 0;
+  for (const c of readConvos) {
+    try {
+      await apiFetch(`/chat/conversations/${c.customer_id}`, { method: 'DELETE' });
+      cleared++;
+    } catch (_) {}
+  }
+
+  allConversations = allConversations.filter(c => (c.unread_count || 0) > 0);
+  renderContacts(allConversations);
+  showToast(`🗑 Cleared ${cleared} read conversation${cleared !== 1 ? 's' : ''}`);
+
+  // If the open chat was one of the cleared ones, close it
+  const openStillExists = allConversations.some(c => c.customer_id === currentCustomerId);
+  if (!openStillExists) {
+    currentCustomerId = null;
+    currentPhone      = null;
+    const noSel = document.getElementById('no-selection');
+    const ac    = document.getElementById('active-chat');
+    if (noSel) noSel.style.display = 'flex';
+    if (ac)    ac.style.display    = 'none';
+  }
+}
+
+async function confirmClearAll() {
+  const total = allConversations.length;
+  if (!total) {
+    showToast('Inbox is already empty.');
+    return;
+  }
+  if (!confirm(`Clear ALL ${total} conversations?
+
+This removes all message history from the inbox. Customer and order records are kept.
+
+This cannot be undone.`)) return;
+
+  let cleared = 0;
+  for (const c of allConversations) {
+    try {
+      await apiFetch(`/chat/conversations/${c.customer_id}`, { method: 'DELETE' });
+      cleared++;
+    } catch (_) {}
+  }
+
+  allConversations = [];
+  renderContacts([]);
+  currentCustomerId = null;
+  currentPhone      = null;
+
+  const noSel = document.getElementById('no-selection');
+  const ac    = document.getElementById('active-chat');
+  if (noSel) noSel.style.display = 'flex';
+  if (ac)    ac.style.display    = 'none';
+
+  showToast(`🗑 Cleared ${cleared} conversation${cleared !== 1 ? 's' : ''}`);
+}

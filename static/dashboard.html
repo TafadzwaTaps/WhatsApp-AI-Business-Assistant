@@ -361,78 +361,99 @@
 
   <!-- BROADCAST -->
   <!-- BROADCAST / CAMPAIGN BUILDER (Phase 2) -->
+  <!-- BROADCAST / SEND MESSAGE (simple) -->
   <div id="section-broadcast" class="section">
     <div class="topbar">
-      <div class="page-title">📢 <span>Campaign Builder</span></div>
+      <div class="page-title">📢 <span>Send Message</span></div>
     </div>
+
     <div class="broadcast-layout">
 
-      <!-- LEFT: Compose -->
-      <div style="display:flex;flex-direction:column;gap:16px;">
+      <!-- LEFT: compose -->
+      <div class="panel" style="flex:1.4;">
+        <div class="panel-header"><div class="panel-title">Write your message</div></div>
+        <div class="panel-body">
 
-        <div class="panel">
-          <div class="panel-header"><div class="panel-title">Compose Message</div></div>
-          <div class="panel-body">
-            <div class="form-group-inline" style="margin-bottom:10px;">
-              <label>Audience</label>
-              <select id="campaign-audience" onchange="onAudienceChange()" style="width:100%;margin-top:4px;">
-                <option value="all">📱 All Customers</option>
-                <option value="vip">⭐ VIP Customers (10+ orders or $50+ spent)</option>
-                <option value="loyal">💚 Loyal Customers (5+ orders or $20+ spent)</option>
-                <option value="regular">👍 Regular Customers (2–4 orders)</option>
-                <option value="new">👋 New Customers (1 order)</option>
-                <option value="inactive_7d">😴 Inactive 7 days</option>
-                <option value="inactive_14d">😴 Inactive 14 days</option>
-                <option value="inactive_30d">🔴 Inactive 30 days</option>
-                <option value="high_spenders">💰 High Spenders ($30+ spent)</option>
-                <option value="unpaid">⏳ Unpaid Orders</option>
-              </select>
+          <!-- Quick-pick message templates -->
+          <div style="margin-bottom:16px;">
+            <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Quick templates</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <button class="quick-tpl-btn" onclick="quickTpl('promo')">
+                🔥 <strong>Special Offer</strong>
+                <span>Announce a deal or promotion</span>
+              </button>
+              <button class="quick-tpl-btn" onclick="quickTpl('restock')">
+                📦 <strong>New Stock</strong>
+                <span>Tell customers what just arrived</span>
+              </button>
+              <button class="quick-tpl-btn" onclick="quickTpl('winback')">
+                😊 <strong>We miss you</strong>
+                <span>Bring back customers who haven't ordered lately</span>
+              </button>
+              <button class="quick-tpl-btn" onclick="quickTpl('thankyou')">
+                🙏 <strong>Thank you</strong>
+                <span>Appreciate your loyal customers</span>
+              </button>
             </div>
-
-            <div class="form-group-inline">
-              <label>Message <span style="font-size:10px;color:var(--text-dim);">— use {name} {business} {orders} {spent}</span></label>
-              <textarea id="broadcast-msg" placeholder="Hi {name}! Special offer at {business} today..." oninput="updatePreview()" style="min-height:100px;"></textarea>
-              <div class="char-count" id="char-count">0 / 1024</div>
-            </div>
-
-            <!-- Template suggestions -->
-            <div id="campaign-templates" style="margin-bottom:14px;"></div>
-
-            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('🔥 Special offer today at {business}! Reply menu to order.')">🔥 Promo</button>
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('📦 Back in stock at {business}! Reply menu to see what\'s available.')">📦 Restock</button>
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('👋 Hi {name}, we miss you at {business}! Come back and order today.')">😴 Win-back</button>
-              <button class="btn btn-ghost" style="color:var(--green);border-color:var(--green-dim);font-size:11px;" onclick="setTpl('⭐ Hey {name}, thank you for your {orders} orders at {business}! You are a valued customer. 🙏')">⭐ VIP</button>
-            </div>
-
-            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-              <button class="btn btn-ghost" style="font-size:12px;" onclick="previewCampaign()">👁 Preview</button>
-              <button class="btn btn-primary" id="broadcast-send-btn" onclick="sendCampaign()">📢 Send Campaign</button>
-            </div>
-            <div class="broadcast-result" id="broadcast-result" style="margin-top:12px;"></div>
           </div>
+
+          <!-- Message textarea -->
+          <div class="form-group-inline">
+            <label>Your message</label>
+            <textarea id="broadcast-msg" rows="4"
+              placeholder="Type your message here, or click a template above…"
+              oninput="updatePreview()" style="resize:vertical;"></textarea>
+            <div class="char-count" id="char-count">0 / 1024</div>
+          </div>
+
+          <!-- Who to send to -->
+          <div style="margin-bottom:16px;">
+            <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;">Send to</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <label class="audience-chip">
+                <input type="radio" name="bc-audience" value="all" checked onchange="onBcAudienceChange()"/>
+                <span>Everyone</span>
+              </label>
+              <label class="audience-chip">
+                <input type="radio" name="bc-audience" value="inactive_30d" onchange="onBcAudienceChange()"/>
+                <span>😴 Haven't ordered in 30 days</span>
+              </label>
+              <label class="audience-chip">
+                <input type="radio" name="bc-audience" value="vip" onchange="onBcAudienceChange()"/>
+                <span>⭐ VIP customers only</span>
+              </label>
+              <label class="audience-chip">
+                <input type="radio" name="bc-audience" value="new" onchange="onBcAudienceChange()"/>
+                <span>👋 New customers only</span>
+              </label>
+              <label class="audience-chip">
+                <input type="radio" name="bc-audience" value="unpaid" onchange="onBcAudienceChange()"/>
+                <span>⏳ Unpaid orders</span>
+              </label>
+            </div>
+            <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:8px;">
+              Sending to: <span id="bc-audience-count" style="color:var(--green);font-weight:700;">all customers</span>
+            </div>
+          </div>
+
+          <button class="btn btn-primary" id="broadcast-send-btn" onclick="sendBroadcastSimple()" style="width:100%;padding:14px;font-size:14px;">
+            📢 Send Message
+          </button>
+          <div class="broadcast-result" id="broadcast-result" style="margin-top:12px;"></div>
+
         </div>
       </div>
 
-      <!-- RIGHT: Preview + Stats -->
-      <div style="display:flex;flex-direction:column;gap:16px;">
-        <div class="panel">
-          <div class="panel-header"><div class="panel-title">Preview</div><span id="preview-audience-label" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);"></span></div>
-          <div class="panel-body">
-            <div class="preview-box" id="preview-box" style="color:var(--text-dim);font-style:italic;white-space:pre-wrap;">Message preview...</div>
-            <div id="preview-samples" style="margin-top:12px;display:none;">
-              <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px;">Personalised samples:</div>
-              <div id="preview-samples-list"></div>
-            </div>
+      <!-- RIGHT: preview -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">Preview</div></div>
+        <div class="panel-body">
+          <div class="preview-box" id="preview-box" style="white-space:pre-wrap;color:var(--text-dim);font-style:italic;min-height:80px;">
+            Your message will appear here…
           </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-header"><div class="panel-title">Campaign Stats</div></div>
-          <div class="panel-body" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2.2;">
-            <div>👥 Audience size: <span id="stat-selected" style="color:var(--green);font-weight:700;">—</span></div>
-            <div>📱 Total customers: <span id="stat-total">—</span></div>
-            <div>📬 Last campaign: <span id="stat-last">Never</span></div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
+            <div>📱 Recipients: <span id="stat-selected" style="color:var(--green);font-weight:700;">—</span></div>
+            <div>📬 Last sent: <span id="stat-last">Never</span></div>
           </div>
         </div>
       </div>
@@ -735,77 +756,56 @@
 
   </div><!-- /section-settings -->
 
-  <!-- CRM SECTION (Phase 3) -->
+  <!-- CUSTOMERS SECTION (simple view) -->
   <div id="section-crm" class="section">
     <div class="topbar">
-      <div class="page-title">👥 <span>Customer CRM</span></div>
+      <div class="page-title">👥 <span>Customers</span></div>
     </div>
 
-    <!-- Segment overview cards -->
+    <!-- 4 simple stat cards -->
     <div class="stats-grid" style="margin-bottom:16px;">
-      <div class="stat-card" style="cursor:pointer;border-color:rgba(245,158,11,0.4);" onclick="loadCrmSegment('vip')">
+      <div class="stat-card" style="border-color:rgba(245,158,11,0.35);">
         <div class="stat-label">⭐ VIP</div>
         <div class="stat-value" id="crm-count-vip" style="color:var(--amber);">—</div>
-        <div class="stat-sub">10+ orders or $50+ spent</div>
+        <div class="stat-sub">Your best customers</div>
       </div>
-      <div class="stat-card" style="cursor:pointer;" onclick="loadCrmSegment('loyal')">
+      <div class="stat-card">
         <div class="stat-label">💚 Loyal</div>
         <div class="stat-value" id="crm-count-loyal">—</div>
-        <div class="stat-sub">5+ orders or $20+ spent</div>
+        <div class="stat-sub">Keep coming back</div>
       </div>
-      <div class="stat-card" style="cursor:pointer;" onclick="loadCrmSegment('regular')">
-        <div class="stat-label">👍 Regular</div>
-        <div class="stat-value" id="crm-count-regular">—</div>
-        <div class="stat-sub">2–4 orders placed</div>
-      </div>
-      <div class="stat-card" style="cursor:pointer;" onclick="loadCrmSegment('new')">
+      <div class="stat-card">
         <div class="stat-label">👋 New</div>
         <div class="stat-value" id="crm-count-new">—</div>
         <div class="stat-sub">First-time buyers</div>
       </div>
+      <div class="stat-card" style="border-color:rgba(239,68,68,0.25);">
+        <div class="stat-label">😴 Haven't ordered</div>
+        <div class="stat-value" id="crm-count-inactive" style="color:var(--text-dim);">—</div>
+        <div class="stat-sub">In the last 30 days</div>
+      </div>
     </div>
 
-    <div class="panels">
-      <div class="panel" style="flex:2;">
-        <div class="panel-header">
-          <div class="panel-title" id="crm-table-title">All Customers</div>
-          <div style="display:flex;gap:6px;align-items:center;">
-            <select id="crm-segment-filter" onchange="loadCrmSegment(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:6px;">
-              <option value="all">All</option>
-              <option value="vip">⭐ VIP</option>
-              <option value="loyal">💚 Loyal</option>
-              <option value="regular">👍 Regular</option>
-              <option value="new">👋 New</option>
-              <option value="inactive_30d">😴 Inactive 30d</option>
-            </select>
-            <button class="panel-action" onclick="loadCrmSegment(document.getElementById('crm-segment-filter').value)">↻</button>
-          </div>
-        </div>
-        <div class="panel-body">
-          <table>
-            <thead><tr><th>Phone</th><th>Name</th><th>Segment</th><th>Orders</th><th>Spent</th><th>Last Seen</th><th>Action</th></tr></thead>
-            <tbody id="crm-table-body"></tbody>
-          </table>
-        </div>
+    <!-- Simple customer list -->
+    <div class="panel full">
+      <div class="panel-header">
+        <div class="panel-title">All Customers</div>
+        <button class="panel-action" onclick="loadCrm()">↻ Refresh</button>
       </div>
-
-      <!-- Inactive customers quick panel -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">😴 Inactive</div>
-          <select id="crm-inactive-days" onchange="loadInactive(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:4px 8px;border-radius:6px;">
-            <option value="7">7 days</option>
-            <option value="14">14 days</option>
-            <option value="30" selected>30 days</option>
-            <option value="60">60 days</option>
-          </select>
-        </div>
-        <div class="panel-body">
-          <div id="crm-inactive-list" style="font-family:var(--mono);font-size:12px;"></div>
-          <button class="btn btn-ghost" style="width:100%;margin-top:10px;font-size:12px;" onclick="campaignInactive()">
-            📢 Send Win-back Campaign
-          </button>
-        </div>
+      <div class="panel-body">
+        <table>
+          <thead>
+            <tr>
+              <th>Phone</th>
+              <th>Name</th>
+              <th>Orders</th>
+              <th>Total Spent</th>
+              <th>Last Seen</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="crm-table-body"></tbody>
+        </table>
       </div>
     </div>
   </div>
