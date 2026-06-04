@@ -764,3 +764,149 @@ This cannot be undone.`)) return;
 
   showToast(`🗑 Cleared ${cleared} conversation${cleared !== 1 ? 's' : ''}`);
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   QUICK ACTIONS BAR — Phase 2
+   Show / hide when a conversation is opened.
+   All functions use existing apiFetch() and showToast().
+══════════════════════════════════════════════════════════ */
+
+function showQuickActions() {
+  const bar = document.getElementById('quick-actions-bar');
+  if (bar) bar.style.display = 'flex';
+}
+
+function hideQuickActions() {
+  const bar = document.getElementById('quick-actions-bar');
+  if (bar) bar.style.display = 'none';
+}
+
+// Hook into existing openChat — show bar when a chat opens
+const _origOpenChat = typeof openChat === 'function' ? openChat : null;
+// We patch via a wrapper so existing openChat logic is unchanged
+(function() {
+  const _orig = window.openChat;
+  window.openChat = async function(customerId, phone, lastSeen) {
+    await _orig.call(this, customerId, phone, lastSeen);
+    showQuickActions();
+  };
+})();
+
+// ── Quick action handlers ───────────────────────────────────────────
+
+async function qaRepeatLastOrder() {
+  if (!currentCustomerId) return;
+  const msg = "🔄 *Repeating your last order*\n\nJust reply *yes* to confirm and I'll add it to your cart!";
+  await _qaSend(msg, 'Repeat order message sent ✓');
+}
+
+async function qaRequestPayment() {
+  if (!currentCustomerId || !currentPhone) return;
+
+  // Try to find an unpaid order for this customer
+  let paymentMsg = "💳 *Payment Reminder*\n\nYou have a pending payment. Please complete your payment to confirm your order.\n\nType *help* if you need the payment details again.";
+
+  try {
+    // Fetch pending reminders for the business (uses existing endpoint)
+    const reminders = await apiFetch('/payments/reminders/pending');
+    const orders    = reminders.orders || [];
+    const match     = orders.find(o => o.customer_phone === currentPhone);
+    if (match) {
+      const ref   = `ORDER-${match.order_id}`;
+      const total = parseFloat(match.total_price || 0).toFixed(2);
+      const method = (match.payment_method || 'EcoCash').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+      paymentMsg = `💳 *Payment Due*\n\n📦 Order: *${ref}*\n💰 Amount: *$${total}*\n📱 Method: *${method}*\n\nPlease complete your payment to confirm your order. Reply *paid* once done.`;
+    }
+  } catch (_) {}
+
+  await _qaSend(paymentMsg, 'Payment request sent ✓');
+}
+
+async function qaMarkPaid() {
+  if (!currentCustomerId || !currentPhone) return;
+
+  // Find the most recent stale order for this customer
+  let orderFound = false;
+  try {
+    const reminders = await apiFetch('/payments/reminders/pending');
+    const orders    = (reminders.orders || []).filter(o => o.customer_phone === currentPhone);
+    if (orders.length > 0) {
+      const order = orders[0];
+      if (!confirm(`Mark ORDER-${order.order_id} ($${parseFloat(order.total_price||0).toFixed(2)}) as PAID?`)) return;
+      await apiFetch(`/payments/reminders/${order.order_id}/nudge?dry_run=false`, { method: 'POST' });
+      // Manually confirm via payment endpoint
+      await apiFetch(`/payments/manual/confirm`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ order_id: order.order_id, reference: `ORDER-${order.order_id}`, amount: parseFloat(order.total_price || 0) }),
+      });
+      showToast(`✅ ORDER-${order.order_id} marked as paid`);
+      orderFound = true;
+    }
+  } catch (e) {
+    showToast('⚠ Could not mark paid: ' + e.message, true);
+    return;
+  }
+  if (!orderFound) showToast('ℹ No pending orders found for this customer');
+}
+
+async function qaCreateDelivery() {
+  if (!currentCustomerId) return;
+  const msg = "🚚 *Delivery Confirmation*\n\nPlease send your *full delivery address* (street, suburb, city) and we'll arrange delivery for your order.";
+  await _qaSend(msg, 'Delivery request sent ✓');
+}
+
+async function qaViewOrders() {
+  if (!currentPhone) return;
+  // Open the dashboard orders page filtered to this phone in a new tab
+  const dashUrl = `/dashboard#orders?phone=${encodeURIComponent(currentPhone)}`;
+  window.open(dashUrl, '_blank');
+}
+
+async function qaGenerateInvoice() {
+  if (!currentCustomerId || !currentPhone) return;
+
+  // Find the most recent order for this customer to get an order_id
+  let invoiceSent = false;
+  try {
+    const reminders = await apiFetch('/payments/reminders/pending');
+    const orders    = (reminders.orders || []).filter(o => o.customer_phone === currentPhone);
+    if (orders.length > 0) {
+      const orderId = orders[0].order_id;
+      const invoiceUrl = `${window.location.origin}/invoice/${orderId}`;
+      const msg = `🧾 *Invoice for ORDER-${orderId}*\n\nYou can download your invoice here:\n${invoiceUrl}`;
+      await _qaSend(msg, `Invoice link sent for ORDER-${orderId} ✓`);
+      invoiceSent = true;
+    }
+  } catch (_) {}
+
+  if (!invoiceSent) {
+    showToast('ℹ No recent orders found for this customer');
+  }
+}
+
+// ── Internal sender ───────────────────────────────────────
+
+async function _qaSend(text, successMsg) {
+  if (!currentCustomerId || !text) return;
+  try {
+    const allBtns = document.querySelectorAll('.qa-btn');
+    allBtns.forEach(b => { b.disabled = true; });
+
+    await apiFetch('/chat/send', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ customer_id: currentCustomerId, text }),
+    });
+
+    // Reload messages to show what was sent
+    await loadMessages(currentCustomerId, false);
+    showToast(successMsg || 'Sent ✓');
+  } catch (e) {
+    showToast('⚠ Send failed: ' + e.message, true);
+  } finally {
+    const allBtns = document.querySelectorAll('.qa-btn');
+    allBtns.forEach(b => { b.disabled = false; });
+  }
+}

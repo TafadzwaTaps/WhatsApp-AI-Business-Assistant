@@ -1802,3 +1802,365 @@ async function sendBroadcastSimple() {
   }
 }
 
+
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 4 — ORDER OPERATIONS ENHANCEMENTS
+   Order age, SLA alerts, bulk actions, advanced filters.
+   All additive — existing loadOrders/renderOrders unchanged.
+══════════════════════════════════════════════════════════ */
+
+// ── Order age helpers ─────────────────────────────────────
+
+function orderAgeMinutes(createdAt) {
+  if (!createdAt) return 0;
+  return (Date.now() - new Date(createdAt).getTime()) / 60000;
+}
+
+function formatOrderAge(createdAt) {
+  const mins = orderAgeMinutes(createdAt);
+  if (mins < 60)  return `${Math.round(mins)}m`;
+  if (mins < 1440) return `${Math.floor(mins/60)}h ${Math.round(mins%60)}m`;
+  return `${Math.floor(mins/1440)}d`;
+}
+
+function orderAgeClass(createdAt, status) {
+  // Only alert on active (not completed/cancelled) orders
+  const done = ['completed','delivered','cancelled','refunded'];
+  if (done.includes((status||'').toLowerCase())) return 'age-ok';
+  const mins = orderAgeMinutes(createdAt);
+  if (mins > 120) return 'age-alert';  // > 2 hours
+  if (mins > 45)  return 'age-warn';   // > 45 min
+  return 'age-ok';
+}
+
+// ── SLA alert bar ─────────────────────────────────────────
+
+function renderSlaAlert(orders) {
+  const active   = orders.filter(o => !['completed','delivered','cancelled','refunded'].includes((o.status||'').toLowerCase()));
+  const overdue  = active.filter(o => orderAgeMinutes(o.created_at) > 120);
+
+  let bar = document.getElementById('sla-alert-bar');
+  if (!bar) {
+    // Create and insert before kanban/orders table
+    bar = document.createElement('div');
+    bar.id = 'sla-alert-bar';
+    bar.className = 'sla-alert-bar';
+    const container = document.getElementById('orders-kanban-view') || document.querySelector('#orders-section .card');
+    if (container) container.insertAdjacentElement('afterbegin', bar);
+  }
+
+  if (!overdue.length) {
+    bar.style.display = 'none';
+    return;
+  }
+
+  bar.style.display = 'flex';
+  bar.innerHTML = `
+    ⚠️ <strong>${overdue.length} order${overdue.length > 1 ? 's' : ''} overdue (2+ hours old)</strong>
+    — oldest: ${formatOrderAge(overdue[0].created_at)} •
+    <button onclick="bulkSelectOverdue()" style="margin-left:4px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid rgba(239,68,68,.4);background:transparent;color:#ef4444;cursor:pointer;">Select all overdue</button>
+  `;
+}
+
+// ── Kanban patch — add age badges ─────────────────────────
+
+// Patch the existing renderKanban to add age badges
+(function() {
+  if (typeof renderKanban !== 'function') return;
+  const _orig = window.renderKanban;
+  window.renderKanban = function(orders) {
+    _orig(orders);
+    // After rendering, inject age badges into each card
+    const board = document.getElementById('kanban-board');
+    if (!board) return;
+    (orders || []).forEach(o => {
+      const card = board.querySelector(`.kanban-card[data-order-id="${o.id}"]`);
+      if (card) {
+        const existingAge = card.querySelector('.kanban-card-age');
+        if (!existingAge) {
+          const ageSpan = document.createElement('span');
+          ageSpan.className = `kanban-card-age ${orderAgeClass(o.created_at, o.status)}`;
+          ageSpan.textContent = formatOrderAge(o.created_at);
+          card.appendChild(ageSpan);
+        }
+      }
+    });
+    renderSlaAlert(orders);
+  };
+})();
+
+// Patch renderKanban card rendering to add data-order-id attribute
+(function() {
+  if (typeof renderKanban !== 'function') return;
+  // Also patch the kanban card HTML — add data-order-id via innerHTML patch
+  const _orig2 = window.renderKanban;
+  window.renderKanban = function(orders) {
+    _orig2(orders);
+    // Tag each card after render
+    const board = document.getElementById('kanban-board');
+    if (!board) return;
+    board.querySelectorAll('.kanban-card').forEach((card, idx) => {
+      const idEl = card.querySelector('.kanban-card-id');
+      if (idEl && !card.dataset.orderId) {
+        const id = parseInt(idEl.textContent.replace('#', ''), 10);
+        if (!isNaN(id)) card.dataset.orderId = id;
+      }
+    });
+  };
+})();
+
+// ── Bulk actions ──────────────────────────────────────────
+
+let _selectedOrderIds = new Set();
+
+function toggleOrderSelect(orderId) {
+  if (_selectedOrderIds.has(orderId)) {
+    _selectedOrderIds.delete(orderId);
+  } else {
+    _selectedOrderIds.add(orderId);
+  }
+  updateBulkBar();
+}
+
+function updateBulkBar() {
+  let bar = document.getElementById('bulk-actions-bar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'bulk-actions-bar';
+    bar.className = 'bulk-actions-bar';
+    bar.innerHTML = `
+      <span id="bulk-count">0 selected</span>
+      <button class="bulk-btn green" onclick="bulkUpdateStatus('confirmed')">✅ Preparing</button>
+      <button class="bulk-btn amber" onclick="bulkUpdateStatus('ready')">🎉 Ready</button>
+      <button class="bulk-btn green" onclick="bulkUpdateStatus('delivered')">📦 Delivered</button>
+      <button class="bulk-btn red"   onclick="bulkUpdateStatus('cancelled')">❌ Cancel</button>
+      <button class="bulk-btn-cancel" onclick="clearBulkSelect()">✕ Clear</button>
+    `;
+    const ordersSection = document.getElementById('orders-section') || document.querySelector('[data-section="orders"]');
+    if (ordersSection) ordersSection.insertAdjacentElement('afterbegin', bar);
+  }
+
+  if (_selectedOrderIds.size > 0) {
+    bar.classList.add('visible');
+    document.getElementById('bulk-count').textContent = `${_selectedOrderIds.size} selected`;
+  } else {
+    bar.classList.remove('visible');
+  }
+}
+
+function clearBulkSelect() {
+  _selectedOrderIds.clear();
+  document.querySelectorAll('.order-checkbox').forEach(cb => { cb.checked = false; });
+  updateBulkBar();
+}
+
+function bulkSelectOverdue() {
+  (_ordersData || []).forEach(o => {
+    const done = ['completed','delivered','cancelled','refunded'];
+    if (!done.includes((o.status||'').toLowerCase()) && orderAgeMinutes(o.created_at) > 120) {
+      _selectedOrderIds.add(o.id);
+      const cb = document.querySelector(`.order-checkbox[data-id="${o.id}"]`);
+      if (cb) cb.checked = true;
+    }
+  });
+  updateBulkBar();
+}
+
+async function bulkUpdateStatus(newStatus) {
+  if (!_selectedOrderIds.size) return;
+  if (!confirm(`Update ${_selectedOrderIds.size} order(s) to "${newStatus}"?`)) return;
+
+  const ids = [..._selectedOrderIds];
+  let done = 0, failed = 0;
+
+  for (const id of ids) {
+    try {
+      await apiFetch(`/orders/${id}/status`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ status: newStatus }),
+      });
+      done++;
+    } catch (_) {
+      failed++;
+    }
+  }
+
+  toast(`Updated ${done} order(s)${failed ? ` (${failed} failed)` : ''}`);
+  clearBulkSelect();
+  loadOrders(); // refresh
+}
+
+// ── Advanced order filters ────────────────────────────────
+
+let _orderFilters = { status: '', payment: '', search: '' };
+
+function renderOrderFilters() {
+  const section = document.getElementById('orders-section') || document.querySelector('[data-section="orders"]');
+  if (!section || document.getElementById('order-filters-bar')) return;
+
+  const bar = document.createElement('div');
+  bar.id = 'order-filters-bar';
+  bar.className = 'order-filters-bar';
+  bar.innerHTML = `
+    <select class="order-filter-select" id="filter-status" onchange="applyOrderFilters()" title="Filter by order status">
+      <option value="">All Statuses</option>
+      <option value="pending">Pending</option>
+      <option value="confirmed">Confirmed</option>
+      <option value="preparing">Preparing</option>
+      <option value="ready">Ready</option>
+      <option value="out_for_delivery">Out for Delivery</option>
+      <option value="delivered">Delivered</option>
+      <option value="completed">Completed</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
+    <select class="order-filter-select" id="filter-payment" onchange="applyOrderFilters()" title="Filter by payment status">
+      <option value="">All Payments</option>
+      <option value="pending">Payment Pending</option>
+      <option value="awaiting_payment">Awaiting Payment</option>
+      <option value="pending_cash">Cash Confirmed</option>
+      <option value="paid">Paid</option>
+      <option value="cancelled">Cancelled</option>
+    </select>
+    <input type="text" class="order-filter-select" id="filter-search"
+           placeholder="Search phone or product…"
+           oninput="applyOrderFilters()"
+           style="min-width:160px;">
+    <button class="bulk-btn" onclick="clearOrderFilters()" style="font-size:11px;padding:4px 10px;">✕ Clear</button>
+  `;
+
+  const firstCard = section.querySelector('.card, table');
+  if (firstCard) firstCard.insertAdjacentElement('beforebegin', bar);
+  else section.insertAdjacentElement('afterbegin', bar);
+}
+
+function applyOrderFilters() {
+  _orderFilters.status  = document.getElementById('filter-status')?.value  || '';
+  _orderFilters.payment = document.getElementById('filter-payment')?.value || '';
+  _orderFilters.search  = (document.getElementById('filter-search')?.value || '').toLowerCase();
+
+  let filtered = (_ordersData || []).filter(o => {
+    if (_orderFilters.status  && o.status         !== _orderFilters.status)  return false;
+    if (_orderFilters.payment && o.payment_status !== _orderFilters.payment) return false;
+    if (_orderFilters.search) {
+      const hay = `${o.customer_phone||''} ${o.product_name||''}`.toLowerCase();
+      if (!hay.includes(_orderFilters.search)) return false;
+    }
+    return true;
+  });
+
+  const tbody = document.getElementById('orders-body');
+  if (!tbody) return;
+
+  // Reuse existing renderOrders but with filtered data
+  if (typeof renderOrders === 'function') {
+    renderOrders(filtered, 'orders-body', true);
+  }
+}
+
+function clearOrderFilters() {
+  _orderFilters = { status: '', payment: '', search: '' };
+  const s = document.getElementById('filter-status');
+  const p = document.getElementById('filter-payment');
+  const q = document.getElementById('filter-search');
+  if (s) s.value = '';
+  if (p) p.value = '';
+  if (q) q.value = '';
+  if (typeof renderOrders === 'function' && _ordersData) {
+    renderOrders(_ordersData, 'orders-body', true);
+  }
+}
+
+// ── Wire into existing loadOrders ─────────────────────────
+(function() {
+  const _origLoad = window.loadOrders;
+  if (typeof _origLoad !== 'function') return;
+  window.loadOrders = async function() {
+    await _origLoad.apply(this, arguments);
+    renderOrderFilters();
+    if (_ordersData) renderSlaAlert(_ordersData);
+  };
+})();
+
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 5 — GROWTH INSIGHTS CARD (dashboard)
+   Loads from GET /insights/growth and injects a card.
+   Additive only — placed in overview section.
+══════════════════════════════════════════════════════════ */
+
+async function loadGrowthInsights() {
+  try {
+    const data = await apiFetch('/insights/growth');
+    renderGrowthCard(data);
+  } catch (e) {
+    console.warn('Growth insights not available:', e.message);
+  }
+}
+
+function renderGrowthCard(data) {
+  const wins = data.quick_wins || [];
+  if (!wins.length) return;
+
+  const existingCard = document.getElementById('growth-insights-card');
+  if (existingCard) {
+    existingCard.remove();
+  }
+
+  const card = document.createElement('div');
+  card.id = 'growth-insights-card';
+  card.className = 'card';
+  card.style.cssText = 'margin-bottom:16px;';
+
+  const rows = wins.map(w => `
+    <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border,#2a3830);">
+      <span style="font-size:18px;flex-shrink:0;">${w.priority === 'high' ? '🔴' : '🟡'}</span>
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:13px;font-weight:600;color:var(--text,#e8f5e9);">${escHtml(w.title)}</div>
+        <div style="font-size:11px;color:var(--text-dim,#6b8f71);margin-top:2px;">${escHtml(w.value)}</div>
+      </div>
+      <button onclick="window.open('${w.endpoint}','_blank')" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border,#2a3830);background:transparent;color:var(--green,#22c55e);cursor:pointer;white-space:nowrap;flex-shrink:0;">${escHtml(w.action)}</button>
+    </div>
+  `).join('');
+
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span style="font-size:16px;">💡</span>
+      <strong style="font-size:14px;">Growth Opportunities</strong>
+      <span style="font-size:11px;color:var(--text-dim,#6b8f71);margin-left:auto;">${wins.length} action${wins.length > 1 ? 's' : ''}</span>
+    </div>
+    ${rows}
+  `;
+
+  // Insert at top of overview section
+  const overview = document.getElementById('overview-section') || document.querySelector('[data-section="overview"]');
+  if (overview) {
+    const firstCard = overview.querySelector('.card');
+    if (firstCard) firstCard.insertAdjacentElement('beforebegin', card);
+    else overview.insertAdjacentElement('afterbegin', card);
+  }
+}
+
+// Auto-load growth insights when dashboard overview tab is shown
+(function() {
+  const _origSwitch = window.switchTab || window.showSection;
+  if (typeof _origSwitch !== 'function') return;
+  const fnName = window.switchTab ? 'switchTab' : 'showSection';
+  const _orig  = window[fnName];
+  window[fnName] = function(name, ...args) {
+    _orig.call(this, name, ...args);
+    if (name === 'overview' || name === 'dashboard') {
+      loadGrowthInsights();
+    }
+  };
+})();
+
+// Also load on initial page load if we're on overview
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(loadGrowthInsights, 2000); // after initial data loads
+  });
+} else {
+  setTimeout(loadGrowthInsights, 2000);
+}

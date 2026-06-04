@@ -1141,3 +1141,123 @@ body {
 }
 .clear-btn:hover { border-color: var(--text-dim); color: var(--text); }
 .clear-btn-danger:hover { border-color: var(--red); color: var(--red); }
+
+
+/* ══════════════════════════════════════════════════════════
+   QUICK ACTIONS BAR — Phase 2 (Growth & Operations)
+   Sits below the handoff banner, above the message list.
+   Never replaces existing elements — purely additive.
+══════════════════════════════════════════════════════════ */
+
+.quick-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.quick-actions-bar::-webkit-scrollbar { display: none; }
+
+.qa-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  touch-action: manipulation;
+  min-height: 30px; /* comfortable touch target */
+}
+.qa-btn:hover, .qa-btn:active {
+  background: var(--surface3);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+.qa-btn.qa-green  { border-color: rgba(34,197,94,.3); color: var(--green); }
+.qa-btn.qa-amber  { border-color: rgba(245,158,11,.3); color: var(--amber); }
+.qa-btn.qa-red    { border-color: rgba(239,68,68,.3);  color: var(--red); }
+.qa-btn.qa-blue   { border-color: rgba(56,189,248,.3); color: var(--blue); }
+.qa-btn:disabled  { opacity: 0.45; cursor: not-allowed; }
+
+.qa-divider {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+/* Mobile: slightly larger touch targets */
+@media (max-width: 600px) {
+  .qa-btn { padding: 6px 11px; font-size: 11.5px; min-height: 34px; }
+  .quick-actions-bar { padding: 7px 10px; gap: 7px; }
+}
+
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 3 — MOBILE-FIRST IMPROVEMENTS
+   Additive only — improves touch targets and reduces friction.
+   Desktop experience unchanged.
+══════════════════════════════════════════════════════════ */
+
+/* Larger touch targets on mobile for all icon buttons */
+@media (max-width: 700px) {
+  .icon-btn {
+    min-height: 40px;
+    min-width:  40px;
+    padding:    8px 10px;
+    font-size:  13px;
+  }
+
+  .send-btn {
+    min-height: 44px;
+    min-width:  44px;
+    font-size:  18px;
+  }
+
+  .send-input {
+    font-size: 16px;  /* prevents iOS zoom on focus */
+    padding: 10px 12px;
+  }
+
+  /* Slightly larger contact rows for easier tapping */
+  .contact-item {
+    padding: 12px 14px;
+    min-height: 64px;
+  }
+
+  /* Chat header actions — wrap if needed on small screens */
+  .chat-actions {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  /* Sticky send box — always visible, no scroll needed */
+  .send-box {
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    z-index: 10;
+    padding: 8px 10px;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 16px rgba(0,0,0,.3);
+  }
+
+  /* Filter bar — larger tap area */
+  .filter-btn {
+    padding: 7px 12px;
+    font-size: 12px;
+    min-height: 36px;
+  }
+}

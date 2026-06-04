@@ -156,6 +156,17 @@
         <button class="handoff-banner-btn" onclick="toggleHandoff()">Switch to AI 🤖</button>
       </div>
 
+      <!-- Quick Actions Bar — Phase 2 (additive) -->
+      <div class="quick-actions-bar" id="quick-actions-bar" style="display:none;">
+        <button class="qa-btn qa-green"  onclick="qaRepeatLastOrder()"  title="Send the customer their last order">🔄 Repeat Order</button>
+        <button class="qa-btn qa-blue"   onclick="qaRequestPayment()"   title="Send payment instructions">💳 Request Payment</button>
+        <button class="qa-btn qa-green"  onclick="qaMarkPaid()"         title="Manually confirm payment">✅ Mark Paid</button>
+        <div class="qa-divider"></div>
+        <button class="qa-btn qa-amber"  onclick="qaCreateDelivery()"   title="Ask customer for delivery address">🚚 Delivery</button>
+        <button class="qa-btn"           onclick="qaViewOrders()"       title="View this customer's order history">📦 Orders</button>
+        <button class="qa-btn"           onclick="qaGenerateInvoice()"  title="Send invoice link to customer">🧾 Invoice</button>
+      </div>
+
       <!-- Messages -->
       <div class="chat-messages" id="chat-messages">
         <button

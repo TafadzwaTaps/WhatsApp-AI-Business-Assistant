@@ -244,6 +244,174 @@ TEMPLATES: dict[str, BusinessTemplate] = {
         ],
         ai_context="This is a grocery/supermarket. Suggest staple items that go together. Remind customers of common household needs.",
     ),
+
+    "salon": BusinessTemplate(
+        id="salon",
+        name="Salon / Beauty",
+        icon="💅",
+        description="Hair salon, nail studio, or beauty parlour offering appointments and products.",
+        greeting_hint="Book your next appointment or browse our beauty products! 💄",
+        category_pairs={
+            "hair":       ["treatment", "shampoo", "conditioner", "styling"],
+            "nails":      ["nail polish", "gel", "nail art", "accessories"],
+            "facial":     ["moisturiser", "serum", "cleanser", "toner"],
+            "waxing":     ["aftercare", "lotion", "oil"],
+            "braiding":   ["hair extensions", "threads", "oil"],
+        },
+        campaign_suggestions=[
+            {
+                "audience": "inactive_14d",
+                "message":  "Hi {name}! 💅 It's been a while — time for a fresh look? Book your appointment at {business} today. Type *menu* to see services.",
+                "label":    "Re-book inactive clients",
+            },
+            {
+                "audience": "vip",
+                "message":  "Hey {name}! 👑 As one of our most loyal clients, we'd love to treat you. Ask about our VIP package next visit at {business}!",
+                "label":    "VIP loyalty reward",
+            },
+            {
+                "audience": "all",
+                "message":  "✨ New styles just in at {business}! Type *menu* to book your appointment or browse our latest products.",
+                "label":    "New styles announcement",
+            },
+        ],
+        ai_context="This is a salon or beauty business. Suggest complementary treatments and home-care products. Use warm, friendly tone.",
+    ),
+
+    "bakery": BusinessTemplate(
+        id="bakery",
+        name="Bakery",
+        icon="🍞",
+        description="Bakery selling fresh bread, cakes, pastries, and baked goods.",
+        greeting_hint="Fresh from the oven! Browse our daily bakes and place your order. 🥐",
+        category_pairs={
+            "bread":    ["butter", "jam", "cheese", "drinks"],
+            "cake":     ["candles", "decorations", "drinks"],
+            "pastry":   ["coffee", "tea", "drinks"],
+            "bun":      ["butter", "drinks"],
+            "pie":      ["sauce", "drinks"],
+        },
+        campaign_suggestions=[
+            {
+                "audience": "inactive_7d",
+                "message":  "Hi {name}! 🍞 Fresh bread and pastries are ready at {business}! Order your daily bake — type *menu* now.",
+                "label":    "Daily reorder nudge",
+            },
+            {
+                "audience": "all",
+                "message":  "🎂 Custom cakes available at {business}! Perfect for birthdays, weddings & events. Type *menu* to order or enquire.",
+                "label":    "Custom cake announcement",
+            },
+            {
+                "audience": "loyal",
+                "message":  "Hey {name}! Thank you for being such a regular at {business} 🙏 We've added new items just for you — type *menu* to see!",
+                "label":    "Loyal customer new items",
+            },
+        ],
+        ai_context="This is a bakery. Suggest complementary items (drinks with pastries, spreads with bread). Highlight freshness and daily availability.",
+    ),
+
+    "electronics": BusinessTemplate(
+        id="electronics",
+        name="Electronics",
+        icon="📱",
+        description="Electronics store selling phones, accessories, gadgets, and repairs.",
+        greeting_hint="Browse our latest phones, accessories and tech deals! 📱",
+        category_pairs={
+            "phone":      ["case", "screen protector", "charger", "earphones", "powerbank"],
+            "laptop":     ["bag", "mouse", "keyboard", "charger", "hdmi"],
+            "tv":         ["remote", "hdmi", "wall bracket", "decoder"],
+            "earphones":  ["phone", "case", "accessories"],
+            "charger":    ["cable", "powerbank", "adapter"],
+        },
+        campaign_suggestions=[
+            {
+                "audience": "all",
+                "message":  "📱 New stock just arrived at {business}! Latest phones and accessories — best prices. Type *menu* to browse now.",
+                "label":    "New stock announcement",
+            },
+            {
+                "audience": "vip",
+                "message":  "Hey {name}! 🔧 As a valued customer, you get first access to our trade-in deals at {business}. Type *menu* to enquire.",
+                "label":    "VIP trade-in offer",
+            },
+            {
+                "audience": "inactive_30d",
+                "message":  "Hi {name}! Looking for an upgrade? {business} has the latest tech at great prices. Type *menu* to see our range.",
+                "label":    "Upgrade prompt",
+            },
+        ],
+        ai_context="This is an electronics store. Always suggest accessories that complete a purchase (case + phone, charger + laptop). Offer repair services when relevant.",
+    ),
+
+    "auto_parts": BusinessTemplate(
+        id="auto_parts",
+        name="Auto Parts",
+        icon="🔧",
+        description="Automotive parts, accessories, and vehicle supplies.",
+        greeting_hint="Find the right part for your vehicle — we stock a wide range! 🔧",
+        category_pairs={
+            "oil":          ["oil filter", "funnel", "rags"],
+            "tyre":         ["rim", "valve", "pump", "jack"],
+            "battery":      ["terminal grease", "cables"],
+            "brake":        ["brake fluid", "pads", "discs"],
+            "filter":       ["oil", "air filter", "fuel filter"],
+            "wiper":        ["washer fluid", "wiper rubber"],
+        },
+        campaign_suggestions=[
+            {
+                "audience": "inactive_30d",
+                "message":  "Hi {name}! 🔧 Your vehicle might be due for a service. {business} has all the parts you need — type *menu* to order.",
+                "label":    "Service reminder",
+            },
+            {
+                "audience": "loyal",
+                "message":  "Hey {name}! Thanks for trusting {business} for your parts 🙏 We have new stock in — type *menu* to browse.",
+                "label":    "Loyal customer restock alert",
+            },
+            {
+                "audience": "all",
+                "message":  "🚗 New auto parts in stock at {business}! Tyres, oils, filters and more. Type *menu* to browse and order.",
+                "label":    "General stock alert",
+            },
+        ],
+        ai_context="This is an auto parts store. Suggest complementary parts that are commonly replaced together. Ask about vehicle make/model if needed for compatibility.",
+    ),
+
+    "agriculture": BusinessTemplate(
+        id="agriculture",
+        name="Agriculture / Farm",
+        icon="🌾",
+        description="Agricultural supplies, seeds, fertiliser, pesticides, and farm produce.",
+        greeting_hint="Your farming partner — seeds, feeds, and supplies delivered! 🌱",
+        category_pairs={
+            "seed":       ["fertiliser", "pesticide", "herbicide", "soil"],
+            "fertiliser": ["seed", "pesticide", "soil amendment"],
+            "pesticide":  ["sprayer", "protective gear", "fertiliser"],
+            "feed":       ["supplements", "mineral lick", "vitamins"],
+            "vegetable":  ["fertiliser", "compost", "pesticide"],
+        },
+        campaign_suggestions=[
+            {
+                "audience": "all",
+                "message":  "🌾 Planting season is here! {business} has seeds, fertiliser and supplies ready. Type *menu* to order now.",
+                "label":    "Planting season alert",
+            },
+            {
+                "audience": "loyal",
+                "message":  "Hi {name}! Harvest time approaching? Stock up on post-harvest supplies at {business}. Type *menu* to browse.",
+                "label":    "Post-harvest supply prompt",
+            },
+            {
+                "audience": "inactive_30d",
+                "message":  "Hey {name}! Your farm might need restocking. {business} has fresh stock of seeds, feeds and fertiliser. Type *menu* now.",
+                "label":    "Restock reminder",
+            },
+        ],
+        ai_context="This is an agricultural supplies business. Ask about crop type, acreage, or animal type to suggest the right products. Seasonal timing is important.",
+    ),
+
+
 }
 
 # Default template used when no specific template is configured

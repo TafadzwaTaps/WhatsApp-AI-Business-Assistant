@@ -259,11 +259,13 @@ from routes.webhook_routes  import router as webhook_router
 from routes.admin_routes    import router as admin_router
 from routes.business_routes import router as business_router
 from routes.chat_routes     import router as chat_router
+from routes.growth_routes   import router as growth_router
 
 app.include_router(auth_router)
 app.include_router(webhook_router)
 app.include_router(admin_router)
 app.include_router(business_router)
 app.include_router(chat_router)
+app.include_router(growth_router)
 
-log.info("🚀 WaziBot API started — %d route modules registered", 5)
+log.info("🚀 WaziBot API started — %d route modules registered", 6)

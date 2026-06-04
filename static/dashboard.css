@@ -831,3 +831,97 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   color: var(--green);
 }
 .audience-chip input[type="radio"] { display: none; }
+
+
+/* ══════════════════════════════════════════════════════════
+   PHASE 4 — ORDER OPERATIONS ENHANCEMENTS
+   Order age badges, SLA alerts, bulk action bar.
+   All additive — existing kanban and list view unchanged.
+══════════════════════════════════════════════════════════ */
+
+/* Order age badge in kanban cards */
+.kanban-card-age {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 600;
+  display: inline-block;
+  margin-top: 4px;
+}
+.kanban-card-age.age-ok    { background: rgba(34,197,94,.15);  color: #22c55e; }
+.kanban-card-age.age-warn  { background: rgba(245,158,11,.15); color: #f59e0b; }
+.kanban-card-age.age-alert { background: rgba(239,68,68,.2);   color: #ef4444; animation: pulse-alert 1.5s infinite; }
+
+@keyframes pulse-alert {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}
+
+/* SLA alert banner shown above kanban when orders are overdue */
+.sla-alert-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: rgba(239,68,68,.12);
+  border: 1px solid rgba(239,68,68,.25);
+  border-radius: 8px;
+  color: #ef4444;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.sla-alert-bar svg { flex-shrink: 0; }
+
+/* Bulk actions bar — shown when checkboxes are selected */
+.bulk-actions-bar {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--surface2, #1a2420);
+  border: 1px solid var(--border, #2a3830);
+  border-radius: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.bulk-actions-bar.visible { display: flex; }
+.bulk-actions-bar span    { font-size: 12px; color: var(--text-dim, #6b8f71); margin-right: 4px; }
+
+.bulk-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a3830);
+  background: var(--surface, #111a15);
+  color: var(--text, #e8f5e9);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.bulk-btn:hover   { background: var(--border, #2a3830); }
+.bulk-btn.green   { border-color: rgba(34,197,94,.3); color: #22c55e; }
+.bulk-btn.amber   { border-color: rgba(245,158,11,.3); color: #f59e0b; }
+.bulk-btn.red     { border-color: rgba(239,68,68,.3);  color: #ef4444; }
+.bulk-btn-cancel  { margin-left: auto; color: var(--text-dim, #6b8f71); background: transparent; border: none; cursor: pointer; font-size: 12px; }
+
+/* Order age in list view rows */
+.order-age-cell { font-size: 11px; color: var(--text-dim, #6b8f71); white-space: nowrap; }
+.order-age-cell.warn  { color: #f59e0b; }
+.order-age-cell.alert { color: #ef4444; font-weight: 600; }
+
+/* Order filters bar */
+.order-filters-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+.order-filter-select {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a3830);
+  background: var(--surface, #111a15);
+  color: var(--text, #e8f5e9);
+  font-size: 12px;
+  cursor: pointer;
+}
