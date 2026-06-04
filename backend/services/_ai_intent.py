@@ -118,6 +118,33 @@ _NAME_PATTERNS = [
     re.compile(r"(?:this is)\s+([A-Za-z]{2,20})\s*[,.]", re.I),
 ]
 
+# Introduction trigger phrases — if ANY of these appear in the message we treat
+# the whole message as a self-introduction, NOT an order attempt.
+_INTRO_PHRASES = (
+    "my name is", "i'm ", "i am ", "call me ", "it's ", "its ",
+    "this is ", "they call me", "people call me", "known as",
+)
+
+
+def _is_introduction(text: str) -> bool:
+    """
+    Returns True if the message is a self-introduction.
+
+    "My name is Tafadzwa" → True
+    "I'm John"            → True
+    "Call me Tafadzwa"    → True
+    "Sadza"               → False
+    "I want sadza"        → False  (starts with intent prefix)
+
+    This check must run BEFORE product matching to prevent names like
+    "Tafadzwa" from being fuzzy-matched to products like "Sadza".
+    """
+    t = text.lower().strip()
+    return (
+        bool(_extract_name(text)) and
+        any(t.startswith(p) or f" {p}" in t for p in _INTRO_PHRASES)
+    )
+
 
 def _extract_name(text: str) -> str | None:
     """Extract a first name from an introduction phrase. Returns None if not found."""
@@ -440,3 +467,25 @@ def _is_proof_submission(text: str, message_has_image: bool = False) -> tuple[bo
         return True, t[:120]
 
     return False, ""
+
+
+# ── Introduction detection ────────────────────────────────────────────────────
+# Must be checked BEFORE _intent() / fuzzy product matching.
+# "My name is Tafadzwa" must never reach the product matcher.
+
+_INTRO_PATTERNS = [
+    re.compile(r"^(?:my name is|i'?m|i am|call me)\s+[A-Za-z]{2,20}", re.I),
+    re.compile(r"^(?:this is)\s+[A-Za-z]{2,20}\s*[,.]?$", re.I),
+    re.compile(r"^[A-Za-z]{2,20}\s+(?:here|speaking|this side)$", re.I),
+]
+
+
+def _is_introduction(text: str) -> bool:
+    """
+    Returns True when the message is clearly a name introduction:
+      "My name is Tafadzwa", "I'm John", "call me Rudo", "Tafadzwa here"
+
+    Prevents these from reaching the fuzzy product matcher where names
+    like "Tafadzwa" fuzzy-match products like "Sadza" (ratio 0.615 > threshold).
+    """
+    return any(p.match(text.strip()) for p in _INTRO_PATTERNS)

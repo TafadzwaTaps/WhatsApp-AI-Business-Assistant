@@ -43,6 +43,11 @@ class BusinessUpdate(BaseModel):
     ecocash_number:    Optional[str]  = None
     ecocash_name:      Optional[str]  = None
     paypal_email:      Optional[str]  = None
+    # Per-business AI customisation
+    welcome_message:   Optional[str]  = None  # Custom greeting on "hi" / first contact
+    currency:          Optional[str]  = None  # e.g. "USD", "ZWL", "ZAR"
+    currency_symbol:   Optional[str]  = None  # e.g. "$", "R", "ZWL$"
+    menu_header:       Optional[str]  = None  # Custom header shown above menu items
 
 
 @router.get("/me")

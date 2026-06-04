@@ -97,6 +97,7 @@ from services._ai_intent import (
     _is_payment_confirmation, _extract_order_id,
     _is_yes, _is_no, _detect_payment_method, _intent,
     _is_proof_submission, _looks_like_txn_id,
+    _is_introduction,
 )
 
 # Products, formatters, multi-item
@@ -129,12 +130,27 @@ def generate_reply(
     message_has_image: bool = False,
     message_is_from_agent: bool = False,
     voice_transcript: str | None = None,
+    business_config: dict | None = None,
 ) -> str:
     """
     Single entry point called by the webhook for every incoming message.
     message_has_image=True signals that the customer sent a photo (payment proof).
     Returns a WhatsApp-formatted reply string.
+
+    business_config (optional) — extra per-business settings from the businesses table:
+      welcome_message (str)   — custom greeting on "hi" / first contact
+      currency_symbol (str)   — e.g. "$", "R", "ZWL$"  (default "$")
+      category (str)          — e.g. "restaurant", "pharmacy"
+      menu_header (str)       — custom text shown above menu items
+    All keys optional — missing keys fall back to defaults.
     """
+    # ── Resolve per-business config ─────────────────────────────────────────
+    _cfg          = business_config or {}
+    _currency_sym = (_cfg.get("currency_symbol") or "$").strip() or "$"
+    _welcome_msg  = (_cfg.get("welcome_message") or "").strip()
+    _menu_header  = (_cfg.get("menu_header") or "").strip()
+    _biz_category = (_cfg.get("category") or "").lower().strip()
+
     if voice_transcript:
         text = voice_transcript.strip()
         log.info("▶ voice  phone=%s  biz=%s  transcript=%r", phone, business_id, text[:80])
@@ -785,6 +801,29 @@ def generate_reply(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P4.3 — INTRODUCTION DETECTION (before product fuzzy match)
+    # "My name is Tafadzwa" must never reach the product matcher.
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_introduction(text):
+        detected_name = _extract_name(text)
+        if detected_name:
+            try:
+                _mem = _get_memory(phone, business_id)
+                _mem["customer_name"] = detected_name
+                crud.save_user_memory(phone, business_id, _mem)
+                log.info("introduction: name saved  name=%r  phone=%s", detected_name, phone)
+            except Exception:
+                pass
+        name_to_show = detected_name or "there"
+        hint = f"*{products[0]['name']}*" if products else "something"
+        return (
+            f"Nice to meet you, *{name_to_show}*! 😊\n\n"
+            f"I'm the ordering assistant for *{business_name}*.\n"
+            f"Type *menu* to see what we have, or just tell me what you'd like — "
+            f"e.g. _{hint}_"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # General intent detection (browsing state)
     # ══════════════════════════════════════════════════════════════════════════
     intent = _intent(text)
@@ -1076,7 +1115,7 @@ def generate_reply(
             s = p.get("stock")
             if s is not None and s <= 5:
                 note = f"  ⚠️ _only {s} left_"
-            lines.append(f"  {i+1}. *{p['name']}* — ${float(p['price']):.2f}{note}")
+            lines.append(f"  {i+1}. *{p['name']}* — {_currency_sym}{float(p['price']):.2f}{note}")
 
         recs     = _recommend(phone, business_id, products)
         rec_text = ""
@@ -1093,12 +1132,16 @@ def generate_reply(
         elif order_count >= 2:
             greeting = f"👋 Welcome back! You've ordered *{order_count} times* from us. 🙏\n\n"
 
+        # Custom menu header (per-business) or default
+        header       = _menu_header or f"📋 *{business_name} Menu*"
+        hint_product = products[0]["name"] if products else "an item"
+        add_hint     = f"_Type a name to add it — e.g. *{hint_product}* or *2 {hint_product}*_"
         return (
             f"{greeting}"
-            f"📋 *{business_name} Menu*\n\n"
+            f"{header}\n\n"
             + "\n".join(lines)
             + rec_text
-            + "\n\n_Just type an item name to add it — e.g. \"Sadza\" or \"2 Beef\"_"
+            + f"\n\n{add_hint}"
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -1117,25 +1160,60 @@ def generate_reply(
         order_count = int(mem.get("order_count", 0) or 0)
         cust_name   = (mem.get("customer_name") or "").strip()
 
+        # Category: prefer business_config, fall back to DB lookup
+        biz_category = _biz_category
+        if not biz_category:
+            try:
+                biz_row      = crud.get_business_by_id(business_id)
+                biz_category = (biz_row.get("category") or "").lower().strip() if biz_row else ""
+            except Exception:
+                pass
+
+        _FOOD_CATS   = {"food", "restaurant", "food & beverage", "café", "cafe",
+                        "fast food", "takeaway", "takeout", "grocery"}
+        _RETAIL_CATS = {"fashion", "boutique", "clothing", "apparel", "hardware",
+                        "tools", "electronics"}
+        _HEALTH_CATS = {"pharmacy", "health", "wellness", "beauty"}
+
+        if any(c in biz_category for c in _FOOD_CATS):     action_verb = "order"
+        elif any(c in biz_category for c in _RETAIL_CATS): action_verb = "shop"
+        elif any(c in biz_category for c in _HEALTH_CATS): action_verb = "get"
+        else:                                               action_verb = "order"
+
         if order_count >= 5 and cust_name:
             greeting = (
                 f"👋 Hey *{cust_name}*! Great to have you back — "
                 f"you've ordered *{order_count} times* with us! 🏆\n\n"
             )
         elif order_count >= 2 and cust_name:
-            greeting = f"👋 Welcome back, *{cust_name}*!\n\n"
+            greeting = f"👋 Welcome back, *{cust_name}*! Great to see you again.\n\n"
         elif order_count >= 2:
             greeting = f"👋 Welcome back! Glad to see you again 😊\n\n"
+        elif cust_name:
+            greeting = f"👋 Hey *{cust_name}*! Welcome to *{business_name}*!\n\n"
         else:
             greeting = f"👋 Hey! Welcome to *{business_name}*!\n\n"
 
+        # Per-business custom welcome overrides the default greeting block
+        if _welcome_msg:
+            # Replace the auto-generated greeting with the custom one,
+            # but still personalise with the customer's name if known.
+            custom = _welcome_msg
+            if cust_name and "{name}" in custom:
+                custom = custom.replace("{name}", cust_name)
+            elif cust_name and not any(
+                word in custom.lower() for word in [cust_name.lower(), "you", "back"]
+            ):
+                custom = f"👋 Hey *{cust_name}*! {custom}"
+            greeting = custom + "\n\n"
+
         return (
             f"{greeting}"
-            f"Here's how to order:\n"
+            f"Here's how to {action_verb}:\n"
             f"  📋 *menu* — see everything we offer\n"
             f"  🛍️ Type a name — e.g. _{hint}_\n"
             f"  🛒 *cart* — review what you've added\n"
-            f"  ✅ *checkout* — place your order\n"
+            f"  ✅ *checkout* — place your {action_verb}\n"
             f"  ❌ *remove [item]* — remove from cart\n"
             f"  🔍 *ORDER-9* — check an order status\n"
             f"  🚫 *cancel* — cancel checkout at any time\n"
@@ -1143,7 +1221,8 @@ def generate_reply(
             f"What can I get you today? 😊"
         )
 
-    # ── Name capture (non-blocking) ───────────────────────────────────────────
+    # ── Name capture fallback (mid-conversation mentions, e.g. "call me Rudo") ──
+    # Pure introductions are handled at P4.3 above.
     detected_name = _extract_name(text)
     if detected_name:
         try:
@@ -1151,7 +1230,7 @@ def generate_reply(
             if not _mem.get("customer_name"):
                 _mem["customer_name"] = detected_name
                 crud.save_user_memory(phone, business_id, _mem)
-                log.info("customer name captured  name=%r  phone=%s", detected_name, phone)
+                log.info("name captured (fallback)  name=%r  phone=%s", detected_name, phone)
         except Exception:
             pass
 

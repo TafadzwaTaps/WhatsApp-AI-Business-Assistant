@@ -234,6 +234,15 @@ async def receive_message(request: Request):
         msg_from          = msg_obj.get("from", "")
         is_from_agent     = bool(business_phone_id and msg_from and msg_from == business_phone_id)
 
+        # Build per-business config so AI can tailor its copy
+        biz_config = {
+            "welcome_message":  business.get("welcome_message", "") or "",
+            "currency":         business.get("currency", "USD")         or "USD",
+            "currency_symbol":  business.get("currency_symbol", "$")    or "$",
+            "category":         business.get("category", "")            or "",
+            "menu_header":      business.get("menu_header", "")         or "",
+        }
+
         reply = generate_reply(
             message=text,
             phone=customer_phone,
@@ -242,6 +251,7 @@ async def receive_message(request: Request):
             products=products,
             message_has_image=message_has_image,
             message_is_from_agent=is_from_agent,
+            business_config=biz_config,
         )
         _log_event(
             "ai.request" if reply else "ai.suppressed",
