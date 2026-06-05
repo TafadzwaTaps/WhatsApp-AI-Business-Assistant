@@ -2164,3 +2164,310 @@ if (document.readyState === 'loading') {
 } else {
   setTimeout(loadGrowthInsights, 2000);
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   UX ENHANCEMENTS — Dashboard Phases 3-6
+   All additive. Existing functions unchanged.
+══════════════════════════════════════════════════════════ */
+
+/* ── Phase 3: Onboarding Wizard ── */
+
+let _wizardDismissed = localStorage.getItem('wazi_wizard_dismissed') === '1';
+
+async function loadOnboardingWizard() {
+  if (_wizardDismissed) return;
+  try {
+    const data = await apiFetch('/onboarding/status');
+    if (!data.show_wizard) return;
+    renderOnboardingWizard(data);
+  } catch (_) {}
+}
+
+function renderOnboardingWizard(data) {
+  const section = document.getElementById('section-overview');
+  if (!section || document.getElementById('wizard-card')) return;
+
+  const steps = data.steps || {};
+  const dots  = [1,2,3,4,5].map(i => {
+    const done   = steps[i];
+    const active = !done && i === data.next_step;
+    const cls    = done ? 'done' : active ? 'active' : 'todo';
+    return `<div class="wizard-step-dot ${cls}" title="Step ${i}">${done ? '✓' : i}</div>`;
+  }).join('');
+
+  const tip  = data.next_tip || {};
+  const card = document.createElement('div');
+  card.id = 'wizard-card';
+  card.className = 'wizard-card';
+  card.innerHTML = `
+    <div class="wizard-header">
+      <span class="wizard-title">🚀 Setup Guide — ${data.completed}/${data.total} complete</span>
+      <button class="wizard-dismiss" onclick="dismissWizard()">✕ Dismiss</button>
+    </div>
+    <div class="wizard-progress">${dots}</div>
+    ${tip.title ? `
+    <div class="wizard-next">
+      <span class="wizard-next-icon">${tip.icon || '📋'}</span>
+      <div style="flex:1;">
+        <div class="wizard-next-title">Step ${tip.step}: ${escHtml(tip.title)}</div>
+        <div class="wizard-next-desc">${escHtml(tip.description || '')}</div>
+      </div>
+      <button class="wizard-action" onclick="showSection('${tip.action_section || 'overview'}', null)">${escHtml(tip.action || 'Go →')}</button>
+    </div>` : ''}
+  `;
+
+  const firstCard = section.querySelector('.card, .stats-grid, .stat-row');
+  if (firstCard) firstCard.insertAdjacentElement('beforebegin', card);
+  else section.insertAdjacentElement('afterbegin', card);
+}
+
+function dismissWizard() {
+  _wizardDismissed = true;
+  localStorage.setItem('wazi_wizard_dismissed', '1');
+  document.getElementById('wizard-card')?.remove();
+}
+
+// Load wizard after overview loads
+(function() {
+  const _orig = window.showSection;
+  window.showSection = function(name, ...args) {
+    _orig.call(this, name, ...args);
+    if (name === 'overview') setTimeout(loadOnboardingWizard, 800);
+  };
+})();
+setTimeout(() => { if (!_wizardDismissed) loadOnboardingWizard(); }, 2500);
+
+
+/* ── Phase 4: Health Center ── */
+
+async function loadHealthStatus() {
+  const section = document.getElementById('section-overview');
+  if (!section) return;
+
+  try {
+    const data   = await apiFetch('/health/status');
+    const checks = data.checks || {};
+
+    let existing = document.getElementById('health-center-card');
+    if (!existing) {
+      existing = document.createElement('div');
+      existing.id = 'health-center-card';
+      existing.className = 'card';
+      existing.style.marginBottom = '16px';
+      const lastCard = section.querySelector('.card:last-of-type');
+      if (lastCard) lastCard.insertAdjacentElement('afterend', existing);
+      else section.appendChild(existing);
+    }
+
+    const overallColor = data.overall === 'green' ? '#22c55e' : data.overall === 'yellow' ? '#f59e0b' : '#ef4444';
+    const overallLabel = data.overall === 'green' ? 'All systems operational' : data.overall === 'yellow' ? 'Some warnings' : 'Issues detected';
+
+    const items = Object.entries(checks).map(([key, v]) => `
+      <div class="health-item">
+        <div class="health-dot ${v.status}"></div>
+        <div>
+          <div class="health-item-label">${escHtml(key.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase()))}</div>
+          <div class="health-item-msg">${escHtml(v.message || '')}</div>
+        </div>
+      </div>
+    `).join('');
+
+    existing.innerHTML = `
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <span style="font-size:16px;">🩺</span>
+        <strong style="font-size:14px;">System Health</strong>
+        <span style="margin-left:auto;font-size:11px;color:${overallColor};font-weight:600;">${overallLabel}</span>
+      </div>
+      <div class="health-grid">${items}</div>
+    `;
+  } catch (_) {}
+}
+
+
+/* ── Phase 6: Customer Success Nudges ── */
+
+async function loadSuccessNudges() {
+  const section = document.getElementById('section-overview');
+  if (!section || document.getElementById('nudge-container')) return;
+
+  try {
+    const data = await apiFetch('/insights/growth');
+    const wins = (data.quick_wins || []).slice(0, 3);
+    if (!wins.length) return;
+
+    const container = document.createElement('div');
+    container.id = 'nudge-container';
+    container.style.marginBottom = '12px';
+
+    container.innerHTML = wins.map(w => `
+      <div class="nudge-bar" onclick="window.open('${w.endpoint}','_blank')">
+        <span class="nudge-bar-icon">${w.priority === 'high' ? '🔴' : '🟡'}</span>
+        <div class="nudge-bar-text">${escHtml(w.title)} — <em>${escHtml(w.value)}</em></div>
+        <span class="nudge-bar-action">${escHtml(w.action)} →</span>
+      </div>
+    `).join('');
+
+    const firstCard = section.querySelector('.card, .stats-grid');
+    if (firstCard) firstCard.insertAdjacentElement('beforebegin', container);
+  } catch (_) {}
+}
+
+
+/* ── Help panel & Command palette (dashboard) ── */
+
+// Inject help FAB into dashboard if not present
+(function() {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', injectDashboardHelp);
+  } else {
+    injectDashboardHelp();
+  }
+})();
+
+function injectDashboardHelp() {
+  if (document.getElementById('dash-help-fab')) return;
+
+  // FAB
+  const fab = document.createElement('button');
+  fab.id = 'dash-help-fab';
+  fab.className = 'help-fab';
+  fab.title = 'Ask WaziBot for help';
+  fab.textContent = '?';
+  fab.onclick = toggleDashHelp;
+  document.body.appendChild(fab);
+
+  // Panel
+  const panel = document.createElement('div');
+  panel.id = 'dash-help-panel';
+  panel.className = 'help-panel';
+  panel.innerHTML = `
+    <div class="help-panel-header">
+      💬 Ask WaziBot
+      <button class="help-panel-close" onclick="closeDashHelp()">✕</button>
+    </div>
+    <div class="help-panel-input-row">
+      <input class="help-panel-input" id="dash-help-input" placeholder="How do I…?" onkeydown="if(event.key==='Enter')askDashHelp()">
+      <button class="help-panel-send" onclick="askDashHelp()">→</button>
+    </div>
+    <div class="help-panel-body" id="dash-help-body">
+      <div class="help-quick-links">
+        <button class="help-quick-link" onclick="askDashHelpQ('How do I send a campaign?')">Campaigns</button>
+        <button class="help-quick-link" onclick="askDashHelpQ('How do I add products?')">Products</button>
+        <button class="help-quick-link" onclick="askDashHelpQ('How do payment reminders work?')">Reminders</button>
+        <button class="help-quick-link" onclick="askDashHelpQ('How do bookings work?')">Bookings</button>
+        <button class="help-quick-link" onclick="askDashHelpQ('How do referrals work?')">Referrals</button>
+      </div>
+      <div style="color:var(--text-dim,#6b8f71);font-size:12px;">Ask anything about using WaziBot. 😊</div>
+    </div>
+  `;
+  document.body.appendChild(panel);
+
+  // Command palette
+  const cmdOverlay = document.createElement('div');
+  cmdOverlay.id = 'dash-cmd-overlay';
+  cmdOverlay.className = 'cmd-overlay';
+  cmdOverlay.onclick = e => { if (e.target === cmdOverlay) closeDashCmd(); };
+  cmdOverlay.innerHTML = `
+    <div class="cmd-box">
+      <div class="cmd-input-row">
+        <span class="cmd-icon">⌘</span>
+        <input class="cmd-input" id="dash-cmd-input" placeholder="Search or type a command…"
+               oninput="renderDashCmdResults()" onkeydown="dashCmdKeyDown(event)" autocomplete="off">
+      </div>
+      <div class="cmd-results" id="dash-cmd-results"></div>
+      <div class="cmd-footer"><span><kbd>↑↓</kbd> Navigate</span><span><kbd>Enter</kbd> Select</span><span><kbd>Esc</kbd> Close</span></div>
+    </div>
+  `;
+  document.body.appendChild(cmdOverlay);
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openDashCmd(); }
+    if (e.key === 'Escape') { closeDashHelp(); closeDashCmd(); }
+  });
+}
+
+let _dashHelpOpen = false;
+function toggleDashHelp() { _dashHelpOpen = !_dashHelpOpen; document.getElementById('dash-help-panel')?.classList.toggle('open', _dashHelpOpen); if (_dashHelpOpen) setTimeout(() => document.getElementById('dash-help-input')?.focus(), 50); }
+function closeDashHelp()  { _dashHelpOpen = false; document.getElementById('dash-help-panel')?.classList.remove('open'); }
+function askDashHelpQ(q)  { const inp = document.getElementById('dash-help-input'); if (inp) inp.value = q; askDashHelp(); }
+
+async function askDashHelp() {
+  const q = (document.getElementById('dash-help-input')?.value || '').trim();
+  if (!q) return;
+  const body = document.getElementById('dash-help-body');
+  if (!body) return;
+  body.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">Looking up…</div>';
+  try {
+    const data = await apiFetch('/support/ask', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: q, context: 'dashboard' }),
+    });
+    let html = `<div class="help-answer">${(data.answer||'').replace(/\*(.*?)\*/g,'<strong>$1</strong>')}</div>`;
+    if (data.steps?.length) html += `<ol class="help-steps">${data.steps.map(s=>`<li>${s}</li>`).join('')}</ol>`;
+    if (data.tips?.length)  html += data.tips.map(t=>`<div class="help-tip">💡 ${t}</div>`).join('');
+    if (data.related?.length) html += `<div class="help-related">${data.related.map(r=>`<button class="help-related-chip" onclick="askDashHelpQ('Tell me about ${r.title}')">${r.title}</button>`).join('')}</div>`;
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${e.message}</div>`;
+  }
+}
+
+const DASH_COMMANDS = [
+  { icon: '📊', label: 'Overview',          action: () => showSection('overview') },
+  { icon: '🛒', label: 'Orders',            action: () => showSection('orders') },
+  { icon: '📋', label: 'Products',          action: () => showSection('inventory') },
+  { icon: '👤', label: 'Customers',         action: () => showSection('customers') },
+  { icon: '📣', label: 'Campaigns',         action: () => showSection('campaigns') },
+  { icon: '⚙️', label: 'Settings',          action: () => showSection('settings') },
+  { icon: '💬', label: 'Open Inbox',        action: () => window.location.href = '/inbox' },
+  { icon: '⭐', label: 'VIP Customers',     action: () => showSection('customers') },
+  { icon: '💳', label: 'Payment Settings',  action: () => showSection('settings') },
+  { icon: '🩺', label: 'System Health',     action: () => { showSection('overview'); setTimeout(loadHealthStatus,300); } },
+  { icon: '❓', label: 'Help / Ask WaziBot', action: () => { closeDashCmd(); toggleDashHelp(); } },
+];
+let _dashCmdActive = 0;
+let _dashCmdFiltered = DASH_COMMANDS;
+
+function openDashCmd() {
+  _dashCmdActive = 0;
+  _dashCmdFiltered = DASH_COMMANDS;
+  document.getElementById('dash-cmd-overlay')?.classList.add('open');
+  const inp = document.getElementById('dash-cmd-input');
+  if (inp) { inp.value = ''; inp.focus(); }
+  renderDashCmdResults();
+}
+function closeDashCmd() { document.getElementById('dash-cmd-overlay')?.classList.remove('open'); }
+
+function renderDashCmdResults() {
+  const q = (document.getElementById('dash-cmd-input')?.value || '').toLowerCase();
+  _dashCmdFiltered = q ? DASH_COMMANDS.filter(c => c.label.toLowerCase().includes(q)) : DASH_COMMANDS;
+  const box = document.getElementById('dash-cmd-results');
+  if (!box) return;
+  box.innerHTML = _dashCmdFiltered.map((c, i) => `
+    <div class="cmd-result ${i === _dashCmdActive ? 'active' : ''}" onclick="execDashCmd(${i})">
+      <span class="cmd-result-icon">${c.icon}</span>
+      <div class="cmd-result-text">${c.label}</div>
+    </div>`).join('');
+}
+
+function execDashCmd(i) { const c = _dashCmdFiltered[i]; if (c) { closeDashCmd(); c.action(); } }
+function dashCmdKeyDown(e) {
+  if (e.key === 'Escape')    { closeDashCmd(); return; }
+  if (e.key === 'ArrowDown') { _dashCmdActive = Math.min(_dashCmdActive+1, _dashCmdFiltered.length-1); renderDashCmdResults(); e.preventDefault(); return; }
+  if (e.key === 'ArrowUp')   { _dashCmdActive = Math.max(_dashCmdActive-1, 0); renderDashCmdResults(); e.preventDefault(); return; }
+  if (e.key === 'Enter')     { execDashCmd(_dashCmdActive); e.preventDefault(); }
+}
+
+// Auto-load health + nudges on overview
+(function() {
+  const _orig = window.showSection;
+  window.showSection = function(name, ...args) {
+    _orig.call(this, name, ...args);
+    if (name === 'overview') {
+      setTimeout(loadHealthStatus, 1000);
+      setTimeout(loadSuccessNudges, 1200);
+    }
+  };
+})();
+setTimeout(() => { loadHealthStatus(); loadSuccessNudges(); }, 3000);

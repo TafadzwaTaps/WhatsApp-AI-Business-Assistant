@@ -156,6 +156,9 @@
         <button class="handoff-banner-btn" onclick="toggleHandoff()">Switch to AI 🤖</button>
       </div>
 
+      <!-- Conversation Summary Panel (Phase 1) -->
+      <div class="conv-summary-panel" id="conv-summary-panel"></div>
+
       <!-- Quick Actions Bar — Phase 2 (additive) -->
       <div class="quick-actions-bar" id="quick-actions-bar" style="display:none;">
         <button class="qa-btn qa-green"  onclick="qaRepeatLastOrder()"  title="Send the customer their last order">🔄 Repeat Order</button>
@@ -185,6 +188,18 @@
         <div class="typing-dot"></div>
       </div>
 
+      <!-- Agent Notes Panel (Phase 1 — internal only, never sent to customer) -->
+      <div class="agent-notes-panel" id="agent-notes-panel">
+        <div class="agent-note-header" onclick="toggleAgentNotes()">
+          🔒 Internal Notes <span id="agent-notes-count"></span><span style="margin-left:auto;font-size:11px;color:var(--text-muted)">▾</span>
+        </div>
+        <div class="agent-note-list" id="agent-note-list"><div style="color:var(--text-muted);font-size:11px;padding:6px 0;">No notes yet.</div></div>
+        <div class="agent-note-input-row">
+          <input class="agent-note-input" id="agent-note-input" placeholder="Internal note (never sent to customer)…" onkeydown="if(event.key==='Enter')saveAgentNote()">
+          <button class="agent-note-save" onclick="saveAgentNote()">Save</button>
+        </div>
+      </div>
+
       <!-- Send box (sticky bottom) -->
       <div class="send-box">
         <textarea
@@ -204,6 +219,54 @@
     </div><!-- /active-chat -->
 
   </main><!-- /chat-panel -->
+
+<!-- ── Phase 1: Handoff Reason Modal ── -->
+<div class="handoff-reason-modal" id="handoff-reason-modal">
+  <div class="handoff-reason-box">
+    <div class="handoff-reason-title">Why are you taking over this chat?</div>
+    <div class="handoff-reason-grid" id="reason-chips"></div>
+    <div style="margin-bottom:14px;"><input id="reason-custom" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:12px;box-sizing:border-box;" placeholder="Custom reason…"></div>
+    <div class="handoff-reason-actions">
+      <button class="btn-handoff-cancel" onclick="closeHandoffReasonModal()">Cancel</button>
+      <button class="btn-handoff-confirm" onclick="confirmHandoffWithReason()">Take Over →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Phase 2: Help Panel & FAB ── -->
+<div class="help-panel" id="help-panel">
+  <div class="help-panel-header">
+    💬 Ask WaziBot
+    <button class="help-panel-close" onclick="closeHelp()">✕</button>
+  </div>
+  <div class="help-panel-input-row">
+    <input class="help-panel-input" id="help-input" placeholder="How do I…?" onkeydown="if(event.key==='Enter')askHelp()">
+    <button class="help-panel-send" onclick="askHelp()">→</button>
+  </div>
+  <div class="help-panel-body" id="help-body">
+    <div class="help-quick-links">
+      <button class="help-quick-link" onclick="askHelpQ('How do I pause the AI?')">Pause AI</button>
+      <button class="help-quick-link" onclick="askHelpQ('How do I send a campaign?')">Campaigns</button>
+      <button class="help-quick-link" onclick="askHelpQ('How do payments work?')">Payments</button>
+      <button class="help-quick-link" onclick="askHelpQ('How do bookings work?')">Bookings</button>
+      <button class="help-quick-link" onclick="askHelpQ('How do I add products?')">Products</button>
+    </div>
+    <div style="color:var(--text-dim);font-size:12px;">Ask any question about using WaziBot. 😊</div>
+  </div>
+</div>
+<button class="help-fab" id="help-fab" onclick="toggleHelp()" title="Ask WaziBot for help">?</button>
+
+<!-- ── Phase 5: Command Palette ── -->
+<div class="cmd-overlay" id="cmd-overlay" onclick="if(event.target===this)closeCmd()">
+  <div class="cmd-box">
+    <div class="cmd-input-row">
+      <span class="cmd-icon">⌘</span>
+      <input class="cmd-input" id="cmd-input" placeholder="Search or type a command…" oninput="renderCmdResults()" onkeydown="cmdKeyDown(event)" autocomplete="off">
+    </div>
+    <div class="cmd-results" id="cmd-results"></div>
+    <div class="cmd-footer"><span><kbd>↑↓</kbd> Navigate</span><span><kbd>Enter</kbd> Select</span><span><kbd>Esc</kbd> Close</span></div>
+  </div>
+</div>
 
 </div><!-- /inbox -->
 

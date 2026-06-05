@@ -910,3 +910,288 @@ async function _qaSend(text, successMsg) {
     allBtns.forEach(b => { b.disabled = false; });
   }
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   UX ENHANCEMENTS — Phases 1-7
+   All additive. Existing functions unchanged.
+══════════════════════════════════════════════════════════ */
+
+/* ── Phase 1: Handoff reason & conversation summary ── */
+
+const HANDOFF_REASONS = [
+  'Payment Issue', 'Refund Request', 'Delivery Problem',
+  'Complaint', 'Complex Order', 'Product Question', 'Technical Issue', 'Other'
+];
+let _selectedReason = 'Other';
+let _handoffPriority = 'normal';
+
+function openHandoffReasonModal() {
+  const modal = document.getElementById('handoff-reason-modal');
+  const grid  = document.getElementById('reason-chips');
+  if (!modal || !grid) return;
+
+  grid.innerHTML = HANDOFF_REASONS.map(r =>
+    `<div class="reason-chip ${r === _selectedReason ? 'selected' : ''}"
+          onclick="selectReason('${r}')">${r}</div>`
+  ).join('');
+
+  document.getElementById('reason-custom').value = '';
+  modal.classList.add('open');
+}
+
+function closeHandoffReasonModal() {
+  const modal = document.getElementById('handoff-reason-modal');
+  if (modal) modal.classList.remove('open');
+}
+
+function selectReason(r) {
+  _selectedReason = r;
+  document.querySelectorAll('.reason-chip').forEach(c => {
+    c.classList.toggle('selected', c.textContent === r);
+  });
+}
+
+async function confirmHandoffWithReason() {
+  if (!currentCustomerId) return;
+  const custom = (document.getElementById('reason-custom')?.value || '').trim();
+  const reason = custom || _selectedReason;
+  closeHandoffReasonModal();
+
+  try {
+    await apiFetch(`/chat/handoff/${currentCustomerId}/request-with-reason`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ reason, priority: _handoffPriority }),
+    });
+    currentHandoffState = true;
+    updateHandoffUI(true);
+    showToast(`👤 Agent mode — ${reason}`);
+    await loadConvSummary(currentCustomerId);
+  } catch (e) {
+    showToast('⚠ Handoff failed: ' + e.message, true);
+  }
+}
+
+// Patch existing toggleHandoff to open reason modal when pausing
+(function() {
+  const _orig = window.toggleHandoff;
+  window.toggleHandoff = async function() {
+    if (!currentHandoffState) {
+      // Opening handoff — show reason modal
+      openHandoffReasonModal();
+    } else {
+      // Releasing handoff — use existing logic
+      await _orig.call(this);
+    }
+  };
+})();
+
+// Conversation summary
+async function loadConvSummary(customerId) {
+  const panel = document.getElementById('conv-summary-panel');
+  if (!panel) return;
+  if (!customerId) { panel.classList.remove('visible'); return; }
+
+  try {
+    const data = await apiFetch(`/chat/handoff/${customerId}/summary`);
+    const chips = [
+      data.segment === 'vip'   ? `<span class="conv-summary-chip vip">⭐ VIP</span>` :
+      data.segment === 'loyal' ? `<span class="conv-summary-chip loyal">💚 Loyal</span>` : '',
+      data.order_count > 0 ? `<span class="conv-summary-chip">🛒 ${data.order_count} orders</span>` : '',
+      data.total_spent > 0 ? `<span class="conv-summary-chip">💰 $${parseFloat(data.total_spent).toFixed(2)}</span>` : '',
+      data.handoff_reason ? `<span class="conv-summary-chip urgent">📌 ${escHtml(data.handoff_reason)}</span>` : '',
+      data.pending_payment ? `<span class="conv-summary-chip urgent">💳 ${escHtml(data.pending_payment)}</span>` : '',
+    ].filter(Boolean).join('');
+
+    panel.innerHTML = chips || `<span class="conv-summary-chip">New Customer</span>`;
+    panel.classList.toggle('visible', currentHandoffState);
+  } catch (_) {
+    panel.classList.remove('visible');
+  }
+}
+
+// Patch openChat to also load summary
+(function() {
+  const _orig = window.openChat;
+  window.openChat = async function(customerId, phone, lastSeen) {
+    await _orig.call(this, customerId, phone, lastSeen);
+    await loadConvSummary(customerId);
+    await loadAgentNotes(customerId);
+    showQuickActions(); // from Phase 2 quick-actions
+  };
+})();
+
+// Agent notes
+let _agentNotesOpen = false;
+
+function toggleAgentNotes() {
+  _agentNotesOpen = !_agentNotesOpen;
+  const panel = document.getElementById('agent-notes-panel');
+  if (panel) panel.classList.toggle('open', _agentNotesOpen);
+}
+
+async function loadAgentNotes(customerId) {
+  if (!customerId) return;
+  try {
+    const data  = await apiFetch(`/chat/handoff/${customerId}/notes`);
+    const notes = data.notes || [];
+    const list  = document.getElementById('agent-note-list');
+    const cnt   = document.getElementById('agent-notes-count');
+    if (cnt) cnt.textContent = notes.length ? ` (${notes.length})` : '';
+    if (list) {
+      list.innerHTML = notes.length
+        ? notes.map(n => `
+            <div class="agent-note-item">
+              ${escHtml(n.text)}
+              <div class="agent-note-meta">— ${escHtml(n.agent || 'agent')} · ${(n.timestamp||'').slice(0,16).replace('T',' ')}</div>
+            </div>`).join('')
+        : '<div style="color:var(--text-muted);font-size:11px;padding:6px 0;">No notes yet.</div>';
+    }
+  } catch (_) {}
+}
+
+async function saveAgentNote() {
+  const input = document.getElementById('agent-note-input');
+  const text  = (input?.value || '').trim();
+  if (!text || !currentCustomerId) return;
+  try {
+    await apiFetch(`/chat/handoff/${currentCustomerId}/note?note_text=${encodeURIComponent(text)}`, { method: 'POST' });
+    input.value = '';
+    await loadAgentNotes(currentCustomerId);
+    showToast('Note saved ✓');
+  } catch (e) {
+    showToast('Failed to save note', true);
+  }
+}
+
+
+/* ── Phase 2: Help Panel / Support Assistant ── */
+
+let _helpOpen = false;
+const _helpCurrentPage = 'inbox';
+
+function toggleHelp() {
+  _helpOpen = !_helpOpen;
+  document.getElementById('help-panel')?.classList.toggle('open', _helpOpen);
+  if (_helpOpen) setTimeout(() => document.getElementById('help-input')?.focus(), 50);
+}
+function closeHelp() {
+  _helpOpen = false;
+  document.getElementById('help-panel')?.classList.remove('open');
+}
+function askHelpQ(q) {
+  const inp = document.getElementById('help-input');
+  if (inp) inp.value = q;
+  askHelp();
+}
+async function askHelp() {
+  const q = (document.getElementById('help-input')?.value || '').trim();
+  if (!q) return;
+  const body = document.getElementById('help-body');
+  if (!body) return;
+  body.innerHTML = '<div style="color:var(--text-dim);font-size:12px;">Looking up…</div>';
+  try {
+    const data = await apiFetch('/support/ask', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ question: q, context: _helpCurrentPage }),
+    });
+    let html = `<div class="help-answer">${escHtml(data.answer).replace(/\*(.*?)\*/g, '<strong>$1</strong>')}</div>`;
+    if (data.steps?.length) {
+      html += `<ol class="help-steps">${data.steps.map(s => `<li>${escHtml(s)}</li>`).join('')}</ol>`;
+    }
+    if (data.tips?.length) {
+      html += data.tips.map(t => `<div class="help-tip">💡 ${escHtml(t)}</div>`).join('');
+    }
+    if (data.related?.length) {
+      html += `<div class="help-related">${data.related.map(r =>
+        `<button class="help-related-chip" onclick="askHelpQ('Tell me about ${escHtml(r.title)}')">${escHtml(r.title)}</button>`
+      ).join('')}</div>`;
+    }
+    body.innerHTML = html;
+  } catch (e) {
+    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Could not load answer: ${e.message}</div>`;
+  }
+}
+
+// Close help on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && _helpOpen) { closeHelp(); return; }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'k') { e.preventDefault(); openCmd(); }
+});
+
+
+/* ── Phase 5: Command Palette ── */
+
+const CMD_COMMANDS = [
+  { icon: '💬', label: 'Open Inbox',         sub: 'View all conversations',    action: () => {} },
+  { icon: '📞', label: 'View Customers',      sub: 'Browse CRM customer list',  action: () => window.open('/dashboard#customers','_self') },
+  { icon: '📣', label: 'Create Campaign',     sub: 'Send a targeted message',   action: () => window.open('/dashboard#campaigns','_self') },
+  { icon: '📦', label: 'View Orders',         sub: 'See pending and recent orders', action: () => window.open('/dashboard#orders','_self') },
+  { icon: '📊', label: 'Open Analytics',      sub: 'Revenue and stats',         action: () => window.open('/dashboard#analytics','_self') },
+  { icon: '📋', label: 'View Inventory',      sub: 'Products and stock',        action: () => window.open('/dashboard#inventory','_self') },
+  { icon: '⭐', label: 'Show VIP Customers',  sub: 'High-value customer list',  action: () => window.open('/dashboard#customers?segment=vip','_self') },
+  { icon: '🔴', label: 'Handoff Queue',       sub: 'Conversations needing agent', action: () => setFilter('handoff') },
+  { icon: '💳', label: 'Pending Payments',    sub: 'Orders awaiting payment',   action: () => window.open('/dashboard#payments','_self') },
+  { icon: '💡', label: 'Growth Opportunities', sub: 'Retention and revenue insights', action: () => window.open('/dashboard#overview','_self') },
+  { icon: '❓', label: 'Ask for Help',        sub: 'Open the support assistant', action: () => { closeCmd(); toggleHelp(); } },
+  { icon: '🔍', label: 'Search Conversations', sub: 'Find a customer',          action: () => document.getElementById('search-input')?.focus() },
+];
+
+let _cmdOpen   = false;
+let _cmdActive = 0;
+let _cmdFiltered = CMD_COMMANDS;
+
+function openCmd() {
+  _cmdOpen = true;
+  _cmdActive = 0;
+  _cmdFiltered = CMD_COMMANDS;
+  document.getElementById('cmd-overlay')?.classList.add('open');
+  const inp = document.getElementById('cmd-input');
+  if (inp) { inp.value = ''; inp.focus(); }
+  renderCmdResults();
+}
+function closeCmd() {
+  _cmdOpen = false;
+  document.getElementById('cmd-overlay')?.classList.remove('open');
+}
+
+function renderCmdResults() {
+  const q    = (document.getElementById('cmd-input')?.value || '').toLowerCase();
+  _cmdFiltered = q
+    ? CMD_COMMANDS.filter(c => c.label.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q))
+    : CMD_COMMANDS;
+
+  const box = document.getElementById('cmd-results');
+  if (!box) return;
+
+  if (!_cmdFiltered.length) {
+    box.innerHTML = `<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:12px;">No results for "${escHtml(q)}"</div>`;
+    return;
+  }
+
+  box.innerHTML = _cmdFiltered.map((c, i) => `
+    <div class="cmd-result ${i === _cmdActive ? 'active' : ''}" onclick="execCmd(${i})">
+      <span class="cmd-result-icon">${c.icon}</span>
+      <div>
+        <div class="cmd-result-text">${escHtml(c.label)}</div>
+        <div class="cmd-result-sub">${escHtml(c.sub)}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function execCmd(idx) {
+  const cmd = _cmdFiltered[idx];
+  if (!cmd) return;
+  closeCmd();
+  cmd.action();
+}
+
+function cmdKeyDown(e) {
+  if (e.key === 'Escape')    { closeCmd(); return; }
+  if (e.key === 'ArrowDown') { _cmdActive = Math.min(_cmdActive + 1, _cmdFiltered.length - 1); renderCmdResults(); e.preventDefault(); return; }
+  if (e.key === 'ArrowUp')   { _cmdActive = Math.max(_cmdActive - 1, 0); renderCmdResults(); e.preventDefault(); return; }
+  if (e.key === 'Enter')     { execCmd(_cmdActive); e.preventDefault(); }
+}
