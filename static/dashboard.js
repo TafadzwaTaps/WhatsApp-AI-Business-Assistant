@@ -136,7 +136,8 @@ function saveSession(data, username) {
 }
 
 async function tryRefresh() {
-  if (!refreshTok) { logout(); return false; }
+  // If there was never a refresh token, user is simply not logged in — don't redirect
+  if (!refreshTok) { return false; }
   try {
     const res = await fetch(API + ROUTES.refresh, {
       method: 'POST',
@@ -162,6 +163,8 @@ function logout() {
 
 // ── API ───────────────────────────────────────────────────
 async function apiFetch(path, opts={}, _retried=false) {
+  // Guard: never fire API calls without a token — avoids 401 spam on page load
+  if (!token && !opts._public) return null;
   // FIX: _retried flag prevents infinite refresh loops — one retry max.
   // If the refreshed token also gets a 401, logout() is called once.
   try {
@@ -1629,6 +1632,7 @@ loadOrders = async function() {
 // ════════════════════════════════════════════════════════════════════════════
 
 async function loadAnalyticsCharts() {
+  if (!token) return;
   try {
     const [stats, topCust] = await Promise.all([
       apiFetch(ROUTES.analyticsStats),
@@ -1667,9 +1671,9 @@ async function loadAnalyticsCharts() {
   } catch (_) {}
 }
 
-// Hook analytics load into overview
+// Hook analytics load into overview — only when logged in
 document.addEventListener('DOMContentLoaded', () => {
-  setTimeout(loadAnalyticsCharts, 500);
+  setTimeout(() => { if (token) loadAnalyticsCharts(); }, 500);
 });
 
 
