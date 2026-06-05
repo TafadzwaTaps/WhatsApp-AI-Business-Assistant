@@ -29,6 +29,31 @@ let userRole    = localStorage.getItem('wazi_role');
 let userName    = localStorage.getItem('wazi_user');
 let bizName     = localStorage.getItem('wazi_biz');
 let bizId       = parseInt(localStorage.getItem('wazi_business_id') || '0', 10);
+
+// ── STARTUP: validate stored token before any API calls fire ──
+// Decode the JWT expiry without a library (base64 decode the payload).
+// If the access token is already expired on page load, clear it immediately
+// so the login screen shows rather than firing authenticated requests.
+(function() {
+  if (!token) return;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    const expiredAt = payload.exp * 1000;
+    if (Date.now() >= expiredAt) {
+      // Access token expired — clear it so the login screen shows.
+      // Keep the refresh token so tryRefresh() can silently re-authenticate
+      // if the user had a valid refresh token.
+      token = null;
+      localStorage.removeItem('wazi_token');
+    }
+  } catch (_) {
+    // Malformed token — clear everything to force clean login
+    token = refreshTok = userRole = userName = bizName = null;
+    bizId = 0;
+    ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id']
+      .forEach(k => localStorage.removeItem(k));
+  }
+})();
 let activePhone = null;
 let customerPhones = [];
 
@@ -1116,10 +1141,24 @@ function init(){
   else{loadOrders();loadProducts();loadConversations();}
 }
 
-if(token&&userRole){
-  const _ls4=document.getElementById('login-screen');
-  if(_ls4) _ls4.style.display='none';
+// If access token is valid → show dashboard immediately
+// If access token expired but refresh token exists → silently refresh, then init
+// If neither → show login screen
+if (token && userRole) {
+  const _ls4 = document.getElementById('login-screen');
+  if (_ls4) _ls4.style.display = 'none';
   init();
+} else if (!token && refreshTok && userRole) {
+  // Access token expired on load — try silent refresh before showing login
+  (async () => {
+    const ok = await tryRefresh();
+    if (ok) {
+      const _ls5 = document.getElementById('login-screen');
+      if (_ls5) _ls5.style.display = 'none';
+      init();
+    }
+    // If refresh fails, login screen stays visible (default state)
+  })();
 }
 
 function copy(text) {
