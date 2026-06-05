@@ -473,6 +473,7 @@
       <button class="stab"         data-tab="ai"        onclick="switchSettingsTab('ai',this)">🤖 AI</button>
       <button class="stab"         data-tab="store"     onclick="switchSettingsTab('store',this)">🏪 Store</button>
       <button class="stab"         data-tab="appearance" onclick="switchSettingsTab('appearance',this)">🎨 Appearance</button>
+      <button class="stab"         data-tab="referrals" onclick="switchSettingsTab('referrals',this);loadReferralTab()">🔗 Referrals</button>
     </div>
 
     <!-- ── PROFILE TAB ────────────────────────────────────── -->
@@ -754,6 +755,85 @@
       </div>
     </div>
 
+
+    <!-- REFERRALS TAB -->
+    <div class="stab-content" id="stab-referrals">
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">🔗 Your Referral Link</div></div>
+          <div class="panel-body">
+            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.7;">Share your link with other business owners. When they sign up using it, you earn rewards. 🎁</div>
+            <div style="margin-bottom:12px;">
+              <label style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-family:var(--mono);">Your Code</label>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:15px;font-weight:700;color:var(--green);letter-spacing:.08em;" id="ref-code-display">—</div>
+                <button class="btn btn-ghost" onclick="copyRef('code')" style="padding:10px 14px;font-size:12px;">📋 Copy</button>
+              </div>
+            </div>
+            <div style="margin-bottom:16px;">
+              <label style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-family:var(--mono);">Referral Link</label>
+              <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                <div style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:11px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="ref-link-display">—</div>
+                <button class="btn btn-ghost" onclick="copyRef('link')" style="padding:10px 14px;font-size:12px;">📋 Copy</button>
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="shareRefWhatsApp()" style="width:100%;margin-bottom:8px;">💬 Share via WhatsApp</button>
+            <button class="btn btn-ghost" onclick="loadReferralMessage('facebook')" style="width:100%;font-size:12px;">📘 Copy Facebook Post</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">📊 Referral Stats</div></div>
+          <div class="panel-body">
+            <div class="stats-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+              <div class="stat-card"><div class="stat-label">Total Referrals</div><div class="stat-value" id="ref-stat-total">—</div><div class="stat-sub">Signed up</div></div>
+              <div class="stat-card"><div class="stat-label">Converted</div><div class="stat-value" id="ref-stat-converted">—</div><div class="stat-sub">Active accounts</div></div>
+            </div>
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center;">
+              <div style="font-size:11px;color:var(--text-muted);font-family:var(--mono);margin-bottom:4px;">PENDING REWARD</div>
+              <div style="font-size:22px;font-weight:700;color:var(--green);" id="ref-stat-pending">$0.00</div>
+            </div>
+          </div>
+        </div>
+        <div class="panel" style="grid-column:1/-1;">
+          <div class="panel-header">
+            <div class="panel-title">📝 Ready-to-Send Messages</div>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="loadReferralMessage('whatsapp')">WhatsApp</button>
+              <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="loadReferralMessage('facebook')">Facebook</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <textarea id="ref-message-preview" rows="8" readonly style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:var(--mono);font-size:12px;color:var(--text-dim);resize:vertical;line-height:1.6;box-sizing:border-box;" placeholder="Loading message…"></textarea>
+            <div style="display:flex;gap:8px;margin-top:10px;">
+              <button class="btn btn-primary" onclick="copyRefMessage()" style="flex:1;">📋 Copy Message</button>
+              <button class="btn btn-ghost" onclick="shareRefWhatsApp()" style="flex:1;font-size:12px;">💬 Open in WhatsApp</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel" style="grid-column:1/-1;">
+          <div class="panel-header"><div class="panel-title">ℹ️ How Referrals Work</div></div>
+          <div class="panel-body">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;">
+              <div style="text-align:center;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+                <div style="font-size:24px;margin-bottom:8px;">1️⃣</div>
+                <div style="font-size:12px;font-weight:600;margin-bottom:4px;">Share Your Link</div>
+                <div style="font-size:11px;color:var(--text-dim);">Send your unique link or code to other business owners via WhatsApp or social media.</div>
+              </div>
+              <div style="text-align:center;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+                <div style="font-size:24px;margin-bottom:8px;">2️⃣</div>
+                <div style="font-size:12px;font-weight:600;margin-bottom:4px;">They Sign Up</div>
+                <div style="font-size:11px;color:var(--text-dim);">They create their WaziBot account using your link or entering your code at signup.</div>
+              </div>
+              <div style="text-align:center;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
+                <div style="font-size:24px;margin-bottom:8px;">3️⃣</div>
+                <div style="font-size:12px;font-weight:600;margin-bottom:4px;">You Earn Rewards</div>
+                <div style="font-size:11px;color:var(--text-dim);">Track your referrals and pending rewards right here in the dashboard.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /stab-referrals -->
   </div><!-- /section-settings -->
 
   <!-- CUSTOMERS SECTION (simple view) -->

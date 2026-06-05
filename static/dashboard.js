@@ -211,7 +211,9 @@ function buildSidebar() {
       <button class="nav-item" onclick="showSection('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
       <button class="nav-item" onclick="window.open('/inbox','_blank');closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
       <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
-      <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>`;
+      <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
+      <div class="nav-section">Growth</div>
+      <button class="nav-item" onclick="showSection('settings',this);switchSettingsTab('referrals',null);loadReferralTab();closeSidebar()"><span class="icon">🔗</span> Referrals <span id="nav-ref-badge" class="nav-badge nav-badge-green" style="display:none"></span></button>`;
   }
 }
 
@@ -2156,13 +2158,13 @@ function renderGrowthCard(data) {
   };
 })();
 
-// Also load on initial page load if we're on overview
+// Load growth insights only after login
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(loadGrowthInsights, 2000); // after initial data loads
+    setTimeout(() => { if (typeof token !== 'undefined' && token) loadGrowthInsights(); }, 2000);
   });
 } else {
-  setTimeout(loadGrowthInsights, 2000);
+  setTimeout(() => { if (typeof token !== 'undefined' && token) loadGrowthInsights(); }, 2000);
 }
 
 
@@ -2236,7 +2238,7 @@ function dismissWizard() {
     if (name === 'overview') setTimeout(loadOnboardingWizard, 800);
   };
 })();
-setTimeout(() => { if (!_wizardDismissed) loadOnboardingWizard(); }, 2500);
+setTimeout(() => { if (!_wizardDismissed && typeof token !== 'undefined' && token) loadOnboardingWizard(); }, 2500);
 
 
 /* ── Phase 4: Health Center ── */
@@ -2470,4 +2472,133 @@ function dashCmdKeyDown(e) {
     }
   };
 })();
-setTimeout(() => { loadHealthStatus(); loadSuccessNudges(); }, 3000);
+setTimeout(() => { if (typeof token !== 'undefined' && token) { loadHealthStatus(); loadSuccessNudges(); } }, 3000);
+
+
+/* ══════════════════════════════════════════════════════════
+   REFERRALS TAB — Settings → Referrals
+   All additive. Calls /me/referral and /marketing/referral-message
+══════════════════════════════════════════════════════════ */
+
+let _refData = null;
+let _refMsgType = 'whatsapp';
+
+async function loadReferralTab() {
+  if (_refData) { renderReferralTab(_refData); return; }
+  try {
+    _refData = await apiFetch('/me/referral');
+    renderReferralTab(_refData);
+    await loadReferralMessage('whatsapp');
+  } catch (e) {
+    console.warn('Referral load failed:', e.message);
+  }
+}
+
+function renderReferralTab(data) {
+  const code    = data.referral_code   || '—';
+  const link    = data.referral_link   || '—';
+  const total   = data.total_referrals ?? '0';
+  const conv    = data.converted       ?? '0';
+  const pending = data.pending_reward  ?? 0;
+
+  const codeEl    = document.getElementById('ref-code-display');
+  const linkEl    = document.getElementById('ref-link-display');
+  const totalEl   = document.getElementById('ref-stat-total');
+  const convEl    = document.getElementById('ref-stat-converted');
+  const pendingEl = document.getElementById('ref-stat-pending');
+
+  if (codeEl)    codeEl.textContent    = code;
+  if (linkEl)    linkEl.textContent    = link;
+  if (totalEl)   totalEl.textContent   = total;
+  if (convEl)    convEl.textContent    = conv;
+  if (pendingEl) pendingEl.textContent = `$${parseFloat(pending).toFixed(2)}`;
+
+  // Show nav badge if there are referrals
+  const badge = document.getElementById('nav-ref-badge');
+  if (badge && parseInt(total) > 0) {
+    badge.textContent    = total;
+    badge.style.display  = 'inline-flex';
+  }
+}
+
+async function loadReferralMessage(type = 'whatsapp') {
+  _refMsgType = type;
+  const preview = document.getElementById('ref-message-preview');
+  if (!preview) return;
+  preview.value = 'Loading…';
+
+  try {
+    if (type === 'whatsapp') {
+      const data = await apiFetch('/marketing/referral-message');
+      preview.value = data.message || '';
+    } else {
+      const data = await apiFetch('/marketing/copy?business_type=general&tone=friendly');
+      const fb   = data.facebook_awareness;
+      preview.value = (fb?.caption || '') + (fb?.hashtags ? '\n\n' + fb.hashtags : '');
+    }
+  } catch (e) {
+    preview.value = 'Could not load message. Please try again.';
+  }
+}
+
+function copyRef(type) {
+  if (!_refData) return;
+  const text = type === 'code' ? _refData.referral_code : _refData.referral_link;
+  if (!text || text === '—') return;
+  navigator.clipboard.writeText(text).then(() => {
+    toast(type === 'code' ? 'Referral code copied! ✓' : 'Referral link copied! ✓');
+  }).catch(() => {
+    // Fallback
+    const el = document.getElementById(type === 'code' ? 'ref-code-display' : 'ref-link-display');
+    if (el) { const range = document.createRange(); range.selectNode(el); window.getSelection().removeAllRanges(); window.getSelection().addRange(range); document.execCommand('copy'); }
+    toast('Copied! ✓');
+  });
+}
+
+function copyRefMessage() {
+  const preview = document.getElementById('ref-message-preview');
+  if (!preview || !preview.value) return;
+  navigator.clipboard.writeText(preview.value).then(() => {
+    toast('Message copied! ✓');
+  }).catch(() => {
+    preview.select();
+    document.execCommand('copy');
+    toast('Message copied! ✓');
+  });
+}
+
+function shareRefWhatsApp() {
+  const preview = document.getElementById('ref-message-preview');
+  const text    = preview?.value || (_refData?.referral_link || '');
+  if (!text) return;
+  const encoded = encodeURIComponent(text.substring(0, 1000));
+  window.open(`https://wa.me/?text=${encoded}`, '_blank');
+}
+
+// Auto-load referral data when user opens the Referrals nav item directly
+// (already wired via onclick in the nav button above)
+
+// Also show a subtle referral nudge on Overview if they have no referrals yet
+async function maybeShowReferralNudge() {
+  try {
+    const data = await apiFetch('/me/referral');
+    if (parseInt(data.total_referrals || 0) === 0) {
+      const section = document.getElementById('section-overview');
+      if (!section || document.getElementById('ref-nudge')) return;
+      const nudge = document.createElement('div');
+      nudge.id = 'ref-nudge';
+      nudge.style.cssText = 'display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(34,197,94,.06);border:1px solid rgba(34,197,94,.15);border-radius:8px;margin-bottom:12px;font-size:12px;color:var(--text-dim);cursor:pointer;';
+      nudge.onclick = () => { showSection('settings', null); switchSettingsTab('referrals', null); loadReferralTab(); };
+      nudge.innerHTML = `
+        <span style="font-size:16px;">🔗</span>
+        <div style="flex:1;">Earn rewards by referring other businesses to WaziBot.</div>
+        <span style="color:var(--green);font-size:11px;white-space:nowrap;">Get my link →</span>
+      `;
+      const firstCard = section.querySelector('.card, .stats-grid, .stat-row');
+      if (firstCard) firstCard.insertAdjacentElement('afterend', nudge);
+    }
+  } catch (_) {}
+}
+
+// Load referral nudge a few seconds after the page settles
+setTimeout(() => { if (typeof token !== 'undefined' && token) maybeShowReferralNudge(); }, 4000);
