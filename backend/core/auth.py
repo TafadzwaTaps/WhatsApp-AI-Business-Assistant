@@ -61,11 +61,18 @@ def decode_token(token: str) -> dict:
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
-    payload     = decode_token(token)
+    import logging as _al
+    _log = _al.getLogger("wazibot.auth")
+    try:
+        payload = decode_token(token)
+    except HTTPException as exc:
+        _log.warning("AUTH FAILED: reason=invalid_or_expired_token  detail=%s", exc.detail)
+        raise
     username    = payload.get("sub")
     role        = payload.get("role", "business")
     business_id = payload.get("business_id")
     if not username:
+        _log.warning("AUTH FAILED: reason=missing_sub_in_token")
         raise HTTPException(status_code=401, detail="Invalid token payload")
     return {"username": username, "role": role, "business_id": business_id}
 
@@ -77,6 +84,10 @@ def require_superadmin(user: dict = Depends(get_current_user)):
 
 
 def require_business(user: dict = Depends(get_current_user)):
-    if user["role"] not in ("business",):
+    import logging as _al
+    _al = _al.getLogger("wazibot.auth")
+    if user["role"] not in ("business", "superadmin"):
+        _al.warning("AUTH FAILED: reason=wrong_role  role=%s  user=%s",
+                    user.get("role"), user.get("username"))
         raise HTTPException(status_code=403, detail="Business account required")
     return user

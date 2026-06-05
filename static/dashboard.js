@@ -135,20 +135,38 @@ function saveSession(data, username) {
   localStorage.setItem('wazi_biz',     bizName    || '');
 }
 
+let _refreshInFlight = false;
 async function tryRefresh() {
   // If there was never a refresh token, user is simply not logged in — don't redirect
-  if (!refreshTok) { return false; }
+  if (!refreshTok) return false;
+  // Prevent concurrent refresh attempts
+  if (_refreshInFlight) {
+    // Wait up to 3s for the in-flight refresh to complete
+    await new Promise(r => setTimeout(r, 3000));
+    return !!token;
+  }
+  _refreshInFlight = true;
   try {
     const res = await fetch(API + ROUTES.refresh, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refreshTok })
     });
-    if (!res.ok) { logout(); return false; }
+    if (!res.ok) {
+      // 401/403 from refresh = token genuinely expired → must re-login
+      logout();
+      return false;
+    }
     const data = await res.json();
     saveSession(data, userName);
     return true;
-  } catch { logout(); return false; }
+  } catch {
+    // Network error — don't logout, just fail this request silently
+    // User can retry; we don't force them back to login on a blip
+    return false;
+  } finally {
+    _refreshInFlight = false;
+  }
 }
 
 function logout() {
@@ -175,7 +193,10 @@ async function apiFetch(path, opts={}, _retried=false) {
     if (res.status === 401 && !_retried) {
       const refreshed = await tryRefresh();
       if (refreshed) return apiFetch(path, opts, true);  // one retry only
-      return null;  // tryRefresh already called logout()
+      // Refresh failed — show UI feedback if we have a status element
+      const statusEl = document.getElementById('api-status-text');
+      if (statusEl) statusEl.textContent = 'Session expired — logging out…';
+      return null;
     }
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
@@ -1127,7 +1148,11 @@ function setLoading(el, state=true) {
 // PHASE 1 — CRM SEGMENT CARD (overview) + REMINDERS BADGE
 // ════════════════════════════════════════════════════════════════════════════
 
+let _overviewExtrasLoading = false;
 async function loadOverviewExtras() {
+  if (!token) return;
+  if (_overviewExtrasLoading) return;
+  _overviewExtrasLoading = true;
   // CRM segments
   try {
     const seg = await apiFetch(ROUTES.crmSegments);
@@ -1161,7 +1186,10 @@ async function loadOverviewExtras() {
     // Nav badge
     const nb = document.getElementById('nav-rem-badge');
     if (nb) { nb.textContent = count; nb.style.display = count > 0 ? 'inline-flex' : 'none'; }
-  } catch (_) {}
+  } catch (_) {
+  } finally {
+    _overviewExtrasLoading = false;
+  }
 }
 
 // Hook into the overview load
@@ -1631,8 +1659,11 @@ loadOrders = async function() {
 // PHASE 6 — ANALYTICS CHARTS
 // ════════════════════════════════════════════════════════════════════════════
 
+let _analyticsChartsLoading = false;
 async function loadAnalyticsCharts() {
   if (!token) return;
+  if (_analyticsChartsLoading) return;
+  _analyticsChartsLoading = true;
   try {
     const [stats, topCust] = await Promise.all([
       apiFetch(ROUTES.analyticsStats),
@@ -1668,7 +1699,10 @@ async function loadAnalyticsCharts() {
         </div>`;
       }).join('');
     }
-  } catch (_) {}
+  } catch (_) {
+  } finally {
+    _analyticsChartsLoading = false;
+  }
 }
 
 // Hook analytics load into overview — only when logged in
@@ -2162,14 +2196,13 @@ function renderGrowthCard(data) {
   };
 })();
 
-// Load growth insights only after login
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => {
-    setTimeout(() => { if (typeof token !== 'undefined' && token) loadGrowthInsights(); }, 2000);
-  });
-} else {
-  setTimeout(() => { if (typeof token !== 'undefined' && token) loadGrowthInsights(); }, 2000);
-}
+// Load growth insights only after login — single consolidated call
+// (all post-login async loads are batched here to prevent a request storm)
+setTimeout(() => {
+  if (typeof token !== 'undefined' && token) {
+    loadGrowthInsights();
+  }
+}, 2500);
 
 
 /* ══════════════════════════════════════════════════════════
@@ -2242,7 +2275,7 @@ function dismissWizard() {
     if (name === 'overview') setTimeout(loadOnboardingWizard, 800);
   };
 })();
-setTimeout(() => { if (!_wizardDismissed && typeof token !== 'undefined' && token) loadOnboardingWizard(); }, 2500);
+setTimeout(() => { if (!_wizardDismissed && typeof token !== 'undefined' && token) loadOnboardingWizard(); }, 3000);
 
 
 /* ── Phase 4: Health Center ── */
@@ -2476,7 +2509,7 @@ function dashCmdKeyDown(e) {
     }
   };
 })();
-setTimeout(() => { if (typeof token !== 'undefined' && token) { loadHealthStatus(); loadSuccessNudges(); } }, 3000);
+setTimeout(() => { if (typeof token !== 'undefined' && token) { loadHealthStatus(); loadSuccessNudges(); } }, 4000);
 
 
 /* ══════════════════════════════════════════════════════════
@@ -2605,4 +2638,4 @@ async function maybeShowReferralNudge() {
 }
 
 // Load referral nudge a few seconds after the page settles
-setTimeout(() => { if (typeof token !== 'undefined' && token) maybeShowReferralNudge(); }, 4000);
+setTimeout(() => { if (typeof token !== 'undefined' && token) maybeShowReferralNudge(); }, 5000);
