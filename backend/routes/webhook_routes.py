@@ -236,11 +236,14 @@ async def receive_message(request: Request):
 
         # Build per-business config so AI can tailor its copy
         biz_config = {
-            "welcome_message":  business.get("welcome_message", "") or "",
-            "currency":         business.get("currency", "USD")         or "USD",
-            "currency_symbol":  business.get("currency_symbol", "$")    or "$",
-            "category":         business.get("category", "")            or "",
-            "menu_header":      business.get("menu_header", "")         or "",
+            "welcome_message":       business.get("welcome_message", "")     or "",
+            "currency":              business.get("currency", "USD")          or "USD",
+            "currency_symbol":       business.get("currency_symbol", "$")     or "$",
+            "category":              business.get("category", "")             or "",
+            "menu_header":           business.get("menu_header", "")          or "",
+            # Service business mode
+            "is_service_business":   bool(business.get("is_service_business", False)),
+            "default_slot_mins":     int(business.get("default_slot_mins", 60) or 60),
         }
 
         reply = generate_reply(

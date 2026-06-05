@@ -45,6 +45,7 @@ class SignupRequest(BaseModel):
     category:          str = ""
     contact_phone:     str = ""
     use_shared_number: bool = True
+    ref_code:          str  = ""   # optional referral code from signup link
 
     @validator("username")
     def username_valid(cls, v):
@@ -96,6 +97,23 @@ def signup(data: SignupRequest, request: Request):
 
     biz = crud.create_business(_Payload())
     log.info("🆕 Signup: %s (@%s)", biz["name"], biz["owner_username"])
+
+    # Auto-start 14-day trial + generate referral code for every new signup
+    try:
+        from services.growth_service import start_trial
+        start_trial(biz["id"])
+    except Exception as exc:
+        log.warning("trial start failed for biz %s: %s", biz["id"], exc)
+
+    # Record referral if signup came via a referral link (?ref=CODE)
+    ref_code = getattr(data, "ref_code", "").strip() if hasattr(data, "ref_code") else ""
+    if ref_code:
+        try:
+            from services.growth_service import record_referral
+            record_referral(biz["id"], ref_code)
+        except Exception as exc:
+            log.warning("referral record failed: %s", exc)
+
     return {
         **_token_pair(biz["owner_username"], "business", biz["id"]),
         "role":          "business",

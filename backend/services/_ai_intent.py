@@ -489,3 +489,48 @@ def _is_introduction(text: str) -> bool:
     like "Tafadzwa" fuzzy-match products like "Sadza" (ratio 0.615 > threshold).
     """
     return any(p.match(text.strip()) for p in _INTRO_PATTERNS)
+
+
+# ── Booking intent detection ──────────────────────────────────────────────────
+# Used only when is_service_business=True — retail businesses unaffected.
+
+import re as _booking_re
+
+_BOOKING_INTENT_RE = _booking_re.compile(
+    r"\b(book|appointment|appoint|schedule|reserve|slot|session|visit|"
+    r"come in|come over|see you|meeting|consultation|available)\b",
+    re.IGNORECASE,
+)
+
+_CANCEL_BOOKING_RE = _booking_re.compile(
+    r"\b(cancel|cancell?ation)\s+(booking|appointment|slot|session)\b",
+    re.IGNORECASE,
+)
+
+_RESCHEDULE_RE = _booking_re.compile(
+    r"\b(reschedule|move|change|postpone)\s+(booking|appointment|slot)\b",
+    re.IGNORECASE,
+)
+
+_MY_BOOKINGS_RE = _booking_re.compile(
+    r"\b(my\s+booking|my\s+appointment|show\s+booking|view\s+appointment|"
+    r"booking\s+status|appointment\s+status)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_booking_intent(text: str) -> bool:
+    """Returns True if the message looks like a booking/appointment request."""
+    return bool(_BOOKING_INTENT_RE.search(text))
+
+
+def _is_cancel_booking(text: str) -> bool:
+    return bool(_CANCEL_BOOKING_RE.search(text.lower()))
+
+
+def _is_reschedule_booking(text: str) -> bool:
+    return bool(_RESCHEDULE_RE.search(text.lower()))
+
+
+def _is_my_bookings_query(text: str) -> bool:
+    return bool(_MY_BOOKINGS_RE.search(text.lower()))

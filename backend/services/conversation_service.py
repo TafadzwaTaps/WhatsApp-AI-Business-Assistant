@@ -56,6 +56,11 @@ class STATE:
 
     ORDER_PREVIEW          = "order_preview"    # parser showed preview, waiting for yes/no
 
+    # Booking states — service businesses only
+    AWAITING_BOOKING_DATE = "awaiting_booking_date"
+    AWAITING_BOOKING_TIME = "awaiting_booking_time"
+    BOOKING_CONFIRM       = "booking_confirm"
+
     ALL = {
         BROWSING, CONFIRM_ORDER, CHECKOUT,
         AWAITING_PAYMENT, AWAITING_PROOF,
@@ -63,6 +68,8 @@ class STATE:
         ORDER_PREVIEW,
         MANUAL_REVIEW, HUMAN_HANDOFF,
         SURVEY, COMPLETED, CANCELLED,
+        # Booking states
+        "awaiting_booking_date", "awaiting_booking_time", "booking_confirm",
     }
 
 

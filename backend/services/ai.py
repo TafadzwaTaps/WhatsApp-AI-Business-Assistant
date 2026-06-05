@@ -98,6 +98,8 @@ from services._ai_intent import (
     _is_yes, _is_no, _detect_payment_method, _intent,
     _is_proof_submission, _looks_like_txn_id,
     _is_introduction,
+    _is_booking_intent, _is_cancel_booking,
+    _is_reschedule_booking, _is_my_bookings_query,
 )
 
 # Products, formatters, multi-item
@@ -145,11 +147,13 @@ def generate_reply(
     All keys optional — missing keys fall back to defaults.
     """
     # ── Resolve per-business config ─────────────────────────────────────────
-    _cfg          = business_config or {}
-    _currency_sym = (_cfg.get("currency_symbol") or "$").strip() or "$"
-    _welcome_msg  = (_cfg.get("welcome_message") or "").strip()
-    _menu_header  = (_cfg.get("menu_header") or "").strip()
-    _biz_category = (_cfg.get("category") or "").lower().strip()
+    _cfg                = business_config or {}
+    _currency_sym       = (_cfg.get("currency_symbol") or "$").strip() or "$"
+    _welcome_msg        = (_cfg.get("welcome_message") or "").strip()
+    _menu_header        = (_cfg.get("menu_header") or "").strip()
+    _biz_category       = (_cfg.get("category") or "").lower().strip()
+    _is_service_biz     = bool(_cfg.get("is_service_business", False))
+    _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
 
     if voice_transcript:
         text = voice_transcript.strip()
@@ -828,6 +832,139 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     intent = _intent(text)
     log.info("intent=%s", intent)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P4.4 — BOOKING HANDLER (service businesses only)
+    # Gated on _is_service_biz — retail businesses never reach this block.
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_service_biz:
+        from services.booking_service import (
+            parse_booking_request, format_booking_preview, create_booking,
+            get_bookings_for_customer, cancel_booking as _cancel_booking,
+            format_booking_confirmation, _format_date, _format_time,
+        )
+        from datetime import date as _date
+
+        if _is_my_bookings_query(text):
+            bookings = get_bookings_for_customer(business_id, phone)
+            if not bookings:
+                return (
+                    f"📅 You don't have any bookings with us yet.\n\n"
+                    f"Type *book* to schedule an appointment with *{business_name}*! 😊"
+                )
+            lines = []
+            for b in bookings[:5]:
+                d, t = b.get("booking_date",""), b.get("start_time","")
+                svc  = b.get("service_name","Appointment")
+                stat = b.get("status","").title()
+                try:    d_fmt = _format_date(_date.fromisoformat(d))
+                except: d_fmt = d
+                lines.append(f"  📌 *{svc}* — {d_fmt} {_format_time(t) if t else ''} [{stat}]")
+            return (
+                f"📅 *Your Bookings at {business_name}*\n\n"
+                + "\n".join(lines) +
+                "\n\n_Type *cancel booking* to cancel | *reschedule booking* to change_"
+            )
+
+        if _is_cancel_booking(text):
+            bookings = get_bookings_for_customer(business_id, phone)
+            active   = [b for b in bookings if b.get("status") in ("confirmed","pending","rescheduled")]
+            if not active:
+                return "ℹ️ You have no active bookings to cancel.\n\nType *book* to make a new appointment."
+            booking = active[0]
+            if _cancel_booking(booking["id"], business_id):
+                try:    d_fmt = _format_date(_date.fromisoformat(booking["booking_date"]))
+                except: d_fmt = booking.get("booking_date","")
+                return f"🚫 *Booking Cancelled*\n\nYour appointment on *{d_fmt}* has been cancelled.\n\n_Type *book* to make a new appointment._"
+            return "⚠️ Could not cancel your booking. Please contact us directly."
+
+        if current_state == "awaiting_booking_date":
+            session = _read_state_data(phone, business_id).get("session") or {}
+            if _is_cancel(text):
+                _reset_state(phone, business_id)
+                return "🚫 Booking cancelled. Type *book* to start again."
+            parsed = parse_booking_request(text)
+            if not parsed.date_str:
+                from services.booking_service import _parse_date_str, _resolve_relative_date
+                raw = _parse_date_str(text) or _resolve_relative_date(text)
+                if raw:
+                    parsed.date_str = raw.isoformat()
+                    parsed.has_booking_intent = True
+            if parsed.date_str:
+                if parsed.time_str:
+                    _write_state_data(phone, business_id, {"state": "booking_confirm",
+                        "session": {**session, "booking_date": parsed.date_str, "time_str": parsed.time_str}})
+                    from services.booking_service import ParsedBooking as _PB
+                    return format_booking_preview(_PB(has_booking_intent=True, date_str=parsed.date_str,
+                        time_str=parsed.time_str, duration_hrs=_default_slot_mins/60), business_name)
+                _write_state_data(phone, business_id, {"state": "awaiting_booking_time",
+                    "session": {**session, "booking_date": parsed.date_str}})
+                try:    d_fmt = _format_date(_date.fromisoformat(parsed.date_str))
+                except: d_fmt = parsed.date_str
+                return (f"📅 Got it — *{d_fmt}*.\n\nWhat time would you like?\n\n"
+                        "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
+            return ("📅 I didn't catch that date.\n\n_e.g. *tomorrow*, *Friday*, *14/09*_\n_Type *cancel* to go back._")
+
+        if current_state == "awaiting_booking_time":
+            session = _read_state_data(phone, business_id).get("session") or {}
+            if _is_cancel(text):
+                _reset_state(phone, business_id)
+                return "🚫 Booking cancelled. Type *book* to start again."
+            from services.booking_service import _parse_time, ParsedBooking as _PB
+            time_str = _parse_time(text)
+            if time_str:
+                booking_date = session.get("booking_date","")
+                _write_state_data(phone, business_id, {"state": "booking_confirm",
+                    "session": {**session, "time_str": time_str}})
+                return format_booking_preview(_PB(has_booking_intent=True, date_str=booking_date,
+                    time_str=time_str, duration_hrs=_default_slot_mins/60,
+                    service_name=session.get("service","")), business_name)
+            return ("🕐 I didn't catch that time.\n\n_e.g. *10am*, *2:30pm*, *14:00*_\n_Type *cancel* to go back._")
+
+        if current_state == "booking_confirm":
+            session = _read_state_data(phone, business_id).get("session") or {}
+            if _is_cancel(text) or _is_no(text):
+                _reset_state(phone, business_id)
+                return "🚫 Booking cancelled. Type *book* to start fresh."
+            if _is_yes(text):
+                booking = create_booking(business_id=business_id, customer_phone=phone,
+                    booking_date=session.get("booking_date",""),
+                    start_time=session.get("time_str","09:00"),
+                    duration_hrs=_default_slot_mins/60,
+                    service_name=session.get("service",""))
+                _reset_state(phone, business_id)
+                if booking:
+                    try:
+                        from services.calendar_service import sync_booking
+                        sync_booking(booking, business_name)
+                    except Exception: pass
+                    return format_booking_confirmation(booking, business_name)
+                return "⚠️ Could not save your booking. Please try again or contact us. 🙏"
+            return "Please reply *yes* to confirm your booking or *no* to cancel."
+
+        if _is_booking_intent(text):
+            parsed = parse_booking_request(text)
+            if parsed.confidence >= 0.85 and parsed.date_str and parsed.time_str:
+                _write_state_data(phone, business_id, {"state": "booking_confirm",
+                    "session": {"booking_date": parsed.date_str, "time_str": parsed.time_str,
+                                "service": parsed.service_name or ""}})
+                return format_booking_preview(parsed, business_name)
+            elif parsed.date_str:
+                _write_state_data(phone, business_id, {"state": "awaiting_booking_time",
+                    "session": {"booking_date": parsed.date_str, "service": parsed.service_name or ""}})
+                try:    d_fmt = _format_date(_date.fromisoformat(parsed.date_str))
+                except: d_fmt = parsed.date_str
+                return (f"📅 Great! *{d_fmt}* works.\n\nWhat time would you like?\n\n"
+                        "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
+            else:
+                _write_state_data(phone, business_id, {"state": "awaiting_booking_date",
+                    "session": {"service": parsed.service_name or ""}})
+                svc_hint = (", ".join(f"*{p['name']}*" for p in products[:4])
+                             if products else "our services")
+                return (f"📅 I'd love to book you in at *{business_name}*!\n\n"
+                        f"Services: {svc_hint}\n\n"
+                        f"What date works for you?\n\n_e.g. *tomorrow*, *Friday*, *14 June*_\n_Type *cancel* to go back._")
+
 
     # ══════════════════════════════════════════════════════════════════════════
     # P4.5 — REORDER
