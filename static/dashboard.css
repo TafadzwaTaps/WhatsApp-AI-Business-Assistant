@@ -1012,3 +1012,188 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   transition: transform .15s;
 }
 .help-fab:hover { transform: scale(1.08); }
+
+
+/* ══════════════════════════════════════════════════════════
+   FLOATING HELP PANEL & COMMAND PALETTE
+   Fixed-position overlays — must live in dashboard.css
+   so they work on the dashboard page independently of inbox.css
+══════════════════════════════════════════════════════════ */
+
+/* Help panel — fixed bottom-right floating card */
+.help-panel {
+  display: none;
+  position: fixed;
+  bottom: 76px;
+  right: 20px;
+  width: min(92vw, 360px);
+  max-height: 500px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.55);
+  z-index: 400;
+  flex-direction: column;
+  overflow: hidden;
+}
+.help-panel.open { display: flex; }
+
+.help-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.help-panel-close {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.help-panel-close:hover { color: var(--text); }
+
+.help-panel-input-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.help-panel-input {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--mono);
+  outline: none;
+}
+.help-panel-input:focus { border-color: var(--green); }
+.help-panel-send {
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: var(--green);
+  color: #000;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+.help-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.help-answer   { color: var(--text); margin-bottom: 10px; line-height: 1.65; }
+.help-steps    { margin: 8px 0 8px 16px; padding: 0; }
+.help-steps li { margin-bottom: 5px; color: var(--text); }
+.help-tip      { padding: 7px 10px; background: rgba(34,197,94,.07); border-left: 2px solid var(--green); margin-top: 6px; border-radius: 0 6px 6px 0; color: var(--text-dim); }
+.help-related  { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.help-related-chip {
+  padding: 4px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--blue, #38bdf8);
+  cursor: pointer;
+  background: transparent;
+}
+.help-related-chip:hover { background: rgba(56,189,248,.08); }
+.help-quick-links { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.help-quick-link  {
+  padding: 5px 11px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+.help-quick-link:hover { color: var(--text); border-color: var(--green); }
+
+/* Command palette — full-screen overlay */
+.cmd-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.65);
+  z-index: 500;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 16vh;
+}
+.cmd-overlay.open { display: flex; }
+
+.cmd-box {
+  width: min(96vw, 540px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0,0,0,.65);
+  overflow: hidden;
+}
+.cmd-input-row {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  gap: 10px;
+}
+.cmd-icon  { font-size: 16px; color: var(--text-dim); flex-shrink: 0; }
+.cmd-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--mono);
+  outline: none;
+}
+.cmd-results { max-height: 320px; overflow-y: auto; }
+.cmd-result {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  cursor: pointer;
+  transition: background .1s;
+}
+.cmd-result:hover, .cmd-result.active { background: var(--surface2); }
+.cmd-result-icon  { font-size: 16px; flex-shrink: 0; width: 24px; text-align: center; }
+.cmd-result-text  { font-size: 13px; color: var(--text); }
+.cmd-result-sub   { font-size: 10.5px; color: var(--text-dim); margin-top: 1px; }
+.cmd-footer {
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  display: flex;
+  gap: 16px;
+}
+.cmd-footer kbd {
+  background: var(--surface2);
+  padding: 2px 5px;
+  border-radius: 3px;
+  font-family: var(--mono);
+}
+
+/* Mobile adjustments */
+@media (max-width: 700px) {
+  .help-panel  { bottom: 80px; right: 12px; width: calc(100vw - 24px); }
+  .help-fab    { bottom: 20px; right: 12px; }
+  .cmd-overlay { padding-top: 0; align-items: flex-end; }
+  .cmd-box     { width: 100vw; border-radius: 14px 14px 0 0; }
+  .cmd-results { max-height: 55vh; }
+}
