@@ -34,7 +34,30 @@ def chat_customers(search: Optional[str] = Query(None), user=Depends(get_current
 
 @router.get("/chat/conversations")
 def chat_conversations(unread_only: bool = Query(False), user=Depends(get_current_user)):
-    return crud.get_chat_conversations(user["business_id"], filter_unread=unread_only)
+    bid = user["business_id"]
+    convos = crud.get_chat_conversations(bid, filter_unread=unread_only)
+
+    # Shared number: also fetch conversations from businesses the platform number serves.
+    # Merge in customers from other business IDs that have no dedicated WhatsApp number
+    # (i.e. they use the shared number and the agent sees all of them).
+    if SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+        try:
+            from core.db import supabase as _sb
+            # Find all active businesses using the shared number
+            biz_res = _sb.table("businesses").select("id").eq("is_active", True).execute()
+            other_ids = [b["id"] for b in (biz_res.data or []) if b["id"] != bid]
+            seen_phones = {c["phone"] for c in convos}
+            for other_bid in other_ids[:10]:  # cap to avoid huge queries
+                other = crud.get_chat_conversations(other_bid, filter_unread=unread_only)
+                for c in other:
+                    if c["phone"] not in seen_phones:
+                        seen_phones.add(c["phone"])
+                        convos.append(c)
+        except Exception as exc:
+            log.warning("chat_conversations shared-number merge failed: %s", exc)
+
+    convos.sort(key=lambda c: c.get("last_message_at") or c.get("last_seen") or "", reverse=True)
+    return convos
 
 
 @router.get("/chat/conversations/{phone:path}")
@@ -108,13 +131,34 @@ class ChatSendRequest(BaseModel):
 async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(body.customer_id, bid)
-    if not customer: raise HTTPException(404, "Customer not found")
+    # Shared number: customer may belong to a different business_id
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", body.customer_id).limit(1).execute()
+            if res.data:
+                customer = res.data[0]
+                log.info("shared-number cross-tenant lookup  customer_id=%s  customer_biz=%s  agent_biz=%s",
+                         body.customer_id, customer.get("business_id"), bid)
+        except Exception as exc:
+            log.warning("cross-tenant lookup failed: %s", exc)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
 
     business = crud.get_business_by_id(bid)
     try:
         token = crud.get_decrypted_token(business)
     except TokenDecryptionError as exc:
         raise HTTPException(503, "WhatsApp token cannot be decrypted. Re-enter it in Settings.")
+
+    # On shared number, the customer's business_id may differ from the agent's
+    customer_biz_id = customer.get("business_id", bid)
+    if customer_biz_id != bid:
+        business = crud.get_business_by_id(customer_biz_id) or business
+        try:
+            token = crud.get_decrypted_token(business)
+        except Exception:
+            token = ""
 
     has_phone_id = bool(business.get("whatsapp_phone_id"))
     has_token    = bool(token)
@@ -136,7 +180,8 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 
     try:
         from workflows.human_handoff import record_agent_reply
-        record_agent_reply(customer["phone"], bid)
+        # Use customer's actual business_id (important for shared number)
+        record_agent_reply(customer["phone"], customer.get("business_id", bid))
     except Exception as exc:
         log.debug("record_agent_reply skipped: %s", exc)
 
@@ -153,13 +198,43 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 @router.get("/chat/handoff/pending")
 def handoff_pending(user=Depends(require_business)):
     from workflows.human_handoff import get_pending_handoffs
-    return get_pending_handoffs(user["business_id"])
+    bid = user["business_id"]
+    pending = get_pending_handoffs(bid)
+
+    # Shared number: also check handoffs on other businesses
+    if SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+        try:
+            from core.db import supabase as _sb
+            biz_res = _sb.table("businesses").select("id").eq("is_active", True).execute()
+            seen = {p["phone"] for p in pending}
+            for b in (biz_res.data or []):
+                if b["id"] == bid: continue
+                for h in get_pending_handoffs(b["id"]):
+                    if h["phone"] not in seen:
+                        seen.add(h["phone"])
+                        pending.append(h)
+        except Exception as exc:
+            log.warning("handoff_pending shared-number merge failed: %s", exc)
+
+    return pending
 
 
 @router.post("/chat/handoff/{customer_id}/request")
 async def handoff_request(customer_id: int, user=Depends(require_business)):
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+            customer = res.data[0] if res.data else None
+        except Exception: pass
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+            customer = res.data[0] if res.data else None
+        except Exception: pass
     if not customer: raise HTTPException(404, "Customer not found")
 
     from workflows.human_handoff import notify_dashboard
