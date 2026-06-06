@@ -354,7 +354,7 @@ class HelpQuestion(BaseModel):
 
 
 @router.post("/support/ask")
-def ask_support(body: HelpQuestion, user=Depends(require_business)):
+def ask_support(body: HelpQuestion):  # public — no auth needed
     """Answer a help question using the WaziBot knowledge base."""
     from services.support_assistant import answer_help_question
     if not body.question or len(body.question.strip()) < 2:
@@ -364,14 +364,14 @@ def ask_support(body: HelpQuestion, user=Depends(require_business)):
 
 
 @router.get("/support/articles")
-def list_articles(user=Depends(require_business)):
+def list_articles():
     """Return a list of all help articles."""
     from services.support_assistant import list_all_articles
     return {"articles": list_all_articles()}
 
 
 @router.get("/support/article/{article_id}")
-def get_article(article_id: str, user=Depends(require_business)):
+def get_article(article_id: str):
     """Return a specific help article."""
     from services.support_assistant import get_feature_instructions
     article = get_feature_instructions(article_id)
@@ -381,7 +381,7 @@ def get_article(article_id: str, user=Depends(require_business)):
 
 
 @router.get("/support/context-tips/{section}")
-def context_tips(section: str, user=Depends(require_business)):
+def context_tips(section: str):
     """Return context-aware tips for the current dashboard section."""
     from services.support_assistant import get_context_tips
     return {"section": section, "tips": get_context_tips(section)}

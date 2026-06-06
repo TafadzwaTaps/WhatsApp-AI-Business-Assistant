@@ -1246,12 +1246,13 @@ async function loadOverviewExtras() {
   }
 }
 
-// Hook into the overview load
-const _origLoadOrders = loadOrders;
-async function loadOrders() {
-  await _origLoadOrders();
-  loadOverviewExtras();
-}
+// Hook into the overview load — IIFE closure avoids const/function TDZ conflict
+loadOrders = (function(_wrapped) {
+  return async function loadOrders() {
+    await _wrapped();
+    loadOverviewExtras();
+  };
+}(loadOrders));
 
 async function sendAllReminders() {
   const btn = event && event.target;
@@ -1685,8 +1686,9 @@ async function updateOrderStatus(orderId) {
 }
 
 // Patch loadOrders to capture data for kanban + filter
-const _origLoadOrdersPhase5 = loadOrders;
-loadOrders = async function() {
+// Phase 5 — patch loadOrders to also store _ordersData (IIFE avoids TDZ)
+loadOrders = (function(_prev5) {
+  return async function() {
   try {
     const raw = await apiFetch(ROUTES.orders);
     if (!raw) return;
@@ -1706,7 +1708,8 @@ loadOrders = async function() {
       if (el) el.innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
     });
   }
-};
+  };
+}(loadOrders));
 
 
 // ════════════════════════════════════════════════════════════════════════════
