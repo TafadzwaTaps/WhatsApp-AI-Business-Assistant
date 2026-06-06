@@ -47,11 +47,10 @@ let bizId       = parseInt(localStorage.getItem('wazi_business_id') || '0', 10);
       localStorage.removeItem('wazi_token');
     }
   } catch (_) {
-    // Malformed token — clear everything to force clean login
-    token = refreshTok = userRole = userName = bizName = null;
-    bizId = 0;
-    ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id']
-      .forEach(k => localStorage.removeItem(k));
+    // Token can't be decoded — treat as expired, clear access token only.
+    // Keep refresh token so silent refresh can try to recover the session.
+    token = null;
+    localStorage.removeItem('wazi_token');
   }
 })();
 let activePhone = null;
@@ -81,28 +80,44 @@ function switchTab(tab) {
 }
 
 async function doLogin() {
+  // Use requestAnimationFrame to ensure browser autofill has completed
+  // before reading field values — fixes Chrome desktop autofill race condition
+  await new Promise(r => requestAnimationFrame(r));
+
   const username = document.getElementById('login-username').value.trim();
   const password = document.getElementById('login-password').value;
-  const errEl = document.getElementById('login-error');
+  const errEl    = document.getElementById('login-error');
+  const btnEl    = document.querySelector('.btn-login');
   errEl.textContent = '';
-  if (!username || !password) { errEl.textContent = 'Enter credentials'; return; }
+
+  if (!username || !password) { errEl.textContent = 'Enter username and password'; return; }
+
+  if (btnEl) { btnEl.disabled = true; btnEl.textContent = 'Signing in…'; }
   try {
     const res = await fetch(API + ROUTES.login, {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password })
+      body:    JSON.stringify({ username, password })
     });
-    if (!res.ok) { const d=await res.json(); errEl.textContent = d.detail || 'Login failed'; return; }
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      errEl.textContent = d.detail || 'Login failed. Check your username and password.';
+      return;
+    }
     const data = await res.json();
     saveSession(data, username);
-    const _ls=document.getElementById('login-screen'); if(_ls) _ls.style.display='none';
-    // If we're on the landing page or signup, redirect to dashboard
+    const _ls = document.getElementById('login-screen');
+    if (_ls) _ls.style.display = 'none';
     if (window.location.pathname !== '/dashboard') {
       window.location.href = '/dashboard';
       return;
     }
     init();
-  } catch(e) { errEl.textContent = 'Cannot reach server. Is backend running?'; }
+  } catch(e) {
+    errEl.textContent = 'Cannot reach server. Check your connection.';
+  } finally {
+    if (btnEl) { btnEl.disabled = false; btnEl.textContent = 'Sign In →'; }
+  }
 }
 
 async function doRegister() {
