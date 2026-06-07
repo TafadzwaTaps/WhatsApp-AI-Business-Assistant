@@ -341,6 +341,30 @@ def notify_dashboard(phone: str, business_id: int, business_name: str) -> None:
     except Exception as exc:
         log.error("handoff: notify_dashboard failed: %s", exc)
 
+    # Increment unread badge on customer record so inbox shows the notification
+    try:
+        from core.db import supabase as _sb
+        from datetime import datetime, timezone
+        # Find customer record and bump unread_count
+        res = (
+            _sb.table("customers")
+            .select("id, unread_count")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            cust = res.data[0]
+            new_count = int(cust.get("unread_count") or 0) + 1
+            _sb.table("customers").update({
+                "unread_count": new_count,
+                "last_seen":    datetime.now(timezone.utc).isoformat(),
+            }).eq("id", cust["id"]).execute()
+            log.debug("handoff: unread incremented  customer=%s  count=%d", cust["id"], new_count)
+    except Exception as exc:
+        log.debug("handoff: unread increment failed (non-fatal): %s", exc)
+
 
 def clear_handoff_flag(phone: str, business_id: int) -> None:
     """Clear the human-needed flag and reset message counter when AI is resumed."""

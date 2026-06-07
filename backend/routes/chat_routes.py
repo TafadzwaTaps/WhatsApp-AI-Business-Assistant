@@ -34,30 +34,9 @@ def chat_customers(search: Optional[str] = Query(None), user=Depends(get_current
 
 @router.get("/chat/conversations")
 def chat_conversations(unread_only: bool = Query(False), user=Depends(get_current_user)):
-    bid = user["business_id"]
-    convos = crud.get_chat_conversations(bid, filter_unread=unread_only)
-
-    # Shared number: also fetch conversations from businesses the platform number serves.
-    # Merge in customers from other business IDs that have no dedicated WhatsApp number
-    # (i.e. they use the shared number and the agent sees all of them).
-    if SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
-        try:
-            from core.db import supabase as _sb
-            # Find all active businesses using the shared number
-            biz_res = _sb.table("businesses").select("id").eq("is_active", True).execute()
-            other_ids = [b["id"] for b in (biz_res.data or []) if b["id"] != bid]
-            seen_phones = {c["phone"] for c in convos}
-            for other_bid in other_ids[:10]:  # cap to avoid huge queries
-                other = crud.get_chat_conversations(other_bid, filter_unread=unread_only)
-                for c in other:
-                    if c["phone"] not in seen_phones:
-                        seen_phones.add(c["phone"])
-                        convos.append(c)
-        except Exception as exc:
-            log.warning("chat_conversations shared-number merge failed: %s", exc)
-
-    convos.sort(key=lambda c: c.get("last_message_at") or c.get("last_seen") or "", reverse=True)
-    return convos
+    # Strict tenant isolation: each business sees ONLY its own customers.
+    # This applies to both dedicated-number and shared-number businesses.
+    return crud.get_chat_conversations(user["business_id"], filter_unread=unread_only)
 
 
 @router.get("/chat/conversations/{phone:path}")
@@ -163,9 +142,13 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     has_phone_id = bool(business.get("whatsapp_phone_id"))
     has_token    = bool(token)
 
-    crud.log_message(bid, customer["phone"], "out", body.text)
+    # Use customer's actual business_id for logging — critical for shared number
+    # where customer_biz_id (e.g. 5) may differ from the agent's bid (e.g. 4)
+    log_biz_id = customer_biz_id
+
+    crud.log_message(log_biz_id, customer["phone"], "out", body.text)
     msg = crud.create_message(
-        customer["id"], bid, body.text, "outgoing",
+        customer["id"], log_biz_id, body.text, "outgoing",
         sender_type="agent", sender_name=user.get("username", "Agent"),
     )
 
@@ -180,15 +163,20 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 
     try:
         from workflows.human_handoff import record_agent_reply
-        # Use customer's actual business_id (important for shared number)
-        record_agent_reply(customer["phone"], customer.get("business_id", bid))
+        record_agent_reply(customer["phone"], log_biz_id)
     except Exception as exc:
         log.debug("record_agent_reply skipped: %s", exc)
 
-    await manager.broadcast(bid, {
+    # Broadcast to both the agent's ws connection and the customer's business ws
+    await manager.broadcast(log_biz_id, {
         "event": "new_message", "customer_id": customer["id"],
         "phone": customer["phone"], "message": msg,
     })
+    if log_biz_id != bid:
+        await manager.broadcast(bid, {
+            "event": "new_message", "customer_id": customer["id"],
+            "phone": customer["phone"], "message": msg,
+        })
 
     return {"ok": True, "message_id": msg["id"], "whatsapp_result": wa_result}
 
@@ -198,37 +186,15 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
 @router.get("/chat/handoff/pending")
 def handoff_pending(user=Depends(require_business)):
     from workflows.human_handoff import get_pending_handoffs
-    bid = user["business_id"]
-    pending = get_pending_handoffs(bid)
-
-    # Shared number: also check handoffs on other businesses
-    if SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
-        try:
-            from core.db import supabase as _sb
-            biz_res = _sb.table("businesses").select("id").eq("is_active", True).execute()
-            seen = {p["phone"] for p in pending}
-            for b in (biz_res.data or []):
-                if b["id"] == bid: continue
-                for h in get_pending_handoffs(b["id"]):
-                    if h["phone"] not in seen:
-                        seen.add(h["phone"])
-                        pending.append(h)
-        except Exception as exc:
-            log.warning("handoff_pending shared-number merge failed: %s", exc)
-
-    return pending
+    # Strict isolation: only this business's handoffs
+    return get_pending_handoffs(user["business_id"])
 
 
 @router.post("/chat/handoff/{customer_id}/request")
 async def handoff_request(customer_id: int, user=Depends(require_business)):
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
-    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        try:
-            from core.db import supabase as _sb
-            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
-            customer = res.data[0] if res.data else None
-        except Exception: pass
+    # Shared number: customer may belong to a different business
     if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
         try:
             from core.db import supabase as _sb
@@ -240,14 +206,30 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     from workflows.human_handoff import notify_dashboard
     from services._ai_state import _set_human_handoff
 
-    phone    = customer["phone"]
-    biz      = crud.get_business_by_id(bid)
-    biz_name = biz.get("name", "") if biz else ""
+    phone      = customer["phone"]
+    # Use customer's actual business_id — critical for shared number
+    actual_bid = customer.get("business_id", bid)
+    biz        = crud.get_business_by_id(actual_bid)
+    biz_name   = biz.get("name", "") if biz else ""
 
-    _set_human_handoff(phone, bid)
-    notify_dashboard(phone, bid, biz_name)
+    _set_human_handoff(phone, actual_bid)
+    notify_dashboard(phone, actual_bid, biz_name)
 
-    log.info("handoff requested  customer=%s  phone=%s  by=%s", customer_id, phone, user["username"])
+    log.info("handoff requested  customer=%s  phone=%s  actual_biz=%s  by=%s",
+             customer_id, phone, actual_bid, user["username"])
+
+    # Broadcast WebSocket event so the inbox updates in real time
+    if manager:
+        try:
+            await manager.broadcast(actual_bid, {
+                "event":       "handoff_requested",
+                "customer_id": customer_id,
+                "phone":       phone,
+                "reason":      "manual",
+            })
+        except Exception as exc:
+            log.debug("handoff ws broadcast failed: %s", exc)
+
     return {"ok": True, "customer_id": customer_id, "phone": phone, "state": "human_handoff"}
 
 
@@ -255,23 +237,35 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
 async def handoff_release(customer_id: int, user=Depends(require_business)):
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
+    # Shared number: customer may belong to a different business
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+            customer = res.data[0] if res.data else None
+        except Exception: pass
     if not customer: raise HTTPException(404, "Customer not found")
 
     from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
     from services._ai_state import _reset_state
 
-    phone    = customer["phone"]
-    biz      = crud.get_business_by_id(bid)
-    biz_name = biz.get("name", "") if biz else ""
+    phone      = customer["phone"]
+    # Use customer's actual business_id — critical for shared number
+    actual_bid = customer.get("business_id", bid)
+    biz        = crud.get_business_by_id(actual_bid)
+    biz_name   = biz.get("name", "") if biz else ""
 
-    _reset_state(phone, bid)
-    clear_handoff_flag(phone, bid)
+    _reset_state(phone, actual_bid)
+    clear_handoff_flag(phone, actual_bid)
 
     try:
         token    = crud.get_decrypted_token(biz) if biz else ""
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+        # Shared number fallback: business has no dedicated phone_id
         if token and phone_id:
             send_whatsapp(phone_id, token, phone, ai_resumed_message(biz_name))
+        elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, ai_resumed_message(biz_name))
     except Exception as exc:
         log.warning("handoff_release: WA notification failed: %s", exc)
 

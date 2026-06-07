@@ -486,17 +486,82 @@
             <div class="form-row">
               <div class="form-group"><label>Business Name</label><input type="text" id="set-biz-name" placeholder="e.g. Flavoury Foods"/></div>
               <div class="form-group"><label>Category</label>
-                <select id="set-category">
+                <select id="set-category" onchange="toggleCustomCategory()">
                   <option value="">Select category…</option>
-                  <option value="Food &amp; Beverage">Food &amp; Beverage</option>
-                  <option value="Electronics">Electronics</option>
-                  <option value="Fashion &amp; Clothing">Fashion &amp; Clothing</option>
-                  <option value="Health &amp; Beauty">Health &amp; Beauty</option>
-                  <option value="Home &amp; Garden">Home &amp; Garden</option>
-                  <option value="Services">Services</option>
-                  <option value="Retail">Retail</option>
-                  <option value="Other">Other</option>
+                  <optgroup label="Food &amp; Beverage">
+                    <option>Restaurant</option>
+                    <option>Fast Food</option>
+                    <option>Bakery</option>
+                    <option>Cafe</option>
+                    <option>Coffee Shop</option>
+                    <option>Butchery</option>
+                    <option>Liquor Store</option>
+                  </optgroup>
+                  <optgroup label="Health">
+                    <option>Pharmacy</option>
+                    <option>Clinic</option>
+                    <option>Hospital</option>
+                    <option>Doctor</option>
+                    <option>Dentist</option>
+                  </optgroup>
+                  <optgroup label="Beauty &amp; Wellness">
+                    <option>Salon</option>
+                    <option>Barbershop</option>
+                    <option>Beauty Spa</option>
+                    <option>Fitness</option>
+                    <option>Gym</option>
+                  </optgroup>
+                  <optgroup label="Fashion &amp; Retail">
+                    <option>Fashion Store</option>
+                    <option>Clothing Boutique</option>
+                    <option>Shoe Store</option>
+                    <option>Jewelry Store</option>
+                    <option>Supermarket</option>
+                    <option>Grocery Store</option>
+                    <option>Wholesale</option>
+                    <option>Stationery</option>
+                    <option>Printing</option>
+                    <option>Furniture Store</option>
+                  </optgroup>
+                  <optgroup label="Technology">
+                    <option>Electronics</option>
+                    <option>Computer Shop</option>
+                    <option>Repair Services</option>
+                  </optgroup>
+                  <optgroup label="Construction &amp; Hardware">
+                    <option>Hardware Store</option>
+                    <option>Construction</option>
+                    <option>Agriculture</option>
+                  </optgroup>
+                  <optgroup label="Services">
+                    <option>Automotive</option>
+                    <option>Transport</option>
+                    <option>Logistics</option>
+                    <option>Courier</option>
+                    <option>Education</option>
+                    <option>Tutoring</option>
+                    <option>Consulting</option>
+                    <option>Marketing Agency</option>
+                    <option>Freelancer</option>
+                    <option>Professional Services</option>
+                    <option>Photography</option>
+                    <option>Event Planning</option>
+                  </optgroup>
+                  <optgroup label="Hospitality">
+                    <option>Hotel</option>
+                    <option>Guest House</option>
+                    <option>Airbnb</option>
+                    <option>Travel Agency</option>
+                  </optgroup>
+                  <optgroup label="Other">
+                    <option>Church</option>
+                    <option>NGO</option>
+                    <option>Other</option>
+                  </optgroup>
                 </select>
+                <input type="text" id="set-custom-category"
+                       placeholder="Describe your business type…"
+                       style="display:none;margin-top:8px;width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;box-sizing:border-box;"/>
               </div>
             </div>
             <div class="form-group"><label>Business Description</label>
@@ -572,13 +637,49 @@
             <div class="form-row">
               <div class="form-group">
                 <label>Currency</label>
-                <select id="set-currency">
-                  <option value="USD">USD — US Dollar</option>
-                  <option value="ZWL">ZWL — Zimbabwe Dollar</option>
-                  <option value="ZAR">ZAR — South African Rand</option>
-                  <option value="GBP">GBP — British Pound</option>
-                  <option value="EUR">EUR — Euro</option>
+                <select id="set-currency" onchange="updateCurrencySymbol(this.value)">
+                  <option value="USD">USD — US Dollar ($)</option>
+                  <option value="EUR">EUR — Euro (€)</option>
+                  <option value="GBP">GBP — British Pound (£)</option>
+                  <option value="PLN">PLN — Polish Złoty (zł)</option>
+                  <option value="ZAR">ZAR — South African Rand (R)</option>
+                  <option value="BWP">BWP — Botswana Pula (P)</option>
+                  <option value="NAD">NAD — Namibian Dollar (N$)</option>
+                  <option value="ZMW">ZMW — Zambian Kwacha (ZK)</option>
+                  <option value="KES">KES — Kenyan Shilling (KSh)</option>
+                  <option value="UGX">UGX — Ugandan Shilling (USh)</option>
+                  <option value="TZS">TZS — Tanzanian Shilling (TSh)</option>
+                  <option value="RWF">RWF — Rwandan Franc (RF)</option>
+                  <option value="MWK">MWK — Malawian Kwacha (MK)</option>
+                  <option value="MZN">MZN — Mozambican Metical (MT)</option>
+                  <option value="AOA">AOA — Angolan Kwanza (Kz)</option>
+                  <option value="GHS">GHS — Ghanaian Cedi (₵)</option>
+                  <option value="NGN">NGN — Nigerian Naira (₦)</option>
+                  <option value="XAF">XAF — Central African CFA (FCFA)</option>
+                  <option value="XOF">XOF — West African CFA (CFA)</option>
+                  <option value="ETB">ETB — Ethiopian Birr (Br)</option>
+                  <option value="EGP">EGP — Egyptian Pound (E£)</option>
+                  <option value="MAD">MAD — Moroccan Dirham (DH)</option>
+                  <option value="TND">TND — Tunisian Dinar (DT)</option>
+                  <option value="AED">AED — UAE Dirham (د.إ)</option>
+                  <option value="SAR">SAR — Saudi Riyal (﷼)</option>
+                  <option value="QAR">QAR — Qatari Riyal (﷼)</option>
+                  <option value="OMR">OMR — Omani Rial (﷼)</option>
+                  <option value="KWD">KWD — Kuwaiti Dinar (KD)</option>
+                  <option value="INR">INR — Indian Rupee (₹)</option>
+                  <option value="AUD">AUD — Australian Dollar (A$)</option>
+                  <option value="CAD">CAD — Canadian Dollar (C$)</option>
+                  <option value="JPY">JPY — Japanese Yen (¥)</option>
+                  <option value="CNY">CNY — Chinese Yuan (¥)</option>
+                  <option value="BTC">BTC — Bitcoin (₿)</option>
+                  <option value="USDT">USDT — Tether (₮)</option>
                 </select>
+                <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+                  <label style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">Symbol override (optional):</label>
+                  <input type="text" id="set-currency-symbol" maxlength="5"
+                         placeholder="e.g. $"
+                         style="width:70px;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-family:var(--mono);font-size:12px;"/>
+                </div>
               </div>
             </div>
             <div class="toggle-row"><span class="toggle-label">Cash on Delivery</span>

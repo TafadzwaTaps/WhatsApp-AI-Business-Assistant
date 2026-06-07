@@ -890,7 +890,21 @@ async function loadSettings() {
     const b = await apiFetch('/me');
     if (!b) return;
     _setVal('set-biz-name',      b.name || '');
-    _setVal('set-category',      b.category || '');
+    // Category: if the stored value isn't in the select options, use "Other" + custom
+    const _catSel = document.getElementById('set-category');
+    const _catOpts = _catSel ? Array.from(_catSel.options).map(o => o.value) : [];
+    const _storedCat = b.category || '';
+    if (_storedCat && !_catOpts.includes(_storedCat)) {
+      _setVal('set-category', 'Other');
+      _setVal('set-custom-category', _storedCat);
+      const _customEl = document.getElementById('set-custom-category');
+      if (_customEl) _customEl.style.display = 'block';
+    } else {
+      _setVal('set-category', _storedCat);
+    }
+    // Currency
+    if (b.currency) _setVal('set-currency', b.currency);
+    if (b.currency_symbol) _setVal('set-currency-symbol', b.currency_symbol);
     _setVal('set-description',   b.description || '');
     _setVal('set-contact-phone', b.contact_phone || '');
     _setVal('set-support-email', b.support_email || '');
@@ -950,17 +964,28 @@ async function saveProfile() {
   const btn = document.querySelector('[onclick="saveProfile()"]');
   try {
     setLoading(btn, true);
+    // Use custom category if "Other" is selected
+    const catSel    = _getVal('set-category');
+    const catCustom = _getVal('set-custom-category').trim();
+    const category  = (catSel === 'Other' && catCustom) ? catCustom : catSel;
+
+    // Currency symbol — use override if provided, else derive from selection
+    const currSym = _getVal('set-currency-symbol').trim() ||
+                    _currencySymbolFor(_getVal('set-currency'));
+
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
       name,
-      category:       _getVal('set-category'),
-      description:    _getVal('set-description'),
-      contact_phone:  _getVal('set-contact-phone'),
-      support_email:  _getVal('set-support-email'),
-      address:        _getVal('set-address'),
-      city:           _getVal('set-city'),
-      business_hours: _getVal('set-hours'),
-      instagram:      _getVal('set-instagram'),
-      facebook:       _getVal('set-facebook'),
+      category,
+      description:     _getVal('set-description'),
+      contact_phone:   _getVal('set-contact-phone'),
+      support_email:   _getVal('set-support-email'),
+      address:         _getVal('set-address'),
+      city:            _getVal('set-city'),
+      business_hours:  _getVal('set-hours'),
+      instagram:       _getVal('set-instagram'),
+      facebook:        _getVal('set-facebook'),
+      currency:        _getVal('set-currency'),
+      currency_symbol: currSym,
     })});
     bizName = name;
     localStorage.setItem('wazi_biz', bizName);
@@ -977,6 +1002,36 @@ function _getVal(id) {
   const el = document.getElementById(id);
   return el ? el.value : '';
 }
+
+function toggleCustomCategory() {
+  const sel = document.getElementById('set-category');
+  const inp = document.getElementById('set-custom-category');
+  if (!sel || !inp) return;
+  inp.style.display = sel.value === 'Other' ? 'block' : 'none';
+  if (sel.value !== 'Other') inp.value = '';
+}
+
+const _CURRENCY_SYMBOLS = {
+  USD:'$', EUR:'€', GBP:'£', PLN:'zł', ZAR:'R', BWP:'P', NAD:'N$', ZMW:'ZK',
+  KES:'KSh', UGX:'USh', TZS:'TSh', RWF:'RF', MWK:'MK', MZN:'MT', AOA:'Kz',
+  GHS:'₵', NGN:'₦', XAF:'FCFA', XOF:'CFA', ETB:'Br', EGP:'E£', MAD:'DH',
+  TND:'DT', AED:'د.إ', SAR:'﷼', QAR:'﷼', OMR:'﷼', KWD:'KD', INR:'₹',
+  AUD:'A$', CAD:'C$', JPY:'¥', CNY:'¥', BTC:'₿', USDT:'₮',
+};
+function _currencySymbolFor(code) { return _CURRENCY_SYMBOLS[code] || '$'; }
+
+function updateCurrencySymbol(code) {
+  const symEl = document.getElementById('set-currency-symbol');
+  // Only auto-fill if the user hasn't set a custom override
+  if (symEl && !symEl.dataset.userEdited) {
+    symEl.value = _currencySymbolFor(code);
+  }
+}
+// Track if user manually edits the symbol
+document.addEventListener('DOMContentLoaded', () => {
+  const symEl = document.getElementById('set-currency-symbol');
+  if (symEl) symEl.addEventListener('input', () => { symEl.dataset.userEdited = '1'; });
+});
 
 // ── PAYMENT SAVES ─────────────────────────────────────────
 async function saveEcoCashSettings() {

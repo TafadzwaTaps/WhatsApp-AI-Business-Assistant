@@ -226,14 +226,37 @@ def get_or_create_referral_code(business_id: int) -> str:
 def get_referral_stats(business_id: int) -> dict:
     """
     Return referral statistics for the dashboard card.
+    Always returns a code and link — even if the referrals table doesn't exist yet.
     {referral_code, referral_link, total_referrals, converted, pending_reward}
     """
     from core.db import supabase
+
+    # Step 1: Always ensure the business has a code (never returns empty)
     try:
         code = get_or_create_referral_code(business_id)
-        base_url = os.getenv("APP_BASE_URL", "https://wazibot-api-assistant.onrender.com")
-        link     = f"{base_url}/signup?ref={code}"
+    except Exception as exc:
+        log.warning("get_referral_stats: code generation failed: %s", exc)
+        code = ""
 
+    # If code generation failed, generate a deterministic fallback from business_id
+    if not code:
+        import hashlib
+        h    = hashlib.md5(str(business_id).encode()).hexdigest()[:8].upper()
+        code = f"WAZI{h}"
+        # Try to persist it
+        try:
+            supabase.table("businesses").update(
+                {"referral_code": code}
+            ).eq("id", business_id).execute()
+        except Exception:
+            pass
+
+    base_url = os.getenv("APP_BASE_URL", "https://wazibot-api-assistant.onrender.com")
+    link     = f"{base_url}/signup?ref={code}"
+
+    # Step 2: Fetch referral stats — table may not exist yet (migration pending)
+    total, converted, pending = 0, 0, 0.0
+    try:
         res = (
             supabase.table("referrals")
             .select("id, status, commission_amount")
@@ -245,18 +268,17 @@ def get_referral_stats(business_id: int) -> dict:
         converted = sum(1 for r in rows if r.get("status") in ("converted", "paid"))
         pending   = sum(float(r.get("commission_amount") or 0)
                         for r in rows if r.get("status") == "pending_reward")
-
-        return {
-            "referral_code":    code,
-            "referral_link":    link,
-            "total_referrals":  total,
-            "converted":        converted,
-            "pending_reward":   round(pending, 2),
-        }
     except Exception as exc:
-        log.warning("get_referral_stats error: %s", exc)
-        return {"referral_code": "", "referral_link": "", "total_referrals": 0,
-                "converted": 0, "pending_reward": 0.0}
+        # Table doesn't exist yet — that's OK, we still show code + link
+        log.debug("get_referral_stats: referrals table not ready: %s", exc)
+
+    return {
+        "referral_code":   code,
+        "referral_link":   link,
+        "total_referrals": total,
+        "converted":       converted,
+        "pending_reward":  round(pending, 2),
+    }
 
 
 def record_referral(new_business_id: int, referral_code: str) -> bool:
