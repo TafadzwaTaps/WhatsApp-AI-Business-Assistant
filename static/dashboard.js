@@ -1245,7 +1245,7 @@ setInterval(() => {
     loadOrders().catch(()=>{});
   }
   checkStatus().catch(()=>{});
-}, 15000);
+}, 30000);  // 30s — reduced from 15s to cut Supabase request volume
 
 function setLoading(el, state=true) {
   if (!el) return;
@@ -1756,7 +1756,7 @@ loadOrders = (function(_prev5) {
     if (statO) statO.textContent = _ordersData.length;
     if (statR) statR.textContent = '$' + _ordersData.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
     if (_ordersView === 'kanban') renderKanban(_ordersData);
-    loadOverviewExtras();
+    // loadOverviewExtras() is called by the outer wrapper — not here
   } catch(e) {
     ['orders-body','recent-orders-body'].forEach(id => {
       const el = document.getElementById(id);

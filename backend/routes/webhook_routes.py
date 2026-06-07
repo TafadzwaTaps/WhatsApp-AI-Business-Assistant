@@ -138,8 +138,16 @@ async def receive_message(request: Request):
     try:
         from services.tenant_router import (
             is_shared_number, resolve_business_for_shared_number, is_switch_request,
-            is_businesses_help_request, build_business_picker, _category_icon,
         )
+        # These were added in a later deploy — safe fallback if not yet present
+        try:
+            from services.tenant_router import (
+                is_businesses_help_request, build_business_picker, _category_icon,
+            )
+        except ImportError:
+            def is_businesses_help_request(t): return False
+            def build_business_picker(b, p="WaziBot", current_name=""): return ""
+            def _category_icon(c): return "🏪"
         if is_shared_number(phone_number_id):
             log.info("📋 STEP 2 — shared number  phone=%s", customer_phone)
             active_businesses = crud.get_active_businesses()
