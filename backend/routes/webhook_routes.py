@@ -138,14 +138,28 @@ async def receive_message(request: Request):
     try:
         from services.tenant_router import (
             is_shared_number, resolve_business_for_shared_number, is_switch_request,
+            is_businesses_help_request, build_business_picker, _category_icon,
         )
         if is_shared_number(phone_number_id):
             log.info("📋 STEP 2 — shared number  phone=%s", customer_phone)
             active_businesses = crud.get_active_businesses()
+
+            # Help command: show picker even when already in a business
+            # (does NOT clear selection — customer must say "switch" to actually change)
+            from services.tenant_router import get_selected_business_id, get_selected_business_name
+            if is_businesses_help_request(text) and get_selected_business_id(customer_phone):
+                platform_name = get_shared_wa_phone() if callable(get_shared_wa_phone) else "WaziBot"
+                current_name  = get_selected_business_name(customer_phone)
+                picker        = build_business_picker(active_businesses, platform_name,
+                                                       current_name=current_name)
+                _send_direct(phone_number_id, SHARED_WA_TOKEN, customer_phone, picker)
+                return {"status": "ok"}
+
             business, direct_reply = resolve_business_for_shared_number(
                 phone=customer_phone, text=text, active_businesses=active_businesses,
             )
-            if direct_reply:
+            if direct_reply and not business:
+                # Picker shown (no business selected yet) — send and stop
                 _send_direct(phone_number_id, SHARED_WA_TOKEN, customer_phone, direct_reply)
                 try:
                     cust_any = crud.get_or_create_customer(customer_phone, 0)
@@ -155,6 +169,21 @@ async def receive_message(request: Request):
                 except Exception:
                     pass
                 return {"status": "ok"}
+
+            if direct_reply and business:
+                # Business just selected — send confirmation immediately,
+                # then fall through to generate_reply() for the welcome greeting
+                _send_direct(phone_number_id, SHARED_WA_TOKEN, customer_phone, direct_reply)
+                try:
+                    cust_confirmed = crud.get_or_create_customer(customer_phone, business["id"])
+                    crud.create_message(cust_confirmed["id"], business["id"],
+                                        direct_reply, "outgoing", sender_type="ai")
+                except Exception:
+                    pass
+                # Replace the customer's text with "hi" so generate_reply sends
+                # a proper welcome rather than treating "2" as an order attempt
+                text = "hi"
+
             if not business:
                 log.error("📋 STEP 2 — no business resolved for shared number")
                 return {"status": "ok"}
