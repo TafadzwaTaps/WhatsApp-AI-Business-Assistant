@@ -437,58 +437,160 @@ function setProductView(mode) {
   if (gbBtn) gbBtn.style.opacity = mode === 'grid'  ? '1' : '0.5';
 }
 
+// Internal product cache for filtering
+let _allProducts = [];
+let _selectedProductIds = new Set();
+
 async function loadProducts() {
+  const skeleton = document.getElementById('prod-skeleton');
+  const tbody    = document.getElementById('products-body');
+  if (skeleton) skeleton.style.display = '';
+  if (tbody)    tbody.innerHTML = '';
+
   try {
     const raw = await apiFetch(ROUTES.products);
+    if (skeleton) skeleton.style.display = 'none';
     if (!raw) return;
-    const products = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
-    const statP = document.getElementById('stat-products');
-    if (statP) statP.textContent = products.length;
+    _allProducts = Array.isArray(raw) ? raw : (Array.isArray(raw.data) ? raw.data : []);
 
-    const tbody = document.getElementById('products-body');
-    if (tbody) {
-      if (!products.length) {
-        tbody.innerHTML=`<tr><td colspan="4"><div class="empty">No products yet. Add your first item above!</div></td></tr>`;
-      } else {
-        tbody.innerHTML = products.map(p => {
-          const thumb = p.image_url
-            ? `<img class="product-thumb" src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.style.display='none';this.nextSibling.style.display='flex'">`
-              + `<div class="product-thumb-placeholder" style="display:none">📦</div>`
-            : `<div class="product-thumb-placeholder">📦</div>`;
-          return `<tr>
-            <td style="width:52px">${thumb}</td>
-            <td><strong>${escHtml(p.name||'—')}</strong></td>
-            <td><span class="badge badge-green">$${(p.price||0).toFixed(2)}</span></td>
-            <td><button class="btn btn-ghost" onclick="deleteProduct(${p.id})">✕</button></td>
-          </tr>`;
-        }).join('');
-      }
-    }
+    // KPI update (Phase 1)
+    _updateProductKPIs(_allProducts);
 
-    const grid = document.getElementById('products-grid');
-    if (grid) {
-      if (!products.length) {
-        grid.innerHTML = '<div class="empty" style="grid-column:1/-1">No products yet.</div>';
-      } else {
-        grid.innerHTML = products.map(p => `
-          <div class="product-card">
-            <div class="product-card-img">
-              ${p.image_url
-                ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.parentNode.textContent='📦'">`
-                : '📦'}
-            </div>
-            <div class="product-card-body">
-              <div class="product-card-name">${escHtml(p.name||'—')}</div>
-              <div class="product-card-price">$${(p.price||0).toFixed(2)}</div>
-              <button class="btn btn-ghost" style="margin-top:8px;width:100%;font-size:11px;" onclick="deleteProduct(${p.id})">✕ Remove</button>
-            </div>
-          </div>`).join('');
-      }
-    }
+    // Apply any active filters then render
+    applyProductFilters();
+
+    // Load analytics after products (Phase 8)
+    loadProductAnalytics();
   } catch(e) {
-    const tbody = document.getElementById('products-body');
-    if (tbody) tbody.innerHTML=`<tr><td colspan="4"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    if (skeleton) skeleton.style.display = 'none';
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8"><div class="empty">⚠ ${e.message}</div></td></tr>`;
   }
+}
+
+function _updateProductKPIs(products) {
+  const total   = products.length;
+  const active  = products.filter(p => !_isProdOos(p) && p.status !== 'draft').length;
+  const oos     = products.filter(p => _isProdOos(p)).length;
+  _setKpi('kpi-total-products', total);
+  _setKpi('kpi-active-products', active);
+  _setKpi('kpi-oos-products', oos);
+  _setKpi('stat-products', total);  // existing overview card
+  // Orders and revenue come from existing stats (already loaded by loadOverviewExtras)
+  const statO = document.getElementById('kpi-prod-orders');
+  const statR = document.getElementById('kpi-prod-revenue');
+  const srcO  = document.getElementById('stat-orders');
+  const srcR  = document.getElementById('stat-revenue');
+  if (statO && srcO) statO.textContent = srcO.textContent;
+  if (statR && srcR) statR.textContent = srcR.textContent;
+}
+function _setKpi(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = val;
+}
+function _isProdOos(p) {
+  if (p.status === 'out_of_stock') return true;
+  if (typeof p.stock === 'number' && p.stock === 0) return true;
+  return false;
+}
+function _isProdLowStock(p) {
+  return typeof p.stock === 'number' && p.stock > 0 && p.stock <= 5;
+}
+function _prodStatusBadge(p) {
+  if (_isProdOos(p))         return `<span class="prod-status-oos">● Out of Stock</span>`;
+  if (_isProdLowStock(p))    return `<span class="prod-status-low">⚠ Low Stock</span>`;
+  if (p.status === 'draft')  return `<span class="prod-status-draft">○ Draft</span>`;
+  return `<span class="prod-status-active">● Active</span>`;
+}
+
+function applyProductFilters() {
+  const q      = (document.getElementById('prod-search')?.value || '').toLowerCase();
+  const cat    = (document.getElementById('prod-filter-cat')?.value || '').toLowerCase();
+  const status = document.getElementById('prod-filter-status')?.value || '';
+  const sort   = document.getElementById('prod-sort')?.value || 'newest';
+
+  let filtered = _allProducts.filter(p => {
+    if (q && !((p.name||'').toLowerCase().includes(q) || (p.category||'').toLowerCase().includes(q))) return false;
+    if (cat && (p.category||'').toLowerCase() !== cat) return false;
+    if (status === 'active'     && (_isProdOos(p) || p.status === 'draft')) return false;
+    if (status === 'out_of_stock' && !_isProdOos(p)) return false;
+    if (status === 'low_stock'  && !_isProdLowStock(p)) return false;
+    return true;
+  });
+
+  // Sort
+  if (sort === 'oldest')      filtered = [...filtered].reverse();
+  if (sort === 'price_asc')   filtered.sort((a,b) => (a.price||0)-(b.price||0));
+  if (sort === 'price_desc')  filtered.sort((a,b) => (b.price||0)-(a.price||0));
+
+  _renderProductTable(filtered);
+  _renderProductGrid(filtered);
+}
+
+function _renderProductTable(products) {
+  const tbody = document.getElementById('products-body');
+  if (!tbody) return;
+  if (!products.length) {
+    tbody.innerHTML = `<tr><td colspan="8"><div class="empty" style="padding:24px;text-align:center;">
+      <div style="font-size:32px;margin-bottom:8px;">📦</div>
+      <div style="font-size:13px;font-weight:700;margin-bottom:4px;">No products found</div>
+      <div style="font-size:11px;color:var(--text-dim);">Try adjusting your search or filters, or add a new product above.</div>
+    </div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = products.map(p => {
+    const checked = _selectedProductIds.has(p.id) ? 'checked' : '';
+    const thumb   = p.image_url
+      ? `<img class="product-thumb" src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><div class="product-thumb-placeholder" style="display:none">📦</div>`
+      : `<div class="product-thumb-placeholder">📦</div>`;
+    const stockDisplay = typeof p.stock === 'number'
+      ? `<span style="font-size:12px;font-family:var(--mono);${p.stock <= 5 ? 'color:var(--amber)' : ''}">${p.stock}</span>`
+      : `<span style="color:var(--text-dim);font-size:11px;">—</span>`;
+    const catDisplay = p.category
+      ? `<span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">${escHtml(p.category)}</span>`
+      : `<span style="color:var(--text-dim);font-size:11px;">—</span>`;
+    return `<tr>
+      <td><input type="checkbox" class="prod-cb" ${checked} onchange="toggleProductSelect(${p.id},this.checked)"/></td>
+      <td style="width:44px">${thumb}</td>
+      <td><strong style="font-size:13px;">${escHtml(p.name||'—')}</strong>${p.description?`<div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:2px;">${escHtml(p.description.substring(0,60))}${p.description.length>60?'…':''}</div>`:''}</td>
+      <td>${catDisplay}</td>
+      <td><span class="badge badge-green">$${(p.price||0).toFixed(2)}</span></td>
+      <td>${stockDisplay}</td>
+      <td>${_prodStatusBadge(p)}</td>
+      <td>
+        <div class="prod-action-btn-row">
+          <button class="prod-action-btn edit" onclick="openProdEdit(${p.id})" title="Edit">✎</button>
+          <button class="prod-action-btn view" onclick="viewProduct(${p.id})" title="View">👁</button>
+          <button class="prod-action-btn del"  onclick="deleteProduct(${p.id})" title="Delete">✕</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function _renderProductGrid(products) {
+  const grid = document.getElementById('products-grid');
+  if (!grid) return;
+  if (!products.length) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1;text-align:center;padding:24px;">📦 No products found</div>';
+    return;
+  }
+  grid.innerHTML = products.map(p => `
+    <div class="product-card" style="${_selectedProductIds.has(p.id)?'border-color:var(--green);':''}" onclick="toggleProductSelect(${p.id},!_selectedProductIds.has(${p.id}))">
+      <div class="product-card-img">
+        ${p.image_url
+          ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.parentNode.textContent='📦'">`
+          : '📦'}
+      </div>
+      <div class="product-card-body">
+        <div class="product-card-name">${escHtml(p.name||'—')}</div>
+        <div class="product-card-price">$${(p.price||0).toFixed(2)}</div>
+        ${typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : ''}
+        <div style="display:flex;gap:6px;margin-top:8px;">
+          <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
+          <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();deleteProduct(${p.id})">✕</button>
+        </div>
+      </div>
+    </div>`).join('');
 }
 
 // ── IMAGE UPLOAD HELPERS ──────────────────────────────────
@@ -510,46 +612,72 @@ function _loadImageFile(file) {
   if (!file.type.startsWith('image/')) { toast('Please select an image file', true); return; }
   if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2MB', true); return; }
   const reader = new FileReader();
+  // Show progress bar during file read
+  const progressWrap = document.getElementById('img-progress-wrap');
+  const progressBar  = document.getElementById('img-progress-bar');
+  if (progressWrap) progressWrap.style.display = '';
+  if (progressBar)  { progressBar.style.width = '0'; setTimeout(() => { progressBar.style.width = '60%'; }, 50); }
+
   reader.onload = (e) => {
     _pendingImgDataUrl = e.target.result;
-    const preview = document.getElementById('img-preview');
-    const clearBtn = document.getElementById('img-clear-btn');
-    const area = document.getElementById('img-upload-area');
-    if (preview) { preview.src = _pendingImgDataUrl; preview.classList.add('show'); }
-    if (clearBtn) clearBtn.style.display = 'inline';
-    if (area) area.style.display = 'none';
+    const preview   = document.getElementById('img-preview');
+    const clearBtn  = document.getElementById('img-clear-btn');
+    const actionBar = document.getElementById('img-action-bar');
+    const area      = document.getElementById('img-upload-area');
+    if (progressBar) progressBar.style.width = '100%';
+    setTimeout(() => { if (progressWrap) progressWrap.style.display = 'none'; }, 500);
+    if (preview)   { preview.src = _pendingImgDataUrl; preview.classList.add('show'); }
+    if (clearBtn)  clearBtn.style.display = 'inline';
+    if (actionBar) actionBar.style.display = 'flex';
+    if (area)      area.style.display = 'none';
   };
   reader.readAsDataURL(file);
 }
 
 function clearProductImg() {
   _pendingImgDataUrl = null;
-  const preview = document.getElementById('img-preview');
+  const preview  = document.getElementById('img-preview');
   const clearBtn = document.getElementById('img-clear-btn');
-  const area = document.getElementById('img-upload-area');
-  const fileInput = document.getElementById('product-img-file');
-  if (preview) { preview.src = ''; preview.classList.remove('show'); }
-  if (clearBtn) clearBtn.style.display = 'none';
-  if (area) area.style.display = '';
+  const actionBar= document.getElementById('img-action-bar');
+  const area     = document.getElementById('img-upload-area');
+  const fileInput= document.getElementById('product-img-file');
+  const progress = document.getElementById('img-progress-wrap');
+  if (preview)   { preview.src = ''; preview.classList.remove('show'); }
+  if (clearBtn)  clearBtn.style.display = 'none';
+  if (actionBar) actionBar.style.display = 'none';
+  if (area)      area.style.display = '';
   if (fileInput) fileInput.value = '';
+  if (progress)  progress.style.display = 'none';
 }
 
 async function addProduct() {
   const nameEl  = document.getElementById('product-name');
   const priceEl = document.getElementById('product-price');
-  const name  = nameEl  ? nameEl.value.trim()  : '';
+  const stockEl = document.getElementById('product-stock');
+  const descEl  = document.getElementById('product-description');
+  const catEl   = document.getElementById('product-category');
+  const name  = nameEl  ? nameEl.value.trim()       : '';
   const price = priceEl ? parseFloat(priceEl.value) : NaN;
   if (!name || isNaN(price) || price <= 0) { toast('Enter a valid name and price', true); return; }
+  const btn = document.getElementById('add-product-btn');
   try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
     const payload = { name, price };
     if (_pendingImgDataUrl) payload.image_url = _pendingImgDataUrl;
+    if (stockEl && stockEl.value !== '') payload.stock = parseInt(stockEl.value, 10);
+    if (descEl  && descEl.value.trim())  payload.description  = descEl.value.trim();
+    if (catEl   && catEl.value)          payload.category     = catEl.value;
     await apiFetch(ROUTES.products, { method: 'POST', body: JSON.stringify(payload) });
     if (nameEl)  nameEl.value  = '';
     if (priceEl) priceEl.value = '';
+    if (stockEl) stockEl.value = '';
+    if (descEl)  descEl.value  = '';
+    if (catEl)   catEl.value   = '';
     clearProductImg();
     toast(`✅ ${name} added`);
     loadProducts();
   } catch(e) { toast(e.message || 'Failed to add product', true); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = '+ Add to Menu'; } }
 }
 
 async function deleteProduct(id) {
@@ -2751,3 +2879,323 @@ async function maybeShowReferralNudge() {
 
 // Load referral nudge a few seconds after the page settles
 setTimeout(() => { if (typeof token !== 'undefined' && token) maybeShowReferralNudge(); }, 5000);
+
+
+/* ══════════════════════════════════════════════════════════
+   PRODUCTS PAGE — New functions for Phases 6-11 + 13
+   All additive. Existing deleteProduct unchanged.
+══════════════════════════════════════════════════════════ */
+
+// ── Phase 9: Bulk select ──────────────────────────────────
+
+function toggleProductSelect(id, checked) {
+  if (checked) _selectedProductIds.add(id);
+  else _selectedProductIds.delete(id);
+  _updateBulkBar();
+}
+
+function toggleSelectAllProducts(checked) {
+  const visible = _allProducts.filter(() => true); // filtered subset
+  visible.forEach(p => checked ? _selectedProductIds.add(p.id) : _selectedProductIds.delete(p.id));
+  document.querySelectorAll('.prod-cb').forEach(cb => { cb.checked = checked; });
+  _updateBulkBar();
+}
+
+function clearProductSelection() {
+  _selectedProductIds.clear();
+  const allCb = document.getElementById('prod-select-all');
+  if (allCb) allCb.checked = false;
+  document.querySelectorAll('.prod-cb').forEach(cb => { cb.checked = false; });
+  _updateBulkBar();
+}
+
+function _updateBulkBar() {
+  const bar   = document.getElementById('prod-bulk-bar');
+  const count = document.getElementById('prod-bulk-count');
+  if (!bar) return;
+  const n = _selectedProductIds.size;
+  bar.style.display  = n > 0 ? 'flex' : 'none';
+  if (count) count.textContent = `${n} selected`;
+}
+
+function bulkProductAction(action) {
+  const n = _selectedProductIds.size;
+  if (!n) return;
+  const modal    = document.getElementById('prod-bulk-modal');
+  const titleEl  = document.getElementById('bulk-modal-title');
+  const msgEl    = document.getElementById('bulk-modal-msg');
+  const confirmBtn = document.getElementById('bulk-modal-confirm');
+  if (!modal) return;
+
+  const labels = { delete: 'Delete', activate: 'Activate', deactivate: 'Deactivate' };
+  if (titleEl)  titleEl.textContent = `${labels[action]} ${n} Product${n > 1 ? 's' : ''}`;
+  if (msgEl) {
+    if (action === 'delete')
+      msgEl.textContent = `Are you sure you want to permanently delete ${n} product${n>1?'s':''}? This cannot be undone.`;
+    else
+      msgEl.textContent = `${labels[action]} ${n} selected product${n>1?'s':''}?`;
+  }
+  if (confirmBtn) confirmBtn.onclick = () => _executeBulkAction(action);
+  modal.style.display = 'flex';
+}
+
+async function _executeBulkAction(action) {
+  closeBulkModal();
+  const ids = [..._selectedProductIds];
+  let done = 0, failed = 0;
+  for (const id of ids) {
+    try {
+      if (action === 'delete') {
+        await apiFetch(`${ROUTES.products}/${id}`, { method: 'DELETE' });
+      } else {
+        const status = action === 'activate' ? 'active' : 'draft';
+        await apiFetch(`${ROUTES.products}/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status }),
+        });
+      }
+      done++;
+    } catch (_) { failed++; }
+  }
+  toast(`${action === 'delete' ? '🗑' : '✅'} ${done} product${done > 1 ? 's' : ''} ${action}d${failed ? ` (${failed} failed)` : ''}`);
+  clearProductSelection();
+  loadProducts();
+}
+
+function closeBulkModal() {
+  const modal = document.getElementById('prod-bulk-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+// ── Phase 6: Edit product modal ───────────────────────────
+
+function openProdEdit(id) {
+  const p = _allProducts.find(x => x.id === id);
+  if (!p) { toast('Product not found', true); return; }
+  document.getElementById('edit-prod-id').value    = p.id;
+  document.getElementById('edit-prod-name').value  = p.name  || '';
+  document.getElementById('edit-prod-price').value = p.price || '';
+  document.getElementById('edit-prod-stock').value = typeof p.stock === 'number' ? p.stock : '';
+  document.getElementById('edit-prod-desc').value  = p.description || '';
+  const statusEl = document.getElementById('edit-prod-status');
+  if (statusEl) statusEl.value = p.status || 'active';
+  const modal = document.getElementById('prod-edit-modal');
+  if (modal) modal.style.display = 'flex';
+}
+
+function closeProdEdit() {
+  const modal = document.getElementById('prod-edit-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function saveProdEdit() {
+  const id    = parseInt(document.getElementById('edit-prod-id').value, 10);
+  const name  = document.getElementById('edit-prod-name').value.trim();
+  const price = parseFloat(document.getElementById('edit-prod-price').value);
+  const stock = document.getElementById('edit-prod-stock').value;
+  const desc  = document.getElementById('edit-prod-desc').value.trim();
+  const status= document.getElementById('edit-prod-status').value;
+  if (!name || isNaN(price)) { toast('Name and price are required', true); return; }
+  const payload = { name, price, status };
+  if (desc)           payload.description = desc;
+  if (stock !== '')   payload.stock = parseInt(stock, 10);
+  try {
+    await apiFetch(`${ROUTES.products}/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+    toast('✅ Product updated');
+    closeProdEdit();
+    loadProducts();
+  } catch(e) { toast('Failed to update: ' + e.message, true); }
+}
+
+function viewProduct(id) {
+  const p = _allProducts.find(x => x.id === id);
+  if (!p) return;
+  const info = [
+    `📦 ${p.name}`,
+    `💲 Price: $${(p.price||0).toFixed(2)}`,
+    p.category   ? `🏷 Category: ${p.category}` : '',
+    typeof p.stock === 'number' ? `📊 Stock: ${p.stock}` : '',
+    p.description ? `📝 ${p.description}` : '',
+  ].filter(Boolean).join('\n');
+  alert(info); // simple modal-less view for now
+}
+
+// ── Phase 10: Quick actions ───────────────────────────────
+
+function exportProducts() {
+  if (!_allProducts.length) { toast('No products to export', true); return; }
+  const cols = ['id','name','price','category','stock','status','description'];
+  const rows = [cols.join(',')];
+  for (const p of _allProducts) {
+    rows.push(cols.map(c => {
+      const v = p[c] === undefined || p[c] === null ? '' : String(p[c]);
+      return v.includes(',') || v.includes('"') ? `"${v.replace(/"/g,'""')}"` : v;
+    }).join(','));
+  }
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement('a'), { href: url, download: 'products.csv' });
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('📥 Products exported as CSV');
+}
+
+function generateCatalog() {
+  if (!_allProducts.length) { toast('No products to catalog', true); return; }
+  const name = bizName || 'Our Store';
+  const lines = [`📋 *${name} — Product Catalog*\n`];
+  _allProducts.forEach((p, i) => {
+    lines.push(`${i+1}. *${p.name}* — $${(p.price||0).toFixed(2)}${p.description?' | '+p.description:''}`);
+  });
+  lines.push(`\nType a product name or number to order! 😊`);
+  const text = lines.join('\n');
+  navigator.clipboard.writeText(text)
+    .then(() => toast('📋 WhatsApp catalog copied!'))
+    .catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      toast('📋 WhatsApp catalog copied!');
+    });
+}
+
+function shareMenuLink() {
+  const base = window.location.origin;
+  const link = `${base}/?business=${encodeURIComponent(bizName || '')}`;
+  navigator.clipboard.writeText(link)
+    .then(() => toast('🔗 Menu link copied!'))
+    .catch(() => toast('Link: ' + link));
+}
+
+// ── Phase 8: Product analytics ────────────────────────────
+
+async function loadProductAnalytics() {
+  const products = _allProducts;
+
+  // Best sellers: products with most orders (use order count from memory if available)
+  let orderData = {};
+  try {
+    const raw = await apiFetch(ROUTES.orders);
+    const orders = Array.isArray(raw) ? raw : (raw?.data || []);
+    orders.forEach(o => {
+      const items = o.items || [];
+      items.forEach(item => {
+        if (item.name) orderData[item.name] = (orderData[item.name] || 0) + (item.qty || 1);
+      });
+    });
+  } catch(_) {}
+
+  // Best sellers
+  const bsEl = document.getElementById('prod-best-sellers');
+  if (bsEl) {
+    const sorted = [...products].sort((a,b) => (orderData[b.name]||0) - (orderData[a.name]||0)).slice(0,4);
+    if (sorted.length) {
+      bsEl.innerHTML = sorted.map(p => `
+        <div class="prod-analytics-item">
+          <span>${escHtml(p.name)}</span>
+          <span class="prod-analytics-item-val">${orderData[p.name] ? `${orderData[p.name]} sold` : '—'}</span>
+        </div>`).join('');
+    } else {
+      bsEl.innerHTML = '<div style="color:var(--text-muted,var(--text-dim));">No order data yet.</div>';
+    }
+  }
+
+  // Recently added
+  const raEl = document.getElementById('prod-recently-added');
+  if (raEl) {
+    const recent = [...products].slice(-4).reverse();
+    raEl.innerHTML = recent.map(p => `
+      <div class="prod-analytics-item">
+        <span>${escHtml(p.name)}</span>
+        <span class="prod-analytics-item-val">$${(p.price||0).toFixed(2)}</span>
+      </div>`).join('') || '<div style="color:var(--text-dim);">No products yet.</div>';
+  }
+
+  // Needs attention: OOS or low stock
+  const naEl = document.getElementById('prod-needs-attention');
+  if (naEl) {
+    const attn = products.filter(p => _isProdOos(p) || _isProdLowStock(p));
+    naEl.innerHTML = attn.length
+      ? attn.map(p => `
+          <div class="prod-analytics-item">
+            <span>${escHtml(p.name)}</span>
+            <span class="prod-analytics-item-val" style="${_isProdOos(p)?'color:var(--red)':'color:var(--amber)'}">
+              ${_isProdOos(p)?'Out of stock':'⚠ Low'}
+            </span>
+          </div>`).join('')
+      : '<div style="color:var(--green);font-size:11px;">✅ All products in stock</div>';
+  }
+}
+
+// ── Phase 11: AI assistant tools ─────────────────────────
+
+function toggleAiTools() {
+  const panel = document.getElementById('ai-tools-panel');
+  const btn   = document.getElementById('ai-tools-btn');
+  if (!panel) return;
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : '';
+  if (btn) btn.style.background = open ? '' : 'rgba(167,139,250,.2)';
+}
+
+function _showAiOutput(text) {
+  const out = document.getElementById('ai-tools-output');
+  if (!out) return;
+  out.textContent = text;
+  out.style.display = '';
+}
+
+function aiGenerateDescription() {
+  const name = (document.getElementById('product-name')?.value || '').trim();
+  if (!name) { toast('Enter a product name first', true); return; }
+  // Placeholder: structured template (real AI endpoint can be wired here)
+  const desc = `${name} is a fresh, high-quality item available from our store. `
+    + `Order now via WhatsApp and enjoy fast delivery. `
+    + `Ask us about today's specials!`;
+  const el = document.getElementById('product-description');
+  if (el) el.value = desc;
+  _showAiOutput(`✍️ Description generated for "${name}":\n\n${desc}`);
+  toast('✅ Description applied');
+}
+
+function aiSuggestName() {
+  const cat  = (document.getElementById('product-category')?.value || 'general').toLowerCase();
+  const suggestions = {
+    'food & beverage': ['House Special Plate', 'Chef\'s Daily Special', 'Signature Combo'],
+    'bakery & pastry': ['Fresh Baked Loaf', 'Daily Pastry Box', 'Artisan Roll'],
+    'health & beauty': ['Glow Serum', 'Daily Moisturiser', 'Repair Mask'],
+    default: ['Premium Starter Pack', 'Classic Bundle', 'Value Special'],
+  };
+  const list = suggestions[cat] || suggestions.default;
+  _showAiOutput(`💡 Name suggestions for ${cat || 'your category'}:\n\n${list.map((s,i) => `${i+1}. ${s}`).join('\n')}`);
+}
+
+function aiPricingAdvice() {
+  const price = parseFloat(document.getElementById('product-price')?.value || 0);
+  const cat   = (document.getElementById('product-category')?.value || '').toLowerCase();
+  if (!price) { toast('Enter a price first', true); return; }
+  const margin = cat.includes('food') ? 0.65 : 0.55;
+  const cost   = (price * (1 - margin)).toFixed(2);
+  const advice = `💲 Pricing analysis for $${price.toFixed(2)}:\n\n`
+    + `• Estimated cost at ${(margin*100).toFixed(0)}% margin: $${cost}\n`
+    + `• Suggested range: $${(price*0.85).toFixed(2)} – $${(price*1.2).toFixed(2)}\n`
+    + `• Consider bundling with complementary items to increase basket size.`;
+  _showAiOutput(advice);
+}
+
+function aiProductInsights() {
+  const total    = _allProducts.length;
+  const oos      = _allProducts.filter(_isProdOos).length;
+  const low      = _allProducts.filter(_isProdLowStock).length;
+  const avgPrice = total ? (_allProducts.reduce((s,p) => s+(p.price||0), 0) / total).toFixed(2) : 0;
+  const insights = `📊 Product Performance Insights:\n\n`
+    + `• Total products: ${total}\n`
+    + `• Average price: $${avgPrice}\n`
+    + (oos ? `• ⚠️ ${oos} product${oos>1?'s':''} out of stock — restock to avoid lost sales\n` : `• ✅ All products in stock\n`)
+    + (low ? `• ⚠️ ${low} product${low>1?'s':''} running low — consider restocking soon\n` : '')
+    + `\nTip: Products priced under $5 tend to have higher order frequency.`;
+  _showAiOutput(insights);
+}

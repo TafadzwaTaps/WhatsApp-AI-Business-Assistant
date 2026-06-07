@@ -1197,3 +1197,358 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   .cmd-box     { width: 100vw; border-radius: 14px 14px 0 0; }
   .cmd-results { max-height: 55vh; }
 }
+
+
+/* ══════════════════════════════════════════════════════════
+   PRODUCTS PAGE ENHANCEMENT — Phases 1-13
+   Additive only. Existing product styles unchanged.
+══════════════════════════════════════════════════════════ */
+
+/* ── Phase 1: KPI Overview Cards ─────────────────────────── */
+.prod-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 0 0 4px;
+}
+.prod-kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s, border-color 0.15s;
+}
+.prod-kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--green);
+  opacity: 0.45;
+}
+.prod-kpi-card.green::before  { background: var(--green); }
+.prod-kpi-card.red::before    { background: var(--red); }
+.prod-kpi-card.amber::before  { background: var(--amber); }
+.prod-kpi-card.purple::before { background: var(--purple); }
+.prod-kpi-card:hover { transform: translateY(-2px); border-color: var(--green-dim); }
+.prod-kpi-icon { font-size: 22px; flex-shrink: 0; }
+.prod-kpi-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  margin-bottom: 4px;
+}
+.prod-kpi-value {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1;
+}
+.prod-kpi-card.green  .prod-kpi-value { color: var(--green); }
+.prod-kpi-card.red    .prod-kpi-value { color: var(--red); }
+.prod-kpi-card.amber  .prod-kpi-value { color: var(--amber); }
+.prod-kpi-card.purple .prod-kpi-value { color: var(--purple); }
+
+/* ── Phase 3: Image upload enhancements ──────────────────── */
+.img-progress-wrap {
+  height: 4px;
+  background: var(--surface2);
+  border-radius: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.img-progress-bar {
+  height: 100%;
+  background: var(--green);
+  border-radius: 4px;
+  width: 0;
+  transition: width 0.3s ease;
+}
+.img-replace-btn {
+  font-size: 11px;
+  font-family: var(--mono);
+  color: var(--green);
+  cursor: pointer;
+  background: var(--green-glow);
+  border: 1px solid var(--green-dim);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+.img-replace-btn:hover { background: rgba(34,197,94,.25); }
+
+/* ── Phase 4: Filter toolbar ─────────────────────────────── */
+.prod-filter-bar {
+  display: flex;
+  gap: 8px;
+  padding: 12px 20px 0;
+  flex-wrap: wrap;
+}
+.prod-filter-input {
+  flex: 1;
+  min-width: 160px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.prod-filter-input:focus { border-color: var(--green); }
+.prod-filter-select {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  outline: none;
+}
+
+/* ── Phase 5: Enhanced table header ─────────────────────── */
+#products-table th {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+#products-table td { padding: 10px 12px; vertical-align: middle; }
+#products-table tr { transition: background 0.1s; }
+#products-table tbody tr:hover { background: rgba(34,197,94,.04); }
+#products-table .prod-cb { accent-color: var(--green); cursor: pointer; }
+
+/* ── Phase 5+7: Status badges ────────────────────────────── */
+.prod-status-active   { color: var(--green); background: var(--green-glow); border: 1px solid var(--green-dim); display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:10px;font-family:var(--mono);white-space:nowrap; }
+.prod-status-draft    { color: var(--text-dim); background: rgba(107,143,113,.1); border: 1px solid var(--border); display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:10px;font-family:var(--mono);white-space:nowrap; }
+.prod-status-low      { color: var(--amber); background: rgba(245,158,11,.1); border: 1px solid rgba(245,158,11,.3); display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:10px;font-family:var(--mono);white-space:nowrap; }
+.prod-status-oos      { color: var(--red); background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3); display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:12px;font-size:10px;font-family:var(--mono);white-space:nowrap; }
+
+/* ── Phase 6: Action buttons in table ────────────────────── */
+.prod-action-btn {
+  padding: 4px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.prod-action-btn:hover { background: var(--surface2); color: var(--text); }
+.prod-action-btn.edit:hover  { color: var(--green); border-color: var(--green-dim); }
+.prod-action-btn.del:hover   { color: var(--red);   border-color: rgba(239,68,68,.4); }
+.prod-action-btn.view:hover  { color: var(--blue);  border-color: rgba(56,189,248,.4); }
+.prod-action-btn-row { display: flex; gap: 5px; }
+
+/* ── Phase 9: Bulk actions bar ───────────────────────────── */
+.prod-bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  background: rgba(34,197,94,.06);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.prod-bulk-bar span { font-size: 12px; font-family: var(--mono); color: var(--text-dim); }
+.prod-bulk-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.prod-bulk-btn.green { border-color: rgba(34,197,94,.3);  color: var(--green); }
+.prod-bulk-btn.amber { border-color: rgba(245,158,11,.3); color: var(--amber); }
+.prod-bulk-btn.red   { border-color: rgba(239,68,68,.3);  color: var(--red); }
+.prod-bulk-btn:hover { background: var(--surface2); }
+
+/* ── Phase 10: Quick actions footer ─────────────────────── */
+.prod-quick-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.prod-qa-btn {
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.prod-qa-btn:hover { background: var(--green-glow); color: var(--green); border-color: var(--green-dim); }
+.prod-qa-btn.disabled { opacity: 0.45; cursor: not-allowed; }
+.prod-qa-btn.disabled:hover { background: var(--surface2); color: var(--text-dim); border-color: var(--border); }
+
+/* ── Phase 8: Analytics panel ────────────────────────────── */
+.prod-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+}
+.prod-analytics-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+.prod-analytics-title { font-size: 12px; font-weight: 700; margin-bottom: 10px; }
+.prod-analytics-list { font-size: 12px; color: var(--text-dim); line-height: 1.8; font-family: var(--mono); }
+.prod-analytics-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.prod-analytics-item:last-child { border-bottom: none; }
+.prod-analytics-item-val { color: var(--green); font-weight: 700; }
+
+/* ── Phase 11: AI Tools panel ────────────────────────────── */
+.ai-tools-panel {
+  background: rgba(167,139,250,.06);
+  border-bottom: 1px solid rgba(167,139,250,.2);
+  padding: 14px 20px;
+}
+.ai-tools-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.ai-tool-btn {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(167,139,250,.3);
+  background: rgba(167,139,250,.1);
+  color: var(--purple);
+  font-size: 12px;
+  font-family: var(--mono);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ai-tool-btn:hover { background: rgba(167,139,250,.2); }
+.ai-tools-output {
+  background: var(--surface2);
+  border: 1px solid rgba(167,139,250,.2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 12px;
+  font-family: var(--mono);
+  color: var(--text);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
+/* ── Phase 13: Skeleton loader ───────────────────────────── */
+.prod-skeleton-wrap { padding: 8px 0; }
+.prod-skeleton-row {
+  height: 40px;
+  background: linear-gradient(90deg,
+    var(--surface2) 25%,
+    rgba(34,197,94,.08) 50%,
+    var(--surface2) 75%);
+  background-size: 200% 100%;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  animation: prod-shimmer 1.4s infinite;
+}
+@keyframes prod-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ── Phase 6: Edit / confirm modals ─────────────────────── */
+.prod-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,.6);
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.prod-modal-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  width: min(96vw, 520px);
+  box-shadow: 0 20px 48px rgba(0,0,0,.5);
+  animation: prod-modal-in .18s ease;
+}
+@keyframes prod-modal-in {
+  from { transform: scale(.95); opacity: 0; }
+  to   { transform: scale(1);   opacity: 1; }
+}
+.prod-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.prod-modal-body   { padding: 20px; }
+.prod-modal-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Phase 12: Responsive ────────────────────────────────── */
+@media (max-width: 1100px) {
+  .prod-kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  .prod-analytics-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 700px) {
+  .prod-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .prod-analytics-grid { grid-template-columns: 1fr; }
+  #products-table { font-size: 11px; }
+  #products-table th:nth-child(4),
+  #products-table td:nth-child(4),
+  #products-table th:nth-child(7),
+  #products-table td:nth-child(7) { display: none; } /* hide Category and Status on mobile */
+  .prod-filter-bar { flex-direction: column; }
+  .prod-filter-input, .prod-filter-select { width: 100%; }
+  .prod-kpi-card { padding: 12px 10px; }
+  .prod-kpi-value { font-size: 18px; }
+}
+@media (max-width: 420px) {
+  .prod-kpi-grid { grid-template-columns: 1fr 1fr; }
+}

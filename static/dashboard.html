@@ -301,16 +301,113 @@
   </div>
 
   <!-- PRODUCTS -->
+  <!-- PRODUCTS / INVENTORY ─────────────────────────────── -->
   <div id="section-products" class="section">
     <div class="topbar"><div class="page-title">Manage <span>Products</span></div></div>
+
+    <!-- PHASE 1: KPI Overview Cards -->
+    <div class="prod-kpi-grid">
+      <div class="prod-kpi-card">
+        <div class="prod-kpi-icon">📦</div>
+        <div class="prod-kpi-body">
+          <div class="prod-kpi-label">Total Products</div>
+          <div class="prod-kpi-value" id="kpi-total-products">—</div>
+        </div>
+      </div>
+      <div class="prod-kpi-card green">
+        <div class="prod-kpi-icon">✅</div>
+        <div class="prod-kpi-body">
+          <div class="prod-kpi-label">Active</div>
+          <div class="prod-kpi-value" id="kpi-active-products">—</div>
+        </div>
+      </div>
+      <div class="prod-kpi-card red">
+        <div class="prod-kpi-icon">⚠️</div>
+        <div class="prod-kpi-body">
+          <div class="prod-kpi-label">Out of Stock</div>
+          <div class="prod-kpi-value" id="kpi-oos-products">—</div>
+        </div>
+      </div>
+      <div class="prod-kpi-card amber">
+        <div class="prod-kpi-icon">🛒</div>
+        <div class="prod-kpi-body">
+          <div class="prod-kpi-label">Total Orders</div>
+          <div class="prod-kpi-value" id="kpi-prod-orders">—</div>
+        </div>
+      </div>
+      <div class="prod-kpi-card purple">
+        <div class="prod-kpi-icon">💰</div>
+        <div class="prod-kpi-body">
+          <div class="prod-kpi-label">Revenue</div>
+          <div class="prod-kpi-value" id="kpi-prod-revenue">—</div>
+        </div>
+      </div>
+    </div>
+
     <div class="panels">
+
+      <!-- PHASE 2: Enhanced Add Product Form -->
       <div class="panel">
-        <div class="panel-header"><div class="panel-title">Add Product</div></div>
-        <div class="panel-body">
-          <div class="form-row">
-            <div class="form-group-inline"><label>Name</label><input type="text" id="product-name" placeholder="e.g. Sadza"/></div>
-            <div class="form-group-inline"><label>Price (USD)</label><input type="number" id="product-price" placeholder="2.50" step="0.01"/></div>
+        <div class="panel-header">
+          <div class="panel-title">Add Product</div>
+          <!-- PHASE 11: AI Tools toggle -->
+          <button class="panel-action" onclick="toggleAiTools()" id="ai-tools-btn" title="AI Assistant">✨ AI Tools</button>
+        </div>
+
+        <!-- PHASE 11: AI Tools Panel (expandable) -->
+        <div id="ai-tools-panel" class="ai-tools-panel" style="display:none;">
+          <div class="ai-tools-grid">
+            <button class="ai-tool-btn" onclick="aiGenerateDescription()">✍️ Generate Description</button>
+            <button class="ai-tool-btn" onclick="aiSuggestName()">💡 Name Suggestions</button>
+            <button class="ai-tool-btn" onclick="aiPricingAdvice()">💲 Pricing Advice</button>
+            <button class="ai-tool-btn" onclick="aiProductInsights()">📊 Performance Insights</button>
           </div>
+          <div id="ai-tools-output" class="ai-tools-output" style="display:none;"></div>
+        </div>
+
+        <div class="panel-body">
+          <!-- Row 1: Name + Price -->
+          <div class="form-row">
+            <div class="form-group-inline">
+              <label>Name</label>
+              <input type="text" id="product-name" placeholder="e.g. Sadza"/>
+            </div>
+            <div class="form-group-inline">
+              <label>Price (USD)</label>
+              <input type="number" id="product-price" placeholder="2.50" step="0.01"/>
+            </div>
+          </div>
+          <!-- Row 2: Category + Status (Phase 2) -->
+          <div class="form-row">
+            <div class="form-group-inline">
+              <label>Category <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+              <select id="product-category" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
+                <option value="">Select category…</option>
+                <option>Food &amp; Beverage</option>
+                <option>Bakery &amp; Pastry</option>
+                <option>Grocery &amp; Staples</option>
+                <option>Health &amp; Beauty</option>
+                <option>Electronics</option>
+                <option>Fashion &amp; Clothing</option>
+                <option>Home &amp; Garden</option>
+                <option>Services</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="form-group-inline">
+              <label>Stock Qty <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+              <input type="number" id="product-stock" placeholder="e.g. 50" min="0" step="1"
+                     style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
+            </div>
+          </div>
+          <!-- Row 3: Description (Phase 2) -->
+          <div class="form-group-inline" style="margin-bottom:14px;">
+            <label>Description <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <textarea id="product-description" rows="2"
+              placeholder="Brief product description shown to customers…"
+              style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;resize:vertical;"></textarea>
+          </div>
+          <!-- Phase 3: Enhanced Image Upload -->
           <div class="form-group-inline" style="margin-bottom:14px;">
             <label>Product Image <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
             <div class="img-upload-area" id="img-upload-area"
@@ -322,28 +419,208 @@
               <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Click or drag an image here</div>
               <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);margin-top:2px">JPG, PNG, WebP · max 2MB</div>
             </div>
+            <!-- Progress bar (Phase 3) -->
+            <div class="img-progress-wrap" id="img-progress-wrap" style="display:none;">
+              <div class="img-progress-bar" id="img-progress-bar"></div>
+            </div>
             <img id="img-preview" class="img-preview" alt="preview"/>
-            <button class="img-clear" id="img-clear-btn" onclick="clearProductImg()" style="display:none;">✕ Remove image</button>
+            <div id="img-action-bar" style="display:none;margin-top:6px;display:none;gap:8px;">
+              <label class="img-replace-btn" for="product-img-file">↺ Replace</label>
+              <button class="img-clear" id="img-clear-btn" onclick="clearProductImg()">✕ Remove</button>
+            </div>
           </div>
-          <button class="btn btn-primary" onclick="addProduct()">+ Add to Menu</button>
+          <button class="btn btn-primary" id="add-product-btn" onclick="addProduct()">+ Add to Menu</button>
         </div>
       </div>
-      <div class="panel">
+
+      <!-- PHASE 4-9: Current Menu with search, filter, bulk ops -->
+      <div class="panel full">
         <div class="panel-header">
           <div class="panel-title">Current Menu</div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button class="panel-action" id="view-table-btn" onclick="setProductView('table')" style="opacity:1;">≡ List</button>
             <button class="panel-action" id="view-grid-btn" onclick="setProductView('grid')" style="opacity:0.5;">⊞ Grid</button>
             <button class="panel-action" onclick="loadProducts()">↻</button>
           </div>
         </div>
-        <div class="panel-body">
-          <table id="products-table"><thead><tr><th></th><th>Product</th><th>Price</th><th>Action</th></tr></thead><tbody id="products-body"></tbody></table>
+
+        <!-- Phase 4: Filter toolbar -->
+        <div class="prod-filter-bar">
+          <input type="text" id="prod-search" class="prod-filter-input" placeholder="🔍 Search products…"
+                 oninput="applyProductFilters()"/>
+          <select id="prod-filter-cat" class="prod-filter-select" onchange="applyProductFilters()">
+            <option value="">All Categories</option>
+            <option>Food &amp; Beverage</option>
+            <option>Bakery &amp; Pastry</option>
+            <option>Grocery &amp; Staples</option>
+            <option>Health &amp; Beauty</option>
+            <option>Electronics</option>
+            <option>Fashion &amp; Clothing</option>
+            <option>Home &amp; Garden</option>
+            <option>Services</option>
+            <option>Other</option>
+          </select>
+          <select id="prod-filter-status" class="prod-filter-select" onchange="applyProductFilters()">
+            <option value="">All Statuses</option>
+            <option value="active">Active</option>
+            <option value="low_stock">Low Stock</option>
+            <option value="out_of_stock">Out of Stock</option>
+          </select>
+          <select id="prod-sort" class="prod-filter-select" onchange="applyProductFilters()">
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+            <option value="price_asc">Price Low → High</option>
+            <option value="price_desc">Price High → Low</option>
+          </select>
+        </div>
+
+        <!-- Phase 9: Bulk action bar -->
+        <div id="prod-bulk-bar" class="prod-bulk-bar" style="display:none;">
+          <span id="prod-bulk-count">0 selected</span>
+          <button class="prod-bulk-btn green" onclick="bulkProductAction('activate')">✅ Activate</button>
+          <button class="prod-bulk-btn amber" onclick="bulkProductAction('deactivate')">⏸ Deactivate</button>
+          <button class="prod-bulk-btn red" onclick="bulkProductAction('delete')">🗑 Delete</button>
+          <button class="prod-bulk-btn" onclick="clearProductSelection()">✕ Clear</button>
+        </div>
+
+        <div class="panel-body" style="padding-top:0;">
+          <!-- Skeleton loader (Phase 13) -->
+          <div id="prod-skeleton" class="prod-skeleton-wrap" style="display:none;">
+            <div class="prod-skeleton-row"></div>
+            <div class="prod-skeleton-row"></div>
+            <div class="prod-skeleton-row"></div>
+          </div>
+          <!-- Existing table (IDs preserved exactly) -->
+          <table id="products-table">
+            <thead>
+              <tr>
+                <!-- Phase 9: select-all checkbox -->
+                <th style="width:36px;"><input type="checkbox" id="prod-select-all" onchange="toggleSelectAllProducts(this.checked)" style="accent-color:var(--green);cursor:pointer;"/></th>
+                <th></th>
+                <th>Product</th>
+                <th>Category</th>
+                <th>Price</th>
+                <th>Stock</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="products-body"></tbody>
+          </table>
+          <!-- Existing grid (ID preserved exactly) -->
           <div id="products-grid" class="product-grid" style="display:none;"></div>
+        </div>
+
+        <!-- Phase 10: Quick Actions footer -->
+        <div class="prod-quick-actions">
+          <span style="font-size:11px;color:var(--text-muted,var(--text-dim));font-family:var(--mono);margin-right:4px;">Quick Actions:</span>
+          <button class="prod-qa-btn" onclick="exportProducts()" title="Export as CSV">⬇ Export</button>
+          <button class="prod-qa-btn" onclick="generateCatalog()" title="Generate WhatsApp catalog message">📋 WA Catalog</button>
+          <button class="prod-qa-btn" onclick="shareMenuLink()" title="Copy your menu link">🔗 Share Menu</button>
+          <button class="prod-qa-btn disabled" title="Coming soon">📱 QR Code</button>
+          <button class="prod-qa-btn disabled" title="Import from CSV — coming soon">⬆ Import</button>
+        </div>
+      </div>
+
+      <!-- Phase 8: Analytics mini panel -->
+      <div class="panel full" id="prod-analytics-panel">
+        <div class="panel-header">
+          <div class="panel-title">📊 Product Analytics</div>
+          <button class="panel-action" onclick="loadProductAnalytics()">↻ Refresh</button>
+        </div>
+        <div class="panel-body">
+          <div class="prod-analytics-grid">
+            <div class="prod-analytics-card">
+              <div class="prod-analytics-title">🏆 Best Sellers</div>
+              <div id="prod-best-sellers" class="prod-analytics-list">
+                <div class="prod-skeleton-row" style="height:16px;margin-bottom:8px;"></div>
+                <div class="prod-skeleton-row" style="height:16px;margin-bottom:8px;width:80%;"></div>
+                <div class="prod-skeleton-row" style="height:16px;width:60%;"></div>
+              </div>
+            </div>
+            <div class="prod-analytics-card">
+              <div class="prod-analytics-title">🆕 Recently Added</div>
+              <div id="prod-recently-added" class="prod-analytics-list">
+                <div class="prod-skeleton-row" style="height:16px;margin-bottom:8px;"></div>
+                <div class="prod-skeleton-row" style="height:16px;width:70%;"></div>
+              </div>
+            </div>
+            <div class="prod-analytics-card">
+              <div class="prod-analytics-title">⚠️ Needs Attention</div>
+              <div id="prod-needs-attention" class="prod-analytics-list">
+                <div class="prod-skeleton-row" style="height:16px;margin-bottom:8px;"></div>
+                <div class="prod-skeleton-row" style="height:16px;width:75%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /panels -->
+
+    <!-- Phase 6: Edit Product Modal -->
+    <div id="prod-edit-modal" class="prod-modal-overlay" style="display:none;" onclick="if(event.target===this)closeProdEdit()">
+      <div class="prod-modal-box">
+        <div class="prod-modal-header">
+          <strong>Edit Product</strong>
+          <button onclick="closeProdEdit()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;">✕</button>
+        </div>
+        <div class="prod-modal-body">
+          <input type="hidden" id="edit-prod-id"/>
+          <div class="form-row">
+            <div class="form-group-inline">
+              <label>Name</label>
+              <input type="text" id="edit-prod-name" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
+            </div>
+            <div class="form-group-inline">
+              <label>Price</label>
+              <input type="number" id="edit-prod-price" step="0.01" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:10px;">
+            <div class="form-group-inline">
+              <label>Stock</label>
+              <input type="number" id="edit-prod-stock" min="0" step="1" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
+            </div>
+            <div class="form-group-inline">
+              <label>Status</label>
+              <select id="edit-prod-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
+                <option value="active">Active</option>
+                <option value="draft">Draft</option>
+                <option value="out_of_stock">Out of Stock</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:10px;">
+            <label style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Description</label>
+            <textarea id="edit-prod-desc" rows="2" style="width:100%;margin-top:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;resize:vertical;"></textarea>
+          </div>
+        </div>
+        <div class="prod-modal-footer">
+          <button class="btn btn-ghost" onclick="closeProdEdit()" style="color:var(--text-dim);border-color:var(--border);">Cancel</button>
+          <button class="btn btn-primary" onclick="saveProdEdit()">Save Changes</button>
         </div>
       </div>
     </div>
-  </div>
+
+    <!-- Phase 9: Bulk confirm modal -->
+    <div id="prod-bulk-modal" class="prod-modal-overlay" style="display:none;" onclick="if(event.target===this)closeBulkModal()">
+      <div class="prod-modal-box" style="max-width:380px;">
+        <div class="prod-modal-header">
+          <strong id="bulk-modal-title">Confirm Action</strong>
+          <button onclick="closeBulkModal()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;">✕</button>
+        </div>
+        <div class="prod-modal-body">
+          <p id="bulk-modal-msg" style="font-size:13px;color:var(--text-dim);line-height:1.6;"></p>
+        </div>
+        <div class="prod-modal-footer">
+          <button class="btn btn-ghost" onclick="closeBulkModal()" style="color:var(--text-dim);border-color:var(--border);">Cancel</button>
+          <button class="btn btn-primary" id="bulk-modal-confirm" onclick="">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /section-products -->
 
   <!-- CONVERSATIONS -->
   <div id="section-conversations" class="section">
