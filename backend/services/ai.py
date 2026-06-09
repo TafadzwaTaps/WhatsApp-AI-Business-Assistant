@@ -102,6 +102,20 @@ from services._ai_intent import (
     _is_reschedule_booking, _is_my_bookings_query,
 )
 
+# Visual catalog intents — try/except guards against old _ai_intent.py on server
+try:
+    from services._ai_intent import (
+        _is_catalog_request, _is_show_image_request,
+        _extract_show_target, _is_more_products_request,
+        _extract_show_category,
+    )
+except ImportError:
+    def _is_catalog_request(t):       return False
+    def _is_show_image_request(t):    return False
+    def _extract_show_target(t):      return t
+    def _is_more_products_request(t): return False
+    def _extract_show_category(t):    return ""
+
 # Products, formatters, multi-item
 from services._ai_products import (
     _find_product, _qty, _recommend,
