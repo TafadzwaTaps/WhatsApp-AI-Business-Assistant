@@ -1308,8 +1308,12 @@ function fmtTime(iso){
   if(!iso) return '—';
   try {
     let s = String(iso).trim();
+    // Replace space separator with T (only first occurrence)
     s = s.replace(' ', 'T');
-    if(!/[Z+\-]\d*$/.test(s.slice(10))) s += 'Z';
+    // Normalise timezone: "+00" → "+00:00", remove microseconds for Safari compat
+    s = s.replace(/(\.\d{3})\d+/, '$1');      // trim microseconds to 3dp
+    s = s.replace(/([+-]\d{2})$/, '$1:00');   // +00 → +00:00
+    if (!/[Z+\-]/.test(s.slice(10))) s += 'Z'; // no tz at all → assume UTC
     const d = new Date(s);
     if(isNaN(d.getTime())) return '—';
     const now = new Date();
