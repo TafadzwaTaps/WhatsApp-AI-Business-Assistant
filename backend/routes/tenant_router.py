@@ -158,20 +158,32 @@ def is_in_selection_state(phone: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SWITCH_TRIGGERS = {
+    # Direct switch commands
     "switch", "switch business", "switch shop", "switch store",
     "change business", "change shop", "change store",
     "choose business", "choose shop", "choose store",
     "other business", "other store", "other shop",
-    "go back", "main menu", "back to menu",
     "different store", "different business", "different shop",
+    # Recovery phrases
+    "wrong business", "wrong shop", "wrong store",
+    "restart", "start over", "begin again", "reset",
+    # Navigation
+    "go back", "main menu", "back to menu", "marketplace",
+    "browse businesses", "browse shops",
 }
 
 
 def is_switch_request(text: str) -> bool:
+    """
+    Returns True if the customer wants to switch/change to a different business.
+    Works from ANY conversation state — cart, checkout, booking, handoff.
+    """
     t = text.lower().strip()
     if t in _SWITCH_TRIGGERS:
         return True
     if t.startswith("switch") or t.startswith("change business") or t.startswith("choose business"):
+        return True
+    if t.startswith("browse business") or t.startswith("wrong business"):
         return True
     return False
 
@@ -185,12 +197,19 @@ _NUM_EMOJI = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️�
                "1️⃣1️⃣","1️⃣2️⃣","1️⃣3️⃣","1️⃣4️⃣","1️⃣5️⃣","1️⃣6️⃣","1️⃣7️⃣","1️⃣8️⃣","1️⃣9️⃣","2️⃣0️⃣"]
 
 
-def build_business_picker(businesses: list[dict], platform_name: str = "WaziBot",
-                           current_name: str = "") -> str:
+def build_business_picker(
+    businesses: list[dict],
+    platform_name: str = "WaziBot",
+    current_name: str = "",
+    title: str = "",
+) -> str:
     """
-    Build the WhatsApp business selection menu.
+    Build the WhatsApp business selection menu — marketplace format.
+    Each business gets its own paragraph with number, name, and category icon.
+
     businesses: list of {id, name, category (optional), is_active}
-    current_name: if set, shows the currently selected business at the top.
+    current_name: if set, shows the currently selected business at the top
+    title: optional custom header (e.g. for directory command)
     """
     if not businesses:
         return (
@@ -199,22 +218,28 @@ def build_business_picker(businesses: list[dict], platform_name: str = "WaziBot"
             "Please check back soon. 🙏"
         )
 
-    lines = []
+    entries = []
     for i, biz in enumerate(businesses, 1):
         category = biz.get("category", "").strip()
-        cat_tag  = f" _{category}_" if category else ""
+        icon     = _category_icon(category)
         num      = _NUM_EMOJI[i - 1] if i <= len(_NUM_EMOJI) else f"{i}."
-        lines.append(f"{num}  *{biz['name']}*{cat_tag}")
+        cat_line = f"\n{icon} _{category}_" if category else f"\n{icon}"
+        entries.append(f"{num} *{biz['name']}*{cat_line}")
 
-    header = f"👋 *Welcome to {platform_name}!*"
-    if current_name:
-        header = f"🔄 *Switch Business*\n\n🏪 Currently: *{current_name}*"
+    if title:
+        header = title
+    elif current_name:
+        header = f"🔄 *Switch Business*\n\n🏪 Currently chatting with: *{current_name}*"
+    else:
+        header = f"👋 *Welcome to {platform_name}!*"
 
     return (
         f"{header}\n\n"
         f"Please choose a business:\n\n"
-        + "\n".join(lines) +
-        "\n\n_Reply with the *number* or *business name*._\n"
+        + "\n\n".join(entries) +
+        "\n\n"
+        "_Reply with the *number* or *business name*._\n"
+        "_Examples: *2* or *Flavoury Foods*_\n\n"
         "_Type *switch business* anytime to change._"
     )
 
@@ -293,11 +318,13 @@ def _category_icon(category: str) -> str:
     if any(w in cat for w in ["food", "restaurant", "fast food", "bakery", "cafe",
                                 "coffee", "butchery", "pie", "flavour"]):
         return "🍽️"
-    if any(w in cat for w in ["pharmacy", "clinic", "hospital", "doctor", "dentist",
-                                "health"]):
-        return "💊"
-    if any(w in cat for w in ["salon", "barber", "beauty", "spa", "hair", "nail"]):
+    # Check beauty/salon BEFORE health so "health & beauty" → 💅 not 💊
+    if any(w in cat for w in ["salon", "barber", "beauty", "spa", "hair", "nail",
+                                "cosmetic", "makeup"]):
         return "💅"
+    if any(w in cat for w in ["pharmacy", "clinic", "hospital", "doctor", "dentist",
+                                "health", "medical"]):
+        return "💊"
     if any(w in cat for w in ["fashion", "clothing", "boutique", "shoe", "jewelry",
                                 "apparel"]):
         return "👗"
@@ -316,18 +343,115 @@ def _category_icon(category: str) -> str:
 
 def is_businesses_help_request(text: str) -> bool:
     """
-    Returns True if the customer wants to see the business list
-    (separate from is_switch_request which clears selection first).
-    Used when the customer is already chatting with a business
-    and wants to see what else is available WITHOUT switching yet.
+    Returns True if the customer wants to see the business directory
+    WITHOUT switching — they're just browsing what's available.
+    Separate from is_switch_request which clears the current selection.
     """
     t = text.lower().strip()
     return t in {
-        "businesses", "shops", "stores", "list businesses", "show businesses",
-        "what businesses", "which businesses", "available businesses",
-        "change", "change shop", "change store", "switch shop",
-        "help businesses",
+        # Directory commands (Phase 7)
+        "directory", "business directory", "show businesses", "list businesses",
+        "businesses", "shops", "stores", "available businesses",
+        # Info queries
+        "what businesses", "which businesses", "all businesses", "all shops",
+        "what shops", "which shops", "other businesses", "other shops",
+        # Help phrases
+        "help businesses", "show directory",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CURRENT BUSINESS QUERY — "what shop is this", "who am I talking to"
+# ─────────────────────────────────────────────────────────────────────────────
+
+_CURRENT_BIZ_TRIGGERS = {
+    "current business", "which business", "what business",
+    "what shop", "which shop", "who am i talking to",
+    "what store", "which store", "current shop", "current store",
+    "what business am i in", "who is this", "what shop is this",
+    "am i talking to", "this shop", "current",
+}
+
+def is_current_business_query(text: str) -> bool:
+    """Returns True if the customer is asking which business they are in."""
+    t = text.lower().strip()
+    if t in _CURRENT_BIZ_TRIGGERS:
+        return True
+    if any(phrase in t for phrase in [
+        "which business", "what business", "who am i", "what shop",
+        "current business", "which shop", "who is this",
+    ]):
+        return True
+    return False
+
+
+def build_current_business_response(
+    business_name: str,
+    category: str = "",
+    platform_name: str = "WaziBot",
+) -> str:
+    """Build the 'you are currently chatting with X' response."""
+    icon = _category_icon(category)
+    cat_line = f"\n_{category}_" if category else ""
+    return (
+        f"🏪 *You are currently chatting with:*\n\n"
+        f"{icon} *{business_name}*{cat_line}\n\n"
+        f"Type:\n"
+        f"  📋 *menu* — to see products\n"
+        f"  🛒 *cart* — to view your cart\n"
+        f"  ✅ *checkout* — to place an order\n\n"
+        f"_Type *switch business* to browse other businesses._\n"
+        f"_Type *businesses* to see the full directory._"
+    )
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 3: Safe switch — check active cart before clearing selection
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _has_active_cart(phone: str, business_id: int) -> bool:
+    """Returns True if the customer has items in their cart with this business."""
+    if not business_id:
+        return False
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("carts")
+            .select("items")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        if res.data:
+            items = res.data[0].get("items") or []
+            return len(items) > 0
+    except Exception:
+        pass
+    return False
+
+
+_SWITCH_CONFIRM_TRIGGERS = {"1", "yes", "yeah", "yep", "ok", "confirm", "continue", "proceed"}
+_SWITCH_CANCEL_TRIGGERS   = {"2", "no", "cancel", "back", "stay", "keep"}
+
+def is_switch_confirm(text: str) -> bool:
+    return text.lower().strip() in _SWITCH_CONFIRM_TRIGGERS
+
+def is_switch_cancel(text: str) -> bool:
+    return text.lower().strip() in _SWITCH_CANCEL_TRIGGERS
+
+
+def build_switch_warning(current_biz_name: str) -> str:
+    """Warning shown when switching while a cart is active."""
+    return (
+        f"⚠️ You have items in your cart with *{current_biz_name}*.\n\n"
+        f"Switching businesses will *keep* your cart — "
+        f"you can return to it anytime by saying *switch business* again.\n\n"
+        f"Continue switching?\n\n"
+        f"1️⃣ Yes, show me other businesses\n"
+        f"2️⃣ No, stay with {current_biz_name}"
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN ROUTING FUNCTION — called from webhook
@@ -342,56 +466,98 @@ def resolve_business_for_shared_number(
     Resolve which business to use for an incoming message on the shared number.
 
     Returns:
-        (business_dict | None, reply_or_empty_string)
+        (business, "")           → existing selection, proceed to generate_reply()
+        (business, confirmation) → just selected, send confirmation + proceed to generate_reply()
+        (None, reply)            → send reply directly, do NOT call generate_reply()
 
-    If (business, "") → business found, proceed normally with generate_reply()
-    If (None, reply)  → send reply directly, do not call generate_reply()
-    If (None, "")     → no business found, no reply (should not happen)
+    Priority order (Phase 6):
+      1. Current-business query  → answer in place, stay in current business
+      2. Switch request          → Phase 3 cart-warning or immediate clear + picker
+      3. Pending switch confirm  → confirm or cancel the pending switch
+      4. Existing selection      → route to current business
+      5. New selection attempt   → parse + confirm
+      6. Unknown                 → show picker
     """
+    import re as _re
     platform_name = get_shared_wa_phone() or "WaziBot"
+    selected_id   = get_selected_business_id(phone)
+    selected_name = get_selected_business_name(phone)
 
-    # ── Explicit switch request ───────────────────────────────────────────────
+    # ── P0: Current-business query (Phase 1) ──────────────────────────────────
+    if selected_id is not None and is_current_business_query(text):
+        biz = next((b for b in active_businesses if b["id"] == selected_id), None)
+        if biz:
+            return biz, build_current_business_response(
+                biz["name"], biz.get("category", ""), platform_name)
+        # Fall through to re-show picker
+
+    # ── P1: Pending switch confirmation (Phase 3) ─────────────────────────────
+    sd = _read_platform_state(phone)
+    if sd.get("pending_switch"):
+        if is_switch_confirm(text):
+            # Confirmed — clear current business and show picker
+            _write_platform_state(phone, {"pending_switch": False})
+            clear_selected_business(phone)
+            current_name = sd.get("selected_business_name", "")
+            picker = build_business_picker(active_businesses, platform_name,
+                                           current_name=current_name)
+            return None, picker
+        elif is_switch_cancel(text):
+            # Cancelled — stay with current business
+            _write_platform_state(phone, {"pending_switch": False})
+            biz = next((b for b in active_businesses if b["id"] == selected_id), None)
+            if biz:
+                return biz, f"👍 Staying with *{selected_name}*. Type *menu* to continue. 😊"
+            # Fall through
+
+    # ── P2: Switch request (Phase 2 + 3) ─────────────────────────────────────
     if is_switch_request(text):
+        if selected_id and _has_active_cart(phone, selected_id):
+            # Phase 3: warn before switching — don't clear cart
+            _write_platform_state(phone, {"pending_switch": True})
+            return None, build_switch_warning(selected_name or "current business")
+        # No cart — immediate switch
         clear_selected_business(phone)
-        picker = build_business_picker(active_businesses, platform_name)
+        current_name = selected_name
+        picker = build_business_picker(active_businesses, platform_name,
+                                       current_name=current_name)
         return None, picker
 
-    # ── Already has a selected business ──────────────────────────────────────
-    selected_id = get_selected_business_id(phone)
+    # ── P3: Already has a selected business ──────────────────────────────────
     if selected_id is not None:
-        for biz in active_businesses:
-            if biz["id"] == selected_id:
-                return biz, ""
-        # Selected business is no longer active — clear and re-show picker
+        biz = next((b for b in active_businesses if b["id"] == selected_id), None)
+        if biz:
+            return biz, ""
+        # Business no longer active — clear and re-show picker
         log.warning("selected business %s no longer active  phone=%s", selected_id, phone)
         clear_selected_business(phone)
-        picker = build_business_picker(active_businesses, platform_name)
         return None, (
             "⚠️ The business you were chatting with is currently unavailable.\n\n"
-            + picker
+            + build_business_picker(active_businesses, platform_name)
         )
 
-    # ── Customer needs to select a business ──────────────────────────────────
+    # ── P4: Parse new business selection (Phase 5+6) ─────────────────────────
     selected = parse_business_selection(text, active_businesses)
     if selected:
         set_selected_business(phone, selected["id"], selected["name"])
         cat  = selected.get("category", "").strip()
         icon = _category_icon(cat)
+        # Phase 5: enhanced confirmation
         confirmation = (
-            f"✅ *You are now chatting with:*\n\n"
+            f"✅ *Business Selected!*\n\n"
             f"{icon} *{selected['name']}*"
             + (f"\n_{cat}_" if cat else "") +
             f"\n\n"
-            f"Type:\n"
-            f"  📋 *menu* — to see products\n"
-            f"  🛒 *cart* — to view your cart\n"
-            f"  ✅ *checkout* — to place an order\n\n"
-            f"_Type *switch business* anytime to change._"
+            f"You can now:\n"
+            f"  📋 Type *menu* — see products\n"
+            f"  🛒 Type *cart* — view your cart\n"
+            f"  ✅ Type *checkout* — place an order\n\n"
+            f"_Type *switch business* anytime to switch._\n"
+            f"_Type *businesses* to see the directory._"
         )
-        log.info("business selected via picker  phone=%s  biz=%s  name=%r",
+        log.info("business selected  phone=%s  biz=%s  name=%r",
                  phone, selected["id"], selected["name"])
         return selected, confirmation
 
-    # Not a valid selection — show picker again
-    picker = build_business_picker(active_businesses, platform_name)
-    return None, picker
+    # ── P5: No valid selection — show picker (Phase 4) ───────────────────────
+    return None, build_business_picker(active_businesses, platform_name)

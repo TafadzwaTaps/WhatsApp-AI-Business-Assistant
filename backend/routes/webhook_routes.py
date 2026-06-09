@@ -152,15 +152,35 @@ async def receive_message(request: Request):
             log.info("📋 STEP 2 — shared number  phone=%s", customer_phone)
             active_businesses = crud.get_active_businesses()
 
-            # Help command: show picker even when already in a business
-            # (does NOT clear selection — customer must say "switch" to actually change)
-            from services.tenant_router import get_selected_business_id, get_selected_business_name
-            if is_businesses_help_request(text) and get_selected_business_id(customer_phone):
-                platform_name = get_shared_wa_phone() if callable(get_shared_wa_phone) else "WaziBot"
+            # Phase 7: Directory command — show full business directory
+            # Works whether or not customer already has a selection
+            # Does NOT clear selection — customer must say "switch" to actually switch
+            from services.tenant_router import (
+                get_selected_business_id, get_selected_business_name,
+            )
+            if is_businesses_help_request(text):
+                from services.tenant_router import get_shared_wa_phone as _get_pname
+                platform_name = _get_pname() or "WaziBot"
                 current_name  = get_selected_business_name(customer_phone)
-                picker        = build_business_picker(active_businesses, platform_name,
-                                                       current_name=current_name)
+                picker_title  = (
+                    f"📍 *Business Directory — {platform_name}*"
+                    if not current_name else
+                    f"📍 *Business Directory*\n\n🏪 Currently: *{current_name}*"
+                )
+                picker = build_business_picker(
+                    active_businesses, platform_name,
+                    current_name=current_name,
+                    title=picker_title,
+                )
                 _send_direct(phone_number_id, SHARED_WA_TOKEN, customer_phone, picker)
+                try:
+                    _cust = crud.get_or_create_customer(customer_phone,
+                                get_selected_business_id(customer_phone) or 0)
+                    crud.create_message(_cust["id"],
+                                get_selected_business_id(customer_phone) or 0,
+                                text, "incoming", wa_message_id=wa_message_id)
+                except Exception:
+                    pass
                 return {"status": "ok"}
 
             business, direct_reply = resolve_business_for_shared_number(
