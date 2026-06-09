@@ -342,7 +342,16 @@
           <div class="prod-kpi-value" id="kpi-prod-revenue">—</div>
         </div>
       </div>
+      <div class="prod-kpi-card" style="border-top-color:rgba(56,189,248,.6);">
+        <div class="prod-kpi-icon">📸</div>
+        <div class="prod-kpi-body">
+          <div class="prod-kpi-label">Image Coverage</div>
+          <div class="prod-kpi-value" id="kpi-img-coverage" style="color:var(--blue,#38bdf8);">—</div>
+        </div>
+      </div>
     </div>
+    <!-- Phase 11: Image coverage nudge -->
+    <div id="img-coverage-nudge" style="display:none;padding:9px 14px;background:rgba(56,189,248,.07);border:1px solid rgba(56,189,248,.15);border-radius:8px;font-size:12px;color:var(--text-dim);margin-bottom:12px;"></div>
 
     <div class="panels">
 
@@ -465,6 +474,8 @@
             <option value="active">Active</option>
             <option value="low_stock">Low Stock</option>
             <option value="out_of_stock">Out of Stock</option>
+            <option value="missing_image">Missing Image <span id="prod-missing-img-badge"></span></option>
+            <option value="has_image">Has Image</option>
           </select>
           <select id="prod-sort" class="prod-filter-select" onchange="applyProductFilters()">
             <option value="newest">Newest</option>

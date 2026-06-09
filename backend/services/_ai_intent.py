@@ -534,3 +534,74 @@ def _is_reschedule_booking(text: str) -> bool:
 
 def _is_my_bookings_query(text: str) -> bool:
     return bool(_MY_BOOKINGS_RE.search(text.lower()))
+
+
+# ── Visual catalog / product image intents ───────────────────────────────────
+
+_CATALOG_TRIGGERS = re.compile(
+    r"\b(catalog|catalogue|gallery|visual menu|browse products|show products|"
+    r"product list|all products|see products|view products|product catalog)\b",
+    re.IGNORECASE,
+)
+
+_MORE_TRIGGER = re.compile(r"^(more|next|more products|next products|continue)$", re.IGNORECASE)
+
+_SHOW_CATEGORY_RE = re.compile(
+    r"^show\s+(me\s+)?(all\s+)?(?P<cat>[a-zA-Z][a-zA-Z\s]{1,25})$",
+    re.IGNORECASE,
+)
+
+
+def _is_catalog_request(text: str) -> bool:
+    """Returns True if customer is asking for a visual catalog/gallery."""
+    return bool(_CATALOG_TRIGGERS.search(text))
+
+
+def _is_show_image_request(text: str) -> bool:
+    """
+    Returns True if customer wants to see an image of a specific product.
+    e.g. "show me flowers", "picture of roses", "what do cakes look like"
+    """
+    t = text.strip().lower()
+    # "show X" where X is not a known non-product command
+    if re.match(r"^show\s+\S", text.strip(), re.I):
+        skip = {"show businesses", "show business", "show directory",
+                "show products", "show all products", "show catalog"}
+        if t not in skip and not _is_catalog_request(text):
+            return True
+    # "picture/photo/image of X"
+    if re.match(r"^(picture|photo|image|pic)\s+(of\s+)?\S", text.strip(), re.I):
+        return True
+    # "what does X look like"
+    if re.match(r"^what\s+does\s+.+\s+look\s+like", text.strip(), re.I):
+        return True
+    return False
+
+
+def _extract_show_target(text: str) -> str:
+    """Extract product name from 'show me X', 'picture of X' etc."""
+    t = text.strip()
+    m = re.match(r"^show\s+(?:me\s+)?(?:a\s+)?(?:photo|picture|image\s+of\s+)?(.+)$", t, re.I)
+    if m: return m.group(1).strip()
+    m = re.match(r"^(?:picture|photo|image|pic)\s+(?:of\s+)?(.+)$", t, re.I)
+    if m: return m.group(1).strip()
+    m = re.match(r"^what\s+does\s+(.+?)\s+look\s+like", t, re.I)
+    if m: return m.group(1).strip()
+    return t
+
+
+def _is_more_products_request(text: str) -> bool:
+    """Returns True for 'more', 'next' pagination command."""
+    return bool(_MORE_TRIGGER.match(text.strip()))
+
+
+def _extract_show_category(text: str) -> str:
+    """Extract category from 'show flowers', 'show electronics'. Returns '' if no match."""
+    m = _SHOW_CATEGORY_RE.match(text.strip())
+    if m:
+        cat = m.group("cat").strip()
+        skip = {"me", "all", "products", "catalog", "menu", "cart", "checkout",
+                "businesses", "directory"}
+        if cat.lower() not in skip:
+            return cat
+    return ""

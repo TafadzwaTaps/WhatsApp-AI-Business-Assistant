@@ -301,6 +301,9 @@ async def receive_message(request: Request):
             # Service business mode
             "is_service_business":   bool(business.get("is_service_business", False)),
             "default_slot_mins":     int(business.get("default_slot_mins", 60) or 60),
+            # Visual catalog: pass sending credentials so ai.py can send images directly
+            "phone_number_id":       phone_number_id or "",
+            "wa_token":              token or "",
         }
 
         reply = generate_reply(

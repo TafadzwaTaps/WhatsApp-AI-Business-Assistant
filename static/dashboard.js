@@ -474,14 +474,33 @@ function _updateProductKPIs(products) {
   _setKpi('kpi-total-products', total);
   _setKpi('kpi-active-products', active);
   _setKpi('kpi-oos-products', oos);
-  _setKpi('stat-products', total);  // existing overview card
-  // Orders and revenue come from existing stats (already loaded by loadOverviewExtras)
+  _setKpi('stat-products', total);
   const statO = document.getElementById('kpi-prod-orders');
   const statR = document.getElementById('kpi-prod-revenue');
   const srcO  = document.getElementById('stat-orders');
   const srcR  = document.getElementById('stat-revenue');
   if (statO && srcO) statO.textContent = srcO.textContent;
   if (statR && srcR) statR.textContent = srcR.textContent;
+  _updateImageCoverage(products);
+}
+
+// Phase 11: Image coverage KPI
+function _updateImageCoverage(products) {
+  const total      = products.length;
+  const withImages = products.filter(p => p.image_url).length;
+  const missing    = total - withImages;
+  const pct        = total ? Math.round(withImages / total * 100) : 0;
+  const imgKpi = document.getElementById('kpi-img-coverage');
+  if (imgKpi) imgKpi.textContent = pct + '%';
+  const missingBadge = document.getElementById('prod-missing-img-badge');
+  if (missingBadge) missingBadge.textContent = missing > 0 ? missing : '';
+  const nudgeEl = document.getElementById('img-coverage-nudge');
+  if (nudgeEl) {
+    nudgeEl.style.display = (missing > 0 && total > 0) ? '' : 'none';
+    nudgeEl.textContent   = missing > 0
+      ? '\uD83D\uDCF8 ' + missing + ' product' + (missing > 1 ? 's' : '') + ' missing images — products with images get more interactions.'
+      : '';
+  }
 }
 function _setKpi(id, val) {
   const el = document.getElementById(id);
@@ -511,9 +530,11 @@ function applyProductFilters() {
   let filtered = _allProducts.filter(p => {
     if (q && !((p.name||'').toLowerCase().includes(q) || (p.category||'').toLowerCase().includes(q))) return false;
     if (cat && (p.category||'').toLowerCase() !== cat) return false;
-    if (status === 'active'     && (_isProdOos(p) || p.status === 'draft')) return false;
-    if (status === 'out_of_stock' && !_isProdOos(p)) return false;
-    if (status === 'low_stock'  && !_isProdLowStock(p)) return false;
+    if (status === 'active'       && (_isProdOos(p) || p.status === 'draft')) return false;
+    if (status === 'out_of_stock' && !_isProdOos(p))          return false;
+    if (status === 'low_stock'    && !_isProdLowStock(p))      return false;
+    if (status === 'missing_image'&& p.image_url)              return false;
+    if (status === 'has_image'    && !p.image_url)             return false;
     return true;
   });
 

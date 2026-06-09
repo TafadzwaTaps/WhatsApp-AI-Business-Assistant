@@ -1240,6 +1240,95 @@ def generate_reply(
         return reply
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P8.5 — SHOW PRODUCT IMAGE (Phases 3-6, 8)
+    # "show me flowers", "picture of roses", "what do cakes look like"
+    # Phase 8: graceful fallback — never blocks ordering or menu
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_show_image_request(text):
+        target = _extract_show_target(text)
+        if target and products:
+            from services._ai_products import _find_product
+            matched = _find_product(target, products)
+            if matched:
+                from services.whatsapp_catalog import (
+                    send_product_image, build_product_card_text,
+                )
+                result = send_product_image(
+                    _phone_number_id, _wa_token, phone,
+                    matched, _currency_sym,
+                )
+                if result.get("fallback"):
+                    # Phase 8: text card fallback
+                    return result.get("text") or build_product_card_text(matched, _currency_sym)
+                # Image sent directly — return short follow-up
+                name = matched.get("name", target)
+                return (
+                    f"*{name}* — {_currency_sym}{float(matched.get('price', 0)):.2f}\n\n"
+                    f"Type *{name.lower()}* to add to cart. 🛒"
+                )
+            else:
+                # Product not found — fall through to normal AI handling
+                pass
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P9.5 — VISUAL CATALOG / GALLERY (Phases 4-6, 9)
+    # "catalog", "gallery", "show products", "show flowers", "more"
+    # Phase 9: batched (CATALOG_BATCH_SIZE products per call)
+    # Phase 10: always uses business_id — no cross-tenant leakage
+    # ══════════════════════════════════════════════════════════════════════════
+    _cat_filter = _extract_show_category(text)
+    if _is_catalog_request(text) or _is_more_products_request(text) or _cat_filter:
+        if not products:
+            return f"📦 No products available yet. Check back soon! 🙏"
+
+        from services.whatsapp_catalog import (
+            send_catalog, send_product_gallery,
+            has_product_images, build_text_catalog,
+        )
+
+        # Pagination: read page from session state
+        session      = _get_session(phone, business_id)
+        catalog_page = int((session or {}).get("catalog_page", 0))
+        if not (_is_more_products_request(text)):
+            catalog_page = 0  # fresh request resets page
+
+        if _cat_filter:
+            result = send_product_gallery(
+                _phone_number_id, _wa_token, phone,
+                products, _cat_filter, _currency_sym,
+            )
+        else:
+            result = send_catalog(
+                _phone_number_id, _wa_token, phone,
+                products, _currency_sym, page=catalog_page,
+            )
+
+        # Persist next page in session
+        if result.get("has_more"):
+            _write_state_data(phone, business_id, {
+                "state": current_state,
+                "session": {**(session or {}), "catalog_page": result.get("next_page", 0)},
+            })
+        else:
+            # Reset pagination
+            _write_state_data(phone, business_id, {
+                "state": current_state,
+                "session": {**(session or {}), "catalog_page": 0},
+            })
+
+        fallback_text = result.get("fallback_text")
+        if fallback_text:
+            return fallback_text
+        # Images were sent directly via API — return a short guide text
+        section = _cat_filter.title() if _cat_filter else business_name
+        more_hint = "\n_Type *more* to see more products._" if result.get("has_more") else ""
+        return (
+            f"🛍️ *{section}*\n\n"
+            f"_Type a product name to add to cart._"
+            f"{more_hint}"
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P9 — BROWSE MENU
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "browse":
