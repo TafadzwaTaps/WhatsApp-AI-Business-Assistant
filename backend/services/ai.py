@@ -168,6 +168,10 @@ def generate_reply(
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
+    # Catalog credentials — always defined, falls back to env vars
+    import os as _os_cfg
+    _phone_number_id    = (_cfg.get("phone_number_id") or "").strip()                           or _os_cfg.getenv("SHARED_PHONE_NUMBER_ID", "")
+    _wa_token           = (_cfg.get("wa_token") or "").strip()                           or _os_cfg.getenv("SHARED_WA_TOKEN", "")
 
     if voice_transcript:
         text = voice_transcript.strip()
@@ -1269,10 +1273,7 @@ def generate_reply(
                         send_product_image, build_product_card_text,
                     )
                     # Use env-var credentials as fallback when biz_config not yet updated
-                    import os as _os
-                    _pid   = _phone_number_id or _os.getenv("SHARED_PHONE_NUMBER_ID", "")
-                    _wtok  = _wa_token        or _os.getenv("SHARED_WA_TOKEN", "")
-                    result = send_product_image(_pid, _wtok, phone, matched, _currency_sym)
+                    result = send_product_image(_phone_number_id, _wa_token, phone, matched, _currency_sym)
                     if result.get("fallback"):
                         return result.get("text") or build_product_card_text(matched, _currency_sym)
                     # Image sent directly via API — return short follow-up text
@@ -1310,18 +1311,14 @@ def generate_reply(
         if not (_is_more_products_request(text)):
             catalog_page = 0  # fresh request resets page
 
-        import os as _os2
-        _pid2  = _phone_number_id or _os2.getenv("SHARED_PHONE_NUMBER_ID", "")
-        _wtok2 = _wa_token        or _os2.getenv("SHARED_WA_TOKEN", "")
-
         if _cat_filter:
             result = send_product_gallery(
-                _pid2, _wtok2, phone,
+                _phone_number_id, _wa_token, phone,
                 products, _cat_filter, _currency_sym,
             )
         else:
             result = send_catalog(
-                _pid2, _wtok2, phone,
+                _phone_number_id, _wa_token, phone,
                 products, _currency_sym, page=catalog_page,
             )
 
@@ -1370,17 +1367,13 @@ def generate_reply(
         # ── Visual menu: send images when products have image_url ────────────
         try:
             from services.whatsapp_catalog import has_product_images, send_catalog, send_text_message
-            import os as _osm
-            _pid_m  = _phone_number_id or _osm.getenv("SHARED_PHONE_NUMBER_ID", "")
-            _wtok_m = _wa_token        or _osm.getenv("SHARED_WA_TOKEN", "")
-
-            if has_product_images(products) and _pid_m and _wtok_m:
+            if has_product_images(products) and _phone_number_id and _wa_token:
                 if greeting:
                     try:
-                        send_text_message(_pid_m, _wtok_m, phone, greeting.strip())
+                        send_text_message(_phone_number_id, _wa_token, phone, greeting.strip())
                     except Exception:
                         pass
-                result = send_catalog(_pid_m, _wtok_m, phone, products, _currency_sym, page=0)
+                result = send_catalog(_phone_number_id, _wa_token, phone, products, _currency_sym, page=0)
                 fallback = result.get("fallback_text")
                 if not fallback:
                     hint = products[0]["name"] if products else "an item"
