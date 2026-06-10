@@ -1357,6 +1357,43 @@ def generate_reply(
         if not products:
             return f"📋 *{business_name}*\n\nNo items available yet. Check back soon! 🙏"
 
+        # ── Personalised greeting ────────────────────────────────────────────
+        mem         = _get_memory(phone, business_id)
+        order_count = int(mem.get("order_count", 0) or 0)
+        cust_name   = (mem.get("customer_name") or "").strip()
+        greeting    = ""
+        if order_count >= 2 and cust_name:
+            greeting = f"👋 Welcome back, *{cust_name}*! Great to see you again.\n\n"
+        elif order_count >= 2:
+            greeting = f"👋 Welcome back! You've ordered *{order_count} times* from us. 🙏\n\n"
+
+        # ── Visual menu: send images when products have image_url ────────────
+        try:
+            from services.whatsapp_catalog import has_product_images, send_catalog, send_text_message
+            import os as _osm
+            _pid_m  = _phone_number_id or _osm.getenv("SHARED_PHONE_NUMBER_ID", "")
+            _wtok_m = _wa_token        or _osm.getenv("SHARED_WA_TOKEN", "")
+
+            if has_product_images(products) and _pid_m and _wtok_m:
+                if greeting:
+                    try:
+                        send_text_message(_pid_m, _wtok_m, phone, greeting.strip())
+                    except Exception:
+                        pass
+                result = send_catalog(_pid_m, _wtok_m, phone, products, _currency_sym, page=0)
+                fallback = result.get("fallback_text")
+                if not fallback:
+                    hint = products[0]["name"] if products else "an item"
+                    more = "\n_Type *more* to see more._" if result.get("has_more") else ""
+                    return (
+                        f"_Type a product name to add to cart — e.g. *{hint}*_{more}"
+                    )
+                # Image sending failed — fall through to text menu
+        except Exception as _vis_exc:
+            import logging as _vl
+            _vl.getLogger("wazibot").debug("visual menu error (non-fatal): %s", _vis_exc)
+
+        # ── Text menu (no images, or image send failed) ──────────────────────
         lines = []
         for i, p in enumerate(products):
             note = ""
@@ -1371,16 +1408,6 @@ def generate_reply(
             rec_text = "\n\n⭐ *You usually order:*\n" + "\n".join(
                 f"  • {r['name']}" for r in recs)
 
-        mem         = _get_memory(phone, business_id)
-        order_count = int(mem.get("order_count", 0) or 0)
-        cust_name   = (mem.get("customer_name") or "").strip()
-        greeting    = ""
-        if order_count >= 2 and cust_name:
-            greeting = f"👋 Welcome back, *{cust_name}*! Great to see you again.\n\n"
-        elif order_count >= 2:
-            greeting = f"👋 Welcome back! You've ordered *{order_count} times* from us. 🙏\n\n"
-
-        # Custom menu header (per-business) or default
         header       = _menu_header or f"📋 *{business_name} Menu*"
         hint_product = products[0]["name"] if products else "an item"
         add_hint     = f"_Type a name to add it — e.g. *{hint_product}* or *2 {hint_product}*_"
