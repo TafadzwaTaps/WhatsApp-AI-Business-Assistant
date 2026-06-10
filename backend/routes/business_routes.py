@@ -9,7 +9,7 @@ Routes: /me, /me/*, /products, /orders, /conversations, /customers, /broadcast,
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Request, HTTPException, Depends, Query
+from fastapi import APIRouter, Request, HTTPException, Depends, Query, UploadFile, File
 from pydantic import BaseModel, validator
 
 import crud
@@ -208,6 +208,79 @@ class ProductCreate(BaseModel):
     image_url:           Optional[str] = None
     stock:               int           = 0
     low_stock_threshold: int           = 5
+
+
+@router.post("/products/upload-image")
+async def upload_product_image(
+    file:    UploadFile = File(...),
+    user=Depends(require_business),
+):
+    """
+    Upload a product image to Supabase Storage.
+    Returns the public HTTPS URL that WhatsApp can access.
+    Uses the service_role key server-side — never exposes it to the frontend.
+    """
+    import os, mimetypes
+    from core.db import supabase
+
+    # Validate file type
+    allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    content_type = file.content_type or "image/jpeg"
+    if content_type not in allowed:
+        raise HTTPException(400, f"Unsupported file type: {content_type}. Use JPG, PNG, or WebP.")
+
+    # Max 5MB
+    data = await file.read()
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(400, "File too large. Maximum size is 5MB.")
+
+    # Build storage path: products/{business_id}_{timestamp}.ext
+    ext        = mimetypes.guess_extension(content_type) or ".jpg"
+    ext        = ext.replace(".jpe", ".jpg")  # normalise
+    bid        = user["business_id"]
+    timestamp  = int(__import__("time").time() * 1000)
+    safe_name  = f"products/{bid}_{timestamp}{ext}"
+
+    # Upload to Supabase Storage using the storage client
+    try:
+        # supabase-py storage upload
+        res = supabase.storage.from_("product-images").upload(
+            path        = safe_name,
+            file        = data,
+            file_options= {"content-type": content_type, "upsert": "true"},
+        )
+    except Exception as exc:
+        log.error("storage upload error: %s", exc)
+        # Fallback: try raw HTTP with service_role key
+        try:
+            import httpx
+            supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+            supabase_key = os.getenv("SUPABASE_KEY", "")
+            upload_url   = f"{supabase_url}/storage/v1/object/product-images/{safe_name}"
+            resp = httpx.put(
+                upload_url,
+                content  = data,
+                headers  = {
+                    "Authorization": f"Bearer {supabase_key}",
+                    "Content-Type":  content_type,
+                    "x-upsert":      "true",
+                },
+                timeout  = 20,
+            )
+            if resp.status_code not in (200, 201):
+                raise HTTPException(500, f"Upload failed: {resp.text[:200]}")
+        except HTTPException:
+            raise
+        except Exception as exc2:
+            log.error("storage upload fallback error: %s", exc2)
+            raise HTTPException(500, "Image upload failed. Check Supabase Storage is configured.")
+
+    # Build the public URL
+    supabase_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+    public_url   = f"{supabase_url}/storage/v1/object/public/product-images/{safe_name}"
+
+    log.info("product image uploaded  biz=%s  path=%s", bid, safe_name)
+    return {"url": public_url, "path": safe_name}
 
 
 @router.get("/products")

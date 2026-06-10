@@ -628,10 +628,13 @@ function handleImgDrop(event) {
   _loadImageFile(file);
 }
 
+let _pendingImgFile = null;  // raw File object for direct upload
+
 function _loadImageFile(file) {
   if (!file) return;
   if (!file.type.startsWith('image/')) { toast('Please select an image file', true); return; }
-  if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2MB', true); return; }
+  if (file.size > 5 * 1024 * 1024) { toast('Image must be under 5MB', true); return; }
+  _pendingImgFile = file;  // store raw file for backend upload
   const reader = new FileReader();
   // Show progress bar during file read
   const progressWrap = document.getElementById('img-progress-wrap');
@@ -657,6 +660,7 @@ function _loadImageFile(file) {
 
 function clearProductImg() {
   _pendingImgDataUrl = null;
+  _pendingImgFile    = null;
   const preview  = document.getElementById('img-preview');
   const clearBtn = document.getElementById('img-clear-btn');
   const actionBar= document.getElementById('img-action-bar');
@@ -684,14 +688,37 @@ async function addProduct() {
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
     const payload = { name, price };
-    if (_pendingImgDataUrl) {
-      // Upload to Supabase Storage so WhatsApp can access the image via HTTPS
+    if (_pendingImgFile || _pendingImgDataUrl) {
       if (btn) btn.textContent = 'Uploading image…';
-      const imgUrl = await uploadImageToSupabase(
-        _pendingImgDataUrl,
-        name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now()
-      );
-      payload.image_url = imgUrl;
+      if (_pendingImgFile) {
+        // Direct file upload — faster than base64 round-trip
+        try {
+          const fd = new FormData();
+          fd.append('file', _pendingImgFile);
+          const upResp = await fetch(API + '/products/upload-image', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: fd,
+          });
+          if (upResp.ok) {
+            const upData = await upResp.json();
+            payload.image_url = upData.url;
+          } else {
+            console.warn('Upload failed, using data URL fallback');
+            payload.image_url = _pendingImgDataUrl;
+          }
+        } catch (upErr) {
+          console.warn('Upload error:', upErr);
+          payload.image_url = _pendingImgDataUrl;
+        }
+      } else {
+        // Fallback: convert base64 data URL via uploadImageToSupabase
+        const imgUrl = await uploadImageToSupabase(
+          _pendingImgDataUrl,
+          name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now()
+        );
+        payload.image_url = imgUrl;
+      }
     }
     if (stockEl && stockEl.value !== '') payload.stock = parseInt(stockEl.value, 10);
     if (descEl  && descEl.value.trim())  payload.description  = descEl.value.trim();
@@ -3247,45 +3274,40 @@ function aiProductInsights() {
   _showAiOutput(insights);
 }
 
-// ── Supabase Storage image upload ────────────────────────────────────────────
-// Uploads a base64 data URL to Supabase Storage and returns a public HTTPS URL.
-// Falls back to keeping the data URL if Supabase credentials are unavailable.
+// ── Product image upload via backend ─────────────────────────────────────────
+// Sends the file to /products/upload-image (server-side, uses service_role key).
+// Returns a public HTTPS URL that WhatsApp can load.
+// Falls back to the base64 data URL on error (dashboard preview still works).
 async function uploadImageToSupabase(dataUrl, fileName) {
-  // Read Supabase config from meta tags injected by the server, or env
-  const supabaseUrl = window._SUPABASE_URL || '';
-  const supabaseKey = window._SUPABASE_ANON_KEY || '';
-  if (!supabaseUrl || !supabaseKey) {
-    // No Supabase config — return data URL as-is (works for dashboard preview,
-    // won't display in WhatsApp but won't break anything)
-    return dataUrl;
-  }
+  if (!dataUrl || !dataUrl.startsWith('data:')) return dataUrl;
   try {
-    // Convert base64 data URL to a Blob
-    const res      = await fetch(dataUrl);
-    const blob     = await res.blob();
-    const ext      = blob.type.split('/')[1] || 'jpg';
-    const safeName = (fileName || 'product_' + Date.now()) + '.' + ext;
-    const path     = `products/${safeName}`;
+    // Convert base64 data URL → Blob → File for multipart upload
+    const fetchRes   = await fetch(dataUrl);
+    const blob       = await fetchRes.blob();
+    const ext        = blob.type.split('/')[1] || 'jpg';
+    const file       = new File([blob], (fileName || 'product_' + Date.now()) + '.' + ext, { type: blob.type });
 
-    // Upload to Supabase Storage bucket "product-images"
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/product-images/${path}`;
-    const up = await fetch(uploadUrl, {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    // POST to backend — uses Authorization header from existing token
+    const resp = await fetch(API + '/products/upload-image', {
       method:  'POST',
-      headers: {
-        'Authorization':  `Bearer ${supabaseKey}`,
-        'Content-Type':    blob.type,
-        'x-upsert':        'true',
-      },
-      body: blob,
+      headers: { 'Authorization': `Bearer ${token}` },
+      body:    formData,
     });
-    if (!up.ok) {
-      console.warn('Supabase upload failed:', await up.text());
-      return dataUrl;  // fallback
+
+    if (!resp.ok) {
+      const err = await resp.text();
+      console.warn('Image upload failed:', err);
+      return dataUrl;  // fallback — preview works, WhatsApp won't show image
     }
-    // Return the public URL
-    return `${supabaseUrl}/storage/v1/object/public/product-images/${path}`;
+
+    const data = await resp.json();
+    console.info('Image uploaded:', data.url);
+    return data.url;  // public HTTPS URL — works in WhatsApp ✓
   } catch (err) {
     console.warn('Image upload error:', err);
-    return dataUrl;  // fallback — dashboard preview still works
+    return dataUrl;  // fallback
   }
 }
