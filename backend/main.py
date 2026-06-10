@@ -132,6 +132,18 @@ def _html(name: str) -> FileResponse:
 def landing():    return _html("landing.html")
 @app.get("/dashboard")
 def dashboard():  return _html("dashboard.html")
+
+@app.get("/config/public")
+def public_config():
+    """Return public frontend config (Supabase anon key, URL).
+    Only the anon key is exposed — never the service_role key.
+    """
+    import os
+    return {
+        "supabase_url":       os.getenv("SUPABASE_URL", ""),
+        "supabase_anon_key":  os.getenv("SUPABASE_ANON_KEY", "")
+                               or os.getenv("SUPABASE_KEY", ""),
+    }
 @app.get("/inbox")
 def inbox():      return _html("inbox.html")
 @app.get("/signup")

@@ -684,7 +684,15 @@ async function addProduct() {
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
     const payload = { name, price };
-    if (_pendingImgDataUrl) payload.image_url = _pendingImgDataUrl;
+    if (_pendingImgDataUrl) {
+      // Upload to Supabase Storage so WhatsApp can access the image via HTTPS
+      if (btn) btn.textContent = 'Uploading image…';
+      const imgUrl = await uploadImageToSupabase(
+        _pendingImgDataUrl,
+        name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_' + Date.now()
+      );
+      payload.image_url = imgUrl;
+    }
     if (stockEl && stockEl.value !== '') payload.stock = parseInt(stockEl.value, 10);
     if (descEl  && descEl.value.trim())  payload.description  = descEl.value.trim();
     if (catEl   && catEl.value)          payload.category     = catEl.value;
@@ -1973,6 +1981,11 @@ async function loadAnalyticsCharts() {
 // Hook analytics load into overview — only when logged in
 document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => { if (token) loadAnalyticsCharts(); }, 500);
+  // Fetch public config (Supabase URL/key for image uploads)
+  fetch('/config/public').then(r => r.json()).then(cfg => {
+    window._SUPABASE_URL      = cfg.supabase_url      || '';
+    window._SUPABASE_ANON_KEY = cfg.supabase_anon_key || '';
+  }).catch(() => {});
 });
 
 
@@ -3024,6 +3037,15 @@ async function saveProdEdit() {
   const payload = { name, price, status };
   if (desc)           payload.description = desc;
   if (stock !== '')   payload.stock = parseInt(stock, 10);
+  // If a new image was selected for editing, upload it first
+  if (typeof _pendingEditImgDataUrl !== 'undefined' && _pendingEditImgDataUrl) {
+    const editImgUrl = await uploadImageToSupabase(
+      _pendingEditImgDataUrl,
+      name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_edit_' + Date.now()
+    );
+    payload.image_url = editImgUrl;
+    _pendingEditImgDataUrl = null;
+  }
   try {
     await apiFetch(`${ROUTES.products}/${id}`, {
       method: 'PATCH',
@@ -3223,4 +3245,47 @@ function aiProductInsights() {
     + (low ? `• ⚠️ ${low} product${low>1?'s':''} running low — consider restocking soon\n` : '')
     + `\nTip: Products priced under $5 tend to have higher order frequency.`;
   _showAiOutput(insights);
+}
+
+// ── Supabase Storage image upload ────────────────────────────────────────────
+// Uploads a base64 data URL to Supabase Storage and returns a public HTTPS URL.
+// Falls back to keeping the data URL if Supabase credentials are unavailable.
+async function uploadImageToSupabase(dataUrl, fileName) {
+  // Read Supabase config from meta tags injected by the server, or env
+  const supabaseUrl = window._SUPABASE_URL || '';
+  const supabaseKey = window._SUPABASE_ANON_KEY || '';
+  if (!supabaseUrl || !supabaseKey) {
+    // No Supabase config — return data URL as-is (works for dashboard preview,
+    // won't display in WhatsApp but won't break anything)
+    return dataUrl;
+  }
+  try {
+    // Convert base64 data URL to a Blob
+    const res      = await fetch(dataUrl);
+    const blob     = await res.blob();
+    const ext      = blob.type.split('/')[1] || 'jpg';
+    const safeName = (fileName || 'product_' + Date.now()) + '.' + ext;
+    const path     = `products/${safeName}`;
+
+    // Upload to Supabase Storage bucket "product-images"
+    const uploadUrl = `${supabaseUrl}/storage/v1/object/product-images/${path}`;
+    const up = await fetch(uploadUrl, {
+      method:  'POST',
+      headers: {
+        'Authorization':  `Bearer ${supabaseKey}`,
+        'Content-Type':    blob.type,
+        'x-upsert':        'true',
+      },
+      body: blob,
+    });
+    if (!up.ok) {
+      console.warn('Supabase upload failed:', await up.text());
+      return dataUrl;  // fallback
+    }
+    // Return the public URL
+    return `${supabaseUrl}/storage/v1/object/public/product-images/${path}`;
+  } catch (err) {
+    console.warn('Image upload error:', err);
+    return dataUrl;  // fallback — dashboard preview still works
+  }
 }
