@@ -1261,28 +1261,32 @@ def generate_reply(
     if _is_show_image_request(text):
         target = _extract_show_target(text)
         if target and products:
-            from services._ai_products import _find_product
+            # _find_product already imported at module level — no inner import needed
             matched = _find_product(target, products)
             if matched:
-                from services.whatsapp_catalog import (
-                    send_product_image, build_product_card_text,
-                )
-                result = send_product_image(
-                    _phone_number_id, _wa_token, phone,
-                    matched, _currency_sym,
-                )
-                if result.get("fallback"):
-                    # Phase 8: text card fallback
-                    return result.get("text") or build_product_card_text(matched, _currency_sym)
-                # Image sent directly — return short follow-up
-                name = matched.get("name", target)
-                return (
-                    f"*{name}* — {_currency_sym}{float(matched.get('price', 0)):.2f}\n\n"
-                    f"Type *{name.lower()}* to add to cart. 🛒"
-                )
+                try:
+                    from services.whatsapp_catalog import (
+                        send_product_image, build_product_card_text,
+                    )
+                    # Use env-var credentials as fallback when biz_config not yet updated
+                    import os as _os
+                    _pid   = _phone_number_id or _os.getenv("SHARED_PHONE_NUMBER_ID", "")
+                    _wtok  = _wa_token        or _os.getenv("SHARED_WA_TOKEN", "")
+                    result = send_product_image(_pid, _wtok, phone, matched, _currency_sym)
+                    if result.get("fallback"):
+                        return result.get("text") or build_product_card_text(matched, _currency_sym)
+                    # Image sent directly via API — return short follow-up text
+                    name = matched.get("name", target)
+                    return (
+                        f"*{name}* — {_currency_sym}{float(matched.get('price', 0)):.2f}\n\n"
+                        f"Type *{name.lower()}* to add to cart. 🛒"
+                    )
+                except Exception as _exc:
+                    import logging as _lg
+                    _lg.getLogger("wazibot").warning("show_image error: %s", _exc)
+                    # Fall through to normal menu handling
             else:
-                # Product not found — fall through to normal AI handling
-                pass
+                pass  # Product not found — fall through
 
     # ══════════════════════════════════════════════════════════════════════════
     # P9.5 — VISUAL CATALOG / GALLERY (Phases 4-6, 9)
@@ -1306,14 +1310,18 @@ def generate_reply(
         if not (_is_more_products_request(text)):
             catalog_page = 0  # fresh request resets page
 
+        import os as _os2
+        _pid2  = _phone_number_id or _os2.getenv("SHARED_PHONE_NUMBER_ID", "")
+        _wtok2 = _wa_token        or _os2.getenv("SHARED_WA_TOKEN", "")
+
         if _cat_filter:
             result = send_product_gallery(
-                _phone_number_id, _wa_token, phone,
+                _pid2, _wtok2, phone,
                 products, _cat_filter, _currency_sym,
             )
         else:
             result = send_catalog(
-                _phone_number_id, _wa_token, phone,
+                _pid2, _wtok2, phone,
                 products, _currency_sym, page=catalog_page,
             )
 
