@@ -410,25 +410,62 @@ def get_pending_handoffs(business_id: int) -> list[dict]:
     Return list of customers currently in human_handoff mode.
     Reads from carts.state_data where state == "human_handoff".
     This is the authoritative source — state is stored per-phone per-business.
+
+    Includes customer_id (looked up from the customers table) so the
+    frontend can match against currentCustomerId and conversation lists.
     """
     try:
         from core.db import supabase
         # Fetch all cart rows for this business that have state_data
         res = (
             supabase.table("carts")
-            .select("phone, business_id, state_data")
+            .select("phone, business_id, state_data, updated_at")
             .eq("business_id", business_id)
             .execute()
         )
-        pending = []
+        handoff_rows = []
         for row in (res.data or []):
             sd = row.get("state_data") or {}
             if sd.get("state") == "human_handoff":
-                pending.append({
-                    "phone":       row.get("phone"),
-                    "business_id": row.get("business_id"),
-                    "state":       "human_handoff",
-                })
+                handoff_rows.append(row)
+
+        if not handoff_rows:
+            return []
+
+        # Look up customer_id for each phone in one query
+        phones = [r["phone"] for r in handoff_rows]
+        cust_res = (
+            supabase.table("customers")
+            .select("id, phone, customer_name, unread_count")
+            .eq("business_id", business_id)
+            .in_("phone", phones)
+            .execute()
+        )
+        cust_by_phone = {c["phone"]: c for c in (cust_res.data or [])}
+
+        pending = []
+        for row in handoff_rows:
+            phone = row.get("phone")
+            sd    = row.get("state_data") or {}
+            cust  = cust_by_phone.get(phone, {})
+            handoff_started_at = sd.get("handoff_started_at")
+            wait_seconds = None
+            if handoff_started_at:
+                try:
+                    wait_seconds = max(0, int(time.time() - float(handoff_started_at)))
+                except Exception:
+                    wait_seconds = None
+            pending.append({
+                "customer_id":  cust.get("id"),
+                "id":           cust.get("id"),  # alias for frontend compatibility
+                "phone":        phone,
+                "business_id":  row.get("business_id"),
+                "customer_name": cust.get("customer_name") or "",
+                "unread_count": cust.get("unread_count") or 0,
+                "handoff_reason": sd.get("handoff_reason", ""),
+                "wait_seconds": wait_seconds,
+                "state":        "human_handoff",
+            })
         return pending
     except Exception as exc:
         log.error("get_pending_handoffs error: %s", exc)

@@ -163,6 +163,8 @@ function saveSession(data, username) {
   userRole   = data.role          || userRole;
   userName   = username           || userName;
   bizName    = data.business_name || bizName || '';
+  // Persist username so inbox.js can show "Agent Name is replying" in handoff banner
+  if (userName) localStorage.setItem('wazibot_username', userName);
   // FIX: always persist business_id — needed for WebSocket auth and chat/send
   if (data.business_id) {
     bizId = data.business_id;
@@ -290,6 +292,7 @@ function showSection(name, btn) {
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
+  if (name==='overview') loadCustomerStats();
   if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
   if (name==='crm') loadCrm();
@@ -750,7 +753,8 @@ async function loadConversations() {
     const convos = await apiFetch(ROUTES.conversations);
     if (!convos) return;
     const list_data = Array.isArray(convos) ? convos : (convos.data || []);
-    const _sc=document.getElementById('stat-customers'); if(_sc) _sc.textContent=list_data.length;
+    // stat-customers is now populated from /crm/segments (loadCustomerStats)
+    // for consistency with the Customers tab — do not overwrite it here.
     const list = document.getElementById('contact-list');
     if (!list_data.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
     list.innerHTML=list_data.map(c=>{
@@ -1396,7 +1400,7 @@ function init(){
   buildSidebar();
   checkStatus();
   if(userRole==='superadmin'){loadAdminData();}
-  else{loadOrders();loadProducts();loadConversations();}
+  else{loadOrders();loadProducts();loadConversations();loadCustomerStats();}
 }
 
 // If access token is valid → show dashboard immediately
@@ -3310,4 +3314,17 @@ async function uploadImageToSupabase(dataUrl, fileName) {
     console.warn('Image upload error:', err);
     return dataUrl;  // fallback
   }
+}
+
+
+// Issue 1 fix: Overview customer count now sourced from /crm/segments
+// (same source as Customers tab and CRM segment cards) for consistency.
+async function loadCustomerStats() {
+  try {
+    const seg = await apiFetch(ROUTES.crmSegments);
+    const _sc = document.getElementById('stat-customers');
+    if (_sc && seg && typeof seg.total === 'number') {
+      _sc.textContent = seg.total;
+    }
+  } catch (_) { /* leave existing value on error */ }
 }

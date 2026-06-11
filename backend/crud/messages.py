@@ -207,12 +207,30 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
         if cid not in latest:
             latest[cid] = m
 
+    # Look up which phones are currently in human_handoff state
+    # so the inbox can show the 🔴 Handoff filter and badge correctly.
+    handoff_phones = set()
+    try:
+        cart_res = (
+            supabase.table("carts")
+            .select("phone, state_data")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        for row in (cart_res.data or []):
+            sd = row.get("state_data") or {}
+            if sd.get("state") == "human_handoff":
+                handoff_phones.add(row.get("phone"))
+    except Exception as exc:
+        log.debug("get_chat_conversations: handoff lookup failed: %s", exc)
+
     result = []
     for c in customers:
-        last = latest.get(c["id"], {})
+        last  = latest.get(c["id"], {})
+        phone = c["phone"]
         result.append({
             "customer_id":     c["id"],
-            "phone":           c["phone"],
+            "phone":           phone,
             "customer_since":  c.get("created_at"),
             "last_seen":       c.get("last_seen"),
             "unread_count":    c.get("unread_count") or 0,
@@ -220,6 +238,8 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
             "last_direction":  last.get("direction", ""),
             "last_message_at": last.get("created_at"),
             "last_status":     last.get("status", "sent"),
+            "in_handoff":      phone in handoff_phones,
+            "handoff_state":   "human_handoff" if phone in handoff_phones else None,
         })
     return result
 

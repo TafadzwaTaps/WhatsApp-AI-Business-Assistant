@@ -203,7 +203,7 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
         except Exception: pass
     if not customer: raise HTTPException(404, "Customer not found")
 
-    from workflows.human_handoff import notify_dashboard
+    from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
     from services._ai_state import _set_human_handoff
 
     phone      = customer["phone"]
@@ -211,12 +211,24 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     actual_bid = customer.get("business_id", bid)
     biz        = crud.get_business_by_id(actual_bid)
     biz_name   = biz.get("name", "") if biz else ""
+    agent_name = user.get("username", "Agent")
 
     _set_human_handoff(phone, actual_bid)
     notify_dashboard(phone, actual_bid, biz_name)
 
+    # Phase 5: notify the customer on WhatsApp that a human has joined
+    try:
+        token    = crud.get_decrypted_token(biz) if biz else ""
+        phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+        if token and phone_id:
+            send_whatsapp(phone_id, token, phone, handoff_acknowledgement(biz_name))
+        elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, handoff_acknowledgement(biz_name))
+    except Exception as exc:
+        log.warning("handoff_request: WA notification failed: %s", exc)
+
     log.info("handoff requested  customer=%s  phone=%s  actual_biz=%s  by=%s",
-             customer_id, phone, actual_bid, user["username"])
+             customer_id, phone, actual_bid, agent_name)
 
     # Broadcast WebSocket event so the inbox updates in real time
     if manager:
@@ -274,14 +286,28 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
 
 @router.delete("/chat/conversations/{customer_id}")
 async def delete_conversation(customer_id: int, user=Depends(require_business)):
+    """
+    Delete a single conversation's messages.
+    Removes rows from `messages` (by customer_id) and `chat_messages` (by phone —
+    chat_messages has no customer_id column, only phone + business_id).
+    Does NOT touch orders, CRM, customer memory, or analytics.
+    """
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(customer_id, bid)
     if not customer: raise HTTPException(404, f"Customer {customer_id} not found")
+    phone    = customer.get("phone", "")
     try:
         from core.db import supabase as _sb
         _sb.table("messages").delete().eq("customer_id", customer_id).eq("business_id", bid).execute()
+        # chat_messages has no customer_id column — match by phone + business_id instead
+        if phone:
+            try:
+                _sb.table("chat_messages").delete().eq("phone", phone).eq("business_id", bid).execute()
+            except Exception as exc:
+                log.debug("delete_conversation: chat_messages cleanup failed (non-fatal): %s", exc)
+        # Reset unread count on the customer record
         try:
-            _sb.table("chat_messages").delete().eq("customer_id", customer_id).eq("business_id", bid).execute()
+            _sb.table("customers").update({"unread_count": 0}).eq("id", customer_id).execute()
         except Exception:
             pass
         return {"ok": True, "customer_id": customer_id, "message": "Conversation deleted"}

@@ -362,9 +362,14 @@ function updateHandoffUI(isHandoff) {
     btn.style.borderColor     = isHandoff ? 'var(--amber, #f59e0b)' : '';
   }
   if (banner)  banner.style.display = isHandoff ? 'flex' : 'none';
-  if (bannerT) bannerT.textContent  = isHandoff
-    ? '🔴 Human agent mode — AI is paused. You are replying directly to the customer.'
-    : '';
+  if (bannerT) {
+    if (isHandoff) {
+      const agentName = localStorage.getItem('wazibot_username') || 'You';
+      bannerT.textContent = `🔴 Human agent mode — ${agentName} is replying directly. AI is paused.`;
+    } else {
+      bannerT.textContent = '';
+    }
+  }
   if (bannerB) bannerB.textContent  = isHandoff ? '▶ Resume AI' : '⏸ Pause AI';
   if (input)   input.style.borderColor  = isHandoff ? 'rgba(245,158,11,0.6)' : '';
   if (sbtn)    sbtn.style.background    = isHandoff ? '#f59e0b' : '';
