@@ -227,15 +227,35 @@ async function apiFetch(path, opts={}, _retried=false) {
   if (!token && !opts._public) return null;
   // FIX: _retried flag prevents infinite refresh loops — one retry max.
   // If the refreshed token also gets a 401, logout() is called once.
+
+  // Merge headers properly — object spread (...opts) would otherwise REPLACE
+  // the entire headers object if opts.headers is set, silently dropping
+  // the Authorization header on any call that passes its own Content-Type
+  // (e.g. POST/PUT requests with a JSON body).
+  const mergedHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+    ...(opts.headers || {}),
+  };
+  const finalOpts = { ...opts, headers: mergedHeaders };
+
   try {
-    const res = await fetch(API + path, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      ...opts
-    });
+    const res = await fetch(API + path, finalOpts);
     if (res.status === 401 && !_retried) {
+      let detail = '';
+      try { const e = await res.json(); detail = e.detail || ''; } catch {}
+      console.warn(
+        '[apiFetch] 401 — attempting token refresh',
+        '\n  path:', path,
+        '\n  method:', finalOpts.method || 'GET',
+        '\n  hasAuthHeader:', !!mergedHeaders.Authorization,
+        '\n  tokenPreview:', token ? token.slice(0, 12) + '…' : '(none)',
+        '\n  serverDetail:', detail || '(none)',
+      );
       const refreshed = await tryRefresh();
       if (refreshed) return apiFetch(path, opts, true);  // one retry only
       // Refresh failed — show UI feedback if we have a status element
+      console.error('[apiFetch] 401 after refresh — session expired', path);
       const statusEl = document.getElementById('api-status-text');
       if (statusEl) statusEl.textContent = 'Session expired — logging out…';
       return null;
@@ -243,6 +263,7 @@ async function apiFetch(path, opts={}, _retried=false) {
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
       try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      console.error('[apiFetch] error', path, res.status, msg);
       throw new Error(msg);
     }
     return res.json();

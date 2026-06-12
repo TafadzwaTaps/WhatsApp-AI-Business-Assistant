@@ -12,7 +12,7 @@ import os
 from datetime import datetime, timedelta
 
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from dotenv import load_dotenv
 
@@ -27,7 +27,31 @@ REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 SUPER_ADMIN_USERNAME = os.getenv("SUPER_ADMIN_USERNAME", "superadmin")
 SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "superadmin123")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+class _LoggingOAuth2PasswordBearer(OAuth2PasswordBearer):
+    """
+    OAuth2PasswordBearer subclass that logs WHY a request was rejected
+    before raising "Not authenticated" — this is the 401 that occurs
+    when the Authorization header is missing or malformed entirely
+    (i.e. before decode_token() ever runs).
+    """
+    async def __call__(self, request: Request):
+        auth_header = request.headers.get("Authorization")
+        try:
+            return await super().__call__(request)
+        except HTTPException as exc:
+            import logging as _al
+            _al.getLogger("wazibot.auth").warning(
+                "AUTH FAILED: reason=missing_or_malformed_auth_header  "
+                "path=%s  method=%s  header_present=%s  header_preview=%s",
+                request.url.path,
+                request.method,
+                bool(auth_header),
+                (auth_header[:20] + "…") if auth_header else "(none)",
+            )
+            raise
+
+
+oauth2_scheme = _LoggingOAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 def verify_password(plain: str, stored: str) -> bool:

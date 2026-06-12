@@ -70,23 +70,44 @@ function toggleSidebar() {
 
 /* ── API HELPER ─────────────────────────────────────────── */
 async function apiFetch(path, opts = {}) {
+  // Merge headers properly — object spread (...opts) would otherwise REPLACE
+  // the entire headers object if opts.headers is set, silently dropping
+  // the Authorization header (this was the cause of "Unauthenticated" errors
+  // on any call that passed its own Content-Type header, e.g. POST with body).
+  const mergedHeaders = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
+    ...(opts.headers || {}),
+  };
+  const finalOpts = { ...opts, headers: mergedHeaders };
+
   try {
-    const res = await fetch(API + path, {
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-      ...opts,
-    });
+    const res = await fetch(API + path, finalOpts);
+
     if (res.status === 401) {
+      let detail = '';
+      try { const e = await res.json(); detail = e.detail || ''; } catch {}
+      console.error(
+        '[apiFetch] 401 Unauthorized',
+        '\n  path:', path,
+        '\n  method:', finalOpts.method || 'GET',
+        '\n  hasAuthHeader:', !!mergedHeaders.Authorization,
+        '\n  tokenPresent:', !!token,
+        '\n  tokenPreview:', token ? token.slice(0, 12) + '…' : '(none)',
+        '\n  serverDetail:', detail || '(none)',
+      );
       window.location.href = '/dashboard';
-      throw new Error('Unauthorized');
+      throw new Error('Unauthorized' + (detail ? `: ${detail}` : ''));
     }
     if (!res.ok) {
       let msg = res.statusText || 'API error';
       try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      console.error('[apiFetch] error', path, res.status, msg);
       throw new Error(msg);
     }
     return res.json();
   } catch (err) {
-    if (err.message === 'Unauthorized') throw err;
+    if (err.message && err.message.startsWith('Unauthorized')) throw err;
     if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
     throw err;
   }
