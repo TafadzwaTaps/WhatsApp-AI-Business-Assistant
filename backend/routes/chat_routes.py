@@ -190,25 +190,66 @@ def handoff_pending(user=Depends(require_business)):
     return get_pending_handoffs(user["business_id"])
 
 
+def _handoff_get_customer(customer_id: int, bid: int, agent_user: dict, action: str) -> dict:
+    """
+    Tenant-safe customer lookup for handoff endpoints.
+
+    Looks up the customer scoped to the agent's own business_id first.
+    If not found, performs a cross-business lookup ONLY to produce a
+    clearer error message and a structured security log entry — it never
+    returns a customer belonging to a different business_id than the
+    requesting agent. This prevents Business A from pausing/resuming AI
+    or messaging Business B's customers on a shared WhatsApp number.
+
+    Raises HTTPException(404) if no customer is found, or
+    HTTPException(403) if the customer belongs to a different business.
+    """
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if customer:
+        log.info(
+            "HANDOFF AUTH SUCCESS  action=%s  user=%s  business_id=%s  customer_id=%s",
+            action, agent_user.get("username"), bid, customer_id,
+        )
+        return customer
+
+    # Not found under this business — check if it exists under another business
+    # (shared-number deployments may have the same customer_id space)
+    try:
+        from core.db import supabase as _sb
+        res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+        other = res.data[0] if res.data else None
+    except Exception as exc:
+        log.warning("HANDOFF AUTH FAILED  action=%s  user=%s  business_id=%s  customer_id=%s  "
+                     "reason=lookup_error  detail=%s",
+                     action, agent_user.get("username"), bid, customer_id, exc)
+        raise HTTPException(404, "Customer not found")
+
+    if other:
+        other_bid = other.get("business_id")
+        log.warning(
+            "HANDOFF AUTH FAILED  action=%s  user=%s  business_id=%s  customer_id=%s  "
+            "reason=cross_tenant  customer_business_id=%s",
+            action, agent_user.get("username"), bid, customer_id, other_bid,
+        )
+        raise HTTPException(403, "This conversation belongs to a different business")
+
+    log.warning(
+        "HANDOFF AUTH FAILED  action=%s  user=%s  business_id=%s  customer_id=%s  reason=not_found",
+        action, agent_user.get("username"), bid, customer_id,
+    )
+    raise HTTPException(404, "Customer not found")
+
+
 @router.post("/chat/handoff/{customer_id}/request")
 async def handoff_request(customer_id: int, user=Depends(require_business)):
     bid      = user["business_id"]
-    customer = crud.get_customer_by_id(customer_id, bid)
-    # Shared number: customer may belong to a different business
-    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        try:
-            from core.db import supabase as _sb
-            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
-            customer = res.data[0] if res.data else None
-        except Exception: pass
-    if not customer: raise HTTPException(404, "Customer not found")
+    customer = _handoff_get_customer(customer_id, bid, user, action="request")
 
     from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
     from services._ai_state import _set_human_handoff
 
     phone      = customer["phone"]
-    # Use customer's actual business_id — critical for shared number
-    actual_bid = customer.get("business_id", bid)
+    actual_bid = bid  # _handoff_get_customer guarantees customer.business_id == bid
     biz        = crud.get_business_by_id(actual_bid)
     biz_name   = biz.get("name", "") if biz else ""
     agent_name = user.get("username", "Agent")
@@ -227,8 +268,10 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     except Exception as exc:
         log.warning("handoff_request: WA notification failed: %s", exc)
 
-    log.info("handoff requested  customer=%s  phone=%s  actual_biz=%s  by=%s",
-             customer_id, phone, actual_bid, agent_name)
+    log.info(
+        "HANDOFF STARTED  customer_id=%s  business_id=%s  agent_name=%s  phone=%s",
+        customer_id, actual_bid, agent_name, phone,
+    )
 
     # Broadcast WebSocket event so the inbox updates in real time
     if manager:
@@ -262,20 +305,13 @@ async def handoff_request_with_reason(
     conversation summary and handoff queue.
     """
     bid      = user["business_id"]
-    customer = crud.get_customer_by_id(customer_id, bid)
-    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        try:
-            from core.db import supabase as _sb
-            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
-            customer = res.data[0] if res.data else None
-        except Exception: pass
-    if not customer: raise HTTPException(404, "Customer not found")
+    customer = _handoff_get_customer(customer_id, bid, user, action="request-with-reason")
 
     from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
     from services._ai_state import _set_human_handoff, _write_state_data
 
     phone      = customer["phone"]
-    actual_bid = customer.get("business_id", bid)
+    actual_bid = bid  # _handoff_get_customer guarantees customer.business_id == bid
     biz        = crud.get_business_by_id(actual_bid)
     biz_name   = biz.get("name", "") if biz else ""
     agent_name = user.get("username", "Agent")
@@ -307,8 +343,11 @@ async def handoff_request_with_reason(
     except Exception as exc:
         log.warning("handoff_request_with_reason: WA notification failed: %s", exc)
 
-    log.info("handoff requested (with reason)  customer=%s  phone=%s  reason=%r  priority=%s  by=%s",
-             customer_id, phone, body.reason, body.priority, agent_name)
+    log.info(
+        "HANDOFF STARTED  customer_id=%s  business_id=%s  agent_name=%s  phone=%s  "
+        "reason=%r  priority=%s",
+        customer_id, actual_bid, agent_name, phone, body.reason, body.priority,
+    )
 
     if manager:
         try:
@@ -331,22 +370,13 @@ async def handoff_request_with_reason(
 @router.post("/chat/handoff/{customer_id}/release")
 async def handoff_release(customer_id: int, user=Depends(require_business)):
     bid      = user["business_id"]
-    customer = crud.get_customer_by_id(customer_id, bid)
-    # Shared number: customer may belong to a different business
-    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        try:
-            from core.db import supabase as _sb
-            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
-            customer = res.data[0] if res.data else None
-        except Exception: pass
-    if not customer: raise HTTPException(404, "Customer not found")
+    customer = _handoff_get_customer(customer_id, bid, user, action="release")
 
     from workflows.human_handoff import clear_handoff_flag, ai_resumed_message
     from services._ai_state import _reset_state
 
     phone      = customer["phone"]
-    # Use customer's actual business_id — critical for shared number
-    actual_bid = customer.get("business_id", bid)
+    actual_bid = bid  # _handoff_get_customer guarantees customer.business_id == bid
     biz        = crud.get_business_by_id(actual_bid)
     biz_name   = biz.get("name", "") if biz else ""
 
@@ -364,6 +394,10 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
     except Exception as exc:
         log.warning("handoff_release: WA notification failed: %s", exc)
 
+    log.info(
+        "HANDOFF RESUMED  customer_id=%s  business_id=%s  by=%s",
+        customer_id, actual_bid, user.get("username"),
+    )
     return {"ok": True, "customer_id": customer_id, "phone": phone, "state": "browsing"}
 
 
