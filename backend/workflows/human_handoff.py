@@ -135,14 +135,25 @@ def should_auto_resume(text: str, sd: dict) -> tuple[bool, str]:
 
     Auto-resume triggers:
     1. Customer types a restart intent ("menu", "hi", "cart" etc.)
+       — SKIPPED if an agent manually initiated this handoff
+         (session.agent_initiated == True). In that case only the
+         "▶ Resume AI" button or the timeout below can end it —
+         a customer typing "menu" while waiting for the agent should
+         not silently kick the agent out of the conversation.
     2. HANDOFF_TIMEOUT_SECONDS has elapsed since handoff was set
        and no agent has replied recently (last_agent_reply_at is old/absent)
     """
-    # Trigger 1: restart intent keyword
-    t_lower = text.lower().strip()
-    if t_lower in AUTO_RESUME_INTENTS:
-        log.info("auto_resume: restart intent detected  word=%r", t_lower)
-        return True, f"customer restart intent: {t_lower!r}"
+    session = sd.get("session") or {}
+    agent_initiated = bool(session.get("agent_initiated"))
+
+    # Trigger 1: restart intent keyword (skipped for agent-initiated handoffs)
+    if not agent_initiated:
+        t_lower = text.lower().strip()
+        if t_lower in AUTO_RESUME_INTENTS:
+            log.info("auto_resume: restart intent detected  word=%r", t_lower)
+            return True, f"customer restart intent: {t_lower!r}"
+    else:
+        log.debug("auto_resume: skipping restart-intent check — agent_initiated handoff")
 
     # Trigger 2: timeout elapsed
     if HANDOFF_TIMEOUT_SECONDS > 0:
@@ -204,6 +215,13 @@ def handoff_customer_message(phone: str, business_id: int, text: str = "") -> st
             sd["handoff_msg_count"]  = 0
             sd.pop("handoff_started_at",  None)
             sd.pop("last_agent_reply_at", None)
+            # Clear handoff session flags (agent_initiated, reason, priority)
+            # so they don't linger into the resumed "browsing" state.
+            if isinstance(sd.get("session"), dict):
+                sd["session"].pop("agent_initiated",  None)
+                sd["session"].pop("agent_name",       None)
+                sd["session"].pop("handoff_reason",   None)
+                sd["session"].pop("handoff_priority", None)
             supabase.table("carts").upsert(
                 {
                     "phone":       phone,

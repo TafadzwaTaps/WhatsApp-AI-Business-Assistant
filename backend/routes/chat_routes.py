@@ -255,6 +255,20 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     agent_name = user.get("username", "Agent")
 
     _set_human_handoff(phone, actual_bid)
+
+    # Mark this handoff as agent-initiated — restart-intent words ("menu", "hi",
+    # "cart" etc.) from the customer will NOT auto-resume the AI while this flag
+    # is set. Only the "▶ Resume AI" button (handoff_release) or the timeout
+    # safety net can end an agent-initiated handoff.
+    try:
+        from services._ai_state import _write_state_data
+        _write_state_data(phone, actual_bid, {
+            "state": "human_handoff",
+            "session": {"agent_initiated": True, "agent_name": agent_name},
+        })
+    except Exception as exc:
+        log.debug("handoff_request: agent_initiated flag write failed: %s", exc)
+
     notify_dashboard(phone, actual_bid, biz_name)
 
     # Phase 5: notify the customer on WhatsApp that a human has joined
@@ -318,13 +332,17 @@ async def handoff_request_with_reason(
 
     _set_human_handoff(phone, actual_bid)
 
-    # Store reason + priority alongside the handoff state
+    # Store reason + priority alongside the handoff state, and mark this
+    # handoff as agent-initiated so customer "menu"/"hi" messages don't
+    # silently auto-resume the AI while the agent is handling the chat.
     try:
         _write_state_data(phone, actual_bid, {
             "state": "human_handoff",
             "session": {
                 "handoff_reason":   body.reason or "",
                 "handoff_priority": body.priority or "normal",
+                "agent_initiated":  True,
+                "agent_name":       agent_name,
             },
         })
     except Exception as exc:
