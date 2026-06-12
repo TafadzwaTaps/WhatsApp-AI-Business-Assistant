@@ -5,6 +5,12 @@
 
 'use strict';
 
+// BUILD MARKER — confirms this deployed file includes the apiFetch header-merge fix
+// (added 2026-06-12). If "Handoff failed: Unauthorized" recurs, open browser
+// console and confirm this line prints — if it doesn't, the deployed inbox.js
+// is stale and needs to be re-uploaded.
+console.info('[inbox.js] build 2026-06-12-authfix-1 loaded');
+
 /* ── CONFIG & SESSION ───────────────────────────────────── */
 const API = 'https://wazibot-api-assistant.onrender.com';
 
