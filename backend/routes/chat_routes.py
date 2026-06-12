@@ -245,6 +245,89 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     return {"ok": True, "customer_id": customer_id, "phone": phone, "state": "human_handoff"}
 
 
+class HandoffReasonRequest(BaseModel):
+    reason:   str = ""
+    priority: str = "normal"
+
+
+@router.post("/chat/handoff/{customer_id}/request-with-reason")
+async def handoff_request_with_reason(
+    customer_id: int,
+    body: HandoffReasonRequest,
+    user=Depends(require_business),
+):
+    """
+    Same as /chat/handoff/{customer_id}/request, but also stores the agent's
+    selected reason and priority in carts.state_data for display in the
+    conversation summary and handoff queue.
+    """
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+            customer = res.data[0] if res.data else None
+        except Exception: pass
+    if not customer: raise HTTPException(404, "Customer not found")
+
+    from workflows.human_handoff import notify_dashboard, handoff_acknowledgement
+    from services._ai_state import _set_human_handoff, _write_state_data
+
+    phone      = customer["phone"]
+    actual_bid = customer.get("business_id", bid)
+    biz        = crud.get_business_by_id(actual_bid)
+    biz_name   = biz.get("name", "") if biz else ""
+    agent_name = user.get("username", "Agent")
+
+    _set_human_handoff(phone, actual_bid)
+
+    # Store reason + priority alongside the handoff state
+    try:
+        _write_state_data(phone, actual_bid, {
+            "state": "human_handoff",
+            "session": {
+                "handoff_reason":   body.reason or "",
+                "handoff_priority": body.priority or "normal",
+            },
+        })
+    except Exception as exc:
+        log.debug("handoff_request_with_reason: state write failed: %s", exc)
+
+    notify_dashboard(phone, actual_bid, biz_name)
+
+    # Notify the customer on WhatsApp
+    try:
+        token    = crud.get_decrypted_token(biz) if biz else ""
+        phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+        if token and phone_id:
+            send_whatsapp(phone_id, token, phone, handoff_acknowledgement(biz_name))
+        elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, handoff_acknowledgement(biz_name))
+    except Exception as exc:
+        log.warning("handoff_request_with_reason: WA notification failed: %s", exc)
+
+    log.info("handoff requested (with reason)  customer=%s  phone=%s  reason=%r  priority=%s  by=%s",
+             customer_id, phone, body.reason, body.priority, agent_name)
+
+    if manager:
+        try:
+            await manager.broadcast(actual_bid, {
+                "event":       "handoff_requested",
+                "customer_id": customer_id,
+                "phone":       phone,
+                "reason":      body.reason or "manual",
+                "priority":    body.priority or "normal",
+            })
+        except Exception as exc:
+            log.debug("handoff ws broadcast failed: %s", exc)
+
+    return {
+        "ok": True, "customer_id": customer_id, "phone": phone,
+        "state": "human_handoff", "reason": body.reason, "priority": body.priority,
+    }
+
+
 @router.post("/chat/handoff/{customer_id}/release")
 async def handoff_release(customer_id: int, user=Depends(require_business)):
     bid      = user["business_id"]
