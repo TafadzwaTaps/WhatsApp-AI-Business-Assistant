@@ -100,6 +100,7 @@ from services._ai_intent import (
     _is_introduction,
     _is_booking_intent, _is_cancel_booking,
     _is_reschedule_booking, _is_my_bookings_query,
+    _is_abusive_message,
 )
 
 # Visual catalog intents — try/except guards against old _ai_intent.py on server
@@ -214,9 +215,24 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     if _handoff_mod().is_handoff_request(text) or _is_human_request(text):
         _set_human_handoff(phone, business_id)
+
+        # Generate a support ticket number and store it for the agent + customer
+        ticket = ""
+        try:
+            from services.whatsapp_catalog import generate_ticket_number
+            customer = crud.get_or_create_customer(phone, business_id)
+            cust_id  = customer.get("id") if customer else 0
+            ticket   = generate_ticket_number(cust_id, business_id)
+            _write_state_data(phone, business_id, {
+                "state": "human_handoff",
+                "session": {"ticket": ticket, "handoff_reason": "Customer request"},
+            })
+        except Exception as exc:
+            log.debug("ticket generation failed: %s", exc)
+
         _handoff_mod().notify_dashboard(phone, business_id, business_name)
-        log.info("human_handoff: triggered  phone=%s  biz=%s", phone, business_id)
-        return _handoff_mod().handoff_acknowledgement(business_name)
+        log.info("human_handoff: triggered  phone=%s  biz=%s  ticket=%s", phone, business_id, ticket)
+        return _handoff_mod().handoff_acknowledgement(business_name, ticket=ticket, reason="Customer request")
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-2 — AGENT MESSAGE DETECTION
@@ -398,6 +414,62 @@ def generate_reply(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P0.6 — ABUSIVE / OFFENSIVE LANGUAGE DETECTION
+    # Calmly de-escalates rude or hostile messages instead of falling through
+    # to a generic "I didn't quite get that". Tracks repeat offenses in
+    # state_data.session.abuse_warnings — first offense gets a polite warning,
+    # second+ gets a notice that continued abuse may lead to account
+    # suspension. Never insults back; always professional.
+    # ══════════════════════════════════════════════════════════════════════════
+    if _is_abusive_message(text):
+        session       = _get_session(phone, business_id) or {}
+        warning_count = int(session.get("abuse_warnings", 0) or 0) + 1
+
+        try:
+            _write_state_data(phone, business_id, {
+                "state": current_state,
+                "session": {**session, "abuse_warnings": warning_count},
+            })
+        except Exception as exc:
+            log.debug("abuse warning count write failed: %s", exc)
+
+        log.warning(
+            "ABUSE DETECTED  phone=%s  biz=%s  warning_count=%d  text=%r",
+            phone, business_id, warning_count, text[:100],
+        )
+
+        if warning_count == 1:
+            return (
+                f"😕 We understand you may be frustrated, and we're here to help.\n\n"
+                f"However, we kindly ask that you keep our conversation respectful — "
+                f"our team works hard to assist every customer fairly.\n\n"
+                f"_Let's start fresh: type *menu* to browse, *cart* to view your order, "
+                f"or *agent* to speak with a human team member._ 🙏"
+            )
+        elif warning_count == 2:
+            return (
+                f"⚠️ *Second reminder:* please keep this conversation respectful.\n\n"
+                f"Continued use of offensive or abusive language may result in "
+                f"*restricted access* to this service.\n\n"
+                f"We're happy to help — type *menu* to continue, or *agent* to "
+                f"speak with a human team member. 🙏"
+            )
+        else:
+            # Third+ offense — escalate to human + final warning
+            try:
+                _set_human_handoff(phone, business_id)
+                _handoff_mod().notify_dashboard(phone, business_id, business_name)
+            except Exception as exc:
+                log.debug("abuse escalation handoff failed: %s", exc)
+            return (
+                f"🚫 *Final notice:* repeated offensive language has been logged "
+                f"on this account.\n\n"
+                f"Continued abuse may result in *suspension from this platform*.\n\n"
+                f"_Your conversation has been flagged for our support team to review._"
+            )
+
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P0.7 — CONVERSATION COMPLETION DETECTION
     # ══════════════════════════════════════════════════════════════════════════
     if _is_conversation_done(text) and current_state == "browsing":
@@ -455,16 +527,27 @@ def generate_reply(
             pass
 
         if active_order:
-            ref    = f"ORDER-{active_order['id']}"
-            status = active_order.get("status", "pending").upper()
-            return (
-                f"⏳ *We hear you! Checking on your order...*\n\n"
-                f"📦 Order : *{ref}*\n"
-                f"📍 Status: *{status}*\n\n"
-                f"Our team has been notified of your message and will update you shortly.\n"
-                f"We apologise for any delay! 🙏\n\n"
-                f"_Type *{ref.lower()}* to see full order details._"
-            )
+            ref      = f"ORDER-{active_order['id']}"
+            status   = active_order.get("status", "pending")
+            fulfill  = active_order.get("fulfillment_method", "") or ""
+            try:
+                from services.whatsapp_catalog import build_progress_tracker
+                tracker = build_progress_tracker(active_order["id"], status, fulfill)
+                return (
+                    f"⏳ *We hear you! Here's where things stand:*\n\n"
+                    f"{tracker}\n"
+                    f"_Our team has been notified and will update you shortly. 🙏_"
+                )
+            except Exception as exc:
+                log.debug("progress tracker failed, using simple fallback: %s", exc)
+                return (
+                    f"⏳ *We hear you! Checking on your order...*\n\n"
+                    f"📦 Order : *{ref}*\n"
+                    f"📍 Status: *{status.upper()}*\n\n"
+                    f"Our team has been notified of your message and will update you shortly.\n"
+                    f"We apologise for any delay! 🙏\n\n"
+                    f"_Type *{ref.lower()}* to see full order details._"
+                )
 
         return (
             f"⏳ We're sorry you're waiting!\n\n"
@@ -565,11 +648,23 @@ def generate_reply(
             except Exception as exc:
                 log.warning("pickup fulfillment save failed: %s", exc)
             _reset_state(phone, business_id)
+
+            # Look up business address — show if present, hide gracefully if not
+            address_line = ""
+            try:
+                biz_row = crud.get_business_by_id(business_id)
+                addr = (biz_row.get("address") or "").strip() if biz_row else ""
+                if addr:
+                    address_line = f"\n📍 *Pickup Location:*\n{addr}\n"
+            except Exception:
+                pass
+
             return (
-                f"🏪 *Pickup confirmed!*\n\n"
-                f"📦 Order  : *{reference}*\n\n"
-                f"Please come collect your order from us.\n"
-                f"We'll notify you when it's ready for collection. 😊\n\n"
+                f"🏪 *Pickup Confirmed!*\n\n"
+                f"📦 Order: *{reference}*\n\n"
+                f"⏱ *Estimated preparation time:*\n10–15 minutes\n"
+                f"{address_line}\n"
+                f"We'll notify you as soon as your order is ready. 😊\n\n"
                 f"_Any questions? Type *{reference.lower()}* to check status._"
             )
 
@@ -1555,29 +1650,32 @@ def generate_reply(
     if active_order:
         ref = f"ORDER-{active_order['id']}"
         return (
-            f"🤔 I didn't quite get that.\n\n"
+            f"🤔 I'm not sure what you mean — but happy to help!\n\n"
             f"You have an active order *{ref}* — type it to see the status.\n\n"
-            f"Or type *menu* to browse and add more items. 😊"
+            f"Or type *menu* to browse and add more items, or *help* for all commands. 😊"
         )
 
     if cart:
         hint = f"e.g. _{products[0]['name']}_" if products else ""
         return (
-            f"🤔 I didn't catch that.\n\n"
+            f"🤔 I'm not sure what you mean — but here's where you're at:\n\n"
             f"{_format_cart(cart)}\n\n"
             f"  ✅ *checkout* — place your order\n"
             f"  📋 *menu* — browse more items {'| 🛍️ ' + hint if hint else ''}\n"
             f"  🗑️ *remove [item]* — remove something\n"
+            f"  🆘 *help* — see all commands\n"
         )
 
     hint = f"e.g. _{products[0]['name']}_" if products else "e.g. _Burger_"
     return (
-        f"🤖 I didn't quite get that.\n\n"
-        f"Try:\n"
+        f"🤖 Hmm, I'm not sure what you mean by that — but no worries! 😊\n\n"
+        f"Here's what I can help with:\n"
         f"  📋 *menu* — browse products\n"
         f"  🛍️ Type a product name — {hint}\n"
         f"  🛒 *cart* — view your cart\n"
         f"  ✅ *checkout* — place your order\n"
         f"  🔍 *ORDER-9* — check order status\n"
         f"  🔄 *repeat last order* — reorder quickly\n"
+        f"  🙋 *agent* — talk to a human\n\n"
+        f"_Type *help* anytime to see this list again._"
     )

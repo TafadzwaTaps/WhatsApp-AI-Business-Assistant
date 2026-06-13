@@ -256,6 +256,10 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
 
     _set_human_handoff(phone, actual_bid)
 
+    # Generate a support ticket number for this handoff
+    from services.whatsapp_catalog import generate_ticket_number
+    ticket = generate_ticket_number(customer_id, actual_bid)
+
     # Mark this handoff as agent-initiated — restart-intent words ("menu", "hi",
     # "cart" etc.) from the customer will NOT auto-resume the AI while this flag
     # is set. Only the "▶ Resume AI" button (handoff_release) or the timeout
@@ -264,7 +268,8 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
         from services._ai_state import _write_state_data
         _write_state_data(phone, actual_bid, {
             "state": "human_handoff",
-            "session": {"agent_initiated": True, "agent_name": agent_name},
+            "session": {"agent_initiated": True, "agent_name": agent_name,
+                         "ticket": ticket, "handoff_reason": "Agent took over"},
         })
     except Exception as exc:
         log.debug("handoff_request: agent_initiated flag write failed: %s", exc)
@@ -275,10 +280,11 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     try:
         token    = crud.get_decrypted_token(biz) if biz else ""
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+        ack_msg  = handoff_acknowledgement(biz_name, ticket=ticket, reason="Agent took over")
         if token and phone_id:
-            send_whatsapp(phone_id, token, phone, handoff_acknowledgement(biz_name))
+            send_whatsapp(phone_id, token, phone, ack_msg)
         elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
-            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, handoff_acknowledgement(biz_name))
+            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, ack_msg)
     except Exception as exc:
         log.warning("handoff_request: WA notification failed: %s", exc)
 
@@ -332,6 +338,11 @@ async def handoff_request_with_reason(
 
     _set_human_handoff(phone, actual_bid)
 
+    # Generate a support ticket number for this handoff
+    from services.whatsapp_catalog import generate_ticket_number
+    ticket       = generate_ticket_number(customer_id, actual_bid)
+    reason_label = body.reason or "Agent took over"
+
     # Store reason + priority alongside the handoff state, and mark this
     # handoff as agent-initiated so customer "menu"/"hi" messages don't
     # silently auto-resume the AI while the agent is handling the chat.
@@ -343,6 +354,7 @@ async def handoff_request_with_reason(
                 "handoff_priority": body.priority or "normal",
                 "agent_initiated":  True,
                 "agent_name":       agent_name,
+                "ticket":           ticket,
             },
         })
     except Exception as exc:
@@ -354,10 +366,11 @@ async def handoff_request_with_reason(
     try:
         token    = crud.get_decrypted_token(biz) if biz else ""
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+        ack_msg  = handoff_acknowledgement(biz_name, ticket=ticket, reason=reason_label)
         if token and phone_id:
-            send_whatsapp(phone_id, token, phone, handoff_acknowledgement(biz_name))
+            send_whatsapp(phone_id, token, phone, ack_msg)
         elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
-            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, handoff_acknowledgement(biz_name))
+            send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, ack_msg)
     except Exception as exc:
         log.warning("handoff_request_with_reason: WA notification failed: %s", exc)
 

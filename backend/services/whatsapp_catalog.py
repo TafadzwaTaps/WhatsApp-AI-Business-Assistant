@@ -368,3 +368,115 @@ def image_coverage(products: list[dict]) -> dict:
 def filter_products_needing_images(products: list[dict]) -> list[dict]:
     """Return only products that are missing an image_url."""
     return [p for p in products if not p.get("image_url")]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ORDER PROGRESS TRACKER (Premium UX upgrade)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Display-friendly stage labels and emoji, in customer-facing order.
+# Maps from workflows/order_lifecycle.py VALID_STATUSES — does not hardcode
+# new statuses, only adds presentation metadata for existing ones.
+_PROGRESS_STAGES = [
+    ("pending",         "Order Received"),
+    ("payment_review",  "Payment Verification"),
+    ("confirmed",       "Payment Confirmed"),
+    ("preparing",       "Preparing Order"),
+    ("ready",           "Ready for Pickup"),
+    ("out_for_delivery","Out for Delivery"),
+    ("delivered",       "Delivered"),
+    ("completed",       "Completed"),
+]
+
+# Statuses that map onto an earlier stage for progress display purposes
+# (e.g. pending_cash and awaiting_payment both count as "Order Received")
+_STATUS_ALIASES = {
+    "pending_cash":     "pending",
+    "awaiting_payment": "pending",
+}
+
+_ETA_HINTS = {
+    "pending":          "Awaiting payment",
+    "payment_review":   "5–15 minutes",
+    "confirmed":        "Preparing shortly",
+    "preparing":        "10–15 minutes",
+    "ready":            "Ready now!",
+    "out_for_delivery": "On the way",
+    "delivered":        "Delivered",
+    "completed":        "Completed",
+}
+
+
+def build_progress_tracker(order_id, status: str, fulfillment_method: str = "") -> str:
+    """
+    Build a visual order-progress tracker for WhatsApp.
+
+    order_id: the order's numeric ID (used for the ORDER-N reference)
+    status:   current order status (from VALID_STATUSES)
+    fulfillment_method: "pickup" | "delivery" | "" (unknown)
+
+    Never raises. Falls back to a simple status line for unrecognised statuses.
+    """
+    ref = f"ORDER-{order_id}" if order_id else "your order"
+    status = (status or "pending").lower().strip()
+    status = _STATUS_ALIASES.get(status, status)
+
+    stage_keys = [s[0] for s in _PROGRESS_STAGES]
+    if status not in stage_keys:
+        # Unknown/terminal status (e.g. "cancelled", "refunded") — simple fallback
+        return (
+            f"📦 *{ref}*\n\n"
+            f"Current Status: *{status.replace('_', ' ').title()}*\n\n"
+            f"_Type *menu* to browse or *agent* to talk to our team._"
+        )
+
+    current_idx = stage_keys.index(status)
+
+    # Skip the delivery/pickup-specific stage that doesn't apply
+    lines = []
+    for i, (key, label) in enumerate(_PROGRESS_STAGES):
+        # Pickup orders skip delivery-only stages; delivery orders skip pickup-only stage
+        if fulfillment_method == "delivery" and key in ("ready",):
+            continue
+        if fulfillment_method == "pickup" and key in ("out_for_delivery", "delivered"):
+            continue
+        if i < current_idx:
+            box = "✅"
+        elif i == current_idx:
+            box = "⏳"
+        else:
+            box = "⬜"
+        lines.append(f"{box} {label}")
+
+    eta = _ETA_HINTS.get(status, "")
+    eta_line = f"\nEstimated Time Remaining:\n*{eta}*\n" if eta else ""
+
+    current_label = next((lbl for k, lbl in _PROGRESS_STAGES if k == status), status.title())
+
+    return (
+        f"📦 *{ref}*\n\n"
+        f"Current Status:\n*{current_label}*\n\n"
+        f"Progress:\n\n"
+        + "\n".join(lines) + "\n"
+        + eta_line
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HANDOFF TICKET NUMBERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def generate_ticket_number(customer_id, business_id: int = 0) -> str:
+    """
+    Generate a human-friendly support ticket number, e.g. SUP-1042.
+    Deterministic-ish but unique enough for display purposes — derived from
+    customer_id and current time. Not a database primary key; purely cosmetic.
+    Never raises.
+    """
+    import time as _time
+    try:
+        base = int(customer_id or 0) * 17 + int(_time.time()) % 10000
+        num  = abs(base) % 9000 + 1000  # 4-digit range 1000-9999
+        return f"SUP-{num}"
+    except Exception:
+        return f"SUP-{abs(hash(str(customer_id))) % 9000 + 1000}"

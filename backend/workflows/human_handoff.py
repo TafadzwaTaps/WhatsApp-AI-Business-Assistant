@@ -110,8 +110,24 @@ def is_handoff_request(text: str) -> bool:
 
 # ── Response messages ─────────────────────────────────────────────────────────
 
-def handoff_acknowledgement(business_name: str) -> str:
-    """Message sent to the customer when they are handed off to a human agent."""
+def handoff_acknowledgement(business_name: str, ticket: str = "", reason: str = "") -> str:
+    """
+    Message sent to the customer when they are handed off to a human agent.
+    If a ticket number / reason is provided, shows them as a support-ticket
+    style header — falls back to the original plain message if not provided
+    (e.g. older callers that don't pass these args still work unchanged).
+    """
+    if ticket:
+        reason_line = f"Reason:\n*{reason}*\n\n" if reason else ""
+        return (
+            f"🙋 *Connecting you to a human agent...*\n\n"
+            f"{reason_line}"
+            f"Ticket:\n*{ticket}*\n\n"
+            f"Estimated Response Time:\n*5–15 minutes*\n\n"
+            f"_Your conversation has been transferred. "
+            f"The AI assistant has been paused._\n\n"
+            f"_If this is urgent, please call us directly._"
+        )
     return (
         f"🙋 *Connecting you to our support team...*\n\n"
         f"A member of the *{business_name}* team will be with you shortly.\n\n"
@@ -255,6 +271,44 @@ def handoff_customer_message(phone: str, business_id: int, text: str = "") -> st
             t_lower = text.lower().strip()
             if t_lower in PURE_RESUME_WORDS:
                 log.info("handoff: pure resume word — sending confirmation  word=%r", t_lower)
+
+                # Look up the customer's active order for richer context (#10)
+                order_block = ""
+                try:
+                    from core.db import supabase as _sb
+                    res = (
+                        _sb.table("orders")
+                        .select("id, status")
+                        .eq("customer_phone", phone)
+                        .eq("business_id", business_id)
+                        .not_.in_("status", ["completed", "cancelled", "refunded", "delivered"])
+                        .order("id", desc=True)
+                        .limit(1)
+                        .execute()
+                    )
+                    active = res.data[0] if res.data else None
+                    if active:
+                        ref          = f"ORDER-{active['id']}"
+                        status_label = (active.get("status") or "pending").replace("_", " ").title()
+                        order_block = (
+                            f"\n\n📦 Order:\n*{ref}*\n\n"
+                            f"Current Status:\n*{status_label}*\n\n"
+                            f"You can type:\n"
+                            f"• *menu*\n"
+                            f"• *cart*\n"
+                            f"• *{ref.lower()}*\n\n"
+                            f"for assistance."
+                        )
+                except Exception as exc:
+                    log.debug("resume order lookup failed: %s", exc)
+
+                if order_block:
+                    return (
+                        "✅ *Human conversation ended*\n\n"
+                        "You are now chatting with the AI assistant again."
+                        + order_block
+                    )
+
                 return (
                     "✅ *You're back with the AI assistant!*\n\n"
                     "Type *menu* to browse products or *cart* to view your order. 😊"
