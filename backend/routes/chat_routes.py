@@ -147,9 +147,10 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     log_biz_id = customer_biz_id
 
     crud.log_message(log_biz_id, customer["phone"], "out", body.text)
+    agent_username = user.get("username", "Agent")
     msg = crud.create_message(
         customer["id"], log_biz_id, body.text, "outgoing",
-        sender_type="agent", sender_name=user.get("username", "Agent"),
+        sender_type="agent", sender_name=agent_username, agent_id=agent_username,
     )
 
     wa_result: dict = {}

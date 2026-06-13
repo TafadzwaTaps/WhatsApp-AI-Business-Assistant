@@ -536,9 +536,12 @@ function createBubble(msg) {
     ? '📢 ' + escHtml(text.replace('[BROADCAST] ', ''))
     : escHtml(text);
 
-  // Sender label: shown above agent messages so staff can identify themselves
+  // Sender label: shown above agent messages so staff can identify themselves.
+  // Format: "👤 Sarah (Customer Support)" — the role suffix is generic and
+  // always shown for agent messages so customers always know they're
+  // talking to a human, never confusing it with the AI.
   const senderLabel = isAgentMsg
-    ? `<div class="msg-sender-label">👤 ${escHtml(msg.sender_name || 'Agent')}</div>`
+    ? `<div class="msg-sender-label">👤 ${escHtml(msg.sender_name || 'Agent')} <span class="msg-sender-role">(Customer Support)</span></div>`
     : isAiMsg && dir === 'outgoing'
     ? `<div class="msg-sender-label msg-ai-label">🤖 AI</div>`
     : '';
@@ -574,12 +577,15 @@ async function sendMessage() {
   sendBtn.disabled = true;
 
   // Optimistic render — mark as agent message so it shows agent badge immediately
+  // Use the real logged-in agent's name (persisted at login) instead of "You",
+  // so it matches what's stored server-side and what the customer sees attributed.
+  const _myAgentName = localStorage.getItem('wazibot_username') || 'Agent';
   appendBubble({
     id: null,
     text,
     direction:   'outgoing',
     sender_type: 'agent',     // human agent is typing this
-    sender_name: 'You',
+    sender_name: _myAgentName,
     status: 'sent',
     created_at: new Date().toISOString(),
   });

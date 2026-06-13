@@ -86,6 +86,7 @@ def create_message(
     wa_message_id: str | None = None,
     sender_type: str | None = None,
     sender_name: str | None = None,
+    agent_id: str | None = None,
 ) -> dict:
     """
     Save a message to the messages table.
@@ -112,6 +113,8 @@ def create_message(
         row["sender_type"] = sender_type
     if sender_name and _has_messages_col("sender_name"):
         row["sender_name"] = sender_name
+    if agent_id and _has_messages_col("agent_id"):
+        row["agent_id"] = agent_id
 
     res = supabase.table("messages").insert(row).execute()
     msg = _one("messages", res)

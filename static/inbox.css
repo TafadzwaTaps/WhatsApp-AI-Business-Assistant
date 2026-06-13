@@ -955,6 +955,15 @@ body {
   opacity: 0.7;
 }
 
+/* Role suffix on agent labels, e.g. "Sarah (Customer Support)" —
+   slightly dimmer and not uppercase-transformed for readability */
+.msg-sender-role {
+  text-transform: none;
+  opacity: 0.65;
+  letter-spacing: 0.2px;
+  font-weight: normal;
+}
+
 /* Agent message — outgoing bubble with amber accent */
 .msg.msg-agent .bubble {
   background: rgba(245, 158, 11, 0.10) !important;  /* amber tint */
