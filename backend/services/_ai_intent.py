@@ -396,7 +396,9 @@ def _intent(text: str) -> str:
         return "browse"
 
     if (any(w in t for w in ["help", "hi ", "hello", "hey ", "hie", "howzit"])
-            or t in ("hi", "hello", "hey", "hie", "yo", "sup", "howzit", "start", "help")):
+            or t in ("hi", "hello", "hey", "hie", "yo", "sup", "howzit", "start", "help",
+                     "commands", "options", "what can you do", "what can i do",
+                     "what can i type", "what do i type", "list commands", "list")):
         return "help"
 
     return "order"
@@ -605,3 +607,61 @@ def _extract_show_category(text: str) -> str:
         if cat.lower() not in skip:
             return cat
     return ""
+
+
+# ── Abusive / offensive language detection ────────────────────────────────────
+# Detects profanity, insults, threats, or hostile language directed at the
+# business or its staff. Used to trigger a calm de-escalation warning rather
+# than the generic "I didn't quite get that" fallback, and to track repeat
+# offenses for a tiered warning → notice of suspension flow.
+
+_PROFANITY_WORDS = {
+    # Common English profanity (word-boundary matched, lowercase)
+    "fuck", "fucking", "fucker", "fck", "f*ck", "f**k",
+    "shit", "shitty", "bullshit",
+    "bitch", "bastard", "asshole", "ass",
+    "cunt", "dick", "piss", "pissed",
+    "damn", "goddamn",
+    "idiot", "stupid", "moron", "dumb", "dumbass",
+    "scam", "scammer", "thief", "thieves", "robbing", "rip off", "ripoff",
+    "useless", "garbage", "trash", "rubbish",
+    "hate you", "shut up", "screw you", "f off", "f u",
+}
+
+_THREAT_PHRASES = [
+    "i will report you", "i'll report you", "i will sue", "i'll sue",
+    "i will expose", "i'll expose", "i will destroy your business",
+    "going to ruin your business", "post this online", "go viral",
+    "i know where you", "watch yourself", "you'll regret",
+]
+
+
+def _is_abusive_message(text: str) -> bool:
+    """
+    Returns True if the message contains profanity, insults, or threatening
+    language. Conservative: requires a whole-word match for profanity terms
+    (so e.g. "classic" doesn't match "ass") and substring match for multi-word
+    threat phrases.
+    """
+    t = text.lower().strip()
+    if not t:
+        return False
+
+    # Whole-word match for single-word profanity (avoid false positives like
+    # "assassin", "classic", "passion")
+    words = re.findall(r"[a-z']+", t)
+    word_set = set(words)
+    for term in _PROFANITY_WORDS:
+        if " " in term or "*" in term:
+            # Multi-word or symbol terms — substring match
+            if term in t:
+                return True
+        elif term in word_set:
+            return True
+
+    # Threat phrases — substring match
+    for phrase in _THREAT_PHRASES:
+        if phrase in t:
+            return True
+
+    return False

@@ -51,6 +51,21 @@ AUTO_RESUME_INTENTS = {
     "resume", "ai", "bot", "restart", "reset",
 }
 
+# Subset of AUTO_RESUME_INTENTS that are PURELY "give me back the AI" requests
+# with no other meaning. For these, handoff_customer_message returns an
+# explicit "✅ You're back with the AI assistant" confirmation instead of
+# falling through to normal generate_reply processing — otherwise a bare
+# "resume" or "ai" gets treated as an unrecognised command (e.g. it can
+# trigger the "active order" fallback: "🤔 I didn't quite get that...").
+#
+# Words like "menu", "hi", "cart", "checkout", "order", "help" are NOT in
+# this set — those are real commands the customer wants executed, so after
+# auto-resuming they continue through generate_reply normally.
+PURE_RESUME_WORDS = {
+    "resume", "ai", "bot", "restart", "reset",
+    "back", "nevermind", "never mind",
+}
+
 
 # ── Trigger detection ─────────────────────────────────────────────────────────
 
@@ -231,7 +246,22 @@ def handoff_customer_message(phone: str, business_id: int, text: str = "") -> st
                 },
                 on_conflict="phone,business_id",
             ).execute()
-            # Return special sentinel so ai.py knows to re-run generate_reply
+            # If the customer's message was a PURE resume word ("resume", "ai",
+            # "bot", "restart", "reset", "back", "nevermind") with no other
+            # meaning, return an explicit confirmation here instead of the
+            # sentinel — otherwise ai.py re-runs generate_reply with this text
+            # and it falls through to an unrelated fallback (e.g. active-order
+            # status message), confusing the customer.
+            t_lower = text.lower().strip()
+            if t_lower in PURE_RESUME_WORDS:
+                log.info("handoff: pure resume word — sending confirmation  word=%r", t_lower)
+                return (
+                    "✅ *You're back with the AI assistant!*\n\n"
+                    "Type *menu* to browse products or *cart* to view your order. 😊"
+                )
+
+            # Otherwise (e.g. "menu", "hi", "checkout") — return special
+            # sentinel so ai.py knows to re-run generate_reply with this text
             return "__AUTO_RESUMED__"
 
         # ── Normal handoff handling ───────────────────────────────────────────
