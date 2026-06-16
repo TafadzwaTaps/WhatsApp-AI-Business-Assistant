@@ -672,3 +672,86 @@ async def voice_transcribe(body: VoiceTranscribeRequest, user=Depends(require_bu
         products=products, voice_transcript=transcript,
     )
     return {"ok": True, "transcript": transcript, "reply": reply}
+@router.get("/analytics/handoff-stats")
+def analytics_handoff_stats(user=Depends(require_business)):
+    """
+    #12 — Dashboard: Human Handoff & Agent Activity Analytics.
+
+    Returns:
+      pending_handoffs:  list of active handoffs (from get_pending_handoffs)
+      agent_activity:    list of agents who sent messages, with last-reply time + count
+      avg_wait_seconds:  average time customers wait before agent replies
+      total_today:       number of handoffs initiated today
+    All data derived from existing tables — no new schema required.
+    """
+    import time as _time
+    import datetime as _dt
+    from core.db import supabase as _sb
+
+    bid = user["business_id"]
+
+    # ── Active pending handoffs (from existing function) ──────────────────────
+    from workflows.human_handoff import get_pending_handoffs
+    pending = get_pending_handoffs(bid)
+
+    # ── Average wait time across active handoffs ───────────────────────────────
+    wait_times   = [p["wait_seconds"] for p in pending if p.get("wait_seconds") is not None]
+    avg_wait     = round(sum(wait_times) / len(wait_times)) if wait_times else 0
+
+    # ── Handoffs initiated today ───────────────────────────────────────────────
+    total_today  = 0
+    try:
+        today_start = _dt.datetime.now(_dt.timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0).isoformat()
+        res = (
+            _sb.table("messages")
+            .select("id, sender_name, sender_type, created_at")
+            .eq("business_id", bid)
+            .eq("direction", "outgoing")
+            .eq("sender_type", "agent")
+            .gte("created_at", today_start)
+            .execute()
+        )
+        agent_msgs_today = res.data or []
+    except Exception as exc:
+        log.warning("handoff_stats: messages query failed: %s", exc)
+        agent_msgs_today = []
+
+    # ── Agent activity: unique agents, message counts, last-reply time ─────────
+    agent_activity_map: dict = {}
+    for msg in agent_msgs_today:
+        name = msg.get("sender_name") or "Agent"
+        if name not in agent_activity_map:
+            agent_activity_map[name] = {"agent_name": name, "messages_today": 0, "last_reply_at": None}
+        agent_activity_map[name]["messages_today"] += 1
+        t = msg.get("created_at")
+        if t and (agent_activity_map[name]["last_reply_at"] is None
+                  or t > agent_activity_map[name]["last_reply_at"]):
+            agent_activity_map[name]["last_reply_at"] = t
+    agent_activity = sorted(agent_activity_map.values(),
+                            key=lambda a: a["last_reply_at"] or "", reverse=True)
+
+    # ── Handoffs initiated today (approximate via first-handoff-ack messages) ──
+    # Count messages with text starting with the handoff ack emoji as a proxy
+    try:
+        res2 = (
+            _sb.table("messages")
+            .select("id")
+            .eq("business_id", bid)
+            .eq("direction", "outgoing")
+            .ilike("text", "🙋%")
+            .gte("created_at", today_start)
+            .execute()
+        )
+        total_today = len(res2.data or [])
+    except Exception:
+        total_today = len(pending)
+
+    return {
+        "pending_handoffs": pending,
+        "agent_activity":   agent_activity,
+        "avg_wait_seconds": avg_wait,
+        "total_today":      total_today,
+        "active_count":     len(pending),
+    }
+

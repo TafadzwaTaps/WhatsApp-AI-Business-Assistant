@@ -563,6 +563,7 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   vertical-align: middle;
 }
 .nav-badge-amber { background: var(--amber); }
+.nav-badge-red   { background: #ef4444; }
 
 /* ── Phase 1: CRM segment card ──────────────────────────── */
 .crm-segments-grid {

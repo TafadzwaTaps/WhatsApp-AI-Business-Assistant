@@ -668,3 +668,151 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
     )
     return {"ok": True, "order_id": order_id, "reference": reference,
             "message": "Payment confirmed and customer notified."}
+class ConversationCloseRequest(BaseModel):
+    note: str = ""
+    send_closing_message: bool = True
+
+
+@router.post("/chat/conversations/{customer_id}/close")
+async def close_conversation(
+    customer_id: int,
+    body: ConversationCloseRequest,
+    user=Depends(require_business),
+):
+    """
+    #9 — Professional Conversation Closing.
+
+    When an agent clicks "End Conversation":
+    1. Sends a professional closing message to the customer via WhatsApp
+    2. Resets AI state to browsing (ends any handoff)
+    3. Stores closed_by / closed_at / close_note in state_data for audit
+    4. Broadcasts websocket event so inbox refreshes
+
+    Does NOT delete messages. Does NOT affect orders.
+    """
+    bid      = user["business_id"]
+    agent    = user.get("username", "Agent")
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+            customer = res.data[0] if res.data else None
+        except Exception:
+            pass
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    phone      = customer["phone"]
+    actual_bid = customer.get("business_id", bid)
+    biz        = crud.get_business_by_id(actual_bid)
+    biz_name   = biz.get("name", "") if biz else ""
+
+    import datetime as _dt
+    closed_at_iso = _dt.datetime.now(_dt.timezone.utc).isoformat()
+
+    # 1. Store close metadata in state_data (non-destructive — state stays browsing)
+    from services._ai_state import _write_state_data, _reset_state
+    _reset_state(phone, actual_bid)
+    try:
+        _write_state_data(phone, actual_bid, {
+            "state": "browsing",
+            "closed_by":   agent,
+            "closed_at":   closed_at_iso,
+            "close_note":  body.note or "",
+        })
+    except Exception as exc:
+        log.debug("close_conversation: state write failed: %s", exc)
+
+    # 2. Clear any active handoff
+    try:
+        from workflows.human_handoff import clear_handoff_flag
+        clear_handoff_flag(phone, actual_bid)
+    except Exception as exc:
+        log.debug("close_conversation: clear_handoff_flag failed: %s", exc)
+
+    # 3. Send professional closing message to customer
+    if body.send_closing_message:
+        closing_msg = _build_closing_message(biz_name, agent)
+        try:
+            token    = crud.get_decrypted_token(biz) if biz else ""
+            phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
+            if token and phone_id:
+                send_whatsapp(phone_id, token, phone, closing_msg)
+            elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+                send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, closing_msg)
+        except Exception as exc:
+            log.warning("close_conversation: WA closing message failed: %s", exc)
+
+        # Log the closing message in conversation history
+        try:
+            msg = crud.create_message(
+                customer_id, actual_bid, closing_msg, "outgoing",
+                sender_type="agent", sender_name=agent, agent_id=agent,
+            )
+        except Exception as exc:
+            log.debug("close_conversation: message log failed: %s", exc)
+
+    # 4. Broadcast so inbox refreshes immediately
+    if manager:
+        try:
+            await manager.broadcast(actual_bid, {
+                "event":       "conversation_closed",
+                "customer_id": customer_id,
+                "phone":       phone,
+                "closed_by":   agent,
+                "closed_at":   closed_at_iso,
+            })
+        except Exception as exc:
+            log.debug("close_conversation: broadcast failed: %s", exc)
+
+    log.info("CONVERSATION CLOSED  customer_id=%s  business_id=%s  by=%s",
+             customer_id, actual_bid, agent)
+    return {
+        "ok": True,
+        "customer_id": customer_id,
+        "phone": phone,
+        "closed_by": agent,
+        "closed_at": closed_at_iso,
+    }
+
+
+@router.get("/chat/conversations/{customer_id}/close-info")
+def close_info(customer_id: int, user=Depends(require_business)):
+    """
+    Returns who closed a conversation and when.
+    Used by the inbox header to show the 'Closed By / Closed At' badge.
+    Returns null fields if the conversation has not been closed.
+    """
+    bid      = user["business_id"]
+    customer = crud.get_customer_by_id(customer_id, bid)
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+    phone = customer["phone"]
+    try:
+        from services._ai_state import _read_state_data
+        sd = _read_state_data(phone, bid)
+        return {
+            "customer_id": customer_id,
+            "closed_by":   sd.get("closed_by"),
+            "closed_at":   sd.get("closed_at"),
+            "close_note":  sd.get("close_note", ""),
+        }
+    except Exception as exc:
+        log.debug("close_info: state read failed: %s", exc)
+        return {"customer_id": customer_id, "closed_by": None, "closed_at": None, "close_note": ""}
+
+
+def _build_closing_message(biz_name: str, agent_name: str) -> str:
+    """
+    Professional WhatsApp closing message sent to the customer when an
+    agent ends the conversation.
+    """
+    return (
+        f"😊 *Thank you for reaching out to {biz_name}!*\n\n"
+        f"Your query has been attended to by *{agent_name}*.\n\n"
+        f"We hope everything was resolved to your satisfaction.\n"
+        f"Have a wonderful day! 🌟\n\n"
+        f"_To start a new conversation, simply type *hi* or *menu*._"
+    )
+

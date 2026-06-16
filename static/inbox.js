@@ -1056,6 +1056,7 @@ async function loadConvSummary(customerId) {
     await _orig.call(this, customerId, phone, lastSeen);
     await loadConvSummary(customerId);
     await loadAgentNotes(customerId);
+    await loadCloseInfo(customerId);
     showQuickActions(); // from Phase 2 quick-actions
   };
 })();
@@ -1232,4 +1233,97 @@ function cmdKeyDown(e) {
   if (e.key === 'ArrowDown') { _cmdActive = Math.min(_cmdActive + 1, _cmdFiltered.length - 1); renderCmdResults(); e.preventDefault(); return; }
   if (e.key === 'ArrowUp')   { _cmdActive = Math.max(_cmdActive - 1, 0); renderCmdResults(); e.preventDefault(); return; }
   if (e.key === 'Enter')     { execCmd(_cmdActive); e.preventDefault(); }
+}
+
+
+/* ── #9 CONVERSATION CLOSING ─────────────────────────────────────────────── */
+
+function openCloseConversationModal() {
+  if (!currentCustomerId) return;
+  const modal = document.getElementById('close-conv-modal');
+  if (modal) {
+    document.getElementById('close-conv-note').value = '';
+    document.getElementById('close-send-msg').checked = true;
+    modal.style.display = 'flex';
+  }
+}
+
+function closeCloseConversationModal() {
+  const modal = document.getElementById('close-conv-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+async function confirmCloseConversation() {
+  if (!currentCustomerId) return;
+  const note        = (document.getElementById('close-conv-note')?.value || '').trim();
+  const sendMsg     = document.getElementById('close-send-msg')?.checked ?? true;
+  closeCloseConversationModal();
+
+  try {
+    const result = await apiFetch(`/chat/conversations/${currentCustomerId}/close`, {
+      method:  'POST',
+      body:    JSON.stringify({ note, send_closing_message: sendMsg }),
+    });
+
+    if (!result?.ok) throw new Error(result?.detail || 'Close failed');
+
+    showToast('✅ Conversation ended professionally');
+
+    // Show closed badge in chat header
+    _showClosedBadge(result.closed_by, result.closed_at);
+
+    // Update conversation in the list — mark as closed
+    allConversations = allConversations.map(c =>
+      c.customer_id === currentCustomerId
+        ? { ...c, _closed: true, _closed_by: result.closed_by, _closed_at: result.closed_at }
+        : c
+    );
+    renderContacts(allConversations);
+
+  } catch (e) {
+    showToast('⚠ Could not end conversation: ' + e.message, true);
+  }
+}
+
+function _showClosedBadge(closedBy, closedAt) {
+  // Show a "Closed By: X | At: Y" badge in the chat panel
+  const existing = document.getElementById('conv-closed-badge');
+  if (existing) existing.remove();
+
+  const convSummary = document.getElementById('conv-summary-panel');
+  if (!convSummary) return;
+
+  const badge = document.createElement('div');
+  badge.id    = 'conv-closed-badge';
+  badge.style.cssText = [
+    'display:flex;align-items:center;gap:10px;padding:6px 12px',
+    'background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2)',
+    'border-radius:8px;font-size:11px;color:var(--text-muted)',
+    'margin-top:6px;flex-wrap:wrap;',
+  ].join(';');
+
+  const ts = closedAt
+    ? new Date(closedAt).toLocaleString('en-GB', {day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit'})
+    : '';
+
+  badge.innerHTML = [
+    `<span>✖️ <strong>Closed By:</strong> ${escHtml(closedBy || 'Agent')}</span>`,
+    ts ? `<span>🕐 <strong>Closed At:</strong> ${ts}</span>` : '',
+  ].filter(Boolean).join('<span style="color:var(--border)">|</span>');
+
+  convSummary.after(badge);
+}
+
+// Load and show the close badge when opening a chat that was previously closed
+async function loadCloseInfo(customerId) {
+  try {
+    const info = await apiFetch(`/chat/conversations/${customerId}/close-info`);
+    if (info?.closed_by && info?.closed_at) {
+      _showClosedBadge(info.closed_by, info.closed_at);
+    } else {
+      // Remove any stale badge
+      const existing = document.getElementById('conv-closed-badge');
+      if (existing) existing.remove();
+    }
+  } catch (_) {}
 }

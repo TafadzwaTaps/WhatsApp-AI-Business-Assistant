@@ -751,6 +751,58 @@
   </div>
 
   <!-- BUSINESS: SETTINGS (simplified — no Meta credentials) -->
+
+
+  <!-- ════════════════════════════════════════════════════════════
+       SECTION: HANDOFF (#12 — Agent Activity & Handoff Dashboard)
+       ════════════════════════════════════════════════════════════ -->
+  <div id="section-handoff" class="section" style="display:none;">
+    <div class="section-header">
+      <h2 class="section-title">👤 <span style="color:var(--green)">Human Handoff</span></h2>
+      <button class="btn btn-ghost btn-sm" onclick="loadHandoffStats()">↻ Refresh</button>
+    </div>
+
+    <!-- KPI row -->
+    <div class="kpi-row" style="margin-bottom:24px;display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">
+      <div class="stat-card">
+        <div class="stat-label">Active Handoffs</div>
+        <div class="stat-value" id="hf-active-count" style="color:var(--amber)">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Wait Time</div>
+        <div class="stat-value" id="hf-avg-wait">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Handoffs Today</div>
+        <div class="stat-value" id="hf-total-today">—</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Agents Active</div>
+        <div class="stat-value" id="hf-agents-active" style="color:var(--green)">—</div>
+      </div>
+    </div>
+
+    <!-- Active Handoff Queue -->
+    <div class="panel" style="margin-bottom:20px;">
+      <div class="panel-header">
+        <div class="panel-title">🔴 Waiting Customers</div>
+      </div>
+      <div id="hf-queue-body">
+        <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No active handoffs</div>
+      </div>
+    </div>
+
+    <!-- Agent Activity -->
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title">🧑‍💼 Agent Activity Today</div>
+      </div>
+      <div id="hf-agent-body">
+        <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No agent activity today</div>
+      </div>
+    </div>
+  </div><!-- /section-handoff -->
+
   <div id="section-settings" class="section">
     <div class="topbar"><div class="page-title">Store <span>Settings</span></div></div>
 

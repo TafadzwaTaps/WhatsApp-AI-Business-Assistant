@@ -297,6 +297,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showSection('reminders',this);closeSidebar()"><span class="icon">⏳</span> Reminders <span id="nav-rem-badge" class="nav-badge nav-badge-amber" style="display:none"></span></button>
       <button class="nav-item" onclick="showSection('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
       <button class="nav-item" onclick="window.open('/inbox','_blank');closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
+      <button class="nav-item" onclick="showSection('handoff',this);closeSidebar()"><span class="icon">👤</span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
       <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
       <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
       <div class="nav-section">Growth</div>
@@ -314,6 +315,7 @@ function showSection(name, btn) {
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
   if (name==='overview') loadCustomerStats();
+  if (name==='handoff') loadHandoffStats();
   if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
   if (name==='crm') loadCrm();
@@ -3349,3 +3351,108 @@ async function loadCustomerStats() {
     }
   } catch (_) { /* leave existing value on error */ }
 }
+
+/* ── #12 HANDOFF DASHBOARD ─────────────────────────────────────────────────── */
+
+async function loadHandoffStats() {
+  try {
+    const data = await apiFetch('/analytics/handoff-stats');
+    if (!data) return;
+
+    // KPIs
+    const _s = id => document.getElementById(id);
+    if (_s('hf-active-count')) _s('hf-active-count').textContent = data.active_count ?? 0;
+    if (_s('hf-total-today'))  _s('hf-total-today').textContent  = data.total_today  ?? 0;
+    if (_s('hf-agents-active'))_s('hf-agents-active').textContent= (data.agent_activity || []).length;
+
+    // Avg wait — format nicely
+    const waitSecs = data.avg_wait_seconds || 0;
+    const waitFmt  = waitSecs >= 60
+      ? `${Math.floor(waitSecs / 60)}m ${waitSecs % 60}s`
+      : (waitSecs > 0 ? `${waitSecs}s` : '—');
+    if (_s('hf-avg-wait')) _s('hf-avg-wait').textContent = waitFmt;
+
+    // Badge on nav
+    const badge = document.getElementById('nav-handoff-badge');
+    if (badge) {
+      if (data.active_count > 0) {
+        badge.textContent   = data.active_count;
+        badge.style.display = '';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
+
+    // Active handoff queue
+    const queueEl = document.getElementById('hf-queue-body');
+    if (queueEl) {
+      const pending = data.pending_handoffs || [];
+      if (pending.length === 0) {
+        queueEl.innerHTML = '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">✅ No active handoffs</div>';
+      } else {
+        queueEl.innerHTML = `
+          <table class="data-table" style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Customer</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Ticket</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Reason</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Waiting</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${pending.map(p => {
+                const wait    = p.wait_seconds != null
+                  ? (p.wait_seconds >= 60
+                    ? `${Math.floor(p.wait_seconds/60)}m ${p.wait_seconds%60}s`
+                    : `${p.wait_seconds}s`)
+                  : '—';
+                const urgency = p.wait_seconds > 300 ? 'color:#ef4444;font-weight:600' : '';
+                return `<tr style="border-top:1px solid var(--border)">
+                  <td style="padding:10px 12px">
+                    <div style="font-weight:600;font-size:13px">${escHtml(p.customer_name || p.phone)}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">${escHtml(p.phone)}</div>
+                  </td>
+                  <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${escHtml(p.ticket || '—')}</td>
+                  <td style="padding:10px 12px;font-size:12px">${escHtml(p.handoff_reason || 'Manual')}</td>
+                  <td style="padding:10px 12px;font-size:12px;${urgency}">${wait}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>`;
+      }
+    }
+
+    // Agent activity table
+    const agentEl = document.getElementById('hf-agent-body');
+    if (agentEl) {
+      const agents = data.agent_activity || [];
+      if (agents.length === 0) {
+        agentEl.innerHTML = '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No agent replies sent today</div>';
+      } else {
+        agentEl.innerHTML = `
+          <table class="data-table" style="width:100%;border-collapse:collapse;">
+            <thead>
+              <tr>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Agent</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Messages Today</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Last Reply</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${agents.map(a => `<tr style="border-top:1px solid var(--border)">
+                <td style="padding:10px 12px">
+                  <span style="font-weight:600;font-size:13px">👤 ${escHtml(a.agent_name)}</span>
+                </td>
+                <td style="padding:10px 12px;font-size:13px">${a.messages_today}</td>
+                <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${fmtTime(a.last_reply_at)}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>`;
+      }
+    }
+  } catch (e) {
+    console.error('loadHandoffStats error:', e);
+  }
+}
+
