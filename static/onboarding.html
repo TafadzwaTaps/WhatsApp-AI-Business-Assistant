@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WaziBot Setup Wizard</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
+    :root {
+      --brand: #00c853; --brand-dark: #009c3b; --bg: #0a0a0a;
+      --surface: #141414; --surface2: #1e1e1e; --text: #f0f0f0;
+      --muted: #888; --border: rgba(255,255,255,0.08); --r: 12px;
+      --amber: #f59e0b; --red: #ef4444;
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text);
+           min-height: 100vh; display: flex; flex-direction: column; }
+
+    /* ── Header ─────────────────────────────────────────────────────────────── */
+    header { background: var(--surface); border-bottom: 1px solid var(--border);
+             padding: 14px 24px; display: flex; align-items: center; gap: 12px; }
+    .logo-mark { font-size: 22px; font-weight: 800; color: var(--brand); }
+    .wizard-title { font-size: 14px; color: var(--muted); }
+
+    /* ── Progress bar ────────────────────────────────────────────────────────── */
+    .progress-wrap { background: var(--surface); border-bottom: 1px solid var(--border);
+                     padding: 16px 24px; }
+    .progress-steps { display: flex; gap: 0; justify-content: space-between;
+                      position: relative; max-width: 640px; margin: 0 auto; }
+    .progress-steps::before { content: ''; position: absolute; top: 14px; left: 0; right: 0;
+                               height: 2px; background: var(--border); z-index: 0; }
+    .progress-fill { position: absolute; top: 14px; left: 0; height: 2px;
+                     background: var(--brand); z-index: 1; transition: width .4s ease; }
+    .step-dot { display: flex; flex-direction: column; align-items: center; gap: 6px;
+                cursor: pointer; z-index: 2; }
+    .step-circle { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--border);
+                   background: var(--surface2); display: flex; align-items: center;
+                   justify-content: center; font-size: 12px; font-weight: 700;
+                   transition: all .3s; color: var(--muted); }
+    .step-dot.done   .step-circle { background: var(--brand); border-color: var(--brand); color: #fff; }
+    .step-dot.active .step-circle { border-color: var(--brand); color: var(--brand);
+                                     box-shadow: 0 0 0 3px rgba(0,200,83,.2); }
+    .step-lbl { font-size: 10px; color: var(--muted); white-space: nowrap;
+                display: none; }
+    @media (min-width: 600px) { .step-lbl { display: block; } }
+    .step-dot.active .step-lbl, .step-dot.done .step-lbl { color: var(--text); }
+
+    /* ── Main layout ─────────────────────────────────────────────────────────── */
+    .wizard-body { flex: 1; display: flex; align-items: flex-start;
+                   justify-content: center; padding: 32px 24px; }
+    .wizard-card { background: var(--surface); border: 1px solid var(--border);
+                   border-radius: 16px; width: 100%; max-width: 540px;
+                   padding: 36px; animation: fadeIn .3s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+    .step-num  { font-size: 12px; color: var(--brand); font-weight: 700;
+                 text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .step-heading { font-size: 26px; font-weight: 800; margin-bottom: 8px; }
+    .step-sub  { font-size: 14px; color: var(--muted); margin-bottom: 28px; line-height: 1.6; }
+
+    /* ── Form elements ───────────────────────────────────────────────────────── */
+    .field { margin-bottom: 18px; }
+    .field label { display: block; font-size: 13px; font-weight: 600;
+                   color: var(--muted); margin-bottom: 6px; }
+    .field input, .field select, .field textarea {
+      width: 100%; padding: 12px 14px; background: var(--surface2);
+      border: 1px solid var(--border); border-radius: 8px; color: var(--text);
+      font-size: 14px; font-family: inherit; outline: none; transition: border-color .2s;
+    }
+    .field input:focus, .field select:focus, .field textarea:focus {
+      border-color: var(--brand);
+    }
+    .field textarea { resize: vertical; min-height: 80px; }
+    .field select option { background: var(--surface2); }
+
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+    /* ── Role cards ──────────────────────────────────────────────────────────── */
+    .role-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 20px; }
+    .role-card { border: 2px solid var(--border); border-radius: 10px; padding: 16px;
+                 cursor: pointer; transition: all .2s; }
+    .role-card:hover { border-color: rgba(0,200,83,.4); }
+    .role-card.selected { border-color: var(--brand); background: rgba(0,200,83,.06); }
+    .role-icon { font-size: 28px; margin-bottom: 8px; }
+    .role-name { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+    .role-desc { font-size: 12px; color: var(--muted); }
+
+    /* ── Upload area ─────────────────────────────────────────────────────────── */
+    .upload-area { border: 2px dashed var(--border); border-radius: 10px;
+                   padding: 32px; text-align: center; cursor: pointer; transition: all .2s; }
+    .upload-area:hover { border-color: var(--brand); }
+    .upload-area.has-file { border-color: var(--brand); background: rgba(0,200,83,.04); }
+    .upload-icon { font-size: 36px; margin-bottom: 10px; }
+    .upload-text { font-size: 14px; color: var(--muted); }
+    .upload-text strong { color: var(--text); }
+    #logo-preview { width: 80px; height: 80px; object-fit: contain;
+                    border-radius: 10px; margin: 0 auto 10px; display: none; }
+
+    /* ── Simulation box ──────────────────────────────────────────────────────── */
+    .sim-box { background: var(--surface2); border: 1px solid var(--border);
+               border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+    .sim-phone { width: 220px; background: #1a1a1a; border-radius: 16px; margin: 0 auto;
+                 padding: 16px; font-size: 13px; min-height: 160px; }
+    .sim-msg { background: #2e2e2e; border-radius: 10px 10px 10px 2px;
+               padding: 10px 14px; margin-bottom: 8px; line-height: 1.5; }
+    .sim-msg.out { background: rgba(0,200,83,.15); border-radius: 10px 10px 2px 10px; }
+    .sim-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .sim-loading { text-align: center; color: var(--muted); padding: 20px; font-size: 13px; }
+
+    /* ── Share links ─────────────────────────────────────────────────────────── */
+    .share-links { display: flex; flex-direction: column; gap: 10px; margin-bottom: 20px; }
+    .share-link-row { background: var(--surface2); border: 1px solid var(--border);
+                      border-radius: 8px; padding: 12px 14px;
+                      display: flex; align-items: center; gap: 10px; }
+    .share-link-icon { font-size: 20px; }
+    .share-link-url { flex: 1; font-size: 12px; color: var(--muted); word-break: break-all; }
+    .share-link-copy { background: var(--brand); color: #fff; border: none;
+                       padding: 6px 12px; border-radius: 6px; font-size: 12px;
+                       font-weight: 600; cursor: pointer; white-space: nowrap; }
+
+    /* ── Buttons ─────────────────────────────────────────────────────────────── */
+    .btn-row { display: flex; gap: 12px; margin-top: 8px; }
+    .btn { padding: 13px 24px; border-radius: 10px; font-size: 15px; font-weight: 700;
+           cursor: pointer; border: none; transition: all .2s; flex: 1; }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-primary:hover { background: var(--brand-dark); }
+    .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); flex: 0; padding: 13px 18px; }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Toast ───────────────────────────────────────────────────────────────── */
+    #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px);
+             background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+             padding: 12px 20px; font-size: 14px; transition: transform .3s;
+             z-index: 999; max-width: 320px; text-align: center; pointer-events: none; }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.success { border-color: var(--brand); color: var(--brand); }
+    #toast.error   { border-color: var(--red);   color: var(--red); }
+
+    /* ── Complete ────────────────────────────────────────────────────────────── */
+    .complete-icon { font-size: 64px; text-align: center; margin-bottom: 16px; }
+    .complete-list { list-style: none; }
+    .complete-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0;
+                        border-bottom: 1px solid var(--border); font-size: 14px; }
+    .complete-list li:last-child { border-bottom: none; }
+
+    @media (max-width: 500px) {
+      .wizard-card { padding: 24px 18px; }
+      .role-grid { grid-template-columns: 1fr; }
+      .row { grid-template-columns: 1fr; }
+      .step-heading { font-size: 22px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-mark">WaziBot</div>
+  <div class="wizard-title">Setup Wizard</div>
+</header>
+
+<div class="progress-wrap">
+  <div class="progress-steps" id="progress-steps">
+    <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+    <!-- Dots injected by JS -->
+  </div>
+</div>
+
+<div class="wizard-body">
+  <div class="wizard-card" id="wizard-card">
+    <!-- Steps rendered by JS -->
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = '';
+const token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token') || '';
+
+// ── Step definitions ─────────────────────────────────────────────────────────
+const STEPS = [
+  { num: 1, label: 'Business',  icon: '🏢' },
+  { num: 2, label: 'Branding',  icon: '🎨' },
+  { num: 3, label: 'Products',  icon: '🛍️' },
+  { num: 4, label: 'WhatsApp',  icon: '💬' },
+  { num: 5, label: 'AI Config', icon: '🤖' },
+  { num: 6, label: 'Test',      icon: '🧪' },
+  { num: 7, label: 'Go Live',   icon: '🚀' },
+  { num: 8, label: 'Done',      icon: '✅' },
+];
+
+let currentStep = 1;
+let stateData   = {};   // accumulated form data
+
+// ── API helper ────────────────────────────────────────────────────────────────
+async function api(path, opts = {}) {
+  const headers = { 'Authorization': `Bearer ${token}`, ...(opts.headers || {}) };
+  if (!(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+  const res = await fetch(API + path, { ...opts, headers });
+  if (!res.ok) {
+    const e = await res.json().catch(() => ({}));
+    throw new Error(e.detail || res.statusText);
+  }
+  return res.json();
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'success') {
+  const el = document.getElementById('toast');
+  el.textContent  = msg;
+  el.className    = `show ${type}`;
+  setTimeout(() => el.className = '', 2800);
+}
+
+// ── Progress bar ──────────────────────────────────────────────────────────────
+function renderProgress(step) {
+  const stepsEl = document.getElementById('progress-steps');
+  const fillEl  = document.getElementById('progress-fill');
+  // Keep fill element
+  stepsEl.querySelectorAll('.step-dot').forEach(d => d.remove());
+  STEPS.forEach(s => {
+    const dot = document.createElement('div');
+    dot.className = 'step-dot' + (s.num < step ? ' done' : s.num === step ? ' active' : '');
+    dot.innerHTML = `
+      <div class="step-circle">${s.num < step ? '✓' : s.num}</div>
+      <div class="step-lbl">${s.label}</div>`;
+    stepsEl.appendChild(dot);
+  });
+  const pct = ((step - 1) / (STEPS.length - 1)) * 100;
+  fillEl.style.width = pct + '%';
+}
+
+// ── Render step ───────────────────────────────────────────────────────────────
+function render(step) {
+  currentStep = step;
+  renderProgress(step);
+  const card = document.getElementById('wizard-card');
+  card.style.animation = 'none';
+  card.offsetHeight; // reflow
+  card.style.animation = '';
+
+  const renders = { 1: step1, 2: step2, 3: step3, 4: step4, 5: step5, 6: step6, 7: step7, 8: step8 };
+  card.innerHTML = (renders[step] || step1)();
+  attachListeners(step);
+}
+
+// ── Step 1: Business Info ─────────────────────────────────────────────────────
+function step1() {
+  return `
+    <div class="step-num">Step 1 of 8</div>
+    <div class="step-heading">🏢 Tell us about your business</div>
+    <div class="step-sub">This is how customers will find you in the WaziBot marketplace.</div>
+    <div class="field"><label>Business Name *</label>
+      <input id="biz-name" type="text" placeholder="e.g. Flavoury Foods" value="${stateData.business_name || ''}">
+    </div>
+    <div class="row">
+      <div class="field"><label>Category</label>
+        <select id="biz-cat">
+          ${['Restaurant','Retail','Health & Beauty','Barbershop','Bakery','Pharmacy','Electronics','Grocery','Clothing','Agriculture','Hardware','Other']
+            .map(c => `<option ${(stateData.category||'')===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Currency</label>
+        <select id="biz-currency">
+          ${[['USD','$'],['ZWL','Z$'],['ZAR','R'],['KES','KSh'],['NGN','₦'],['GHS','₵'],['EUR','€'],['GBP','£']]
+            .map(([c,s]) => `<option value="${c}" data-sym="${s}" ${(stateData.currency||'USD')===c?'selected':''}>${c} (${s})</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="submitStep1()">Next: Branding →</button>
+    </div>`;
+}
+
+// ── Step 2: Branding ──────────────────────────────────────────────────────────
+function step2() {
+  return `
+    <div class="step-num">Step 2 of 8</div>
+    <div class="step-heading">🎨 Brand your business</div>
+    <div class="step-sub">Upload a logo and pick your brand colour. Both are optional.</div>
+    <div class="field"><label>Logo (optional)</label>
+      <div class="upload-area" id="upload-area" onclick="document.getElementById('logo-file').click()">
+        <img id="logo-preview" src="">
+        <div class="upload-icon">📸</div>
+        <div class="upload-text"><strong>Click to upload</strong> or drag & drop<br>PNG, JPG, WebP — max 5MB</div>
+      </div>
+      <input type="file" id="logo-file" accept="image/*" style="display:none">
+    </div>
+    <div class="row">
+      <div class="field"><label>Tagline (optional)</label>
+        <input id="biz-tagline" type="text" placeholder="e.g. Fresh food, fast delivery" value="${stateData.tagline||''}">
+      </div>
+      <div class="field"><label>Brand Colour</label>
+        <input id="biz-colour" type="color" value="${stateData.theme_colour||'#00c853'}" style="height:46px;padding:4px 8px;cursor:pointer">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="render(1)">← Back</button>
+      <button class="btn btn-primary" onclick="submitStep2()">Next: Products →</button>
+    </div>`;
+}
+
+// ── Step 3: Products ──────────────────────────────────────────────────────────
+function step3() {
+  return `
+    <div class="step-num">Step 3 of 8</div>
+    <div class="step-heading">🛍️ Add your first products</div>
+    <div class="step-sub">Use your existing dashboard to add products, then come back here. Or skip and add them later.</div>
+    <div class="sim-box" style="text-align:center;padding:32px">
+      <div style="font-size:36px;margin-bottom:12px">📦</div>
+      <p style="color:var(--muted);font-size:14px;margin-bottom:16px">
+        Add products in your dashboard, then return here.<br>
+        Your products will automatically appear in your WhatsApp menu and public store.
+      </p>
+      <a href="/dashboard" target="_blank" style="color:var(--brand);font-size:14px;font-weight:700">
+        Open Dashboard → Add Products ↗
+      </a>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="render(2)">← Back</button>
+      <button class="btn btn-primary" onclick="submitStep3()">I've added products →</button>
+    </div>`;
+}
+
+// ── Step 4: WhatsApp ──────────────────────────────────────────────────────────
+function step4() {
+  return `
+    <div class="step-num">Step 4 of 8</div>
+    <div class="step-heading">💬 Connect WhatsApp</div>
+    <div class="step-sub">WaziBot works with two modes. You're already set up — this step confirms your number is working.</div>
+    <div class="sim-box">
+      <div style="display:flex;gap:20px;justify-content:center;flex-wrap:wrap;margin-bottom:16px">
+        <div style="text-align:center;padding:16px;background:var(--surface);border-radius:10px;flex:1;min-width:120px">
+          <div style="font-size:28px;margin-bottom:6px">📱</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Dedicated Number</div>
+          <div style="font-size:12px;color:var(--muted)">Your own WhatsApp Business number</div>
+        </div>
+        <div style="text-align:center;padding:16px;background:var(--surface);border-radius:10px;flex:1;min-width:120px">
+          <div style="font-size:28px;margin-bottom:6px">🌐</div>
+          <div style="font-size:14px;font-weight:700;margin-bottom:4px">Shared Number</div>
+          <div style="font-size:12px;color:var(--muted)">Share the WaziBot marketplace number</div>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--muted);text-align:center">
+        Your connection is managed in <a href="/dashboard" target="_blank" style="color:var(--brand)">Settings → WhatsApp</a>
+      </p>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="render(3)">← Back</button>
+      <button class="btn btn-primary" onclick="submitStep4()">WhatsApp is connected →</button>
+    </div>`;
+}
+
+// ── Step 5: AI Config ─────────────────────────────────────────────────────────
+function step5() {
+  const roles = [
+    { id:'general',  icon:'🤖', name:'General Assistant',  desc:'Handles orders, questions, and support' },
+    { id:'sales',    icon:'💰', name:'Sales Assistant',     desc:'Focuses on upsell, cross-sell, conversions' },
+    { id:'support',  icon:'🎧', name:'Support Assistant',   desc:'Prioritises issue resolution and empathy' },
+    { id:'booking',  icon:'📅', name:'Booking Assistant',   desc:'Specialises in appointments and scheduling' },
+  ];
+  const sel = stateData.ai_role || 'general';
+  return `
+    <div class="step-num">Step 5 of 8</div>
+    <div class="step-heading">🤖 Configure your AI Employee</div>
+    <div class="step-sub">Choose how your AI behaves with customers. You can change this anytime.</div>
+    <div class="role-grid" id="role-grid">
+      ${roles.map(r => `
+        <div class="role-card ${r.id===sel?'selected':''}" onclick="selectRole('${r.id}',this)">
+          <div class="role-icon">${r.icon}</div>
+          <div class="role-name">${r.name}</div>
+          <div class="role-desc">${r.desc}</div>
+        </div>`).join('')}
+    </div>
+    <div class="field"><label>Custom Welcome Message (optional)</label>
+      <textarea id="welcome-msg" placeholder="e.g. Welcome to Flavoury Foods! Type menu to see what's available today 🍔">${stateData.welcome_message||''}</textarea>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="render(4)">← Back</button>
+      <button class="btn btn-primary" onclick="submitStep5()">Next: Test Order →</button>
+    </div>`;
+}
+
+// ── Step 6: Test ──────────────────────────────────────────────────────────────
+function step6() {
+  return `
+    <div class="step-num">Step 6 of 8</div>
+    <div class="step-heading">🧪 Test your AI</div>
+    <div class="step-sub">See how your AI Employee responds to a real customer interaction.</div>
+    <div class="sim-box">
+      <div class="sim-phone" id="sim-phone">
+        <div class="sim-label">Customer</div>
+        <div class="sim-msg">menu</div>
+        <div class="sim-loading" id="sim-loading">⟳ AI is thinking...</div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="render(5)">← Back</button>
+      <button class="btn btn-primary" id="test-btn" onclick="submitStep6()" disabled>Loading...</button>
+    </div>`;
+}
+
+// ── Step 7: Go Live ───────────────────────────────────────────────────────────
+function step7() {
+  const links = stateData.share_links || {};
+  return `
+    <div class="step-num">Step 7 of 8</div>
+    <div class="step-heading">🚀 You're ready to go live!</div>
+    <div class="step-sub">Share these links with your customers. They can browse your products and order on WhatsApp instantly.</div>
+    <div class="share-links">
+      ${Object.entries({
+        '📋 Menu Page': links.menu    || '—',
+        '🏪 Store Page': links.store  || '—',
+        '🌍 Directory': links.directory || '—',
+      }).map(([label, url]) => `
+        <div class="share-link-row">
+          <div class="share-link-icon">${label.split(' ')[0]}</div>
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:2px">${label.slice(2)}</div>
+            <div class="share-link-url">${url}</div>
+          </div>
+          <button class="share-link-copy" onclick="copyText('${url}',this)">Copy</button>
+        </div>`).join('')}
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-ghost" onclick="render(6)">← Back</button>
+      <button class="btn btn-primary" onclick="submitStep7()">Complete Setup ✅</button>
+    </div>`;
+}
+
+// ── Step 8: Complete ──────────────────────────────────────────────────────────
+function step8() {
+  return `
+    <div class="complete-icon">🎉</div>
+    <div class="step-heading" style="text-align:center;margin-bottom:8px">You're live on WaziBot!</div>
+    <div class="step-sub" style="text-align:center;margin-bottom:24px">
+      Your AI Employee is ready to handle customers on WhatsApp 24/7.
+    </div>
+    <ul class="complete-list">
+      <li>✅ Business profile created</li>
+      <li>✅ AI Employee configured</li>
+      <li>✅ Public store page ready</li>
+      <li>✅ WhatsApp ordering active</li>
+    </ul>
+    <div class="btn-row" style="margin-top:24px">
+      <a href="/dashboard" class="btn btn-primary" style="text-align:center;text-decoration:none">
+        Go to Dashboard →
+      </a>
+    </div>`;
+}
+
+// ── Submit handlers ───────────────────────────────────────────────────────────
+async function submitStep1() {
+  const name = document.getElementById('biz-name').value.trim();
+  if (!name) { toast('Please enter your business name', 'error'); return; }
+  const catEl = document.getElementById('biz-cat');
+  const curEl = document.getElementById('biz-currency');
+  const symEl = curEl.options[curEl.selectedIndex];
+  stateData.business_name   = name;
+  stateData.category        = catEl.value;
+  stateData.currency        = curEl.value;
+  stateData.currency_symbol = symEl.dataset.sym || '$';
+  try {
+    await api('/onboarding/step/1', { method:'POST', body: JSON.stringify({
+      business_name: name, category: catEl.value,
+      currency: curEl.value, currency_symbol: stateData.currency_symbol,
+    })});
+    render(2);
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function submitStep2() {
+  const tagline = document.getElementById('biz-tagline').value.trim();
+  const colour  = document.getElementById('biz-colour').value;
+  const file    = document.getElementById('logo-file').files[0];
+  stateData.tagline      = tagline;
+  stateData.theme_colour = colour;
+  const fd = new FormData();
+  fd.append('tagline',      tagline);
+  fd.append('theme_colour', colour);
+  if (file) fd.append('logo', file);
+  try {
+    await api('/onboarding/step/2', { method:'POST', body: fd, headers:{} });
+    render(3);
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function submitStep3() {
+  try {
+    await api('/onboarding/step/3', { method:'POST', body:'{}' });
+    render(4);
+  } catch(e) { toast('Saved — continuing', 'success'); render(4); }
+}
+
+async function submitStep4() {
+  try {
+    await api('/onboarding/step/4', { method:'POST', body:'{}' });
+    render(5);
+  } catch(e) { render(5); }
+}
+
+let selectedRole = 'general';
+function selectRole(id, el) {
+  selectedRole = id;
+  document.querySelectorAll('.role-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+async function submitStep5() {
+  const wm = document.getElementById('welcome-msg').value.trim();
+  stateData.ai_role        = selectedRole;
+  stateData.welcome_message = wm;
+  try {
+    await api('/onboarding/step/5', { method:'POST', body: JSON.stringify({
+      ai_role: selectedRole, welcome_message: wm,
+    })});
+    render(6);
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function submitStep6() {
+  try {
+    const data = await api('/onboarding/step/6/test', { method:'POST', body:'{}' });
+    const sim  = document.getElementById('sim-phone');
+    if (sim) {
+      const lines = (data.simulation || '').split('\n').filter(Boolean);
+      sim.innerHTML = `
+        <div class="sim-label">Customer</div>
+        <div class="sim-msg">menu</div>
+        <div class="sim-label" style="margin-top:10px">AI Employee</div>
+        ${lines.map(l => `<div class="sim-msg out" style="font-size:12px">${l}</div>`).join('')}`;
+    }
+    stateData.test_passed = true;
+    document.getElementById('test-btn').textContent = 'Looks great! Go Live →';
+    document.getElementById('test-btn').disabled = false;
+    document.getElementById('test-btn').onclick = () => submitGoLive();
+  } catch(e) {
+    toast('Test error: ' + e.message, 'error');
+    document.getElementById('test-btn').textContent = 'Retry Test';
+    document.getElementById('test-btn').disabled = false;
+  }
+}
+
+async function submitGoLive() {
+  try {
+    const data = await api('/onboarding/step/7', { method:'POST', body: JSON.stringify({ confirmed: true }) });
+    stateData.share_links = data.share_links || {};
+    render(7);
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function submitStep7() {
+  try {
+    await api('/onboarding/complete', { method:'POST', body:'{}' });
+    render(8);
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    const orig = btn.textContent;
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = orig, 2000);
+  });
+}
+
+// ── Attach additional DOM listeners ──────────────────────────────────────────
+function attachListeners(step) {
+  if (step === 2) {
+    const input   = document.getElementById('logo-file');
+    const area    = document.getElementById('upload-area');
+    const preview = document.getElementById('logo-preview');
+    if (input) input.addEventListener('change', e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => {
+        preview.src     = ev.target.result;
+        preview.style.display = 'block';
+        area.classList.add('has-file');
+        area.querySelector('.upload-icon').style.display = 'none';
+        area.querySelector('.upload-text').textContent = file.name;
+      };
+      reader.readAsDataURL(file);
+    });
+    area.addEventListener('dragover', e => { e.preventDefault(); area.classList.add('has-file'); });
+    area.addEventListener('drop', e => {
+      e.preventDefault();
+      const file = e.dataTransfer.files[0];
+      if (file) { input.files = e.dataTransfer.files; input.dispatchEvent(new Event('change')); }
+    });
+  }
+  if (step === 6) {
+    // Auto-run the test
+    setTimeout(() => submitStep6(), 600);
+  }
+}
+
+// ── Init: load progress from server ──────────────────────────────────────────
+async function init() {
+  if (!token) { render(1); return; }
+  try {
+    const data = await api('/onboarding/progress');
+    currentStep = data.completed ? 8 : (data.current_step || 1);
+    stateData.business_name = data.business_name || '';
+    render(currentStep);
+  } catch(e) {
+    render(1);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

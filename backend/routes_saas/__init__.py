@@ -1,0 +1,1 @@
+"""WaziBot SaaS Admin routes."""

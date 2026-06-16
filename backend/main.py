@@ -133,6 +133,15 @@ def landing():    return _html("landing.html")
 @app.get("/dashboard")
 def dashboard():  return _html("dashboard.html")
 
+# SaaS public pages — only static fallbacks for slug-based pages
+# /onboarding and /directory GET routes are served by the routers below
+# to avoid duplicate route registration conflicts
+@app.get("/store/{slug}", include_in_schema=False)
+def store_fallback(slug: str):  return _html("store.html")
+
+@app.get("/menu/{slug}", include_in_schema=False)
+def menu_fallback(slug: str):   return _html("store.html")
+
 @app.get("/config/public")
 def public_config():
     """Return public frontend config (Supabase anon key, URL).
@@ -275,6 +284,21 @@ from routes.growth_routes     import router as growth_router
 from routes.expansion_routes  import router as expansion_router
 from routes.ux_routes         import router as ux_router
 
+# ── SaaS Extension Routers (optional — try/except so system works if missing) ─
+try:
+    from routes.billing_routes     import router as billing_router
+    from routes.saas_admin_routes  import router as saas_admin_router
+    from routes.onboarding_routes  import router as onboarding_router
+    from routes.marketplace_routes import router as marketplace_router
+    _SAAS_ROUTERS_LOADED = True
+except ImportError as _saas_err:
+    billing_router     = None
+    saas_admin_router  = None
+    onboarding_router  = None
+    marketplace_router = None
+    _SAAS_ROUTERS_LOADED = False
+    log.warning("SaaS routers not found — SaaS features disabled: %s", _saas_err)
+
 app.include_router(auth_router)
 app.include_router(webhook_router)
 app.include_router(admin_router)
@@ -283,5 +307,11 @@ app.include_router(chat_router)
 app.include_router(growth_router)
 app.include_router(expansion_router)
 app.include_router(ux_router)
+
+# SaaS extension routers — only registered if import succeeded
+if billing_router:     app.include_router(billing_router)
+if saas_admin_router:  app.include_router(saas_admin_router)
+if onboarding_router:  app.include_router(onboarding_router)
+if marketplace_router: app.include_router(marketplace_router)
 
 log.info("🚀 WaziBot API started — %d route modules registered", 8)

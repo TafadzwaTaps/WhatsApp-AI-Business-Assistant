@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title id="page-title">Store — WaziBot</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
+    :root {
+      --brand: #00c853; --brand-dark: #009c3b; --bg: #0a0a0a;
+      --surface: #141414; --surface2: #1e1e1e; --text: #f0f0f0;
+      --muted: #888; --border: rgba(255,255,255,0.08); --r: 12px;
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Header */
+    header { background: var(--surface); border-bottom: 1px solid var(--border);
+             padding: 16px 24px; display: flex; align-items: center; gap: 14px;
+             position: sticky; top: 0; z-index: 100; }
+    .back-link { color: var(--muted); text-decoration: none; font-size: 14px; white-space: nowrap; }
+    .back-link:hover { color: var(--text); }
+    .biz-logo { height: 40px; width: 40px; object-fit: contain; border-radius: 8px; }
+    .biz-logo-placeholder { height: 40px; width: 40px; border-radius: 8px; background: var(--brand);
+                             display: flex; align-items: center; justify-content: center;
+                             font-size: 20px; font-weight: 800; color: #fff; }
+    .biz-name-h { font-size: 18px; font-weight: 700; }
+    .biz-cat-h  { font-size: 12px; color: var(--muted); }
+    .wa-float { position: fixed; bottom: 24px; right: 24px; background: #25D366;
+                color: #fff; border: none; border-radius: 50px; padding: 14px 22px;
+                font-size: 15px; font-weight: 700; cursor: pointer; text-decoration: none;
+                display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 20px rgba(37,211,102,.4);
+                z-index: 200; transition: transform .2s; }
+    .wa-float:hover { transform: scale(1.05); }
+
+    /* Hero */
+    .hero { padding: 40px 24px; text-align: center; border-bottom: 1px solid var(--border); }
+    .hero h1 { font-size: clamp(24px,4vw,40px); font-weight: 800; margin-bottom: 8px; }
+    .hero p { font-size: 16px; color: var(--muted); max-width: 480px; margin: 0 auto; }
+
+    /* Category tabs */
+    .cat-tabs { display: flex; gap: 8px; padding: 16px 24px; overflow-x: auto;
+                border-bottom: 1px solid var(--border); }
+    .cat-tab { padding: 6px 16px; border-radius: 20px; font-size: 13px; cursor: pointer;
+               border: 1px solid var(--border); background: var(--surface); white-space: nowrap;
+               transition: all .2s; }
+    .cat-tab.active, .cat-tab:hover { border-color: var(--brand); color: var(--brand); }
+
+    /* Products */
+    .products-section { padding: 24px; max-width: 1100px; margin: 0 auto; }
+    .products-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr)); gap: 18px; }
+    .prod-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+                 overflow: hidden; transition: transform .2s, box-shadow .2s; cursor: pointer; }
+    .prod-card:hover { transform: translateY(-3px); box-shadow: 0 6px 24px rgba(0,0,0,.4); }
+    .prod-img { width: 100%; height: 180px; object-fit: cover; }
+    .prod-img-ph { width: 100%; height: 180px; background: var(--surface2);
+                   display: flex; align-items: center; justify-content: center; font-size: 40px; }
+    .prod-body { padding: 14px; }
+    .prod-name { font-size: 15px; font-weight: 700; margin-bottom: 5px; }
+    .prod-desc { font-size: 12px; color: var(--muted); margin-bottom: 12px; line-height: 1.5; }
+    .prod-foot { display: flex; align-items: center; gap: 8px; }
+    .prod-price { font-size: 18px; font-weight: 800; color: var(--brand); }
+    .stock-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+    .in-stock  { background: rgba(0,200,83,.12); color: #00c853; }
+    .out-stock { background: rgba(239,68,68,.12); color: #ef4444; }
+    .order-btn { margin-left: auto; background: var(--brand); color: #fff; padding: 7px 12px;
+                 border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;
+                 border: none; transition: opacity .2s; text-decoration: none; }
+    .order-btn:hover { opacity: 0.85; }
+
+    /* Share section */
+    .share-section { padding: 32px 24px; text-align: center; background: var(--surface);
+                     border-top: 1px solid var(--border); margin-top: 32px; }
+    .share-section h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .share-section p { color: var(--muted); margin-bottom: 16px; font-size: 14px; }
+    .share-url { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+                 padding: 10px 16px; font-size: 13px; color: var(--muted); word-break: break-all;
+                 margin-bottom: 12px; }
+    .copy-btn { background: var(--brand); color: #fff; border: none; padding: 10px 20px;
+                border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+
+    footer { background: var(--surface2); border-top: 1px solid var(--border);
+             padding: 20px; text-align: center; color: var(--muted); font-size: 13px; }
+    footer a { color: var(--brand); text-decoration: none; }
+
+    .loading { text-align: center; padding: 64px; color: var(--muted); }
+    .not-found { text-align: center; padding: 64px 24px; }
+    .not-found h2 { font-size: 24px; margin-bottom: 8px; }
+    .not-found p { color: var(--muted); margin-bottom: 20px; }
+
+    @media (max-width: 600px) {
+      .products-grid { grid-template-columns: 1fr 1fr; }
+      header { padding: 12px 16px; }
+      .wa-float { bottom: 16px; right: 16px; padding: 12px 18px; font-size: 14px; }
+    }
+    @media (max-width: 400px) {
+      .products-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <a class="back-link" href="/directory">← All Businesses</a>
+  <div id="header-logo"></div>
+  <div>
+    <div class="biz-name-h" id="header-name">Loading...</div>
+    <div class="biz-cat-h"  id="header-cat"></div>
+  </div>
+</header>
+
+<div id="page-content">
+  <div class="loading">⟳ Loading store...</div>
+</div>
+
+<a class="wa-float" id="wa-cta" href="#" target="_blank">
+  💬 Order on WhatsApp
+</a>
+
+<footer>
+  <a href="/directory">← Back to Marketplace</a> &nbsp;|&nbsp;
+  Powered by <a href="https://wazibot-api-assistant.onrender.com">WaziBot</a>
+</footer>
+
+<script>
+const slug = window.location.pathname.split('/').pop() || window.location.pathname.split('/').filter(Boolean).pop();
+
+async function loadStore() {
+  try {
+    const res  = await fetch(`/api/store/${slug}`);
+    if (!res.ok) throw new Error('not found');
+    const data = await res.json();
+    const biz  = data.business;
+    const prods = data.products || [];
+
+    // Update page meta
+    document.title = `${biz.name} — WaziBot Store`;
+    document.getElementById('page-title').textContent = biz.name;
+    document.getElementById('header-name').textContent = biz.name;
+    document.getElementById('header-cat').textContent  = biz.category || '';
+
+    // Logo
+    const logoEl = document.getElementById('header-logo');
+    if (biz.logo_url) {
+      logoEl.innerHTML = `<img class="biz-logo" src="${biz.logo_url}" alt="${biz.name}">`;
+    } else {
+      logoEl.innerHTML = `<div class="biz-logo-placeholder">${(biz.name[0] || '?').toUpperCase()}</div>`;
+    }
+
+    // Update WhatsApp CTA
+    document.getElementById('wa-cta').href =
+      `https://wa.me/?text=Hi%20${encodeURIComponent(biz.name)}%21%20I%20want%20to%20order.`;
+
+    // Build categories
+    const cats = [...new Set(prods.map(p => p.category).filter(Boolean))];
+
+    // Render page
+    const cssVar = biz.theme_colour || '#00c853';
+    document.documentElement.style.setProperty('--brand', cssVar);
+
+    let catTabsHtml = '';
+    if (cats.length > 1) {
+      catTabsHtml = `<div class="cat-tabs">
+        <div class="cat-tab active" onclick="filterProds('all', this)">All</div>
+        ${cats.map(c => `<div class="cat-tab" onclick="filterProds('${c}', this)">${c}</div>`).join('')}
+      </div>`;
+    }
+
+    document.getElementById('page-content').innerHTML = `
+      <section class="hero">
+        <h1>${biz.name}</h1>
+        <p>${biz.tagline || `Order ${biz.category || 'products'} via WhatsApp`}</p>
+      </section>
+      ${catTabsHtml}
+      <section class="products-section">
+        <div class="products-grid" id="prod-grid">
+          ${renderProducts(prods, biz.currency_sym || '$')}
+        </div>
+      </section>
+      <div class="share-section">
+        <h3>📤 Share This Store</h3>
+        <p>Send this link to let customers browse and order instantly.</p>
+        <div class="share-url">${window.location.href}</div>
+        <button class="copy-btn" onclick="copyLink()">📋 Copy Link</button>
+      </div>`;
+
+    window._allProds   = prods;
+    window._currencySym = biz.currency_sym || '$';
+
+  } catch (e) {
+    document.getElementById('page-content').innerHTML = `
+      <div class="not-found">
+        <h2>Store not found</h2>
+        <p>The business you're looking for doesn't exist or isn't available yet.</p>
+        <a href="/directory" style="color:var(--brand)">← Browse all businesses</a>
+      </div>`;
+    document.getElementById('wa-cta').style.display = 'none';
+  }
+}
+
+function renderProducts(prods, sym) {
+  if (!prods.length) return '<p style="text-align:center;padding:48px;color:var(--muted)">No products yet.</p>';
+  return prods.map(p => {
+    const img = p.image_url
+      ? `<img class="prod-img" src="${p.image_url}" alt="${p.name}" loading="lazy">`
+      : `<div class="prod-img-ph">📦</div>`;
+    const stockBadge = p.available
+      ? `<span class="stock-badge in-stock">✅ Available</span>`
+      : `<span class="stock-badge out-stock">❌ Out of stock</span>`;
+    const waLink = `https://wa.me/?text=${encodeURIComponent(`Hi! I'd like to order ${p.name}`)}`;
+    return `
+      <div class="prod-card">
+        ${img}
+        <div class="prod-body">
+          <div class="prod-name">${p.name}</div>
+          ${p.description ? `<div class="prod-desc">${p.description}</div>` : ''}
+          <div class="prod-foot">
+            <span class="prod-price">${sym}${Number(p.price).toFixed(2)}</span>
+            ${stockBadge}
+            ${p.available ? `<a class="order-btn" href="${waLink}" target="_blank">Order</a>` : ''}
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function filterProds(cat, el) {
+  document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
+  el.classList.add('active');
+  const filtered = cat === 'all' ? window._allProds : window._allProds.filter(p => p.category === cat);
+  document.getElementById('prod-grid').innerHTML = renderProducts(filtered, window._currencySym);
+}
+
+function copyLink() {
+  navigator.clipboard.writeText(window.location.href).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = '✅ Copied!';
+    setTimeout(() => btn.textContent = '📋 Copy Link', 2000);
+  });
+}
+
+loadStore();
+</script>
+</body>
+</html>

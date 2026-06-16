@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WaziBot Marketplace — Find WhatsApp Businesses</title>
+  <meta name="description" content="Browse and order from WhatsApp businesses powered by WaziBot AI.">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
+    :root {
+      --brand: #00c853; --brand-dark: #009c3b; --bg: #0a0a0a;
+      --surface: #141414; --surface2: #1e1e1e; --text: #f0f0f0;
+      --muted: #888; --border: rgba(255,255,255,0.08); --r: 12px;
+    }
+    body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Header */
+    header { background: var(--surface); border-bottom: 1px solid var(--border);
+             padding: 16px 24px; display: flex; align-items: center; gap: 16px;
+             position: sticky; top: 0; z-index: 100; }
+    .logo-mark { font-size: 24px; font-weight: 800; color: var(--brand); }
+    .header-sub { font-size: 13px; color: var(--muted); }
+    .header-actions { margin-left: auto; display: flex; gap: 10px; }
+    .btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+           cursor: pointer; text-decoration: none; border: none; transition: opacity .2s; }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn:hover { opacity: 0.85; }
+
+    /* Hero */
+    .hero { background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
+            padding: 64px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(28px,5vw,52px); font-weight: 800; color: #fff; margin-bottom: 12px; }
+    .hero p { font-size: 18px; color: rgba(255,255,255,.85); max-width: 520px; margin: 0 auto 28px; }
+    .search-bar { display: flex; gap: 0; max-width: 480px; margin: 0 auto; }
+    .search-bar input { flex: 1; padding: 14px 18px; border-radius: 10px 0 0 10px;
+                        border: none; background: #fff; color: #111; font-size: 15px; outline: none; }
+    .search-bar button { padding: 14px 22px; background: var(--bg); color: var(--brand);
+                          border: none; border-radius: 0 10px 10px 0; font-size: 15px;
+                          font-weight: 700; cursor: pointer; }
+
+    /* Category filters */
+    .filters { padding: 20px 24px; display: flex; gap: 10px; overflow-x: auto; }
+    .filter-chip { padding: 6px 16px; border-radius: 20px; font-size: 13px; cursor: pointer;
+                   border: 1px solid var(--border); background: var(--surface);
+                   white-space: nowrap; transition: all .2s; }
+    .filter-chip.active, .filter-chip:hover { border-color: var(--brand); color: var(--brand); }
+
+    /* Grid */
+    .main { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .section-title { font-size: 22px; font-weight: 700; margin-bottom: 20px; }
+    .biz-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+    .biz-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+                overflow: hidden; cursor: pointer; transition: transform .2s, box-shadow .2s;
+                text-decoration: none; color: inherit; display: block; }
+    .biz-card:hover { transform: translateY(-4px); box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+    .biz-card-banner { height: 80px; display: flex; align-items: center; justify-content: center; font-size: 36px; }
+    .biz-card-body { padding: 16px; }
+    .biz-name { font-size: 18px; font-weight: 700; margin-bottom: 4px; }
+    .biz-cat { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+    .biz-tagline { font-size: 13px; color: var(--muted); line-height: 1.5; }
+    .biz-card-foot { display: flex; align-items: center; gap: 8px; margin-top: 14px; }
+    .badge-active { background: rgba(0,200,83,.15); color: var(--brand); font-size: 11px;
+                    padding: 2px 10px; border-radius: 20px; }
+    .view-btn { margin-left: auto; background: var(--brand); color: #fff; padding: 7px 14px;
+                border-radius: 6px; font-size: 13px; font-weight: 600; }
+
+    /* Stats */
+    .stats-row { display: flex; gap: 24px; justify-content: center; margin: 32px 0; flex-wrap: wrap; }
+    .stat-item { text-align: center; }
+    .stat-num { font-size: 32px; font-weight: 800; color: var(--brand); }
+    .stat-lbl { font-size: 13px; color: var(--muted); }
+
+    /* Empty state */
+    .empty { text-align: center; padding: 64px 24px; color: var(--muted); }
+    .empty h3 { font-size: 20px; margin-bottom: 8px; color: var(--text); }
+
+    /* Loading */
+    .loading { text-align: center; padding: 48px; color: var(--muted); font-size: 16px; }
+    .spin { animation: spin 1s linear infinite; display: inline-block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Footer */
+    footer { background: var(--surface); border-top: 1px solid var(--border);
+             padding: 32px 24px; text-align: center; color: var(--muted); margin-top: 48px; }
+    footer a { color: var(--brand); text-decoration: none; }
+    footer .footer-links { display: flex; gap: 24px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
+
+    @media (max-width: 600px) {
+      .biz-grid { grid-template-columns: 1fr; }
+      .stats-row { gap: 16px; }
+      header { padding: 12px 16px; }
+      .hero { padding: 40px 16px; }
+      .search-bar { flex-direction: column; }
+      .search-bar input { border-radius: 10px; }
+      .search-bar button { border-radius: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo-mark">WaziBot</div>
+    <div class="header-sub">AI Marketplace</div>
+  </div>
+  <div class="header-actions">
+    <a href="/dashboard" class="btn btn-ghost">Dashboard</a>
+    <a href="/signup" class="btn btn-primary">List Your Business</a>
+  </div>
+</header>
+
+<section class="hero">
+  <h1>🌍 WaziBot Marketplace</h1>
+  <p>Order from WhatsApp-powered businesses in your community. Fast, easy, conversational.</p>
+  <div class="search-bar">
+    <input type="text" id="search-input" placeholder="Search businesses or products..." autocomplete="off">
+    <button onclick="filterBusinesses()">🔍</button>
+  </div>
+</section>
+
+<div class="stats-row">
+  <div class="stat-item">
+    <div class="stat-num" id="stat-biz">—</div>
+    <div class="stat-lbl">Businesses</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num" id="stat-categories">—</div>
+    <div class="stat-lbl">Categories</div>
+  </div>
+  <div class="stat-item">
+    <div class="stat-num">🟢</div>
+    <div class="stat-lbl">Always Open</div>
+  </div>
+</div>
+
+<div class="filters" id="filters-bar">
+  <div class="filter-chip active" onclick="setFilter('all', this)">All</div>
+</div>
+
+<main class="main">
+  <div class="section-title">🏪 Available Businesses</div>
+  <div class="biz-grid" id="biz-grid">
+    <div class="loading"><span class="spin">⟳</span> Loading businesses...</div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-links">
+    <a href="/dashboard">Business Dashboard</a>
+    <a href="/signup">Sign Up Free</a>
+    <a href="/privacy">Privacy Policy</a>
+    <a href="/terms">Terms of Service</a>
+  </div>
+  <p>Powered by <strong>WaziBot</strong> — AI Employee for WhatsApp Businesses</p>
+</footer>
+
+<script>
+const API = '';
+let allBusinesses = [];
+let activeFilter = 'all';
+
+async function loadDirectory() {
+  try {
+    const res  = await fetch(`${API}/api/directory`);
+    const data = await res.json();
+    allBusinesses = data.businesses || [];
+
+    // Update stats
+    const cats = [...new Set(allBusinesses.map(b => b.category).filter(Boolean))];
+    document.getElementById('stat-biz').textContent       = allBusinesses.length;
+    document.getElementById('stat-categories').textContent = cats.length;
+
+    // Build category filters
+    const filtersBar = document.getElementById('filters-bar');
+    cats.forEach(cat => {
+      const chip = document.createElement('div');
+      chip.className = 'filter-chip';
+      chip.textContent = cat;
+      chip.onclick = () => setFilter(cat, chip);
+      filtersBar.appendChild(chip);
+    });
+
+    renderGrid(allBusinesses);
+  } catch (e) {
+    document.getElementById('biz-grid').innerHTML =
+      '<div class="empty"><h3>Could not load directory</h3><p>Please try again shortly.</p></div>';
+  }
+}
+
+function setFilter(cat, el) {
+  activeFilter = cat;
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  filterBusinesses();
+}
+
+function filterBusinesses() {
+  const q    = (document.getElementById('search-input').value || '').toLowerCase();
+  const list = allBusinesses.filter(b => {
+    const matchCat  = activeFilter === 'all' || b.category === activeFilter;
+    const matchQ    = !q
+      || b.name.toLowerCase().includes(q)
+      || (b.category || '').toLowerCase().includes(q)
+      || (b.tagline  || '').toLowerCase().includes(q);
+    return matchCat && matchQ;
+  });
+  renderGrid(list);
+}
+
+function getBannerEmoji(cat) {
+  const map = {
+    'Restaurant': '🍽️', 'Food': '🍔', 'Bakery': '🍞', 'Cafe': '☕',
+    'Health & Beauty': '💅', 'Barbershop': '💈', 'Salon': '💄',
+    'Retail': '🛒', 'Electronics': '📱', 'Clothing': '👗',
+    'Pharmacy': '💊', 'Grocery': '🛍️', 'Flowers': '🌸',
+    'Bookshop': '📚', 'Hardware': '🔧', 'Agriculture': '🌾',
+  };
+  for (const [k, v] of Object.entries(map)) {
+    if ((cat || '').toLowerCase().includes(k.toLowerCase())) return v;
+  }
+  return '🏪';
+}
+
+function renderGrid(businesses) {
+  const grid = document.getElementById('biz-grid');
+  if (!businesses.length) {
+    grid.innerHTML = '<div class="empty"><h3>No businesses found</h3><p>Try a different search term.</p></div>';
+    return;
+  }
+  grid.innerHTML = businesses.map(b => `
+    <a class="biz-card" href="/store/${b.slug || b.id}">
+      <div class="biz-card-banner" style="background: linear-gradient(135deg,${b.theme_colour || '#00c853'}22,${b.theme_colour || '#00c853'}44)">
+        ${b.logo_url
+          ? `<img src="${b.logo_url}" style="height:48px;width:48px;object-fit:contain;border-radius:8px" alt="${b.name}">`
+          : getBannerEmoji(b.category)}
+      </div>
+      <div class="biz-card-body">
+        <div class="biz-name">${b.name}</div>
+        <div class="biz-cat">${b.category || ''}</div>
+        <div class="biz-tagline">${b.tagline || 'Order via WhatsApp'}</div>
+        <div class="biz-card-foot">
+          <span class="badge-active">🟢 Active</span>
+          <span class="view-btn">View Store →</span>
+        </div>
+      </div>
+    </a>`).join('');
+}
+
+document.getElementById('search-input').addEventListener('input', filterBusinesses);
+loadDirectory();
+</script>
+</body>
+</html>
