@@ -34,6 +34,36 @@ from pydantic import BaseModel
 log = logging.getLogger("wazibot")
 router = APIRouter()
 
+import os as _os
+
+def _find_static_dir() -> str:
+    """Find static/ using the same multi-candidate search as main.py."""
+    base = _os.path.dirname(_os.path.abspath(__file__))
+    candidates = [
+        _os.path.join(base, "static"),
+        _os.path.join(base, "..", "static"),
+        _os.path.join(base, "..", "..", "static"),
+    ]
+    for c in candidates:
+        p = _os.path.abspath(c)
+        if _os.path.isdir(p):
+            return p
+    return _os.path.abspath(_os.path.join(base, "..", "static"))
+
+_STATIC_DIR = _find_static_dir()
+
+def _html(filename: str):
+    from fastapi.responses import HTMLResponse
+    path = _os.path.join(_STATIC_DIR, filename)
+    if _os.path.exists(path):
+        return HTMLResponse(open(path, encoding="utf-8").read())
+    return HTMLResponse(
+        f"<html><body><h2>WaziBot</h2><p>File not found: {filename}</p>"
+        f"<p>Looked in: {_STATIC_DIR}</p></body></html>",
+        status_code=404,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dependency — reuse existing require_business
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,16 +107,7 @@ class Step7Request(BaseModel):
 @router.get("/onboarding", response_class=HTMLResponse, include_in_schema=False)
 async def onboarding_page():
     """Serve the setup wizard SPA."""
-    static_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "static", "onboarding.html"
-    )
-    if os.path.exists(static_path):
-        return HTMLResponse(open(static_path).read())
-    # Minimal fallback if static file not yet deployed
-    return HTMLResponse(
-        "<html><body><h1>WaziBot Setup Wizard</h1>"
-        "<p>Static file not found. Deploy static/onboarding.html.</p></body></html>"
-    )
+    return _html("onboarding.html")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,16 +122,17 @@ def onboarding_progress(user=Depends(require_business)):
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("id, name, category, onboarding_step, onboarding_completed")
+            .select("id, name, category")
             .eq("id", bid)
             .limit(1)
             .execute()
         )
         biz = res.data[0] if res.data else {}
+        # onboarding_step/onboarding_completed may not exist yet (schema upgrade pending)
         return {
-            "business_id": bid,
+            "business_id":  bid,
             "current_step": biz.get("onboarding_step", 1),
-            "completed": bool(biz.get("onboarding_completed", False)),
+            "completed":    bool(biz.get("onboarding_completed", False)),
             "business_name": biz.get("name", ""),
         }
     except Exception as exc:
@@ -124,13 +146,20 @@ def onboarding_step1(body: Step1Request, user=Depends(require_business)):
     bid = user["business_id"]
     try:
         from core.db import supabase
-        supabase.table("businesses").update({
+        # Build update payload — only include columns that actually exist
+        # onboarding_step is optional (schema upgrade) — skip if column missing
+        payload: dict = {
             "name":            body.business_name.strip(),
             "category":        body.category.strip(),
             "currency":        body.currency,
             "currency_symbol": body.currency_symbol,
-            "onboarding_step": 2,
-        }).eq("id", bid).execute()
+        }
+        # Try to include onboarding_step — ignore if column doesn't exist
+        try:
+            supabase.table("businesses").update({**payload, "onboarding_step": 2}).eq("id", bid).execute()
+        except Exception:
+            # Column doesn't exist yet — update without it
+            supabase.table("businesses").update(payload).eq("id", bid).execute()
         return {"ok": True, "next_step": 2}
     except Exception as exc:
         log.error("onboarding step1 error: %s", exc)
@@ -212,11 +241,16 @@ def onboarding_step5(body: Step5Request, user=Depends(require_business)):
     bid = user["business_id"]
     try:
         from core.db import supabase
-        update: dict = {"onboarding_step": 6}
+        update: dict = {}
         if body.ai_role:         update["ai_role"]         = body.ai_role
         if body.welcome_message: update["welcome_message"] = body.welcome_message
         if body.business_hours:  update["business_hours"]  = body.business_hours
-        supabase.table("businesses").update(update).eq("id", bid).execute()
+        # Try with onboarding_step, fall back without it
+        try:
+            supabase.table("businesses").update({**update, "onboarding_step": 6}).eq("id", bid).execute()
+        except Exception:
+            if update:
+                supabase.table("businesses").update(update).eq("id", bid).execute()
         return {"ok": True, "next_step": 6, "ai_role": body.ai_role}
     except Exception as exc:
         raise HTTPException(500, str(exc))

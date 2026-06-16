@@ -28,7 +28,21 @@ from fastapi.responses import HTMLResponse, JSONResponse
 log    = logging.getLogger("wazibot")
 router = APIRouter()
 
-STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+def _find_static_dir() -> str:
+    base = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(base, "static"),
+        os.path.join(base, "..", "static"),
+        os.path.join(base, "..", "..", "static"),
+    ]
+    for c in candidates:
+        p = os.path.abspath(c)
+        if os.path.isdir(p):
+            return p
+    return os.path.abspath(os.path.join(base, "..", "static"))
+
+STATIC_DIR = _find_static_dir()
 
 # Public-safe fields only — never exposes credentials/tokens
 _BIZ_PUBLIC_FIELDS = (
