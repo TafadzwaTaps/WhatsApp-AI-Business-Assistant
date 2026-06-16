@@ -150,18 +150,8 @@ async def directory_page():
     return _serve_static("marketplace.html")
 
 
-@router.get("/store/{slug}", response_class=HTMLResponse, include_in_schema=False)
-async def store_page(slug: str):
-    """Public store page for a business."""
-    return _serve_static("store.html")
-
-
-@router.get("/menu/{slug}", response_class=HTMLResponse, include_in_schema=False)
-async def menu_page(slug: str):
-    """Public menu page (same data as store, menu layout)."""
-    return _serve_static("store.html")
-
-
+# /store/{slug} and /menu/{slug} are served by main.py fallback routes.
+# Only /site/{slug} is unique to this router.
 @router.get("/site/{slug}", response_class=HTMLResponse, include_in_schema=False)
 async def site_page(slug: str):
     """AI-generated website for a business."""
@@ -171,5 +161,4 @@ async def site_page(slug: str):
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)
-        # Fallback to store page
         return _serve_static("store.html")

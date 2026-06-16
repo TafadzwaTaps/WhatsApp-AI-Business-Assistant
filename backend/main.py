@@ -285,19 +285,41 @@ from routes.expansion_routes  import router as expansion_router
 from routes.ux_routes         import router as ux_router
 
 # ── SaaS Extension Routers (optional — try/except so system works if missing) ─
+billing_router     = None
+saas_admin_router  = None
+onboarding_router  = None
+marketplace_router = None
+_SAAS_ROUTERS_LOADED = False
+
 try:
-    from routes.billing_routes     import router as billing_router
-    from routes.saas_admin_routes  import router as saas_admin_router
-    from routes.onboarding_routes  import router as onboarding_router
+    from routes.billing_routes import router as billing_router
+    log.info("SaaS billing_router loaded")
+except Exception as _e:
+    log.warning("SaaS billing_routes failed: %s: %s", type(_e).__name__, _e)
+
+try:
+    from routes.saas_admin_routes import router as saas_admin_router
+    log.info("SaaS saas_admin_router loaded")
+except Exception as _e:
+    log.warning("SaaS saas_admin_routes failed: %s: %s", type(_e).__name__, _e)
+
+try:
+    from routes.onboarding_routes import router as onboarding_router
+    log.info("SaaS onboarding_router loaded")
+except Exception as _e:
+    log.warning("SaaS onboarding_routes failed: %s: %s", type(_e).__name__, _e)
+
+try:
     from routes.marketplace_routes import router as marketplace_router
-    _SAAS_ROUTERS_LOADED = True
-except ImportError as _saas_err:
-    billing_router     = None
-    saas_admin_router  = None
-    onboarding_router  = None
-    marketplace_router = None
-    _SAAS_ROUTERS_LOADED = False
-    log.warning("SaaS routers not found — SaaS features disabled: %s", _saas_err)
+    log.info("SaaS marketplace_router loaded")
+except Exception as _e:
+    log.warning("SaaS marketplace_routes failed: %s: %s", type(_e).__name__, _e)
+
+_SAAS_ROUTERS_LOADED = any([billing_router, saas_admin_router, onboarding_router, marketplace_router])
+if _SAAS_ROUTERS_LOADED:
+    log.info("SaaS routers loaded successfully")
+else:
+    log.warning("No SaaS routers loaded — check warnings above")
 
 app.include_router(auth_router)
 app.include_router(webhook_router)

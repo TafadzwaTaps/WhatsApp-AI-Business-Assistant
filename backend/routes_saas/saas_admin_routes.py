@@ -8,7 +8,7 @@ Endpoints (all require superadmin role):
   GET /admin/saas/health      — system health snapshot
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
-They are only accessible to the superadmin role (existing require_admin dep).
+They are only accessible to the superadmin role (require_superadmin dep).
 They do NOT affect any existing business-facing endpoints.
 """
 
@@ -19,15 +19,11 @@ log    = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _require_admin():
-    from core.auth import require_admin
-    return require_admin
-
 
 # ── Overview ──────────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/overview")
-def saas_overview(user=Depends(_require_admin())):
+def saas_overview(user=Depends(require_superadmin)):
     """
     Platform-wide SaaS KPIs:
       total_businesses, active_today, messages_sent_today,
@@ -75,7 +71,7 @@ def saas_tenants(
     limit:  int = 50,
     offset: int = 0,
     tier:   str = "",
-    user=Depends(_require_admin()),
+    user=Depends(require_superadmin),
 ):
     """
     List all businesses (tenants) with their subscription status.
@@ -101,7 +97,7 @@ def saas_tenants(
 # ── Revenue ───────────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/revenue")
-def saas_revenue(user=Depends(_require_admin())):
+def saas_revenue(user=Depends(require_superadmin)):
     """
     MRR estimate, tier breakdown, and WaziBot platform revenue.
 
@@ -149,7 +145,7 @@ def saas_revenue(user=Depends(_require_admin())):
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/health")
-def saas_health(user=Depends(_require_admin())):
+def saas_health(user=Depends(require_superadmin)):
     """
     System health snapshot:
       db connectivity, total rows, Stripe status, pending handoffs,
@@ -201,7 +197,7 @@ def saas_health(user=Depends(_require_admin())):
 # ── Tenant detail ─────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/tenants/{business_id}")
-def saas_tenant_detail(business_id: int, user=Depends(_require_admin())):
+def saas_tenant_detail(business_id: int, user=Depends(require_superadmin)):
     """
     Full detail for a single tenant: subscription, onboarding, usage stats.
     """
@@ -234,7 +230,7 @@ def saas_tenant_detail(business_id: int, user=Depends(_require_admin())):
 def saas_set_tenant_tier(
     business_id: int,
     tier:         str,
-    user=Depends(_require_admin()),
+    user=Depends(require_superadmin),
 ):
     """Manually override a business's subscription tier (admin use only)."""
     from billing.stripe_service import TIERS
