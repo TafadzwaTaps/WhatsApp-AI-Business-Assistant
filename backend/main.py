@@ -46,6 +46,29 @@ logging.basicConfig(
 )
 log = logging.getLogger("wazibot")
 
+# ── Sentry error monitoring (Feature 6) ───────────────────────────────────
+# Optional — app starts normally if SENTRY_DSN is not set or sentry-sdk
+# is not installed. Never raises. Add to requirements.txt: sentry-sdk>=2.0.0
+_SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if _SENTRY_DSN:
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        sentry_sdk.init(
+            dsn=_SENTRY_DSN,
+            integrations=[StarletteIntegration(), FastApiIntegration()],
+            traces_sample_rate=0.1,   # 10% of requests for performance monitoring
+            send_default_pii=False,   # never send PII to Sentry
+        )
+        log.info("✅ Sentry initialized (DSN configured)")
+    except ImportError:
+        log.warning("sentry-sdk not installed — add sentry-sdk>=2.0.0 to requirements.txt")
+    except Exception as _se:
+        log.warning("Sentry init failed (non-fatal): %s", _se)
+else:
+    log.info("Sentry not configured (SENTRY_DSN not set) — skipping")
+
 # ── Runtime config ────────────────────────────────────────────────────────────
 VERIFY_TOKEN           = os.getenv("VERIFY_TOKEN", "myverifytoken123")
 WHATSAPP_APP_SECRET    = os.getenv("WHATSAPP_APP_SECRET", "").strip()
@@ -162,6 +185,9 @@ def privacy_page(): return _html("privacy.html")
 @app.get("/terms")
 def terms_page(): return _html("terms.html")
 
+@app.get("/pricing")
+def pricing_page(): return _html("pricing.html")
+
 
 # ── WebSocket connection manager ──────────────────────────────────────────────
 class ConnectionManager:
@@ -193,27 +219,91 @@ manager = ConnectionManager()
 
 # ── Shared WhatsApp sender ────────────────────────────────────────────────────
 def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
+    """
+    Send a WhatsApp text message via the Meta Cloud API.
+
+    Feature 7: Retry logic with exponential backoff.
+    Retries on: timeouts, connection failures, 5xx responses.
+    Does NOT retry on 4xx responses (bad credentials, invalid number, etc.).
+
+    Retry schedule:
+      Attempt 1 — immediate
+      Attempt 2 — after 2 seconds
+      Attempt 3 — after 5 seconds
+
+    Return value and API behaviour are identical to the original function.
+    """
+    import time as _time
+
     if not phone_number_id or not token:
         missing = [k for k, v in {"phone_number_id": phone_number_id, "token": token}.items() if not v]
         log.error("send_whatsapp: ABORTED — missing %s", missing)
         return {"error": f"missing credentials: {missing}"}
-    to = to.replace("whatsapp:", "").strip()
+
+    to  = to.replace("whatsapp:", "").strip()
     url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    body = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": message}}
-    try:
-        resp   = http_requests.post(url, headers=headers, json=body, timeout=10)
-        result = resp.json()
-        if resp.status_code == 200:
-            msg_id = (result.get("messages") or [{}])[0].get("id", "?")
-            log.info("✅ WhatsApp OK  msg_id=%s  to=%s", msg_id, to)
-        else:
+    body    = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": message}}
+
+    _RETRY_DELAYS = [0, 2, 5]   # seconds before each attempt (0 = immediate)
+
+    last_exc:  Exception | None = None
+    last_result: dict = {}
+
+    for attempt, delay in enumerate(_RETRY_DELAYS, start=1):
+        if delay > 0:
+            _time.sleep(delay)
+        try:
+            resp   = http_requests.post(url, headers=headers, json=body, timeout=10)
+            result = resp.json()
+
+            if resp.status_code == 200:
+                msg_id = (result.get("messages") or [{}])[0].get("id", "?")
+                if attempt > 1:
+                    log.info("✅ WhatsApp OK (attempt %d)  msg_id=%s  to=%s", attempt, msg_id, to)
+                else:
+                    log.info("✅ WhatsApp OK  msg_id=%s  to=%s", msg_id, to)
+                return result
+
+            # 4xx — do NOT retry (bad request, auth failure, invalid number)
+            if 400 <= resp.status_code < 500:
+                err = result.get("error", {})
+                log.error(
+                    "❌ WhatsApp API %d (4xx — no retry)  code=%s  msg=%s",
+                    resp.status_code, err.get("code"), err.get("message"),
+                )
+                return result
+
+            # 5xx — log and retry
             err = result.get("error", {})
-            log.error("❌ WhatsApp API %d  code=%s  msg=%s", resp.status_code, err.get("code"), err.get("message"))
-        return result
-    except Exception as exc:
-        log.exception("send_whatsapp exception: %s", exc)
-        return {"error": str(exc)}
+            log.warning(
+                "⚠️  WhatsApp API %d (attempt %d/%d) — will retry  code=%s  msg=%s",
+                resp.status_code, attempt, len(_RETRY_DELAYS),
+                err.get("code"), err.get("message"),
+            )
+            last_result = result
+
+        except (http_requests.exceptions.Timeout,
+                http_requests.exceptions.ConnectionError) as exc:
+            log.warning(
+                "⚠️  send_whatsapp network error (attempt %d/%d): %s",
+                attempt, len(_RETRY_DELAYS), exc,
+            )
+            last_exc = exc
+
+        except Exception as exc:
+            # Unexpected error — log and abort (no retry)
+            log.exception("send_whatsapp unexpected error: %s", exc)
+            return {"error": str(exc)}
+
+    # All retries exhausted
+    if last_exc:
+        log.error("❌ send_whatsapp: all %d attempts failed  to=%s  last_error=%s",
+                  len(_RETRY_DELAYS), to, last_exc)
+        return {"error": str(last_exc)}
+
+    log.error("❌ send_whatsapp: all %d attempts failed  to=%s", len(_RETRY_DELAYS), to)
+    return last_result or {"error": "all retry attempts failed"}
 
 
 def _send_direct(phone_number_id: str, token: str, to: str, message: str) -> None:

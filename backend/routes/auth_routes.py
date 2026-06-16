@@ -114,6 +114,19 @@ def signup(data: SignupRequest, request: Request):
         except Exception as exc:
             log.warning("referral record failed: %s", exc)
 
+    # ── Feature 3: Send welcome email (non-blocking — signup succeeds regardless) ──
+    try:
+        from services.email_service import send_welcome_email
+        _owner_email = getattr(data, "email", "").strip()
+        if _owner_email:
+            send_welcome_email(
+                to_email=_owner_email,
+                business_name=biz["name"],
+                username=biz["owner_username"],
+            )
+    except Exception as _email_exc:
+        log.warning("signup: welcome email failed (non-fatal): %s", _email_exc)
+
     return {
         **_token_pair(biz["owner_username"], "business", biz["id"]),
         "role":          "business",

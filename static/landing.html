@@ -3,7 +3,13 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>WaziBot — WhatsApp Automation for Your Business</title>
+<title>WaziBot — AI Employee for WhatsApp Businesses</title>
+<meta name="description" content="WaziBot gives your business a 24/7 AI employee on WhatsApp — handles orders, answers questions, sends promotions. Free to start, live in minutes."/>
+<meta property="og:title" content="WaziBot — AI Employee for WhatsApp Businesses"/>
+<meta property="og:description" content="Your WhatsApp sales bot, running while you sleep. Free to start."/>
+<meta property="og:type" content="website"/>
+<meta property="og:url" content="https://wazibot-api-assistant.onrender.com"/>
+<meta name="twitter:card" content="summary_large_image"/>
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
 :root {
@@ -574,6 +580,153 @@ footer {
   .hero-sub { font-size: 13px; }
 }
 
+/* ── LIVE DEMO NUDGE (CA-2) ───────────────────────────── */
+.demo-nudge {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--green-dim);
+  border-radius: 24px;
+  padding: 9px 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  text-decoration: none;
+  margin-top: 20px;
+  transition: border-color 0.2s, color 0.2s;
+  cursor: pointer;
+}
+.demo-nudge:hover { border-color: var(--green); color: var(--text); }
+.demo-nudge .live-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 0 rgba(34,197,94,0.5);
+  animation: livepulse 2s ease-in-out infinite;
+}
+@keyframes livepulse {
+  0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
+}
+.demo-nudge .arrow { color: var(--green); }
+
+/* ── SOCIAL PROOF STRIP (CA-5) ────────────────────────── */
+.proof-strip {
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 28px 24px;
+  text-align: center;
+  background: var(--surface);
+}
+.proof-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 18px;
+}
+.proof-avatars {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.proof-pill {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  padding: 7px 14px 7px 8px;
+  transition: border-color 0.2s;
+}
+.proof-pill:hover { border-color: var(--green-dim); }
+.proof-emoji {
+  width: 28px; height: 28px; border-radius: 50%;
+  background: var(--green-glow);
+  border: 1px solid var(--green-dim);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px;
+}
+.proof-biz { font-size: 12px; font-weight: 700; }
+.proof-type { font-size: 10px; color: var(--text-dim); font-family: var(--mono); }
+
+/* ── STEP BADGE (AC-1 honest path) ───────────────────── */
+.step-badge {
+  display: inline-block;
+  margin-top: 12px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--green);
+  background: var(--green-glow);
+  border: 1px solid var(--green-dim);
+  border-radius: 4px;
+  padding: 3px 9px;
+}
+.step-badge-dim {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-dim);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 9px;
+}
+
+/* ── ANNUAL SAVE NOTE (MO-4) ──────────────────────────── */
+.price-save-note {
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--green);
+  margin-top: 10px;
+}
+.price-save-note a { color: var(--green); text-decoration: underline; }
+
+/* ── TRIAL LENGTH NOTE ────────────────────────────────── */
+.trial-note {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-align: center;
+  margin-top: 10px;
+}
+
+/* ── DEMO BOT CTA INSIDE DEMO SECTION ────────────────── */
+.btn-demo-wa {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #25D366;
+  color: #fff;
+  font-family: var(--sans);
+  font-weight: 800;
+  font-size: 13px;
+  padding: 12px 22px;
+  border-radius: 9px;
+  text-decoration: none;
+  margin-top: 20px;
+  transition: all 0.15s;
+  box-shadow: 0 0 20px rgba(37,211,102,0.25);
+}
+.btn-demo-wa:hover { background: #20b95a; transform: translateY(-2px); }
+
+/* ── PLAN FEATURE LOCKED ──────────────────────────────── */
+.price-feature.locked { opacity: 0.35; }
+
+/* ── FOOTER TAGLINE FIX ───────────────────────────────── */
+.footer-tagline {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
 </style>
 </head>
 <body>
@@ -609,14 +762,21 @@ footer {
     <a href="/dashboard" class="btn-hero-secondary">Already have an account →</a>
   </div>
 
+  <!-- Live demo nudge — lets prospects try the real AI before signing up -->
+  <a class="demo-nudge" href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener">
+    <span class="live-dot"></span>
+    <span>💬 Try the live demo on WhatsApp right now</span>
+    <span class="arrow">→</span>
+  </a>
+
   <div class="stats-row">
     <div class="stat-item">
       <div class="stat-num">24/7</div>
       <div class="stat-lbl">Auto-replies</div>
     </div>
     <div class="stat-item">
-      <div class="stat-num">2 min</div>
-      <div class="stat-lbl">Setup time</div>
+      <div class="stat-num">Instant</div>
+      <div class="stat-lbl">Shared number</div>
     </div>
     <div class="stat-item">
       <div class="stat-num">$0</div>
@@ -631,6 +791,41 @@ footer {
 
 <hr class="section-divider"/>
 
+<!-- SOCIAL PROOF STRIP -->
+<div class="proof-strip">
+  <div class="proof-label">Businesses already automating on WhatsApp</div>
+  <div class="proof-avatars">
+    <div class="proof-pill">
+      <div class="proof-emoji">🍽️</div>
+      <div>
+        <div class="proof-biz">Flavoury Foods</div>
+        <div class="proof-type">Restaurant · Harare</div>
+      </div>
+    </div>
+    <div class="proof-pill">
+      <div class="proof-emoji">🌸</div>
+      <div>
+        <div class="proof-biz">Firelilyfarrismum</div>
+        <div class="proof-type">Flowers &amp; Beauty</div>
+      </div>
+    </div>
+    <div class="proof-pill">
+      <div class="proof-emoji">💈</div>
+      <div>
+        <div class="proof-biz">Uptown Class Barber</div>
+        <div class="proof-type">Barbershop · Harare</div>
+      </div>
+    </div>
+    <div class="proof-pill">
+      <div class="proof-emoji">🛒</div>
+      <div>
+        <div class="proof-biz">Econ Side Hustle</div>
+        <div class="proof-type">Retail · Harare</div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- HOW IT WORKS -->
 <section id="how-it-works">
   <div class="section-label">How it works</div>
@@ -643,18 +838,22 @@ footer {
       <div class="step-icon">📝</div>
       <div class="step-title">Create your account</div>
       <div class="step-desc">Sign up with your business name and choose a username. Free, no credit card required. Takes about 30 seconds.</div>
+      <span class="step-badge">⚡ 30 seconds</span>
     </div>
     <div class="step-card">
       <div class="step-num">Step 02</div>
       <div class="step-icon">📦</div>
       <div class="step-title">Add your products</div>
       <div class="step-desc">List your menu or product catalogue — names, prices, and optional photos. Your bot learns it instantly.</div>
+      <span class="step-badge">📸 Photos supported</span>
     </div>
     <div class="step-card">
       <div class="step-num">Step 03</div>
       <div class="step-icon">📱</div>
       <div class="step-title">Connect WhatsApp</div>
-      <div class="step-desc">Paste your Meta Phone Number ID and Access Token from the Meta developer portal. Your bot is live immediately.</div>
+      <div class="step-desc"><strong style="color:var(--green)">Instant:</strong> Use our shared number and start taking orders immediately — no Meta approval needed.<br/><br/><span style="color:var(--text-dim)">Or connect your own dedicated number using your Meta Phone Number ID and Access Token.</span></div>
+      <span class="step-badge">✅ Live in minutes</span>
+      <br/><span class="step-badge-dim">Dedicated number: Meta approval required</span>
     </div>
   </div>
 </section>
@@ -678,6 +877,9 @@ footer {
         <span class="badge badge-purple">✓ Opening hours</span>
         <span class="badge badge-purple">✓ Location queries</span>
       </div>
+      <a class="btn-demo-wa" href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener">
+        💬 Try the live demo bot
+      </a>
     </div>
     <div class="terminal">
       <div class="terminal-bar">
@@ -786,13 +988,15 @@ footer {
       <div class="price-period">Free forever</div>
       <hr class="price-divider"/>
       <div class="price-features">
-        <div class="price-feature"><span class="check">✓</span> 1 WhatsApp number</div>
+        <div class="price-feature"><span class="check">✓</span> Shared WhatsApp number</div>
         <div class="price-feature"><span class="check">✓</span> AI auto-replies</div>
         <div class="price-feature"><span class="check">✓</span> Up to 10 products</div>
         <div class="price-feature"><span class="check">✓</span> Order tracking</div>
         <div class="price-feature"><span class="check">✓</span> Basic dashboard</div>
-        <div class="price-feature"><span class="cross">✗</span> Broadcast messages</div>
-        <div class="price-feature"><span class="cross">✗</span> Live inbox</div>
+        <div class="price-feature"><span class="check">✓</span> Public store page</div>
+        <div class="price-feature locked"><span class="cross">✗</span> Broadcast messages</div>
+        <div class="price-feature locked"><span class="cross">✗</span> Live inbox &amp; chat</div>
+        <div class="price-feature locked"><span class="cross">✗</span> Dedicated WhatsApp number</div>
       </div>
       <a href="/signup" class="btn-price btn-price-outline">Get started →</a>
     </div>
@@ -801,18 +1005,20 @@ footer {
       <span class="price-tag">Most popular</span>
       <div class="price-name">Growth</div>
       <div class="price-amount"><span>$</span>12</div>
-      <div class="price-period">per month</div>
+      <div class="price-period">per month · 14-day free trial</div>
       <hr class="price-divider"/>
       <div class="price-features">
-        <div class="price-feature"><span class="check">✓</span> 1 WhatsApp number</div>
+        <div class="price-feature"><span class="check">✓</span> Your own WhatsApp number</div>
         <div class="price-feature"><span class="check">✓</span> AI auto-replies</div>
         <div class="price-feature"><span class="check">✓</span> Unlimited products</div>
         <div class="price-feature"><span class="check">✓</span> Order tracking</div>
-        <div class="price-feature"><span class="check">✓</span> Full dashboard</div>
+        <div class="price-feature"><span class="check">✓</span> Full dashboard &amp; analytics</div>
         <div class="price-feature"><span class="check">✓</span> Broadcast campaigns</div>
-        <div class="price-feature"><span class="check">✓</span> Live inbox & chat</div>
+        <div class="price-feature"><span class="check">✓</span> Live inbox &amp; chat</div>
+        <div class="price-feature"><span class="check">✓</span> Human handoff &amp; tickets</div>
       </div>
       <a href="/signup" class="btn-price btn-price-primary">Start free trial →</a>
+      <p class="price-save-note">Save 20% with annual billing · <a href="/signup">$115/year</a></p>
     </div>
 
     <div class="price-card">
@@ -830,6 +1036,7 @@ footer {
         <div class="price-feature"><span class="check">✓</span> API access</div>
       </div>
       <a href="mailto:hello@wazibot.com" class="btn-price btn-price-outline">Contact us →</a>
+      <p class="trial-note">For agencies and high-volume businesses</p>
     </div>
   </div>
 </section>
@@ -841,23 +1048,35 @@ footer {
   <p class="cta-sub">Free to start. No credit card. No code. Just your business on autopilot.</p>
   <div class="hero-actions">
     <a href="/signup" class="btn-hero-primary">🚀 Create your free account</a>
-    <a href="/dashboard" class="btn-hero-secondary">Sign in →</a>
+    <a href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener" class="btn-demo-wa">💬 Try the demo first</a>
   </div>
+  <p style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">
+    Questions? <a href="mailto:hello@wazibot.com" style="color:var(--green)">hello@wazibot.com</a>
+  </p>
 </div>
 
 <!-- FOOTER -->
 <footer>
-  <div class="footer-logo">WaziBot</div>
+  <div>
+    <div class="footer-logo">WaziBot</div>
+    <div class="footer-tagline">Built in Zimbabwe 🇿🇼 — serving businesses worldwide</div>
+  </div>
   <div class="footer-links">
     <a href="#features">Features</a>
     <a href="#how-it-works">How it works</a>
     <a href="#pricing">Pricing</a>
+    <a href="/directory">Marketplace</a>
     <a href="/signup">Sign up</a>
     <a href="/dashboard">Sign in</a>
   </div>
-  <div>© 2026 WaziBot. Built for Zimbabwe businesses. 🇿🇼</div>
+  <div style="width:100%;border-top:1px solid var(--border);padding-top:20px;margin-top:8px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;">
+    <span>© 2026 WaziBot. All rights reserved.</span>
+    <span style="display:flex;gap:16px;">
+      <a href="/privacy" style="color:var(--green);text-decoration:none;">Privacy Policy</a>
+      <a href="/terms" style="color:var(--green);text-decoration:none;">Terms &amp; Conditions</a>
+    </span>
+  </div>
 </footer>
-
 <script>
 // Smooth scroll for anchor links
 document.querySelectorAll('a[href^="#"]').forEach(a => {
@@ -867,17 +1086,12 @@ document.querySelectorAll('a[href^="#"]').forEach(a => {
   });
 });
 
-// If already logged in, show "Go to dashboard" hint in nav
+// If already logged in, show "Go to dashboard" in nav CTA
 const token = localStorage.getItem('wazi_token');
 if (token) {
   const cta = document.querySelector('.nav-cta');
   if (cta) { cta.textContent = 'My Dashboard →'; cta.href = '/dashboard'; }
 }
 </script>
-  <footer style="text-align:center;padding:24px;border-top:1px solid #1f3025;margin-top:40px;font-family:'DM Mono',monospace;font-size:12px;color:#6b8f71;">
-    <a href="/privacy" style="color:#22c55e;text-decoration:none;margin:0 12px;">Privacy Policy</a>
-    <a href="/terms" style="color:#22c55e;text-decoration:none;margin:0 12px;">Terms &amp; Conditions</a>
-    <span style="margin:0 12px;">© 2026 WaziBot</span>
-  </footer>
 </body>
 </html>

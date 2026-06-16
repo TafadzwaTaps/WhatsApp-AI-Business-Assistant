@@ -177,6 +177,17 @@
       <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
       <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
     </div>
+
+    <!-- ═══ Feature 8: BUSINESS HEALTH WIDGET ═══════════════════════════════ -->
+    <div class="panel" id="health-widget-panel" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title">💚 Business Health</div>
+        <button class="panel-action" onclick="loadHealthWidget()">↻ Refresh</button>
+      </div>
+      <div class="panel-body" id="health-widget-body">
+        <div class="empty">Checking your setup…</div>
+      </div>
+    </div>
     <!-- Phase 6: Analytics chart panel -->
     <div class="panel full" style="margin-bottom:0;">
       <div class="panel-header">
@@ -803,7 +814,83 @@
     </div>
   </div><!-- /section-handoff -->
 
-  <div id="section-settings" class="section">
+
+
+  <!-- ═══ Feature 10: GROWTH AUTOMATION SECTION ══════════════════════════ -->
+  <div id="section-growth-automation" class="section" style="display:none;">
+    <div class="topbar">
+      <div class="page-title">Growth <span>Automation</span></div>
+    </div>
+    <p style="font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-bottom:24px;">
+      Automatically recover abandoned carts and re-engage inactive customers.
+      All messages are sent via WhatsApp on your business's behalf.
+    </p>
+
+    <div class="panels">
+      <!-- Cart Recovery -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">🛒 Cart Recovery</div>
+          <div id="cart-recovery-status" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">—</div>
+        </div>
+        <div class="panel-body">
+          <p style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:16px;line-height:1.6;">
+            Automatically message customers who added items to their cart but didn't check out.
+            Sends after a configurable idle period.
+          </p>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <span style="font-size:13px;font-weight:700;">Enable Cart Recovery</span>
+            <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
+              <input type="checkbox" id="toggle-cart-recovery" onchange="saveGrowthSetting('cart_recovery', this.checked)"
+                     style="opacity:0;width:0;height:0;">
+              <span id="track-cart-recovery" style="position:absolute;inset:0;background:var(--surface2);
+                    border:1px solid var(--border);border-radius:12px;transition:.2s;"></span>
+            </label>
+          </div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">
+            Last run: <span id="cart-recovery-last-run">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Re-engagement -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">🔄 Re-engagement</div>
+          <div id="reengagement-status" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">—</div>
+        </div>
+        <div class="panel-body">
+          <p style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:16px;line-height:1.6;">
+            Send a friendly WhatsApp message to customers who haven't ordered in 14+ days.
+            Brings lapsed customers back without any manual effort.
+          </p>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <span style="font-size:13px;font-weight:700;">Enable Re-engagement</span>
+            <label style="position:relative;display:inline-block;width:44px;height:24px;cursor:pointer;">
+              <input type="checkbox" id="toggle-reengagement" onchange="saveGrowthSetting('reengagement', this.checked)"
+                     style="opacity:0;width:0;height:0;">
+              <span id="track-reengagement" style="position:absolute;inset:0;background:var(--surface2);
+                    border:1px solid var(--border);border-radius:12px;transition:.2s;"></span>
+            </label>
+          </div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">
+            Last run: <span id="reengagement-last-run">—</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px;">
+      <div class="panel-header"><div class="panel-title">ℹ️ How It Works</div></div>
+      <div class="panel-body" style="font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:1.8;">
+        <p>🛒 <strong style="color:var(--text)">Cart Recovery</strong> — runs hourly. Customers idle for 60+ minutes receive a WhatsApp nudge linking back to their cart.</p>
+        <p style="margin-top:10px;">🔄 <strong style="color:var(--text)">Re-engagement</strong> — runs daily. Customers with no orders in 14+ days receive a personalised "we miss you" message.</p>
+        <p style="margin-top:10px;">Both automations are <strong style="color:var(--text)">opt-in</strong> and respect WhatsApp messaging policies. Messages are sent using your business name.</p>
+      </div>
+    </div>
+  </div><!-- /section-growth-automation -->
+
+    <div id="section-settings" class="section">
     <div class="topbar"><div class="page-title">Store <span>Settings</span></div></div>
 
     <!-- Settings tabs -->
@@ -1420,5 +1507,44 @@
 <div class="toast" id="toast"></div>
 
 <script src="/static/dashboard.js"></script>
+
+  <!-- ═══ Feature 9: FIRST ORDER CELEBRATION MODAL ═══════════════════════ -->
+  <div id="first-order-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
+       z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);border:1px solid var(--green-dim);border-radius:20px;
+                padding:48px 40px;max-width:420px;width:90%;text-align:center;position:relative;
+                box-shadow:0 0 60px rgba(34,197,94,0.25);">
+      <div style="font-size:56px;margin-bottom:16px;animation:popIn .4s ease">🎉</div>
+      <h2 style="font-size:24px;font-weight:800;margin-bottom:10px;color:var(--text)">
+        Your first order is in!
+      </h2>
+      <p style="color:var(--text-dim);font-family:var(--mono);font-size:13px;line-height:1.7;margin-bottom:24px;">
+        Congratulations — a customer just placed an order through WaziBot.
+        Your AI employee is working! 🤖
+      </p>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;
+                  padding:16px;margin-bottom:24px;font-family:var(--mono);font-size:12px;color:var(--text-dim);">
+        <div id="first-order-details">Loading order details…</div>
+      </div>
+      <button onclick="dismissFirstOrderModal()"
+              style="background:var(--green);color:#000;font-weight:800;font-size:14px;
+                     padding:13px 32px;border-radius:10px;border:none;cursor:pointer;width:100%;">
+        View Orders →
+      </button>
+      <button onclick="document.getElementById('first-order-modal').style.display='none'"
+              style="background:transparent;color:var(--text-dim);font-family:var(--mono);
+                     font-size:12px;border:none;cursor:pointer;margin-top:12px;display:block;width:100%;">
+        Dismiss
+      </button>
+    </div>
+  </div>
+  <style>
+    @keyframes popIn {
+      0%   { transform: scale(0.5); opacity: 0; }
+      70%  { transform: scale(1.1); }
+      100% { transform: scale(1);   opacity: 1; }
+    }
+  </style>
+
 </body>
 </html>

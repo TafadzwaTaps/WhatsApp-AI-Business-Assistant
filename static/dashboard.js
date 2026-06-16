@@ -298,6 +298,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showSection('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
       <button class="nav-item" onclick="window.open('/inbox','_blank');closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
       <button class="nav-item" onclick="showSection('handoff',this);closeSidebar()"><span class="icon">👤</span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
+      <button class="nav-item" onclick="showSection('growth-automation',this);closeSidebar()"><span class="icon">🚀</span> Growth</button>
       <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
       <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
       <div class="nav-section">Growth</div>
@@ -3456,3 +3457,267 @@ async function loadHandoffStats() {
   }
 }
 
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   FEATURE 8 — BUSINESS HEALTH WIDGET
+   Additive — loadHealthWidget() called on overview load.
+   Checks 4 conditions: WhatsApp connected, products added,
+   payment method configured, first order received.
+═══════════════════════════════════════════════════════════════════════════════ */
+
+async function loadHealthWidget() {
+  const body = document.getElementById('health-widget-body');
+  if (!body) return;
+
+  try {
+    // Fetch data needed for health checks in parallel
+    const [biz, products, orders] = await Promise.all([
+      apiFetch('/me').catch(() => null),
+      apiFetch('/products').catch(() => []),
+      apiFetch('/orders').catch(() => []),
+    ]);
+
+    const checks = [
+      {
+        key:     'whatsapp',
+        label:   'WhatsApp Connected',
+        ok:      !!(biz?.whatsapp_phone_id || biz?.use_shared_number),
+        guidance:'Connect WhatsApp in Settings → WhatsApp, or use our shared number.',
+        action:  "showSection('settings',null);switchSettingsTab('whatsapp',null)",
+      },
+      {
+        key:     'products',
+        label:   'Products Added',
+        ok:      Array.isArray(products) && products.length > 0,
+        guidance:'Add at least one product so customers can order from your bot.',
+        action:  "showSection('products',null)",
+      },
+      {
+        key:     'payment',
+        label:   'Payment Method Configured',
+        ok:      !!(biz?.ecocash_number || biz?.paypal_email || biz?.cash_enabled),
+        guidance:'Add a payment method so customers know how to pay.',
+        action:  "showSection('settings',null);switchSettingsTab('payment',null)",
+      },
+      {
+        key:     'first_order',
+        label:   'First Order Received',
+        ok:      Array.isArray(orders) && orders.length > 0,
+        guidance:'Share your WhatsApp number or store link to get your first order.',
+        action:  "showSection('products',null)",
+      },
+    ];
+
+    const allOk = checks.every(c => c.ok);
+    const score = checks.filter(c => c.ok).length;
+
+    body.innerHTML = `
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+        <div style="font-size:28px;font-weight:800;color:${score === 4 ? 'var(--green)' : 'var(--amber)'}">
+          ${score}/4
+        </div>
+        <div>
+          <div style="font-size:14px;font-weight:700;">
+            ${score === 4 ? '✅ All systems go!' : `${4 - score} item${4 - score > 1 ? 's' : ''} need attention`}
+          </div>
+          <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);">
+            ${score === 4 ? 'Your AI employee is fully configured.' : 'Complete these steps to go fully live.'}
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        ${checks.map(c => `
+          <div style="display:flex;align-items:flex-start;gap:12px;padding:10px 12px;
+                      background:var(--surface2);border-radius:8px;
+                      border:1px solid ${c.ok ? 'var(--border)' : 'rgba(245,158,11,0.3)'};">
+            <span style="font-size:16px;flex-shrink:0;margin-top:1px">${c.ok ? '✅' : '⚠️'}</span>
+            <div style="flex:1;">
+              <div style="font-size:13px;font-weight:${c.ok ? '600' : '700'};
+                          color:${c.ok ? 'var(--text-dim)' : 'var(--text)'}">
+                ${c.label}
+              </div>
+              ${!c.ok ? `
+                <div style="font-size:12px;color:var(--amber);font-family:var(--mono);margin-top:3px;line-height:1.5;">
+                  ${c.guidance}
+                </div>
+                <button onclick="${c.action}" style="margin-top:8px;background:transparent;
+                        border:1px solid rgba(245,158,11,0.4);color:var(--amber);border-radius:6px;
+                        padding:4px 12px;font-size:11px;cursor:pointer;font-family:var(--mono);">
+                  Fix this →
+                </button>
+              ` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (e) {
+    body.innerHTML = '<div class="empty">Could not load health status</div>';
+  }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   FEATURE 9 — FIRST ORDER CELEBRATION
+   Additive — checks localStorage to only fire once per business.
+   Shows a modal with order details when the first order is detected.
+═══════════════════════════════════════════════════════════════════════════════ */
+
+async function checkFirstOrderCelebration() {
+  try {
+    const bizId  = localStorage.getItem('wazibot_business_id') || '0';
+    const seenKey = `wazibot_first_order_seen_${bizId}`;
+    if (localStorage.getItem(seenKey)) return;   // already celebrated
+
+    const orders = await apiFetch('/orders').catch(() => []);
+    if (!Array.isArray(orders) || orders.length === 0) return;
+
+    // First order exists and hasn't been celebrated yet
+    const first = orders[orders.length - 1];   // oldest order (most likely the first)
+    const detailEl = document.getElementById('first-order-details');
+    if (detailEl) {
+      const item = (first.items || [])[0] || {};
+      detailEl.innerHTML = `
+        <div>📦 Order #${first.id || '—'}</div>
+        <div style="margin-top:4px;color:var(--text)">
+          ${item.name || 'Order'} — $${parseFloat(first.total_price || 0).toFixed(2)}
+        </div>
+        <div style="margin-top:4px;">Customer: ${first.customer_phone || '—'}</div>
+      `;
+    }
+
+    const modal = document.getElementById('first-order-modal');
+    if (modal) modal.style.display = 'flex';
+
+    // Remember we've shown this so it doesn't repeat
+    localStorage.setItem(seenKey, '1');
+  } catch (e) {
+    // Non-critical — ignore
+  }
+}
+
+function dismissFirstOrderModal() {
+  const modal = document.getElementById('first-order-modal');
+  if (modal) modal.style.display = 'none';
+  showSection('orders', null);
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   FEATURE 10 — GROWTH AUTOMATION SETTINGS UI
+   Additive — reads and writes features_json via /me PATCH.
+   Does NOT modify growth/cart_recovery.py or growth/reengagement.py.
+═══════════════════════════════════════════════════════════════════════════════ */
+
+async function loadGrowthAutomation() {
+  try {
+    const biz = await apiFetch('/me').catch(() => null);
+    const features = biz?.features_json || {};
+
+    // Cart recovery toggle
+    const crToggle = document.getElementById('toggle-cart-recovery');
+    const crTrack  = document.getElementById('track-cart-recovery');
+    if (crToggle) {
+      crToggle.checked = !!features.cart_recovery_enabled;
+      _applyToggleStyle(crTrack, crToggle.checked);
+    }
+
+    // Re-engagement toggle
+    const reToggle = document.getElementById('toggle-reengagement');
+    const reTrack  = document.getElementById('track-reengagement');
+    if (reToggle) {
+      reToggle.checked = !!features.reengagement_enabled;
+      _applyToggleStyle(reTrack, reToggle.checked);
+    }
+
+    // Last run timestamps (stored in features_json if available)
+    const crLast = document.getElementById('cart-recovery-last-run');
+    if (crLast) crLast.textContent = features.cart_recovery_last_run
+      ? new Date(features.cart_recovery_last_run).toLocaleString()
+      : 'Never run yet';
+
+    const reLast = document.getElementById('reengagement-last-run');
+    if (reLast) reLast.textContent = features.reengagement_last_run
+      ? new Date(features.reengagement_last_run).toLocaleString()
+      : 'Never run yet';
+
+    // Status labels
+    const crStatus = document.getElementById('cart-recovery-status');
+    if (crStatus) crStatus.textContent = features.cart_recovery_enabled ? '🟢 Active' : '⚪ Inactive';
+
+    const reStatus = document.getElementById('reengagement-status');
+    if (reStatus) reStatus.textContent = features.reengagement_enabled ? '🟢 Active' : '⚪ Inactive';
+
+  } catch (e) {
+    console.error('loadGrowthAutomation error:', e);
+  }
+}
+
+function _applyToggleStyle(track, checked) {
+  if (!track) return;
+  if (checked) {
+    track.style.background    = 'var(--green-glow)';
+    track.style.borderColor   = 'var(--green-dim)';
+  } else {
+    track.style.background    = 'var(--surface2)';
+    track.style.borderColor   = 'var(--border)';
+  }
+  // Move the thumb
+  track.style.setProperty('--thumb-translate', checked ? '20px' : '0px');
+}
+
+async function saveGrowthSetting(key, enabled) {
+  // key: 'cart_recovery' or 'reengagement'
+  const trackId = key === 'cart_recovery' ? 'track-cart-recovery' : 'track-reengagement';
+  const statusId = key === 'cart_recovery' ? 'cart-recovery-status' : 'reengagement-status';
+  const track    = document.getElementById(trackId);
+  const statusEl = document.getElementById(statusId);
+
+  _applyToggleStyle(track, enabled);
+  if (statusEl) statusEl.textContent = enabled ? '🟢 Active' : '⚪ Inactive';
+
+  try {
+    // Read current features_json, patch the relevant key, write back
+    const biz      = await apiFetch('/me').catch(() => ({}));
+    const features = biz?.features_json || {};
+    const featureKey = key === 'cart_recovery' ? 'cart_recovery_enabled' : 'reengagement_enabled';
+    features[featureKey] = enabled;
+
+    await apiFetch('/me', {
+      method: 'PATCH',
+      body: JSON.stringify({ features_json: features }),
+    });
+    showToast(`${key === 'cart_recovery' ? 'Cart Recovery' : 'Re-engagement'} ${enabled ? 'enabled' : 'disabled'}`);
+  } catch (e) {
+    showToast('Failed to save setting', true);
+  }
+}
+
+
+/* ══ HOOK ALL FEATURES INTO EXISTING LOAD FLOWS ═════════════════════════════
+   These integrate with the existing showSection() / loadCustomerStats()
+   calls. Additive — wrapped in try/except so existing flows never break.
+══════════════════════════════════════════════════════════════════════════════ */
+
+// Patch showSection to load Growth Automation when navigated to
+const _origShowSection = typeof showSection === 'function' ? showSection : null;
+if (_origShowSection) {
+  window.showSection = function(name, el) {
+    _origShowSection(name, el);
+    if (name === 'growth-automation') {
+      try { loadGrowthAutomation(); } catch(_) {}
+    }
+    if (name === 'overview') {
+      try { loadHealthWidget(); } catch(_) {}
+    }
+  };
+}
+
+// On page load: check for first order celebration (runs once, 2s delay to let data settle)
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    try { checkFirstOrderCelebration(); } catch(_) {}
+    try { loadHealthWidget(); } catch(_) {}
+  }, 2000);
+});
