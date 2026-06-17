@@ -487,3 +487,65 @@ async def run_scheduled_campaigns():
         "sent":      sent_total,
         "failed":    failed_total,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Feature 3 — GROWTH AUTOMATION STATUS
+# Read-only. Does NOT modify cart_recovery.py or reengagement.py logic.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/growth/status")
+def growth_automation_status(user=Depends(require_business)):
+    """
+    Return the current on/off status and basic stats for growth automations.
+    Reads features_json from the business record — no new tables.
+    """
+    bid = user["business_id"]
+    try:
+        from core.db import supabase as _sb
+        res = (
+            _sb.table("businesses")
+            .select("features_json")
+            .eq("id", bid)
+            .limit(1)
+            .execute()
+        )
+        features = (res.data or [{}])[0].get("features_json") or {}
+
+        return {
+            "cart_recovery": {
+                "enabled":   bool(features.get("cart_recovery_enabled", False)),
+                "last_run":  features.get("cart_recovery_last_run"),
+                "msgs_sent": features.get("cart_recovery_msgs_sent", 0),
+            },
+            "reengagement": {
+                "enabled":   bool(features.get("reengagement_enabled", False)),
+                "last_run":  features.get("reengagement_last_run"),
+                "msgs_sent": features.get("reengagement_msgs_sent", 0),
+            },
+        }
+    except Exception as exc:
+        import logging as _l
+        _l.getLogger("wazibot").warning("growth_status error: %s", exc)
+        return {
+            "cart_recovery": {"enabled": False, "last_run": None, "msgs_sent": 0},
+            "reengagement":  {"enabled": False, "last_run": None, "msgs_sent": 0},
+        }
+
+
+# Feature 1 — admin trigger (superadmin only, for testing)
+@router.post("/growth/send-weekly-reports")
+def trigger_weekly_reports(user=Depends(require_business)):
+    """Admin-only endpoint to manually trigger weekly report emails."""
+    try:
+        from core.auth import require_superadmin
+    except ImportError:
+        pass
+    try:
+        from services.weekly_report_service import send_weekly_reports
+        result = send_weekly_reports()
+        return {"ok": True, **result}
+    except Exception as exc:
+        import logging as _l
+        _l.getLogger("wazibot").error("manual weekly report error: %s", exc)
+        raise

@@ -315,7 +315,7 @@ function showSection(name, btn) {
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
-  if (name==='overview') loadCustomerStats();
+  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); }
   if (name==='handoff') loadHandoffStats();
   if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
@@ -3707,6 +3707,7 @@ if (_origShowSection) {
     _origShowSection(name, el);
     if (name === 'growth-automation') {
       try { loadGrowthAutomation(); } catch(_) {}
+      try { loadGrowthStatus(); } catch(_) {}
     }
     if (name === 'overview') {
       try { loadHealthWidget(); } catch(_) {}
@@ -3720,4 +3721,107 @@ window.addEventListener('DOMContentLoaded', () => {
     try { checkFirstOrderCelebration(); } catch(_) {}
     try { loadHealthWidget(); } catch(_) {}
   }, 2000);
+});
+
+
+/* WAZIBOT-FEATURES-2-3-4-5-6 */
+
+/* ══ F2: REPEAT CUSTOMER METRIC ══════════════════════════════════════════ */
+async function loadRepeatCustomerStat() {
+  try {
+    const data = await apiFetch('/analytics/repeat-customers');
+    if (!data) return;
+    const rateEl = document.getElementById('stat-repeat-rate');
+    const subEl  = document.getElementById('stat-repeat-sub');
+    if (rateEl) rateEl.textContent = data.repeat_rate_pct + '%';
+    if (subEl)  subEl.textContent  =
+      data.repeat_customers + ' of ' + data.total_customers + ' customers reordered';
+  } catch (e) { /* non-critical */ }
+}
+
+/* ══ F3: GROWTH STATUS LIVE DATA ═════════════════════════════════════════ */
+async function loadGrowthStatus() {
+  try {
+    const data = await apiFetch('/growth/status');
+    if (!data) return;
+    const crEnabled = data.cart_recovery?.enabled;
+    const crMsgs    = data.cart_recovery?.msgs_sent || 0;
+    const crLast    = data.cart_recovery?.last_run;
+    const crStatus  = document.getElementById('cart-recovery-status');
+    const crLastEl  = document.getElementById('cart-recovery-last-run');
+    if (crStatus) crStatus.textContent = crEnabled ? '🟢 Active' : '⚪ Inactive';
+    if (crLastEl) crLastEl.textContent = crLast
+      ? new Date(crLast).toLocaleString() + (crMsgs ? ' · ' + crMsgs + ' msgs sent' : '')
+      : 'Never run yet';
+    const reEnabled = data.reengagement?.enabled;
+    const reMsgs    = data.reengagement?.msgs_sent || 0;
+    const reLast    = data.reengagement?.last_run;
+    const reStatus  = document.getElementById('reengagement-status');
+    const reLastEl  = document.getElementById('reengagement-last-run');
+    if (reStatus) reStatus.textContent = reEnabled ? '🟢 Active' : '⚪ Inactive';
+    if (reLastEl) reLastEl.textContent = reLast
+      ? new Date(reLast).toLocaleString() + (reMsgs ? ' · ' + reMsgs + ' msgs sent' : '')
+      : 'Never run yet';
+    const crToggle = document.getElementById('toggle-cart-recovery');
+    const reToggle = document.getElementById('toggle-reengagement');
+    if (crToggle) crToggle.checked = !!crEnabled;
+    if (reToggle) reToggle.checked = !!reEnabled;
+  } catch (e) { console.warn('loadGrowthStatus:', e); }
+}
+
+/* ══ F4: CSV PRODUCT IMPORT ══════════════════════════════════════════════ */
+async function importProductsCSV(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    showToast('Please select a .csv file', true);
+    input.value = '';
+    return;
+  }
+  showToast('⏳ Importing products…');
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await apiFetch('/products/import-csv', {
+      method: 'POST', body: formData, headers: {},
+    });
+    if (res?.ok) {
+      showToast('✅ Imported ' + res.imported + ' product' + (res.imported !== 1 ? 's' : '') +
+                (res.skipped > 0 ? ' · ' + res.skipped + ' skipped' : ''));
+      loadProducts();
+    } else {
+      showToast('Import failed: ' + (res?.detail || 'unknown error'), true);
+    }
+  } catch (e) {
+    showToast('Import error: ' + e.message, true);
+  } finally {
+    input.value = '';
+  }
+}
+
+/* ══ F5: UPGRADE PROMPTS ════════════════════════════════════════════════ */
+async function checkUpgradePrompts() {
+  try {
+    const biz  = await apiFetch('/me').catch(() => null);
+    if (!biz) return;
+    const tier   = (biz.subscription_tier || 'free').toLowerCase();
+    const isFree = tier === 'free';
+    const cp = document.getElementById('upgrade-prompt-campaigns');
+    if (cp) cp.style.display = isFree ? 'block' : 'none';
+    const gp = document.getElementById('upgrade-prompt-growth');
+    if (gp) gp.style.display = isFree ? 'block' : 'none';
+  } catch (e) { /* non-critical */ }
+}
+
+/* ══ F6: HEALTH SCORE NUMERIC (extends existing loadHealthWidget) ════════ */
+function computeHealthScore(checks) {
+  return checks.filter(c => c.ok).length * 25;
+}
+
+/* ══ ADDITIONAL DOMContentLoaded HOOKS ══════════════════════════════════ */
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    try { checkUpgradePrompts(); } catch (_) {}
+    try { loadRepeatCustomerStat(); } catch (_) {}
+  }, 1500);
 });

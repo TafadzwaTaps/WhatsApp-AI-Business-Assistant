@@ -426,4 +426,13 @@ if saas_admin_router:  app.include_router(saas_admin_router)
 if onboarding_router:  app.include_router(onboarding_router)
 if marketplace_router: app.include_router(marketplace_router)
 
+# ── Feature 1: Weekly report scheduler ───────────────────────────────────
+# Runs in a daemon thread — never blocks startup or requests.
+# Fires every Monday at 08:00 UTC. Fails silently if email not configured.
+try:
+    from services.weekly_report_service import attach_weekly_report_scheduler
+    attach_weekly_report_scheduler(app)
+except Exception as _wrs_err:
+    log.warning("weekly_report_scheduler: failed to start (non-fatal): %s", _wrs_err)
+
 log.info("🚀 WaziBot API started — %d route modules registered", 8)

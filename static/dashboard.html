@@ -176,6 +176,8 @@
       <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
       <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
       <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
+      <!-- Feature 2: Repeat customer metric -->
+      <div class="stat-card"><div class="stat-label">Repeat Rate</div><div class="stat-value" id="stat-repeat-rate">—</div><div class="stat-sub" id="stat-repeat-sub">Customers who reordered</div></div>
     </div>
 
     <!-- ═══ Feature 8: BUSINESS HEALTH WIDGET ═══════════════════════════════ -->
@@ -314,7 +316,16 @@
   <!-- PRODUCTS -->
   <!-- PRODUCTS / INVENTORY ─────────────────────────────── -->
   <div id="section-products" class="section">
-    <div class="topbar"><div class="page-title">Manage <span>Products</span></div></div>
+    <div class="topbar">
+      <div class="page-title">Manage <span>Products</span></div>
+      <!-- Feature 4: CSV import button -->
+      <div style="display:flex;gap:10px;align-items:center;">
+        <label class="panel-action" for="csv-import-file" title="Import products from CSV"
+               style="cursor:pointer;">📥 Import CSV</label>
+        <input type="file" id="csv-import-file" accept=".csv"
+               style="display:none" onchange="importProductsCSV(this)">
+      </div>
+    </div>
 
     <!-- PHASE 1: KPI Overview Cards -->
     <div class="prod-kpi-grid">
@@ -663,6 +674,23 @@
   <!-- BROADCAST / CAMPAIGN BUILDER (Phase 2) -->
   <!-- BROADCAST / SEND MESSAGE (simple) -->
   <div id="section-broadcast" class="section">
+    <!-- Feature 5: Upgrade prompt shown to FREE plan users -->
+    <div id="upgrade-prompt-campaigns" style="display:none;background:rgba(245,158,11,0.08);
+         border:1px solid rgba(245,158,11,0.3);border-radius:12px;padding:20px 24px;margin-bottom:20px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span style="font-size:20px;">🔒</span>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:var(--amber);">Campaigns — Growth Plan Feature</div>
+          <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-top:3px;">
+            Upgrade to send broadcast campaigns and reach all your customers at once.
+          </div>
+        </div>
+        <a href="/pricing" style="margin-left:auto;background:var(--amber);color:#000;font-weight:800;
+           font-size:12px;padding:9px 18px;border-radius:8px;text-decoration:none;white-space:nowrap;">
+          Upgrade to Growth →
+        </a>
+      </div>
+    </div>
     <div class="topbar">
       <div class="page-title">📢 <span>Send Message</span></div>
     </div>

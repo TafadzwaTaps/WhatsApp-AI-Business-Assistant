@@ -755,3 +755,131 @@ def analytics_handoff_stats(user=Depends(require_business)):
         "active_count":     len(pending),
     }
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Feature 2 — REPEAT CUSTOMER ANALYTICS
+# Simple endpoint: reads user_memory.order_count. No new tables.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.get("/analytics/repeat-customers")
+def analytics_repeat_customers(user=Depends(require_business)):
+    """
+    Return repeat customer metrics for the dashboard overview card.
+    Repeat customer = has order_count > 1 in user_memory.
+    """
+    bid = user["business_id"]
+    try:
+        from core.db import supabase as _sb
+        res = (
+            _sb.table("user_memory")
+            .select("phone, order_count")
+            .eq("business_id", bid)
+            .execute()
+        )
+        rows             = res.data or []
+        total_customers  = len(rows)
+        repeat_customers = sum(1 for r in rows if (r.get("order_count") or 0) > 1)
+        repeat_rate      = round(repeat_customers / total_customers * 100, 1) if total_customers else 0
+        return {
+            "total_customers":   total_customers,
+            "repeat_customers":  repeat_customers,
+            "repeat_rate_pct":   repeat_rate,
+        }
+    except Exception as exc:
+        log.warning("analytics_repeat_customers error: %s", exc)
+        return {"total_customers": 0, "repeat_customers": 0, "repeat_rate_pct": 0}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Feature 4 — CSV PRODUCT IMPORT
+# Accepts a CSV file, parses it, inserts valid rows. Skips invalid ones.
+# Uses existing products table and validation patterns.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/products/import-csv")
+async def import_products_csv(
+    file: UploadFile = File(...),
+    user=Depends(require_business),
+):
+    """
+    Bulk product import via CSV.
+    Expected columns: name, price, description (optional), image_url (optional)
+    Skips rows with missing name or non-numeric price.
+    Returns summary: {imported, skipped, errors}
+    """
+    import csv
+    import io
+
+    bid       = user["business_id"]
+    imported  = 0
+    skipped   = 0
+    row_errors: list[str] = []
+
+    try:
+        content  = await file.read()
+        text     = content.decode("utf-8-sig", errors="replace")  # handle BOM
+        reader   = csv.DictReader(io.StringIO(text))
+
+        # Normalise column names to lowercase stripped
+        rows = []
+        for row in reader:
+            rows.append({k.strip().lower(): (v or "").strip() for k, v in row.items()})
+
+        if not rows:
+            raise HTTPException(400, "CSV file is empty or has no rows.")
+
+        from core.db import supabase as _sb
+        import time as _t
+
+        for i, row in enumerate(rows, start=2):   # start=2 (row 1 = header)
+            name  = row.get("name") or row.get("product_name") or ""
+            price = row.get("price") or ""
+
+            if not name:
+                skipped += 1
+                row_errors.append(f"Row {i}: missing name — skipped")
+                continue
+
+            try:
+                price_f = float(price)
+                if price_f < 0:
+                    raise ValueError("negative price")
+            except (ValueError, TypeError):
+                skipped += 1
+                row_errors.append(f"Row {i}: invalid price '{price}' — skipped")
+                continue
+
+            payload = {
+                "business_id": bid,
+                "name":        name[:200],
+                "price":       price_f,
+                "description": (row.get("description") or "")[:1000],
+                "stock":       None,
+            }
+            img = (row.get("image_url") or row.get("image") or "").strip()
+            if img and img.startswith("http"):
+                payload["image_url"] = img[:500]
+
+            try:
+                _sb.table("products").insert(payload).execute()
+                imported += 1
+            except Exception as db_exc:
+                skipped += 1
+                row_errors.append(f"Row {i}: DB error — {str(db_exc)[:80]}")
+
+        log.info(
+            "csv_import: biz=%s imported=%d skipped=%d",
+            bid, imported, skipped,
+        )
+        return {
+            "ok":       True,
+            "imported": imported,
+            "skipped":  skipped,
+            "errors":   row_errors[:20],   # cap error list
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("import_products_csv error: %s", exc)
+        raise HTTPException(500, f"Import failed: {exc}")
