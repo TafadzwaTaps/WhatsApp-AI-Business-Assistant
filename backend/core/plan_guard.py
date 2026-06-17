@@ -209,7 +209,15 @@ def require_plan(minimum_tier: str):
     if minimum_upper not in _PLAN_ORDER:
         raise ValueError(f"require_plan: unknown tier {minimum_tier!r}. Valid: {_PLAN_ORDER}")
 
-    def _check(user: dict = Depends(_get_current_user_dep)):
+    # C2 fix: import require_business lazily inside the closure to avoid
+    # circular imports, then use it directly as the FastAPI dependency.
+    try:
+        from core.auth import require_business as _rb
+    except ImportError:
+        def _rb():
+            return {}
+
+    def _check(user: dict = Depends(_rb)):
         """Inner dependency — resolves the user's plan and enforces the minimum."""
         business_id = user.get("business_id")
         if not business_id:
@@ -249,17 +257,17 @@ def require_plan(minimum_tier: str):
 
 def _get_current_user_dep():
     """
-    Deferred import of require_business to avoid circular imports.
-    Returns the same dependency as require_business.
+    DEPRECATED — C2 fix replaced Depends(_get_current_user_dep) with
+    Depends(require_business) directly inside require_plan closure.
+    Kept to avoid breaking any external callers; do not use for new code.
     """
     try:
         from core.auth import require_business
-        return Depends(require_business)
+        return require_business
     except ImportError:
-        # Fallback: if core.auth isn't available (e.g. in tests), pass through
         def _passthrough():
             return {}
-        return Depends(_passthrough)
+        return _passthrough
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -298,3 +306,83 @@ def feature_access(feature_key: str, business_id: int) -> dict:
         "current_tier":  effective,
         "upgrade_url":   "/pricing",
     }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sprint 2 — Product count limits per plan
+# ─────────────────────────────────────────────────────────────────────────────
+
+PLAN_PRODUCT_LIMITS: dict[str, int | None] = {
+    "FREE":    10,
+    "STARTER": 25,
+    "GROWTH":  None,  # None = unlimited
+    "PRO":     None,
+}
+
+
+def get_product_limit(business_id: int) -> int | None:
+    """
+    Return the product count limit for this business's current plan.
+    None means unlimited.
+    Fails safely — returns None (unlimited) on any error.
+    """
+    try:
+        plan_info = _get_business_plan(business_id)
+        effective = _normalise_tier(
+            plan_info["tier"],
+            plan_info["billing_status"],
+            plan_info["trial_ends_at"],
+        )
+        return PLAN_PRODUCT_LIMITS.get(effective, 10)
+    except Exception as exc:
+        log.warning("get_product_limit: error for biz %s: %s — allowing", business_id, exc)
+        return None   # fail open: don't block on plan check errors
+
+
+def check_product_limit(business_id: int) -> dict | None:
+    """
+    Check if this business has reached its product limit.
+
+    Returns None if the limit is not reached (proceed normally).
+    Returns a structured error dict if the limit IS reached:
+        {"error": "plan_limit", "message": "...", "limit": N, "upgrade_url": "/pricing"}
+
+    Called ONLY in POST /products — never in PATCH, DELETE, or import.
+    """
+    limit = get_product_limit(business_id)
+    if limit is None:
+        return None   # unlimited plan — no check needed
+
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("products")
+            .select("id", count="exact")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        current_count = res.count if hasattr(res, "count") and res.count is not None else len(res.data or [])
+    except Exception as exc:
+        log.warning("check_product_limit: count query failed for biz %s: %s — allowing", business_id, exc)
+        return None   # fail open
+
+    if current_count >= limit:
+        plan_info = _get_business_plan(business_id)
+        effective = _normalise_tier(
+            plan_info["tier"], plan_info["billing_status"], plan_info["trial_ends_at"]
+        )
+        plan_label = _PLAN_LABELS.get(effective, effective)
+        log.info(
+            "PRODUCT_LIMIT: biz=%s plan=%s limit=%d current=%d",
+            business_id, effective, limit, current_count,
+        )
+        return {
+            "error":       "plan_limit",
+            "message":     (
+                f"You have reached the {limit}-product limit on your {plan_label} plan. "
+                f"Upgrade to add more products."
+            ),
+            "limit":       limit,
+            "current":     current_count,
+            "upgrade_url": "/pricing",
+        }
+    return None

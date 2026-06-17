@@ -352,6 +352,13 @@ def _wire_routes():
 
     # business_routes
     _biz.send_whatsapp          = send_whatsapp
+
+    # Sprint 1: inject send_whatsapp into crud.orders for owner notifications
+    try:
+        import crud.orders as _crud_orders
+        _crud_orders.send_whatsapp = send_whatsapp
+    except Exception as _e:
+        log.warning("Sprint1: could not inject send_whatsapp into crud.orders: %s", _e)
     _biz.SHARED_WA_TOKEN        = SHARED_WA_TOKEN
     _biz.SHARED_PHONE_NUMBER_ID = SHARED_PHONE_NUMBER_ID
 

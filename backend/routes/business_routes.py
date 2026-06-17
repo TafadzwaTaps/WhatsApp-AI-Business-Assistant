@@ -48,6 +48,8 @@ class BusinessUpdate(BaseModel):
     currency:          Optional[str]  = None  # e.g. "USD", "ZWL", "ZAR"
     currency_symbol:   Optional[str]  = None  # e.g. "$", "R", "ZWL$"
     menu_header:       Optional[str]  = None  # Custom header shown above menu items
+    # H3 fix: allow growth automation and other feature flags to be persisted
+    features_json:     Optional[dict] = None  # arbitrary feature flags, stored as JSONB
 
 
 @router.get("/me")
@@ -293,6 +295,16 @@ def create_product(product: ProductCreate, user=Depends(require_business)):
     bid = user["business_id"]
     if not product.name or not product.name.strip(): raise HTTPException(422, "Product name cannot be empty")
     if product.price < 0: raise HTTPException(422, "Product price must be non-negative")
+    # Sprint 2: Plan-based product limit (edit/delete/import are NOT affected)
+    try:
+        from core.plan_guard import check_product_limit
+        limit_error = check_product_limit(bid)
+        if limit_error:
+            raise HTTPException(403, detail=limit_error)
+    except HTTPException:
+        raise
+    except Exception as _lim_exc:
+        log.warning("product limit check failed (non-blocking): %s", _lim_exc)
     try:
         created = crud.create_product(bid, product)
     except ValueError as exc: raise HTTPException(422, str(exc))
@@ -343,6 +355,12 @@ def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
         order = create_order_supabase(business_id=user["business_id"],
                                       customer_phone=data.customer_phone, cart=data.items)
     except ValueError as exc: raise HTTPException(400, str(exc))
+    # Sprint 1: Notify business owner — fail silently
+    try:
+        from crud.orders import notify_owner_new_order
+        notify_owner_new_order(user["business_id"], order)
+    except Exception:
+        pass
     return {"message": "Order created", "order_id": order.get("id"),
             "order": order, "invoice": generate_invoice_text(order)}
 
@@ -567,7 +585,12 @@ def reminder_preview(order_id: int, user=Depends(require_business)):
 
 @router.get("/analytics/stats")
 def analytics_stats(user=Depends(require_business)):
-    return crud.get_business_stats(user["business_id"])
+    # Sprint 4: use 60s cached version to reduce Supabase load
+    try:
+        from crud.analytics import get_business_stats_cached
+        return get_business_stats_cached(user["business_id"])
+    except Exception:
+        return crud.get_business_stats(user["business_id"])
 
 
 @router.get("/analytics/top-customers")
@@ -883,3 +906,9 @@ async def import_products_csv(
     except Exception as exc:
         log.error("import_products_csv error: %s", exc)
         raise HTTPException(500, f"Import failed: {exc}")
+
+@router.get("/analytics/satisfaction")
+def analytics_satisfaction(user=Depends(require_business)):
+    """Sprint 5 — Customer satisfaction score from user_memory.last_rating."""
+    from crud.analytics import get_satisfaction_score
+    return get_satisfaction_score(user["business_id"])

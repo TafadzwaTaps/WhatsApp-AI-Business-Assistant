@@ -12,6 +12,41 @@ from crud.businesses import get_all_businesses
 
 log = logging.getLogger(__name__)
 
+# ── Sprint 4: Simple in-memory TTL cache ──────────────────────────────────────
+# No Redis, no new dependencies. stdlib only.
+# Cache is keyed by (function_name, business_id).
+# Expires after TTL_SECONDS. Thread-safe for typical single-worker Render deploys.
+import time as _time
+from typing import Any as _Any
+
+_CACHE_TTL = 60   # seconds
+_cache: dict[tuple, tuple[float, _Any]] = {}
+
+
+def _cache_get(key: tuple) -> tuple[bool, _Any]:
+    """Return (hit, value). hit=False if expired or missing."""
+    entry = _cache.get(key)
+    if entry is None:
+        return False, None
+    ts, val = entry
+    if _time.monotonic() - ts > _CACHE_TTL:
+        del _cache[key]
+        return False, None
+    return True, val
+
+
+def _cache_set(key: tuple, value: _Any) -> None:
+    _cache[key] = (_time.monotonic(), value)
+
+
+def _cache_invalidate_business(business_id: int) -> None:
+    """Call after writes (order/product changes) to clear stale data."""
+    stale = [k for k in _cache if len(k) >= 2 and k[1] == business_id]
+    for k in stale:
+        _cache.pop(k, None)
+
+
+
 
 # ── Admin stats ───────────────────────────────────────────────────────────────
 
@@ -126,7 +161,8 @@ def get_business_stats(business_id: int) -> dict:
         }
     except Exception as exc:
         log.warning("get_business_stats error: %s", exc)
-        return {
+    
+    return {
             "total_orders": 0, "paid_orders": 0, "total_revenue": 0.0,
             "pending_orders": 0, "active_customers": 0,
             "ai_handled": 0, "human_handled": 0,
@@ -355,3 +391,58 @@ def get_segment_summary(business_id: int) -> dict:
     except Exception as exc:
         log.warning("get_segment_summary error: %s", exc)
         return {"vip": 0, "loyal": 0, "regular": 0, "new": 0, "prospect": 0, "total": 0}
+
+def get_business_stats_cached(business_id: int) -> dict:
+    """
+    Sprint 4: Cached version of get_business_stats.
+    60-second TTL per business. Falls back to live query on any error.
+    Called by routes/business_routes.py /analytics/stats endpoint.
+    """
+    _ck = ("get_business_stats", business_id)
+    hit, cached = _cache_get(_ck)
+    if hit:
+        return cached
+    result = get_business_stats(business_id)
+    _cache_set(_ck, result)
+    return result
+
+
+def get_segment_summary_cached(business_id: int) -> dict:
+    """
+    Sprint 4: Cached version of get_segment_summary.
+    """
+    _ck = ("get_segment_summary", business_id)
+    hit, cached = _cache_get(_ck)
+    if hit:
+        return cached
+    result = get_segment_summary(business_id)
+    _cache_set(_ck, result)
+    return result
+
+def get_satisfaction_score(business_id: int) -> dict:
+    """
+    Sprint 5 — Customer Satisfaction Score.
+    Reads last_rating from user_memory. No new tables or surveys.
+    Returns: {avg_rating, rated_count, total_customers}
+    """
+    try:
+        res = (
+            supabase.table("user_memory")
+            .select("last_rating")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        rows = res.data or []
+        ratings = [
+            float(r["last_rating"]) for r in rows
+            if r.get("last_rating") is not None
+        ]
+        avg = round(sum(ratings) / len(ratings), 1) if ratings else None
+        return {
+            "avg_rating":      avg,
+            "rated_count":     len(ratings),
+            "total_customers": len(rows),
+        }
+    except Exception as exc:
+        log.warning("get_satisfaction_score error: %s", exc)
+        return {"avg_rating": None, "rated_count": 0, "total_customers": 0}

@@ -34,6 +34,8 @@ def create_business(data) -> dict:
         row["use_shared_number"] = bool(data.use_shared_number)
     if hasattr(data, "contact_phone") and data.contact_phone:
         row["contact_phone"] = data.contact_phone.strip()
+    if hasattr(data, "owner_email") and data.owner_email:        # C1
+        row["owner_email"] = data.owner_email.strip().lower()
 
     res = supabase.table("businesses").insert(row).execute()
     biz = _one("businesses", res)

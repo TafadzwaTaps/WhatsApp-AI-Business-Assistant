@@ -122,17 +122,18 @@ def onboarding_progress(user=Depends(require_business)):
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("id, name, category")
+            .select("id, name, category, onboarding_step, onboarding_completed")
             .eq("id", bid)
             .limit(1)
             .execute()
         )
         biz = res.data[0] if res.data else {}
-        # onboarding_step/onboarding_completed may not exist yet (schema upgrade pending)
+        # L2 fix: columns now fetched — .get() still has safe defaults
+        # in case the schema migration hasn't run yet
         return {
-            "business_id":  bid,
-            "current_step": biz.get("onboarding_step", 1),
-            "completed":    bool(biz.get("onboarding_completed", False)),
+            "business_id":   bid,
+            "current_step":  biz.get("onboarding_step", 1),
+            "completed":     bool(biz.get("onboarding_completed", False)),
             "business_name": biz.get("name", ""),
         }
     except Exception as exc:

@@ -40,6 +40,7 @@ class SignupRequest(BaseModel):
     business_name:      str
     username:           str
     password:           str
+    email:             str = ""   # C1 fix: collected at signup, stored as owner_email
     whatsapp_phone_id:  str = ""
     whatsapp_token:     str = ""
     category:          str = ""
@@ -89,6 +90,7 @@ def signup(data: SignupRequest, request: Request):
         name              = data.business_name
         owner_username    = data.username
         owner_password    = data.password
+        owner_email       = data.email.strip().lower() if data.email else ""  # C1
         whatsapp_phone_id = phone_id
         whatsapp_token    = data.whatsapp_token.strip() or None
         category          = data.category.strip() if data.category else ""

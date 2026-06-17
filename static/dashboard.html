@@ -171,6 +171,29 @@
       <div class="page-title">Dashboard <span>Overview</span></div>
       <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;" id="biz-name-header">—</div>
     </div>
+
+    <!-- Sprint 6: Post-wizard share store banner — dismissible, localStorage-gated -->
+    <div id="share-store-banner" style="display:none;background:rgba(34,197,94,0.08);
+         border:1px solid rgba(34,197,94,0.3);border-radius:12px;padding:14px 18px;
+         margin-bottom:16px;align-items:center;gap:14px;flex-wrap:wrap;">
+      <span style="font-size:22px;flex-shrink:0;">🎉</span>
+      <div style="flex:1;min-width:200px;">
+        <div style="font-size:14px;font-weight:700;margin-bottom:3px;">Your store is live!</div>
+        <div id="share-store-url" style="font-family:var(--mono);font-size:11px;
+             color:var(--green);word-break:break-all;"></div>
+      </div>
+      <button onclick="copyStoreLink()"
+              style="background:var(--green);color:#000;font-weight:800;font-size:12px;
+                     padding:8px 16px;border-radius:8px;border:none;cursor:pointer;
+                     white-space:nowrap;flex-shrink:0;">
+        📋 Copy Link
+      </button>
+      <button onclick="dismissShareBanner()"
+              style="background:transparent;color:var(--text-dim);border:none;
+                     cursor:pointer;font-size:16px;padding:4px 8px;flex-shrink:0;"
+              title="Dismiss">✕</button>
+    </div>
+
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
       <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
@@ -178,6 +201,8 @@
       <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
       <!-- Feature 2: Repeat customer metric -->
       <div class="stat-card"><div class="stat-label">Repeat Rate</div><div class="stat-value" id="stat-repeat-rate">—</div><div class="stat-sub" id="stat-repeat-sub">Customers who reordered</div></div>
+      <!-- Sprint 5: Customer satisfaction score -->
+      <div class="stat-card"><div class="stat-label">⭐ Satisfaction</div><div class="stat-value" id="stat-satisfaction">—</div><div class="stat-sub" id="stat-satisfaction-sub">Avg customer rating</div></div>
     </div>
 
     <!-- ═══ Feature 8: BUSINESS HEALTH WIDGET ═══════════════════════════════ -->

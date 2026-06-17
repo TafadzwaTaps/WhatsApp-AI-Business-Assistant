@@ -30,8 +30,14 @@ def create_order(business_id: int, order) -> dict:
         "payment_status": "pending",
         "created_at":     _now(),
     }
-    res = supabase.table("orders").insert(row).execute()
-    return _one("orders", res)
+    res    = supabase.table("orders").insert(row).execute()
+    created = _one("orders", res)
+    # Sprint 1: Notify business owner — fail silently, never blocks order creation
+    try:
+        notify_owner_new_order(business_id, created)
+    except Exception:
+        pass
+    return created
 
 
 def get_orders(business_id: int) -> list[dict]:
@@ -210,3 +216,85 @@ def get_dashboard_stats(business_id: int) -> dict:
         "customers_per_day": customers_by_day,
         "recent_orders":     recent_orders,
     }
+
+def notify_owner_new_order(business_id: int, order: dict) -> None:
+    """
+    Sprint 1 — Send a WhatsApp notification to the business owner when a
+    new order is created.
+
+    Design:
+      • Fail silently — any error is logged but never propagates.
+      • No duplicate check needed: called once per order insert.
+      • Uses existing send_whatsapp() injected at runtime by main.py.
+      • Reads contact_phone from the businesses table.
+      • Customer order flow and reply are completely unaffected.
+    """
+    try:
+        biz = supabase.table("businesses").select(
+            "name, contact_phone, whatsapp_phone_id, whatsapp_token, use_shared_number"
+        ).eq("id", business_id).limit(1).execute()
+        biz_row = (biz.data or [{}])[0]
+
+        owner_phone = (biz_row.get("contact_phone") or "").strip()
+        if not owner_phone:
+            return  # no contact phone configured — skip silently
+
+        order_id   = order.get("id", "?")
+        customer   = order.get("customer_phone", "unknown")
+        total      = float(order.get("total_price") or 0)
+        items      = order.get("items") or []
+        item_count = len(items) if isinstance(items, list) else 1
+        # Use first item name if available, else product_name field
+        first_item = ""
+        if isinstance(items, list) and items:
+            first_item = items[0].get("name") or items[0].get("product_name") or ""
+        if not first_item:
+            first_item = order.get("product_name", "")
+
+        msg = (
+            f"🔔 *New Order Received!*\n\n"
+            f"📦 Order: *ORDER-{order_id}*\n"
+            f"👤 Customer: {customer}\n"
+            f"🛍️ Items: {item_count}" +
+            (f" ({first_item})" if first_item else "") +
+            f"\n💰 Total: *${total:.2f}*\n\n"
+            f"_Open your dashboard to manage this order._"
+        )
+
+        # Import send_whatsapp lazily to avoid circular imports
+        # In production, main.py injects send_whatsapp into this module;
+        # fall back to a direct import if available.
+        _sw = globals().get("send_whatsapp")
+        if _sw is None:
+            try:
+                from main import send_whatsapp as _sw
+            except Exception:
+                return
+
+        # Determine which phone number ID + token to use
+        phone_id = (biz_row.get("whatsapp_phone_id") or "").strip()
+        token    = (biz_row.get("whatsapp_token") or "").strip()
+
+        if not phone_id or not token:
+            # Try shared number
+            import os as _os
+            phone_id = _os.getenv("SHARED_PHONE_NUMBER_ID", "")
+            token    = _os.getenv("SHARED_WA_TOKEN", "")
+
+        if not phone_id or not token:
+            return  # no credentials available
+
+        _sw(phone_id, token, owner_phone, msg)
+        import logging as _l
+        _l.getLogger("wazibot").info(
+            "notify_owner: sent for order=%s biz=%s", order_id, business_id
+        )
+    except Exception as exc:
+        import logging as _l
+        _l.getLogger("wazibot").warning(
+            "notify_owner_new_order: failed silently biz=%s: %s", business_id, exc
+        )
+
+
+# Runtime injection point — main.py sets this after defining send_whatsapp
+send_whatsapp = None

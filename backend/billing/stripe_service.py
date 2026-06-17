@@ -54,10 +54,42 @@ TIERS: dict[str, dict] = {
         "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_FREE_MONTHLY", ""),
         "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_FREE_ANNUAL", ""),
     },
+    "starter": {
+        "label":            "Starter",
+        "price_monthly":    9,
+        "price_annual":     86,     # 9 * 12 * 0.8 = 86.40 → 86
+        "messages_per_day": -1,
+        "products_limit":   25,
+        "campaigns":        False,
+        "analytics":        False,
+        "multi_agent":      False,
+        "api_access":       False,
+        "priority_support": False,
+        "ai_roles":         False,
+        "catalog_images":   False,
+        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY", ""),
+        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL", ""),
+    },
+    "growth": {
+        "label":            "Growth",
+        "price_monthly":    29,
+        "price_annual":     278,    # 29 * 12 * 0.8
+        "messages_per_day": -1,
+        "products_limit":   -1,
+        "campaigns":        True,
+        "analytics":        True,
+        "multi_agent":      False,
+        "api_access":       False,
+        "priority_support": False,
+        "ai_roles":         True,
+        "catalog_images":   True,
+        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_GROWTH_MONTHLY", ""),
+        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_GROWTH_ANNUAL", ""),
+    },
     "pro": {
         "label":            "Pro",
-        "price_monthly":    29,
-        "price_annual":     290,
+        "price_monthly":    79,    # H6 fix: was incorrectly set to 29 (same as Growth)
+        "price_annual":     758,   # 79 * 12 * 0.8 = 758.40 → 758
         "messages_per_day": -1,   # unlimited
         "products_limit":   100,
         "campaigns":        True,

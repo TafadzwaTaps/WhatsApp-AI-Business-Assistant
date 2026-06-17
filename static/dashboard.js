@@ -222,7 +222,36 @@ function logout() {
 }
 
 // ── API ───────────────────────────────────────────────────
-async function apiFetch(path, opts={}, _retried=false) {
+async 
+/* Sprint 4 — Client-side /me cache (60s TTL)
+   /me is called 12+ times per page load across functions.
+   This cache reduces those to 1 real HTTP request per minute.
+   Cache is per-session (memory only), invalidated on page reload. */
+const _meCache = { data: null, ts: 0, ttl: 60000 };
+
+async function getCachedMe() {
+  const now = Date.now();
+  if (_meCache.data && (now - _meCache.ts) < _meCache.ttl) {
+    return _meCache.data;
+  }
+  try {
+    const result = await apiFetch('/me');
+    if (result) {
+      _meCache.data = result;
+      _meCache.ts   = now;
+    }
+    return result;
+  } catch (e) {
+    return _meCache.data || null;
+  }
+}
+
+function invalidateMeCache() {
+  _meCache.data = null;
+  _meCache.ts   = 0;
+}
+
+function apiFetch(path, opts={}, _retried=false) {
   // Guard: never fire API calls without a token — avoids 401 spam on page load
   if (!token && !opts._public) return null;
   // FIX: _retried flag prevents infinite refresh loops — one retry max.
@@ -315,7 +344,7 @@ function showSection(name, btn) {
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
-  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); }
+  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); try { showShareStoreBanner(); } catch(_){} }
   if (name==='handoff') loadHandoffStats();
   if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
@@ -332,6 +361,9 @@ function toast(msg, isError=false) {
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3500);
 }
+
+// Alias used by sprint-added functions
+const showToast = toast;
 
 // ── SUPERADMIN ────────────────────────────────────────────
 async function loadAdminData() {
@@ -3473,7 +3505,7 @@ async function loadHealthWidget() {
   try {
     // Fetch data needed for health checks in parallel
     const [biz, products, orders] = await Promise.all([
-      apiFetch('/me').catch(() => null),
+      getCachedMe(),
       apiFetch('/products').catch(() => []),
       apiFetch('/orders').catch(() => []),
     ]);
@@ -3802,7 +3834,7 @@ async function importProductsCSV(input) {
 /* ══ F5: UPGRADE PROMPTS ════════════════════════════════════════════════ */
 async function checkUpgradePrompts() {
   try {
-    const biz  = await apiFetch('/me').catch(() => null);
+    const biz  = await getCachedMe();
     if (!biz) return;
     const tier   = (biz.subscription_tier || 'free').toLowerCase();
     const isFree = tier === 'free';
@@ -3825,3 +3857,90 @@ window.addEventListener('DOMContentLoaded', () => {
     try { loadRepeatCustomerStat(); } catch (_) {}
   }, 1500);
 });
+
+
+/* ══ Sprint 5: CUSTOMER SATISFACTION SCORE ══════════════════════════════════ */
+async function loadSatisfactionScore() {
+  try {
+    const data = await apiFetch('/analytics/satisfaction');
+    if (!data) return;
+    const scoreEl = document.getElementById('stat-satisfaction');
+    const subEl   = document.getElementById('stat-satisfaction-sub');
+    if (scoreEl) {
+      scoreEl.textContent = data.avg_rating != null
+        ? data.avg_rating.toFixed(1) + ' / 5'
+        : '—';
+    }
+    if (subEl) {
+      subEl.textContent = data.rated_count > 0
+        ? data.rated_count + ' rating' + (data.rated_count !== 1 ? 's' : '')
+        : 'No ratings yet';
+    }
+  } catch (e) { /* non-critical */ }
+}
+
+
+/* ══ Sprint 6: POST-WIZARD SHARE STORE BANNER ═══════════════════════════════
+   Shows a dismissible "Your store is live" banner after wizard completion.
+   Uses localStorage so it never re-appears after dismissal.
+   Reads /onboarding/progress (existing endpoint) and /me (cached) for slug.
+══════════════════════════════════════════════════════════════════════════════ */
+
+const _SHARE_BANNER_KEY = 'wazibot_share_banner_dismissed';
+
+async function showShareStoreBanner() {
+  // Bail immediately if already dismissed
+  if (localStorage.getItem(_SHARE_BANNER_KEY)) return;
+
+  try {
+    // Only show after wizard completion
+    const progress = await apiFetch('/onboarding/progress').catch(() => null);
+    if (!progress?.completed) return;
+
+    // Build store URL from business name slug
+    const biz  = await getCachedMe();
+    if (!biz)  return;
+
+    const name = (biz.name || '').trim();
+    if (!name) return;
+
+    const slug    = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+    const baseUrl = window.location.origin;
+    const storeUrl = `${baseUrl}/store/${slug}`;
+
+    // Populate and show the banner
+    const urlEl = document.getElementById('share-store-url');
+    if (urlEl) urlEl.textContent = storeUrl;
+
+    const banner = document.getElementById('share-store-banner');
+    if (banner) banner.style.display = 'flex';
+
+  } catch (e) {
+    // Non-critical — never break the dashboard
+  }
+}
+
+function dismissShareBanner() {
+  const banner = document.getElementById('share-store-banner');
+  if (banner) banner.style.display = 'none';
+  localStorage.setItem(_SHARE_BANNER_KEY, '1');
+}
+
+function copyStoreLink() {
+  const urlEl = document.getElementById('share-store-url');
+  if (!urlEl) return;
+  const url = urlEl.textContent.trim();
+  if (!url) return;
+  navigator.clipboard.writeText(url).then(() => {
+    toast('✅ Store link copied!');
+  }).catch(() => {
+    // Fallback for browsers that block clipboard
+    const input = document.createElement('input');
+    input.value = url;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    document.body.removeChild(input);
+    toast('✅ Store link copied!');
+  });
+}
