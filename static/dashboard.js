@@ -175,6 +175,11 @@ function saveSession(data, username) {
   localStorage.setItem('wazi_role',    userRole   || '');
   localStorage.setItem('wazi_user',    userName   || '');
   localStorage.setItem('wazi_biz',     bizName    || '');
+  // H4: if signup included a pre-selected plan, store for checkout redirect
+  if (data.selected_tier) {
+    localStorage.setItem('wazi_pending_tier',    data.selected_tier);
+    localStorage.setItem('wazi_pending_period',  data.billing_period || 'monthly');
+  }
 }
 
 let _refreshInFlight = false;
@@ -343,7 +348,7 @@ function showSection(name, btn) {
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
-  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); try { showShareStoreBanner(); } catch(_){} }
+  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); try { loadSatisfactionScore(); } catch(_){} try { showShareStoreBanner(); } catch(_){} }
   if (name==='handoff') loadHandoffStats();
   if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
@@ -1445,6 +1450,35 @@ function escHtml(s){
     .replace(/"/g,'&quot;');
 }
 
+// H4: After signup with a pre-selected plan, redirect to Stripe checkout once.
+// Fires on first init() after signup from pricing page. Clears immediately so
+// it never runs twice. Fails silently — user stays on dashboard if checkout fails.
+function checkPendingCheckout() {
+  const tier   = localStorage.getItem('wazi_pending_tier');
+  const period = localStorage.getItem('wazi_pending_period') || 'monthly';
+  if (!tier || !token) return;
+
+  // Clear immediately — only redirect once regardless of outcome
+  localStorage.removeItem('wazi_pending_tier');
+  localStorage.removeItem('wazi_pending_period');
+
+  // Small delay so dashboard renders first before redirect
+  setTimeout(async () => {
+    try {
+      const res = await apiFetch('/billing/create-checkout', {
+        method: 'POST',
+        body: JSON.stringify({ tier: tier, billing_period: period }),
+      });
+      if (res && res.url) {
+        window.location.href = res.url;
+      }
+    } catch (e) {
+      // Non-fatal: user remains on dashboard, can upgrade manually
+      console.warn('H4: pending checkout redirect failed:', e);
+    }
+  }, 1500);
+}
+
 // ── INIT ──────────────────────────────────────────────────
 function init(){
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
@@ -1456,6 +1490,8 @@ function init(){
   checkStatus();
   if(userRole==='superadmin'){loadAdminData();}
   else{loadOrders();loadProducts();loadConversations();loadCustomerStats();}
+  // H4: redirect to Stripe checkout if user just signed up from pricing page
+  checkPendingCheckout();
 }
 
 // If access token is valid → show dashboard immediately

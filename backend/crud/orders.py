@@ -32,6 +32,12 @@ def create_order(business_id: int, order) -> dict:
     }
     res    = supabase.table("orders").insert(row).execute()
     created = _one("orders", res)
+    # M1: invalidate analytics cache so dashboard shows fresh stats immediately
+    try:
+        from crud.analytics import _cache_invalidate_business
+        _cache_invalidate_business(business_id)
+    except Exception:
+        pass
     # Sprint 1: Notify business owner — fail silently, never blocks order creation
     try:
         notify_owner_new_order(business_id, created)
@@ -261,15 +267,12 @@ def notify_owner_new_order(business_id: int, order: dict) -> None:
             f"_Open your dashboard to manage this order._"
         )
 
-        # Import send_whatsapp lazily to avoid circular imports
-        # In production, main.py injects send_whatsapp into this module;
-        # fall back to a direct import if available.
+        # Use send_whatsapp injected by main.py at startup.
+        # If not injected yet (e.g. during tests or early boot), skip silently.
+        # Never fall back to "from main import ..." — that causes a circular import.
         _sw = globals().get("send_whatsapp")
         if _sw is None:
-            try:
-                from main import send_whatsapp as _sw
-            except Exception:
-                return
+            return  # H1: not yet injected — skip silently, no circular import
 
         # Determine which phone number ID + token to use
         phone_id = (biz_row.get("whatsapp_phone_id") or "").strip()

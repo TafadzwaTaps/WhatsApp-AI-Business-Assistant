@@ -47,6 +47,10 @@ class SignupRequest(BaseModel):
     contact_phone:     str = ""
     use_shared_number: bool = True
     ref_code:          str  = ""   # optional referral code from signup link
+    # H4: passed from pricing page (?tier=growth&billing_period=annual)
+    # Included in signup response so frontend can redirect to checkout
+    tier:              str  = ""   # plan tier selected on pricing page
+    billing_period:    str  = "monthly"   # "monthly" | "annual"
 
     @validator("username")
     def username_valid(cls, v):
@@ -129,11 +133,18 @@ def signup(data: SignupRequest, request: Request):
     except Exception as _email_exc:
         log.warning("signup: welcome email failed (non-fatal): %s", _email_exc)
 
+    # H4: pass back tier/billing_period so frontend can redirect to checkout
+    # if the user arrived from the pricing page with a plan pre-selected
+    _tier           = (data.tier or "").strip().lower()
+    _billing_period = (data.billing_period or "monthly").strip().lower()
+
     return {
         **_token_pair(biz["owner_username"], "business", biz["id"]),
-        "role":          "business",
-        "business_name": biz["name"],
-        "business_id":   biz["id"],
+        "role":           "business",
+        "business_name":  biz["name"],
+        "business_id":    biz["id"],
+        "selected_tier":  _tier or None,
+        "billing_period": _billing_period if _tier else None,
     }
 
 

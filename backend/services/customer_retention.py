@@ -114,7 +114,14 @@ def predict_reorders(business_id: int) -> list[dict]:
         biz  = crud.get_business_by_id(business_id)
         biz_name = biz.get("name", "our store") if biz else "our store"
     except Exception as exc:
-        log.warning("predict_reorders: db error: %s", exc)
+        # M4: [Errno 11] "Resource temporarily unavailable" is a transient
+        # connection-pool exhaustion — log at DEBUG to reduce noise.
+        # All other unexpected errors stay at WARNING level.
+        _msg = str(exc)
+        if "temporarily unavailable" in _msg or "Errno 11" in _msg or "EAGAIN" in _msg:
+            log.debug("predict_reorders: transient db error (pool busy): %s", exc)
+        else:
+            log.warning("predict_reorders: db error: %s", exc)
         return []
 
     results = []
@@ -255,7 +262,11 @@ def get_churn_risk_customers(
         loyal = crud.get_customers_by_segment(business_id, "loyal")
         at_risk_rows = vip + loyal
     except Exception as exc:
-        log.warning("get_churn_risk_customers: db error: %s", exc)
+        _msg = str(exc)
+        if "temporarily unavailable" in _msg or "Errno 11" in _msg or "EAGAIN" in _msg:
+            log.debug("get_churn_risk_customers: transient db error (pool busy): %s", exc)
+        else:
+            log.warning("get_churn_risk_customers: db error: %s", exc)
         return []
 
     results = []
