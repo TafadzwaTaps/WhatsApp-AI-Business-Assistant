@@ -221,8 +221,6 @@ function logout() {
   window.location.href = '/';
 }
 
-// ── API ───────────────────────────────────────────────────
-async 
 /* Sprint 4 — Client-side /me cache (60s TTL)
    /me is called 12+ times per page load across functions.
    This cache reduces those to 1 real HTTP request per minute.
@@ -251,7 +249,8 @@ function invalidateMeCache() {
   _meCache.ts   = 0;
 }
 
-function apiFetch(path, opts={}, _retried=false) {
+// ── API ───────────────────────────────────────────────────
+async function apiFetch(path, opts={}, _retried=false) {
   // Guard: never fire API calls without a token — avoids 401 spam on page load
   if (!token && !opts._public) return null;
   // FIX: _retried flag prevents infinite refresh loops — one retry max.
