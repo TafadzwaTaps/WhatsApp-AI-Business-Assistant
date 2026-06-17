@@ -354,13 +354,16 @@ def check_product_limit(business_id: int) -> dict | None:
 
     try:
         from core.db import supabase
+        # M6: select("id") only — avoids fetching full rows and doesn't rely on
+        # res.count which requires specific PostgREST headers that may not be set.
+        # len(res.data) is always reliable in supabase-py regardless of version.
         res = (
             supabase.table("products")
-            .select("id", count="exact")
+            .select("id")
             .eq("business_id", business_id)
             .execute()
         )
-        current_count = res.count if hasattr(res, "count") and res.count is not None else len(res.data or [])
+        current_count = len(res.data or [])
     except Exception as exc:
         log.warning("check_product_limit: count query failed for biz %s: %s — allowing", business_id, exc)
         return None   # fail open

@@ -50,6 +50,8 @@ class BusinessUpdate(BaseModel):
     menu_header:       Optional[str]  = None  # Custom header shown above menu items
     # H3 fix: allow growth automation and other feature flags to be persisted
     features_json:     Optional[dict] = None  # arbitrary feature flags, stored as JSONB
+    # H5: allow business owners to add/update their contact email
+    owner_email:       Optional[str]  = None
 
 
 @router.get("/me")
@@ -58,6 +60,20 @@ def get_me(user=Depends(require_business)):
     if not b: raise HTTPException(404, "Not found")
     b.pop("owner_password", None)
     b.pop("whatsapp_token", None)
+    # H2: provide safe defaults for columns that may not exist if the schema
+    # migration hasn't been run yet — prevents frontend undefined checks
+    b.setdefault("subscription_tier",  "free")
+    b.setdefault("billing_status",     "free")
+    b.setdefault("trial_ends_at",      None)
+    b.setdefault("features_json",      {})
+    b.setdefault("onboarding_step",    1)
+    b.setdefault("onboarding_completed", False)
+    b.setdefault("owner_email",        None)
+    b.setdefault("contact_phone",      None)
+    b.setdefault("use_shared_number",  False)
+    b.setdefault("ecocash_number",     None)
+    b.setdefault("paypal_email",       None)
+    b.setdefault("cash_enabled",       False)
     return b
 
 

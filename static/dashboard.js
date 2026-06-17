@@ -3877,7 +3877,29 @@ async function checkUpgradePrompts() {
     if (cp) cp.style.display = isFree ? 'block' : 'none';
     const gp = document.getElementById('upgrade-prompt-growth');
     if (gp) gp.style.display = isFree ? 'block' : 'none';
+    // H5: show email-missing banner when owner_email not set
+    const emailBanner = document.getElementById('email-missing-banner');
+    if (emailBanner) {
+      const dismissed = sessionStorage.getItem('wazi_email_banner_done');
+      emailBanner.style.display = (!biz.owner_email && !dismissed) ? 'block' : 'none';
+    }
   } catch (e) { /* non-critical */ }
+}
+
+// H5: save owner_email via PATCH /me — called from the banner button
+async function saveOwnerEmail() {
+  const emailEl = document.getElementById('set-owner-email');
+  if (!emailEl) return;
+  const email = (emailEl.value || '').trim();
+  if (!email || !email.includes('@')) { toast('Enter a valid email address', true); return; }
+  try {
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ owner_email: email }) });
+    toast('✅ Email saved');
+    sessionStorage.setItem('wazi_email_banner_done', '1');
+    invalidateMeCache();
+    const banner = document.getElementById('email-missing-banner');
+    if (banner) banner.style.display = 'none';
+  } catch (e) { toast('Could not save email', true); }
 }
 
 /* ══ F6: HEALTH SCORE NUMERIC (extends existing loadHealthWidget) ════════ */

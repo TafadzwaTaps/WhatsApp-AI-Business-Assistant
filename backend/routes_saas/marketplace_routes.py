@@ -119,15 +119,41 @@ def api_store(slug: str):
     """JSON: public store data for one business."""
     try:
         from core.db import supabase
-        name_pattern = _slug_to_name(slug)
+        name_pattern = _slug_to_name(slug)   # e.g. "flavoury-foods" → "flavoury foods"
+
+        # M5/M8: try exact name match first (case-insensitive) to avoid matching
+        # wrong business with similar name; fall back to ilike contains-match
         res = (
             supabase.table("businesses")
             .select(_BIZ_PUBLIC_FIELDS)
             .eq("is_active", True)
-            .ilike("name", f"%{name_pattern}%")
+            .ilike("name", name_pattern)       # exact ci match: "flavoury foods"
             .limit(1)
             .execute()
         )
+        if not res.data:
+            # Fallback 1: contains match on space-expanded slug
+            res = (
+                supabase.table("businesses")
+                .select(_BIZ_PUBLIC_FIELDS)
+                .eq("is_active", True)
+                .ilike("name", f"%{name_pattern}%")
+                .limit(1)
+                .execute()
+            )
+        if not res.data:
+            # Fallback 2: try matching against the raw slug characters (no space expansion)
+            # Handles single-word names like "Firelilyfarrismum" whose slug is
+            # "firelilyfarrismum" — different from the space-expanded form
+            slug_compact = slug.replace("-", "")
+            res = (
+                supabase.table("businesses")
+                .select(_BIZ_PUBLIC_FIELDS)
+                .eq("is_active", True)
+                .ilike("name", f"%{slug_compact}%")
+                .limit(1)
+                .execute()
+            )
         if not res.data:
             raise HTTPException(404, f"Business '{slug}' not found")
         biz = _safe_biz(res.data[0])

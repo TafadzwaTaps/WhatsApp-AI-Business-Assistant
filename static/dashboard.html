@@ -1060,6 +1060,27 @@
               <div class="form-group"><label>Instagram</label><input type="text" id="set-instagram" placeholder="@yourbiz"/></div>
               <div class="form-group"><label>Facebook</label><input type="text" id="set-facebook" placeholder="facebook.com/yourbiz"/></div>
             </div>
+            <!-- H5: shown when owner_email is missing; dismissed via localStorage -->
+            <div id="email-missing-banner" style="display:none;
+                 background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);
+                 border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;">
+              <strong style="color:var(--amber);">📧 Add your email address</strong>
+              <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.6;">
+                Your email is used for weekly reports, order notifications, and account recovery.
+              </div>
+              <div class="form-group" style="margin-top:10px;">
+                <input type="email" id="set-owner-email"
+                       placeholder="yourname@example.com"
+                       style="width:100%;background:var(--surface2);border:1px solid var(--border);
+                              border-radius:8px;padding:9px 12px;color:var(--text);
+                              font-family:var(--mono);font-size:12px;box-sizing:border-box;"/>
+              </div>
+              <button onclick="saveOwnerEmail()"
+                      style="background:var(--amber);color:#000;font-weight:800;font-size:12px;
+                             padding:8px 18px;border-radius:7px;border:none;cursor:pointer;margin-top:6px;">
+                Save Email
+              </button>
+            </div>
             <div style="margin-top:8px;">
               <button class="btn btn-primary" onclick="saveProfile()">Save Profile</button>
             </div>
