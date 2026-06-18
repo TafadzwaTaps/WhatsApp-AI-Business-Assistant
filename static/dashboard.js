@@ -293,6 +293,22 @@ async function apiFetch(path, opts={}, _retried=false) {
       if (statusEl) statusEl.textContent = 'Session expired — logging out…';
       return null;
     }
+    if (res.status === 403) {
+      // Fix 3: distinguish plan-limit 403 from auth 403.
+      // plan_required errors show an upgrade modal and do NOT logout.
+      // All other 403s (wrong role, cross-tenant) still throw normally.
+      let body403 = {};
+      try { body403 = await res.json(); } catch {}
+      const detail = body403.detail || body403;
+      if (detail && (detail.error === 'plan_required' || (typeof detail === 'string' && detail.includes('plan_required')))) {
+        showPlanUpgradeModal(detail);
+        return null;  // caller receives null — same as auth failure, no logout
+      }
+      // Not a plan error — throw normally so caller handles it
+      const msg403 = (typeof detail === 'string' ? detail : detail.message) || res.statusText || 'Forbidden';
+      console.error('[apiFetch] 403', path, msg403);
+      throw new Error(msg403);
+    }
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
       try { const e = await res.json(); msg = e.detail || msg; } catch {}
@@ -1156,6 +1172,7 @@ async function loadSettings() {
     _setVal('set-description',   b.description || '');
     _setVal('set-contact-phone', b.contact_phone || '');
     _setVal('set-support-email', b.support_email || '');
+    _setVal('set-owner-email',   b.owner_email   || '');  // Sprint 8 Fix 5
     _setVal('set-address',       b.address || '');
     _setVal('set-city',          b.city || '');
     _setVal('set-hours',         b.business_hours || '');
@@ -1276,6 +1293,54 @@ function updateCurrencySymbol(code) {
   }
 }
 // Track if user manually edits the symbol
+
+/* ══ Fix 3: PLAN UPGRADE MODAL ══════════════════════════════════════════════
+   Called by apiFetch when backend returns plan_required 403.
+   Shows inline modal — does NOT logout, does NOT clear token.
+════════════════════════════════════════════════════════════════════════════ */
+function showPlanUpgradeModal(detail) {
+  const isObj      = typeof detail === 'object' && detail !== null;
+  const message    = isObj ? (detail.message    || 'This feature requires a higher plan.') : String(detail);
+  const upgradeUrl = isObj ? (detail.upgrade_url || '/pricing') : '/pricing';
+
+  let modal = document.getElementById('plan-upgrade-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'plan-upgrade-modal';
+    modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;align-items:center;justify-content:center;';
+    modal.innerHTML = `
+      <div style="background:var(--surface);border:1px solid rgba(245,158,11,0.5);
+                  border-radius:20px;padding:40px 36px;max-width:400px;width:90%;
+                  text-align:center;box-shadow:0 0 48px rgba(245,158,11,0.15);">
+        <div style="font-size:44px;margin-bottom:14px;">🔒</div>
+        <h2 id="pum-title" style="font-size:20px;font-weight:800;margin-bottom:10px;color:var(--text);">
+          Upgrade Required
+        </h2>
+        <p id="pum-message" style="font-family:var(--mono,monospace);font-size:13px;
+           color:var(--text-dim);line-height:1.7;margin-bottom:24px;"></p>
+        <a id="pum-btn" href="/pricing"
+           style="display:block;background:var(--green,#22c55e);color:#000;font-weight:800;
+                  font-size:14px;padding:13px;border-radius:10px;text-decoration:none;margin-bottom:12px;">
+          View Plans →
+        </a>
+        <button onclick="document.getElementById('plan-upgrade-modal').style.display='none'"
+                style="background:transparent;border:none;cursor:pointer;
+                       font-family:var(--mono,monospace);font-size:12px;color:var(--text-dim);">
+          Dismiss
+        </button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+
+  const msgEl = document.getElementById('pum-message');
+  if (msgEl) msgEl.textContent = message;
+  const btnEl = document.getElementById('pum-btn');
+  if (btnEl) btnEl.href = upgradeUrl;
+
+  modal.style.display = 'flex';
+  toast('⬆️ Upgrade your plan to use this feature');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const symEl = document.getElementById('set-currency-symbol');
   if (symEl) symEl.addEventListener('input', () => { symEl.dataset.userEdited = '1'; });
@@ -1465,7 +1530,7 @@ function checkPendingCheckout() {
   // Small delay so dashboard renders first before redirect
   setTimeout(async () => {
     try {
-      const res = await apiFetch('/billing/create-checkout', {
+      const res = await apiFetch('/billing/checkout', {
         method: 'POST',
         body: JSON.stringify({ tier: tier, billing_period: period }),
       });
@@ -1492,6 +1557,32 @@ function init(){
   else{loadOrders();loadProducts();loadConversations();loadCustomerStats();}
   // H4: redirect to Stripe checkout if user just signed up from pricing page
   checkPendingCheckout();
+  // Sprint 8: single consolidated post-auth init (replaces scattered DOM listeners)
+  _postLoginInit();
+}
+
+// Sprint 8: All post-auth initialisation in one place.
+// Every function here runs ONCE per page load, with staggered delays to avoid
+// hammering Supabase simultaneously. Replaces the scattered window.addEventListener
+// and appended DOMContentLoaded blocks from previous sprint sessions.
+function _postLoginInit() {
+  if (!token) return;  // not logged in — nothing to do
+
+  // Immediate: upgrade prompts read from /me which is already cached
+  try { checkUpgradePrompts(); }        catch(_) {}
+
+  // 1.5 s: repeat customer stat (lightweight analytics query)
+  setTimeout(() => {
+    try { loadRepeatCustomerStat(); }   catch(_) {}
+    try { loadSatisfactionScore();  }   catch(_) {}
+  }, 1500);
+
+  // 2 s: heavier UI features that depend on full session being established
+  setTimeout(() => {
+    try { checkFirstOrderCelebration(); } catch(_) {}
+    try { loadHealthWidget();           } catch(_) {}
+    try { showShareStoreBanner();       } catch(_) {}
+  }, 2000);
 }
 
 // If access token is valid → show dashboard immediately
@@ -3783,12 +3874,7 @@ if (_origShowSection) {
 }
 
 // On page load: check for first order celebration (runs once, 2s delay to let data settle)
-window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
-    try { checkFirstOrderCelebration(); } catch(_) {}
-    try { loadHealthWidget(); } catch(_) {}
-  }, 2000);
-});
+// Sprint 8: removed — consolidated into _postLoginInit()
 
 
 /* WAZIBOT-FEATURES-2-3-4-5-6 */
@@ -3908,12 +3994,7 @@ function computeHealthScore(checks) {
 }
 
 /* ══ ADDITIONAL DOMContentLoaded HOOKS ══════════════════════════════════ */
-window.addEventListener('DOMContentLoaded', () => {
-  setTimeout(() => {
-    try { checkUpgradePrompts(); } catch (_) {}
-    try { loadRepeatCustomerStat(); } catch (_) {}
-  }, 1500);
-});
+// Sprint 8: removed — consolidated into _postLoginInit()
 
 
 /* ══ Sprint 5: CUSTOMER SATISFACTION SCORE ══════════════════════════════════ */

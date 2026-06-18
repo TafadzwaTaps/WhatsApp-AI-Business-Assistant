@@ -14,6 +14,7 @@ from pydantic import BaseModel, validator
 
 import crud
 from core.auth import require_business, get_current_user
+from core.plan_guard import require_plan
 from core.crypto import TokenDecryptionError
 from services.ai import generate_reply
 from services.invoice_service import generate_invoice_text
@@ -424,7 +425,7 @@ class BroadcastRequest(BaseModel):
 
 
 @router.post("/broadcast")
-def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business)):
+def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     _rate_check("broadcast", request)
     bid      = user["business_id"]
     business = crud.get_business_by_id(bid)
@@ -498,7 +499,7 @@ class CampaignRequest(BaseModel):
 
 
 @router.post("/campaigns/send")
-async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business)):
+async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     _rate_check("campaign", request)
     from services.campaign_service import CampaignService, AUDIENCE_INFO
     bid = user["business_id"]
@@ -610,7 +611,7 @@ def analytics_stats(user=Depends(require_business)):
 
 
 @router.get("/analytics/top-customers")
-def analytics_top_customers(limit: int = 10, user=Depends(require_business)):
+def analytics_top_customers(limit: int = 10, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     return crud.get_top_customers(user["business_id"], limit=limit)
 
 
@@ -712,7 +713,7 @@ async def voice_transcribe(body: VoiceTranscribeRequest, user=Depends(require_bu
     )
     return {"ok": True, "transcript": transcript, "reply": reply}
 @router.get("/analytics/handoff-stats")
-def analytics_handoff_stats(user=Depends(require_business)):
+def analytics_handoff_stats(user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """
     #12 — Dashboard: Human Handoff & Agent Activity Analytics.
 
@@ -801,7 +802,7 @@ def analytics_handoff_stats(user=Depends(require_business)):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.get("/analytics/repeat-customers")
-def analytics_repeat_customers(user=Depends(require_business)):
+def analytics_repeat_customers(user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """
     Return repeat customer metrics for the dashboard overview card.
     Repeat customer = has order_count > 1 in user_memory.
@@ -924,7 +925,7 @@ async def import_products_csv(
         raise HTTPException(500, f"Import failed: {exc}")
 
 @router.get("/analytics/satisfaction")
-def analytics_satisfaction(user=Depends(require_business)):
+def analytics_satisfaction(user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """Sprint 5 — Customer satisfaction score from user_memory.last_rating."""
     from crud.analytics import get_satisfaction_score
     return get_satisfaction_score(user["business_id"])

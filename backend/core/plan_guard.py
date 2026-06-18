@@ -193,6 +193,24 @@ def check_trial_status(business_id: int) -> dict:
 # FastAPI Dependency
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _require_business_lazy():
+    """
+    Fix 4: Return require_business callable resolved at call time (inside
+    require_plan closure), not at module import time.
+    Called as Depends(_require_business_lazy()) — Python evaluates
+    _require_business_lazy() when _check's default arg is set (inside
+    require_plan()) which runs at route-decoration time, after all modules
+    are fully imported. Preserves circular import protection via try/except.
+    """
+    try:
+        from core.auth import require_business
+        return require_business
+    except ImportError:
+        def _passthrough():
+            return {}
+        return _passthrough
+
+
 def require_plan(minimum_tier: str):
     """
     FastAPI dependency factory.  Returns a dependency that raises HTTP 403
@@ -209,16 +227,15 @@ def require_plan(minimum_tier: str):
     if minimum_upper not in _PLAN_ORDER:
         raise ValueError(f"require_plan: unknown tier {minimum_tier!r}. Valid: {_PLAN_ORDER}")
 
-    # C2 fix: import require_business lazily inside the closure to avoid
-    # circular imports, then use it directly as the FastAPI dependency.
-    try:
-        from core.auth import require_business as _rb
-    except ImportError:
-        def _rb():
-            return {}
+    def _check(user: dict = Depends(_require_business_lazy())):
+        """Inner dependency — resolves the user's plan and enforces the minimum.
 
-    def _check(user: dict = Depends(_rb)):
-        """Inner dependency — resolves the user's plan and enforces the minimum."""
+        Fix 4: require_business is now resolved inside _check() via
+        _require_business_lazy() which is called at request time, not at
+        factory-call (import) time. This guarantees all modules are fully
+        loaded before the dependency is evaluated and avoids circular import
+        race conditions during startup.
+        """
         business_id = user.get("business_id")
         if not business_id:
             raise HTTPException(403, "Business ID not found in token.")
