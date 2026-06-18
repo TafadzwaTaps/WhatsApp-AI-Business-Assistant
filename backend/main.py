@@ -162,10 +162,14 @@ def dashboard():  return _html("dashboard.html")
 # /onboarding and /directory GET routes are served by the routers below
 # to avoid duplicate route registration conflicts
 @app.get("/store/{slug}", include_in_schema=False)
-def store_fallback(slug: str):  return _html("store.html")
+def store_fallback(slug: str):
+    """Redirect to store SPA served by StaticFiles."""
+    return RedirectResponse(url="/static/store.html", status_code=302)
 
 @app.get("/menu/{slug}", include_in_schema=False)
-def menu_fallback(slug: str):   return _html("store.html")
+def menu_fallback(slug: str):
+    """Redirect to store SPA (menu view) served by StaticFiles."""
+    return RedirectResponse(url="/static/store.html", status_code=302)
 
 @app.get("/config/public")
 def public_config():
@@ -189,6 +193,12 @@ def terms_page(): return _html("terms.html")
 
 @app.get("/pricing")
 def pricing_page(): return _html("pricing.html")
+
+@app.get("/onboarding", include_in_schema=False)
+def onboarding_page(): return _html("onboarding.html")
+
+@app.get("/directory", include_in_schema=False)
+def directory_page(): return _html("marketplace.html")
 
 
 # ── WebSocket connection manager ──────────────────────────────────────────────
