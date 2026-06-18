@@ -2156,10 +2156,13 @@ async function loadAnalyticsCharts() {
   if (_analyticsChartsLoading) return;
   _analyticsChartsLoading = true;
   try {
-    const [stats, topCust] = await Promise.all([
+    // Use Promise.allSettled so one 403 doesn't block the other
+    const [statsResult, topCustResult] = await Promise.allSettled([
       apiFetch(ROUTES.analyticsStats),
       apiFetch(ROUTES.analyticsTop + '?limit=5'),
     ]);
+    const stats   = statsResult.status   === 'fulfilled' ? statsResult.value   : null;
+    const topCust = topCustResult.status === 'fulfilled' ? topCustResult.value : null;
 
     // Update stat cards if present
     if (stats) {
@@ -2177,6 +2180,14 @@ async function loadAnalyticsCharts() {
 
     // Top customers mini-chart (horizontal bar using CSS)
     const chartEl = document.getElementById('analytics-top-customers');
+    if (chartEl) {
+      if (Array.isArray(topCust) && topCust.length) {
+        // will render below
+      } else {
+        // Clear "Loading analytics..." even when data is unavailable
+        chartEl.innerHTML = '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px 0;">No data yet</div>';
+      }
+    }
     if (chartEl && Array.isArray(topCust) && topCust.length) {
       const max = Math.max(...topCust.map(c => c.order_count || 0), 1);
       chartEl.innerHTML = topCust.map(c => {
@@ -3888,13 +3899,21 @@ if (_origShowSection) {
 async function loadRepeatCustomerStat() {
   try {
     const data = await apiFetch('/analytics/repeat-customers');
-    if (!data) return;
     const rateEl = document.getElementById('stat-repeat-rate');
     const subEl  = document.getElementById('stat-repeat-sub');
-    if (rateEl) rateEl.textContent = data.repeat_rate_pct + '%';
-    if (subEl)  subEl.textContent  =
-      data.repeat_customers + ' of ' + data.total_customers + ' customers reordered';
-  } catch (e) { /* non-critical */ }
+    if (data && data.repeat_rate_pct != null) {
+      if (rateEl) rateEl.textContent = data.repeat_rate_pct + '%';
+      if (subEl)  subEl.textContent  =
+        data.repeat_customers + ' of ' + data.total_customers + ' customers reordered';
+    } else {
+      // Endpoint unavailable or no data — show neutral 0
+      if (rateEl) rateEl.textContent = '0%';
+      if (subEl)  subEl.textContent  = 'No data yet';
+    }
+  } catch (e) {
+    const rateEl = document.getElementById('stat-repeat-rate');
+    if (rateEl) rateEl.textContent = '0%';
+  }
 }
 
 /* ══ F3: GROWTH STATUS LIVE DATA ═════════════════════════════════════════ */
@@ -3996,18 +4015,26 @@ async function loadTrialBanner() {
     const cpBanner     = document.getElementById('upgrade-prompt-campaigns');
     const gpBanner     = document.getElementById('upgrade-prompt-growth');
 
+    // Always hide both first — prevents both showing simultaneously
+    if (trialBanner)   trialBanner.style.display   = 'none';
+    if (expiredBanner) expiredBanner.style.display  = 'none';
+
     if (ts.trial_active) {
       // Active trial — show trial banner, HIDE upgrade prompts
       const endsLabel = document.getElementById('trial-ends-label');
-      if (endsLabel && ts.trial_ends_at) endsLabel.textContent = ts.trial_ends_at;
-      if (trialBanner)   trialBanner.style.display   = 'block';
+      if (endsLabel) {
+        endsLabel.textContent = ts.trial_ends_at
+          ? ts.trial_ends_at
+          : '30 days from signup';
+      }
+      if (trialBanner)   trialBanner.style.display   = 'flex';
       if (expiredBanner) expiredBanner.style.display  = 'none';
       if (cpBanner)      cpBanner.style.display       = 'none';
       if (gpBanner)      gpBanner.style.display       = 'none';
     } else if (ts.billing_status === 'trialing' || ts.billing_status === 'trial') {
       // Expired trial — hide trial banner, show upgrade prompts
       if (trialBanner)   trialBanner.style.display   = 'none';
-      if (expiredBanner) expiredBanner.style.display  = 'block';
+      if (expiredBanner) expiredBanner.style.display  = 'flex';
       if (cpBanner)      cpBanner.style.display       = 'block';
       if (gpBanner)      gpBanner.style.display       = 'block';
     } else {

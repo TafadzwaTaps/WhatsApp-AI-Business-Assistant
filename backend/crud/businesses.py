@@ -37,6 +37,13 @@ def create_business(data) -> dict:
     if hasattr(data, "owner_email") and data.owner_email:        # C1
         row["owner_email"] = data.owner_email.strip().lower()
 
+    # Set trial dates on signup so is_trial_active() works correctly
+    from datetime import datetime, timezone, timedelta
+    _now_utc = datetime.now(timezone.utc)
+    row["billing_status"]    = "trialing"
+    row["trial_started_at"]  = _now_utc.isoformat()
+    row["trial_ends_at"]     = (_now_utc + timedelta(days=30)).isoformat()
+
     res = supabase.table("businesses").insert(row).execute()
     biz = _one("businesses", res)
     log.info("create_business OK  id=%s  name=%r", biz["id"], biz["name"])

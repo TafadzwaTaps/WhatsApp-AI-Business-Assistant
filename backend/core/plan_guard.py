@@ -79,16 +79,17 @@ def _get_business_plan(business_id: int) -> dict:
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("subscription_tier, billing_status, trial_ends_at")
+            .select("subscription_tier, billing_status, trial_ends_at, trial_started_at")
             .eq("id", business_id)
             .limit(1)
             .execute()
         )
         row = (res.data or [{}])[0]
         return {
-            "tier":           (row.get("subscription_tier") or "free").lower(),
-            "billing_status": (row.get("billing_status")   or "free").lower(),
-            "trial_ends_at":  row.get("trial_ends_at"),
+            "tier":             (row.get("subscription_tier") or "free").lower(),
+            "billing_status":   (row.get("billing_status")   or "free").lower(),
+            "trial_ends_at":    row.get("trial_ends_at"),
+            "trial_started_at": row.get("trial_started_at"),
         }
     except Exception as exc:
         log.warning("plan_guard: DB error fetching plan for biz %s: %s", business_id, exc)
@@ -98,31 +99,49 @@ def _get_business_plan(business_id: int) -> dict:
 
 def is_trial_active(plan_info: dict) -> bool:
     """
-    Central trial-active check used throughout the plan guard system.
+    Central trial-active check.
 
-    Returns True when:
-      billing_status == "trialing"  (or "trial")
-      AND trial_ends_at > now()
+    Returns True when billing_status is "trialing"/"trial" AND the trial
+    has not expired.
 
-    Pass the dict returned by _get_business_plan(business_id).
-    This is the single source of truth — all other guards call this.
+    trial_ends_at takes priority. If it is NULL (common for older records),
+    falls back to trial_started_at + 30 days. If neither is set but status
+    is "trialing", assumes the trial is active (benefit of the doubt for new
+    signups whose trial timer hasn't been set yet).
     """
     status = (plan_info.get("billing_status") or "").lower()
     if status not in ("trialing", "trial"):
         return False
-    trial_ends_at = plan_info.get("trial_ends_at")
-    if not trial_ends_at:
-        return False
-    try:
-        if isinstance(trial_ends_at, str):
-            ends = datetime.fromisoformat(trial_ends_at.replace("Z", "+00:00"))
-        else:
-            ends = trial_ends_at
-        if ends.tzinfo is None:
-            ends = ends.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) < ends
-    except Exception:
-        return False
+
+    def _parse(dt_val):
+        if not dt_val:
+            return None
+        try:
+            if isinstance(dt_val, str):
+                d = datetime.fromisoformat(dt_val.replace("Z", "+00:00"))
+            else:
+                d = dt_val
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            return d
+        except Exception:
+            return None
+
+    trial_ends_at   = _parse(plan_info.get("trial_ends_at"))
+    trial_started_at = _parse(plan_info.get("trial_started_at"))
+
+    now = datetime.now(timezone.utc)
+
+    if trial_ends_at is not None:
+        return now < trial_ends_at
+
+    if trial_started_at is not None:
+        # Fallback: trial_started_at + 30 days
+        from datetime import timedelta
+        return now < (trial_started_at + timedelta(days=30))
+
+    # Neither date set but status is "trialing" → assume active (new signup)
+    return True
 
 
 def _normalise_tier(raw_tier: str, billing_status: str, trial_ends_at) -> str:
