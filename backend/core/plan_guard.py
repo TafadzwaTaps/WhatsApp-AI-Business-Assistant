@@ -95,6 +95,36 @@ def _get_business_plan(business_id: int) -> dict:
         return {"tier": "free", "billing_status": "free", "trial_ends_at": None}
 
 
+
+def is_trial_active(plan_info: dict) -> bool:
+    """
+    Central trial-active check used throughout the plan guard system.
+
+    Returns True when:
+      billing_status == "trialing"  (or "trial")
+      AND trial_ends_at > now()
+
+    Pass the dict returned by _get_business_plan(business_id).
+    This is the single source of truth — all other guards call this.
+    """
+    status = (plan_info.get("billing_status") or "").lower()
+    if status not in ("trialing", "trial"):
+        return False
+    trial_ends_at = plan_info.get("trial_ends_at")
+    if not trial_ends_at:
+        return False
+    try:
+        if isinstance(trial_ends_at, str):
+            ends = datetime.fromisoformat(trial_ends_at.replace("Z", "+00:00"))
+        else:
+            ends = trial_ends_at
+        if ends.tzinfo is None:
+            ends = ends.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < ends
+    except Exception:
+        return False
+
+
 def _normalise_tier(raw_tier: str, billing_status: str, trial_ends_at) -> str:
     """
     Resolve the effective plan tier, accounting for trial status.
@@ -110,22 +140,13 @@ def _normalise_tier(raw_tier: str, billing_status: str, trial_ends_at) -> str:
 
     # Trial — check if still active
     if status in ("trialing", "trial"):
-        if trial_ends_at:
-            try:
-                if isinstance(trial_ends_at, str):
-                    from datetime import datetime as dt
-                    ends = dt.fromisoformat(trial_ends_at.replace("Z", "+00:00"))
-                else:
-                    ends = trial_ends_at
-                if ends.tzinfo is None:
-                    ends = ends.replace(tzinfo=timezone.utc)
-                if datetime.now(timezone.utc) < ends:
-                    # Trial is active — give STARTER-level access
-                    return "STARTER"
-            except Exception:
-                pass
-        # Trial expired — drop to FREE
-        return "FREE"
+        trial_plan_info = {"billing_status": status, "trial_ends_at": trial_ends_at}
+        if is_trial_active(trial_plan_info):
+            # Active trial: give PRO-level access so businesses experience the
+            # full product. After expiry, enforcement resumes from stored tier.
+            return "PRO"
+        # Trial expired — fall through to stored tier or FREE
+        return _TIER_MAP.get(raw_tier, "FREE")
 
     # Cancelled, expired, or unknown — fall back to stored tier or FREE
     return _TIER_MAP.get(raw_tier, "FREE")
@@ -291,16 +312,27 @@ def _get_current_user_dep():
 # Convenience: which features are gated at each tier
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Revised gating — philosophy: let businesses get results first, then upgrade naturally.
+# Free: AI ordering, store, basic analytics, up to 10 products, shared WhatsApp number.
+# Starter ($9): own number, 25 products, campaigns, CSV import, weekly reports, growth automation.
+# Growth ($29): unlimited products, advanced analytics, satisfaction tracking, multi-language.
 GATED_FEATURES = {
-    "campaigns":          "GROWTH",
-    "ai_website":         "PRO",
-    "multi_language":     "PRO",
-    "advanced_analytics": "PRO",
-    "growth_automation":  "GROWTH",
-    "crm_segments":       "GROWTH",
-    "human_handoff":      "GROWTH",
-    "broadcast":          "GROWTH",
-    "live_inbox":         "GROWTH",
+    # Starter+ features — basic but require own number / account investment
+    "campaigns":          "STARTER",
+    "broadcast":          "STARTER",
+    "growth_automation":  "STARTER",
+    "csv_import":         "STARTER",
+    "weekly_reports":     "STARTER",
+    # Growth+ features — power users already earning money through WaziBot
+    "advanced_analytics": "GROWTH",
+    "multi_language":     "GROWTH",
+    "ai_website":         "GROWTH",
+    # Never gated — core product experience
+    # "human_handoff"  → free (support is a basic need)
+    # "live_inbox"     → free (core dashboard)
+    # "crm_segments"   → free (basic visibility)
+    # "insights"       → free (helps them see value)
+    # "satisfaction"   → free (basic feedback)
 }
 
 
@@ -329,10 +361,10 @@ def feature_access(feature_key: str, business_id: int) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 PLAN_PRODUCT_LIMITS: dict[str, int | None] = {
-    "FREE":    10,
-    "STARTER": 25,
-    "GROWTH":  None,  # None = unlimited
-    "PRO":     None,
+    "FREE":    10,     # enough for a small restaurant or clothing boutique to prove value
+    "STARTER": 25,     # serious small businesses
+    "GROWTH":  None,   # unlimited
+    "PRO":     None,   # unlimited
 }
 
 
@@ -364,7 +396,13 @@ def check_product_limit(business_id: int) -> dict | None:
         {"error": "plan_limit", "message": "...", "limit": N, "upgrade_url": "/pricing"}
 
     Called ONLY in POST /products — never in PATCH, DELETE, or import.
+    During an active trial: always returns None (unlimited).
     """
+    # Trial bypass: active trials have unlimited products
+    plan_info = _get_business_plan(business_id)
+    if is_trial_active(plan_info):
+        return None   # trial active — no product limit
+
     limit = get_product_limit(business_id)
     if limit is None:
         return None   # unlimited plan — no check needed
@@ -406,3 +444,32 @@ def check_product_limit(business_id: int) -> dict | None:
             "upgrade_url": "/pricing",
         }
     return None
+
+def get_trial_status_response(business_id: int) -> dict:
+    """
+    Return trial status for the dashboard banner.
+    Called by GET /trial/status endpoint.
+    """
+    plan_info = _get_business_plan(business_id)
+    active    = is_trial_active(plan_info)
+    ends_at   = plan_info.get("trial_ends_at")
+
+    ends_str = None
+    if ends_at:
+        try:
+            if isinstance(ends_at, str):
+                ends = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
+            else:
+                ends = ends_at
+            ends_str = ends.strftime("%-d %B %Y")
+        except Exception:
+            ends_str = str(ends_at)[:10]
+
+    return {
+        "trial_active":   active,
+        "trial_ends_at":  ends_str,
+        "billing_status": plan_info.get("billing_status"),
+        "effective_tier": _normalise_tier(
+            plan_info["tier"], plan_info["billing_status"], plan_info["trial_ends_at"]
+        ),
+    }

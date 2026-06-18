@@ -89,6 +89,8 @@ STATIC_DIR = next(
 )
 os.makedirs(STATIC_DIR, exist_ok=True)
 log.info("📁 Static dir: %s", STATIC_DIR)
+# Export STATIC_DIR as env var so route files can find it without repeating the search
+os.environ["WAZIBOT_STATIC_DIR"] = STATIC_DIR
 
 INVOICES_DIR = os.path.join(_BASE, "invoices")
 os.makedirs(INVOICES_DIR, exist_ok=True)

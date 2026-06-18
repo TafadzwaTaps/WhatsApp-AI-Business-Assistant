@@ -30,6 +30,13 @@ router = APIRouter()
 
 
 def _find_static_dir() -> str:
+    """
+    Find static/ directory. Checks env var WAZIBOT_STATIC_DIR first (set by
+    main.py at startup), then falls back to filesystem search.
+    """
+    env_path = os.environ.get("WAZIBOT_STATIC_DIR", "").strip()
+    if env_path and os.path.isdir(env_path):
+        return env_path
     base = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.path.join(base, "static"),

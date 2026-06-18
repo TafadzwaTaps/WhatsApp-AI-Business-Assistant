@@ -229,6 +229,11 @@
         <div class="ferr" id="ferr-user"></div>
       </div>
       <div class="form-group">
+        <label>Email Address <span style="opacity:0.6;font-size:9px;text-transform:none;">(for reports &amp; notifications)</span></label>
+        <input type="email" id="s-email" placeholder="yourname@example.com" autocomplete="email"/>
+        <div class="ferr" id="ferr-email"></div>
+      </div>
+      <div class="form-group">
         <label>Password</label>
         <input type="password" id="s-pass" placeholder="At least 6 characters" autocomplete="new-password"/>
         <div class="ferr" id="ferr-pass"></div>
@@ -301,6 +306,13 @@
 // ── Config ────────────────────────────────────────────────
 const API = 'https://wazibot-api-assistant.onrender.com';
 
+// Read optional URL params passed from pricing page
+// e.g. /signup?tier=growth&billing_period=annual
+const _urlParams = new URLSearchParams(window.location.search);
+const _urlTier   = (_urlParams.get('tier')           || '').trim().toLowerCase();
+const _urlPeriod = (_urlParams.get('billing_period') || 'monthly').trim().toLowerCase();
+const _urlRef    = (_urlParams.get('ref')            || '').trim();
+
 const TITLES = [
   'Create your <span>account</span>',
   'Your <span>business</span>',
@@ -358,11 +370,13 @@ function next(to) {
 
   if (to === 2) {
     const u  = document.getElementById('s-user').value.trim();
+    const em = document.getElementById('s-email').value.trim();
     const p  = document.getElementById('s-pass').value;
     const p2 = document.getElementById('s-pass2').value;
     let ok = true;
     if (u.length < 3)      { fieldErr('s-user',  'ferr-user',  'At least 3 characters'); ok = false; }
     else if (/\s/.test(u)) { fieldErr('s-user',  'ferr-user',  'No spaces allowed');      ok = false; }
+    if (!em || !em.includes('@')) { fieldErr('s-email', 'ferr-email', 'Enter a valid email address'); ok = false; }
     if (p.length < 6)      { fieldErr('s-pass',  'ferr-pass',  'At least 6 characters'); ok = false; }
     if (p !== p2)          { fieldErr('s-pass2', 'ferr-pass2', 'Passwords do not match'); ok = false; }
     if (!ok) return;
@@ -396,8 +410,13 @@ async function submitForm() {
     business_name:     document.getElementById('s-biz').value.trim(),
     username:          username,
     password:          document.getElementById('s-pass').value,
+    email:             document.getElementById('s-email').value.trim(),
     category:          document.getElementById('s-category').value || undefined,
     use_shared_number: true,   // no Meta setup needed
+    // Pass tier/billing_period from pricing page URL params (e.g. ?tier=growth&billing_period=annual)
+    tier:              _urlTier,
+    billing_period:    _urlPeriod,
+    ref_code:          _urlRef,
   };
 
   try {
@@ -425,6 +444,11 @@ async function submitForm() {
     localStorage.setItem('wazi_biz',         data.business_name);
     if (data.business_id) {
       localStorage.setItem('wazi_business_id', String(data.business_id));
+    }
+    // If user came from pricing page with a plan selected, store for checkout redirect
+    if (data.selected_tier) {
+      localStorage.setItem('wazi_pending_tier',   data.selected_tier);
+      localStorage.setItem('wazi_pending_period', data.billing_period || 'monthly');
     }
 
     showSuccess(payload, data);

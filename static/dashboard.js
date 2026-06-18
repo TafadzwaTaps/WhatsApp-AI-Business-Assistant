@@ -265,8 +265,12 @@ async function apiFetch(path, opts={}, _retried=false) {
   // the entire headers object if opts.headers is set, silently dropping
   // the Authorization header on any call that passes its own Content-Type
   // (e.g. POST/PUT requests with a JSON body).
+  // Fix 2: do NOT set Content-Type for FormData — browser must set it with
+  // the correct multipart boundary for file uploads (CSV import, logo upload).
+  // For all other bodies, default to application/json.
+  const isFormData = opts.body instanceof FormData;
   const mergedHeaders = {
-    'Content-Type': 'application/json',
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
     'Authorization': `Bearer ${token}`,
     ...(opts.headers || {}),
   };
@@ -1238,6 +1242,9 @@ async function saveProfile() {
     const currSym = _getVal('set-currency-symbol').trim() ||
                     _currencySymbolFor(_getVal('set-currency'));
 
+    // Fix 3: include owner_email — undefined is omitted by JSON.stringify so
+    // an empty field sends nothing (no accidental email wipe)
+    const _ownerEmail = (_getVal('set-owner-email') || '').trim() || undefined;
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
       name,
       category,
@@ -1251,6 +1258,7 @@ async function saveProfile() {
       facebook:        _getVal('set-facebook'),
       currency:        _getVal('set-currency'),
       currency_symbol: currSym,
+      owner_email:     _ownerEmail,
     })});
     bizName = name;
     localStorage.setItem('wazi_biz', bizName);
@@ -1338,7 +1346,7 @@ function showPlanUpgradeModal(detail) {
   if (btnEl) btnEl.href = upgradeUrl;
 
   modal.style.display = 'flex';
-  toast('⬆️ Upgrade your plan to use this feature');
+  toast('This feature is available on a paid plan — see /pricing');
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1567,9 +1575,6 @@ function init(){
 // and appended DOMContentLoaded blocks from previous sprint sessions.
 function _postLoginInit() {
   if (!token) return;  // not logged in — nothing to do
-
-  // Immediate: upgrade prompts read from /me which is already cached
-  try { checkUpgradePrompts(); }        catch(_) {}
 
   // 1.5 s: repeat customer stat (lightweight analytics query)
   setTimeout(() => {
@@ -2996,11 +3001,11 @@ function dashCmdKeyDown(e) {
     _orig.call(this, name, ...args);
     if (name === 'overview') {
       setTimeout(loadHealthStatus, 1000);
-      setTimeout(loadSuccessNudges, 1200);
+      // loadSuccessNudges removed from auto-start (Sprint 10: optional only)
     }
   };
 })();
-setTimeout(() => { if (typeof token !== 'undefined' && token) { loadHealthStatus(); loadSuccessNudges(); } }, 4000);
+setTimeout(() => { if (typeof token !== 'undefined' && token) { loadHealthStatus(); } }, 4000); // loadSuccessNudges: optional
 
 
 /* ══════════════════════════════════════════════════════════
@@ -3955,19 +3960,63 @@ async function importProductsCSV(input) {
 /* ══ F5: UPGRADE PROMPTS ════════════════════════════════════════════════ */
 async function checkUpgradePrompts() {
   try {
-    const biz  = await getCachedMe();
+    const biz = await getCachedMe();
     if (!biz) return;
-    const tier   = (biz.subscription_tier || 'free').toLowerCase();
-    const isFree = tier === 'free';
-    const cp = document.getElementById('upgrade-prompt-campaigns');
-    if (cp) cp.style.display = isFree ? 'block' : 'none';
-    const gp = document.getElementById('upgrade-prompt-growth');
-    if (gp) gp.style.display = isFree ? 'block' : 'none';
-    // H5: show email-missing banner when owner_email not set
+
+    // Email-missing banner (one-time, dismissible, session-based) — always show
     const emailBanner = document.getElementById('email-missing-banner');
     if (emailBanner) {
       const dismissed = sessionStorage.getItem('wazi_email_banner_done');
       emailBanner.style.display = (!biz.owner_email && !dismissed) ? 'block' : 'none';
+    }
+
+    // Load trial status — single source of truth for banner and prompt visibility
+    await loadTrialBanner();
+
+  } catch (e) { /* non-critical */ }
+}
+
+// Trial status cache — avoid hammering /trial/status on every section open
+let _trialCache = null;
+let _trialCacheTs = 0;
+
+async function loadTrialBanner() {
+  try {
+    // Cache trial status for 5 minutes — it changes at most once a day
+    const now = Date.now();
+    if (!_trialCache || (now - _trialCacheTs) > 300000) {
+      _trialCache = await apiFetch('/trial/status').catch(() => null);
+      _trialCacheTs = now;
+    }
+    const ts = _trialCache;
+    if (!ts) return;
+
+    const trialBanner  = document.getElementById('trial-active-banner');
+    const expiredBanner= document.getElementById('trial-expired-banner');
+    const cpBanner     = document.getElementById('upgrade-prompt-campaigns');
+    const gpBanner     = document.getElementById('upgrade-prompt-growth');
+
+    if (ts.trial_active) {
+      // Active trial — show trial banner, HIDE upgrade prompts
+      const endsLabel = document.getElementById('trial-ends-label');
+      if (endsLabel && ts.trial_ends_at) endsLabel.textContent = ts.trial_ends_at;
+      if (trialBanner)   trialBanner.style.display   = 'block';
+      if (expiredBanner) expiredBanner.style.display  = 'none';
+      if (cpBanner)      cpBanner.style.display       = 'none';
+      if (gpBanner)      gpBanner.style.display       = 'none';
+    } else if (ts.billing_status === 'trialing' || ts.billing_status === 'trial') {
+      // Expired trial — hide trial banner, show upgrade prompts
+      if (trialBanner)   trialBanner.style.display   = 'none';
+      if (expiredBanner) expiredBanner.style.display  = 'block';
+      if (cpBanner)      cpBanner.style.display       = 'block';
+      if (gpBanner)      gpBanner.style.display       = 'block';
+    } else {
+      // Paid or free — hide both trial banners, show upgrade prompts only if free
+      if (trialBanner)   trialBanner.style.display   = 'none';
+      if (expiredBanner) expiredBanner.style.display  = 'none';
+      const isFree = (ts.effective_tier || '').toLowerCase() === 'free';
+      if (cpBanner) cpBanner.style.display = isFree ? 'block' : 'none';
+      if (gpBanner) gpBanner.style.display = isFree ? 'block' : 'none';
     }
   } catch (e) { /* non-critical */ }
 }
