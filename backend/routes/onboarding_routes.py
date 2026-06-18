@@ -34,6 +34,11 @@ from pydantic import BaseModel
 log = logging.getLogger("wazibot")
 router = APIRouter()
 
+# Static files are served exclusively via app.mount("/static", StaticFiles(...))
+# in main.py. Route handlers redirect to /static/filename.html — no manual
+# file I/O, no path resolution, no timing issues. Render/Docker safe.
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Dependency — reuse existing require_business
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,19 +79,8 @@ class Step7Request(BaseModel):
 # Wizard page (serves the SPA)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@router.get("/onboarding", response_class=HTMLResponse, include_in_schema=False)
-async def onboarding_page():
-    """Serve the setup wizard SPA."""
-    static_path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "static", "onboarding.html"
-    )
-    if os.path.exists(static_path):
-        return HTMLResponse(open(static_path).read())
-    # Minimal fallback if static file not yet deployed
-    return HTMLResponse(
-        "<html><body><h1>WaziBot Setup Wizard</h1>"
-        "<p>Static file not found. Deploy static/onboarding.html.</p></body></html>"
-    )
+# /onboarding page route is registered in main.py (more reliable — main.py
+# is always deployed). This router handles only /onboarding/* API endpoints.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -101,17 +95,18 @@ def onboarding_progress(user=Depends(require_business)):
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("id, name, category")
+            .select("id, name, category, onboarding_step, onboarding_completed")
             .eq("id", bid)
             .limit(1)
             .execute()
         )
         biz = res.data[0] if res.data else {}
-        # onboarding_step/onboarding_completed may not exist yet (schema upgrade pending)
+        # L2 fix: columns now fetched — .get() still has safe defaults
+        # in case the schema migration hasn't run yet
         return {
-            "business_id":  bid,
-            "current_step": biz.get("onboarding_step", 1),
-            "completed":    bool(biz.get("onboarding_completed", False)),
+            "business_id":   bid,
+            "current_step":  biz.get("onboarding_step", 1),
+            "completed":     bool(biz.get("onboarding_completed", False)),
             "business_name": biz.get("name", ""),
         }
     except Exception as exc:
@@ -202,14 +197,67 @@ def onboarding_step3_complete(user=Depends(require_business)):
         raise HTTPException(500, str(exc))
 
 
+class WhatsAppConnectionRequest(BaseModel):
+    """
+    Feature 2: Shared number default onboarding.
+
+    connection_type:
+      "shared"    — use WaziBot's shared WhatsApp number (instant, no Meta approval)
+      "dedicated" — business will connect their own Meta phone number later
+    """
+    connection_type: str = "shared"   # "shared" | "dedicated"
+
+
 @router.post("/onboarding/step/4")
-def onboarding_step4_complete(user=Depends(require_business)):
-    """Step 4 — WhatsApp connection verified. Advance wizard."""
+def onboarding_step4_complete(
+    body: WhatsAppConnectionRequest = WhatsAppConnectionRequest(),
+    user=Depends(require_business),
+):
+    """
+    Step 4 — WhatsApp connection choice.
+
+    Feature 2 — Shared number is now the DEFAULT path:
+      Option A (shared):    Mark use_shared_number=True on the business.
+                            Onboarding can complete immediately — no Meta API
+                            credentials required. Customer can use the shared
+                            WaziBot number right away.
+      Option B (dedicated): Record intent to connect dedicated number.
+                            Business is advanced to step 5 without blocking.
+                            They can add credentials in Settings later.
+
+    Backward compatible: calling without a body still advances the wizard
+    (defaults to "shared").
+    """
     bid = user["business_id"]
     try:
         from core.db import supabase
-        supabase.table("businesses").update({"onboarding_step": 5}).eq("id", bid).execute()
-        return {"ok": True, "next_step": 5}
+        import os as _os
+
+        connection_type = (body.connection_type or "shared").lower().strip()
+        use_shared = connection_type == "shared"
+
+        update_payload: dict = {"onboarding_step": 5}
+
+        if use_shared:
+            # Mark the business to use the shared WaziBot number
+            update_payload["use_shared_number"] = True
+            # Store a note about which shared number they're on
+            shared_phone = _os.getenv("SHARED_WA_PHONE", "WaziBot Shared")
+            update_payload["shared_number_label"] = shared_phone
+
+        supabase.table("businesses").update(update_payload).eq("id", bid).execute()
+
+        return {
+            "ok":              True,
+            "next_step":       5,
+            "connection_type": connection_type,
+            "use_shared":      use_shared,
+            "message": (
+                "You're on the WaziBot shared WhatsApp number — you can start taking orders immediately."
+                if use_shared else
+                "Dedicated number selected. Add your Meta credentials in Settings when ready."
+            ),
+        }
     except Exception as exc:
         raise HTTPException(500, str(exc))
 

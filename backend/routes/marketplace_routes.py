@@ -28,7 +28,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 log    = logging.getLogger("wazibot")
 router = APIRouter()
 
-STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+# Static files served exclusively via app.mount("/static", StaticFiles(...))
+# All page routes below use RedirectResponse — no manual file I/O, no path issues.
 
 # Public-safe fields only — never exposes credentials/tokens
 _BIZ_PUBLIC_FIELDS = (
@@ -105,15 +107,41 @@ def api_store(slug: str):
     """JSON: public store data for one business."""
     try:
         from core.db import supabase
-        name_pattern = _slug_to_name(slug)
+        name_pattern = _slug_to_name(slug)   # e.g. "flavoury-foods" → "flavoury foods"
+
+        # M5/M8: try exact name match first (case-insensitive) to avoid matching
+        # wrong business with similar name; fall back to ilike contains-match
         res = (
             supabase.table("businesses")
             .select(_BIZ_PUBLIC_FIELDS)
             .eq("is_active", True)
-            .ilike("name", f"%{name_pattern}%")
+            .ilike("name", name_pattern)       # exact ci match: "flavoury foods"
             .limit(1)
             .execute()
         )
+        if not res.data:
+            # Fallback 1: contains match on space-expanded slug
+            res = (
+                supabase.table("businesses")
+                .select(_BIZ_PUBLIC_FIELDS)
+                .eq("is_active", True)
+                .ilike("name", f"%{name_pattern}%")
+                .limit(1)
+                .execute()
+            )
+        if not res.data:
+            # Fallback 2: try matching against the raw slug characters (no space expansion)
+            # Handles single-word names like "Firelilyfarrismum" whose slug is
+            # "firelilyfarrismum" — different from the space-expanded form
+            slug_compact = slug.replace("-", "")
+            res = (
+                supabase.table("businesses")
+                .select(_BIZ_PUBLIC_FIELDS)
+                .eq("is_active", True)
+                .ilike("name", f"%{slug_compact}%")
+                .limit(1)
+                .execute()
+            )
         if not res.data:
             raise HTTPException(404, f"Business '{slug}' not found")
         biz = _safe_biz(res.data[0])
@@ -137,31 +165,15 @@ def api_store(slug: str):
 # HTML pages (serve SPAs from static/)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _serve_static(filename: str) -> HTMLResponse:
-    path = os.path.join(STATIC_DIR, filename)
-    if os.path.exists(path):
-        return HTMLResponse(open(path).read())
-    return HTMLResponse(f"<html><body><p>File not found: {filename}</p></body></html>", status_code=404)
+# _serve_static removed — use RedirectResponse to /static/ instead
 
 
-@router.get("/directory", response_class=HTMLResponse, include_in_schema=False)
-async def directory_page():
-    """Public marketplace directory SPA."""
-    return _serve_static("marketplace.html")
+# /directory page route is registered in main.py (more reliable — main.py
+# is always deployed). This router handles only /api/directory and /api/store/* API routes.
 
 
-@router.get("/store/{slug}", response_class=HTMLResponse, include_in_schema=False)
-async def store_page(slug: str):
-    """Public store page for a business."""
-    return _serve_static("store.html")
-
-
-@router.get("/menu/{slug}", response_class=HTMLResponse, include_in_schema=False)
-async def menu_page(slug: str):
-    """Public menu page (same data as store, menu layout)."""
-    return _serve_static("store.html")
-
-
+# /store/{slug} and /menu/{slug} are served by main.py fallback routes.
+# Only /site/{slug} is unique to this router.
 @router.get("/site/{slug}", response_class=HTMLResponse, include_in_schema=False)
 async def site_page(slug: str):
     """AI-generated website for a business."""
@@ -171,5 +183,5 @@ async def site_page(slug: str):
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)
-        # Fallback to store page
-        return _serve_static("store.html")
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/static/store.html", status_code=302)
