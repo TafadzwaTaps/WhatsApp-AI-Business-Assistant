@@ -19,7 +19,7 @@ import requests as http_requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -162,14 +162,10 @@ def dashboard():  return _html("dashboard.html")
 # /onboarding and /directory GET routes are served by the routers below
 # to avoid duplicate route registration conflicts
 @app.get("/store/{slug}", include_in_schema=False)
-def store_fallback(slug: str):
-    """Redirect to store SPA served by StaticFiles."""
-    return RedirectResponse(url="/static/store.html", status_code=302)
+def store_fallback(slug: str):    return _html("store.html")
 
 @app.get("/menu/{slug}", include_in_schema=False)
-def menu_fallback(slug: str):
-    """Redirect to store SPA (menu view) served by StaticFiles."""
-    return RedirectResponse(url="/static/store.html", status_code=302)
+def menu_fallback(slug: str):     return _html("store.html")
 
 @app.get("/config/public")
 def public_config():
