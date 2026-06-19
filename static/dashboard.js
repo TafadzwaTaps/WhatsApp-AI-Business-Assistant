@@ -370,7 +370,7 @@ function showSection(name, btn) {
   if (name==='conversations') loadConversations();
   if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); try { loadSatisfactionScore(); } catch(_){} try { showShareStoreBanner(); } catch(_){} }
   if (name==='handoff') loadHandoffStats();
-  if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); }
+  if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); loadBcCustomerPicker(); updateBcRecipientPreview('all'); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
   if (name==='crm') loadCrm();
   if (name==='reminders') loadReminders();
@@ -1923,10 +1923,38 @@ function openCustomerDrawer(customer) {
   document.getElementById('drawer-orders').textContent   = customer.order_count || 0;
   document.getElementById('drawer-spent').textContent    = '$' + parseFloat(customer.total_spent||0).toFixed(2);
   document.getElementById('drawer-last').textContent     = customer.last_seen ? fmtTime(customer.last_seen) : '—';
+  const nameInput = document.getElementById('drawer-name-input');
+  if (nameInput) nameInput.value = customer.customer_name || '';
   document.getElementById('drawer-orders-list').innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;">Loading orders…</div>';
   document.getElementById('customer-drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
   loadDrawerOrders(phone);
+}
+
+async function saveDrawerName() {
+  if (!_drawerCustomer || !_drawerCustomer.phone) return;
+  const input = document.getElementById('drawer-name-input');
+  const name  = input ? input.value.trim() : '';
+  if (!name) { toast('Enter a name first', true); return; }
+
+  try {
+    const res = await apiFetch(`/crm/customers/${encodeURIComponent(_drawerCustomer.phone)}/name`, {
+      method: 'PATCH',
+      body: JSON.stringify({ customer_name: name }),
+    });
+    if (res && res.ok) {
+      _drawerCustomer.customer_name = name;
+      toast('✅ Name saved');
+      // Refresh whichever lists could show this customer's name
+      loadCrm();
+      const picker = document.getElementById('bc-customer-picker');
+      if (picker && picker.style.display !== 'none') loadBcCustomerPicker();
+    } else {
+      toast('Could not save name', true);
+    }
+  } catch (e) {
+    toast(e.message || 'Could not save name', true);
+  }
 }
 
 async function loadDrawerOrders(phone) {
@@ -2272,6 +2300,12 @@ function quickTpl(key) {
   if (ta) { ta.value = _QUICK_TPLS[key] || ''; updatePreview(); }
 }
 
+// Global state for the campaign customer picker (separate from the
+// existing allCustomerData/customerPhones used by the legacy recipient
+// filter panel, to avoid any collision).
+let _bcAllCustomers = [];       // [{phone, customer_name, order_count, total_spent, last_seen}]
+let _bcSelectedPhones = new Set();
+
 function onBcAudienceChange() {
   const sel  = document.querySelector('input[name="bc-audience"]:checked');
   const val  = sel ? sel.value : 'all';
@@ -2282,9 +2316,140 @@ function onBcAudienceChange() {
     vip:          'VIP customers only',
     new:          'new customers only',
     unpaid:       'customers with unpaid orders',
+    custom:       'selected customers',
   };
   if (lbl) lbl.textContent = map[val] || val;
+
+  const picker = document.getElementById('bc-customer-picker');
+  if (picker) picker.style.display = (val === 'custom') ? 'block' : 'none';
+
+  if (val === 'custom') {
+    if (!_bcAllCustomers.length) loadBcCustomerPicker();
+    else renderCustomerPicker();
+  }
+
   updatePreview();
+  updateBcRecipientPreview(val);
+}
+
+// Fetch the full customer list (phone + name) for the picker and the
+// non-custom audience preview lists. Uses /crm/segments/all which already
+// returns customer_name — more efficient than the legacy /customers +
+// /analytics/top-customers double-fetch.
+async function loadBcCustomerPicker() {
+  const list = document.getElementById('bc-picker-list');
+  if (list) list.innerHTML = '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px;">Loading customers…</div>';
+  try {
+    const data = await apiFetch(ROUTES.crmSegments + '/all');
+    _bcAllCustomers = Array.isArray(data) ? data : [];
+    renderCustomerPicker();
+    const sel = document.querySelector('input[name="bc-audience"]:checked');
+    if (sel && sel.value === 'custom') updateBcRecipientPreview('custom');
+  } catch (e) {
+    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${e.message}</div>`;
+  }
+}
+
+function renderCustomerPicker() {
+  const list   = document.getElementById('bc-picker-list');
+  const search = (document.getElementById('bc-picker-search') || {}).value || '';
+  if (!list) return;
+
+  const q = search.trim().toLowerCase();
+  const filtered = _bcAllCustomers.filter(c => {
+    if (!q) return true;
+    return (c.phone || '').toLowerCase().includes(q) ||
+           (c.customer_name || '').toLowerCase().includes(q);
+  });
+
+  if (!filtered.length) {
+    list.innerHTML = '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px;">No customers found.</div>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(c => {
+    const checked = _bcSelectedPhones.has(c.phone) ? 'checked' : '';
+    const label   = c.customer_name ? `${escHtml(c.customer_name)} — ${escHtml(c.phone)}` : escHtml(c.phone);
+    return `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-family:var(--mono);font-size:12px;"
+             onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+        <input type="checkbox" data-bc-phone="${escHtml(c.phone)}" ${checked}
+               onchange="toggleBcCustomer('${escHtml(c.phone)}', this.checked)"
+               style="cursor:pointer;"/>
+        <span>${label}</span>
+        ${c.order_count ? `<span style="margin-left:auto;color:var(--text-dim);font-size:10px;">${c.order_count} orders</span>` : ''}
+      </label>`;
+  }).join('');
+}
+
+function toggleBcCustomer(phone, checked) {
+  if (checked) _bcSelectedPhones.add(phone);
+  else _bcSelectedPhones.delete(phone);
+  updateBcRecipientPreview('custom');
+}
+
+function bcSelectAll(selectAll) {
+  const search = (document.getElementById('bc-picker-search') || {}).value || '';
+  const q = search.trim().toLowerCase();
+  const visible = _bcAllCustomers.filter(c => {
+    if (!q) return true;
+    return (c.phone || '').toLowerCase().includes(q) ||
+           (c.customer_name || '').toLowerCase().includes(q);
+  });
+  visible.forEach(c => {
+    if (selectAll) _bcSelectedPhones.add(c.phone);
+    else _bcSelectedPhones.delete(c.phone);
+  });
+  renderCustomerPicker();
+  updateBcRecipientPreview('custom');
+}
+
+// Compute and render the live recipient list in the right-side Preview
+// panel for whichever audience is currently selected. Shows name (or phone
+// if no name) for every recipient, not just a count.
+function updateBcRecipientPreview(audience) {
+  const recipientListEl = document.getElementById('bc-recipient-list');
+  const statSelected     = document.getElementById('stat-selected');
+  if (!recipientListEl) return;
+
+  if (audience === 'custom') {
+    const chosen = _bcAllCustomers.filter(c => _bcSelectedPhones.has(c.phone));
+    if (statSelected) statSelected.textContent = chosen.length;
+    recipientListEl.innerHTML = chosen.length
+      ? chosen.map(c => `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:3px 0;">${escHtml(c.customer_name || c.phone)}</div>`).join('')
+      : '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">No customers selected yet.</div>';
+    return;
+  }
+
+  // Non-custom audiences: fetch the matching segment so the user sees the
+  // actual recipients (names/phones), not just a vague count.
+  recipientListEl.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">Loading recipients…</div>';
+  if (statSelected) statSelected.textContent = '…';
+
+  const fetchPromise = (() => {
+    if (audience === 'all')          return apiFetch(ROUTES.crmSegments + '/all');
+    if (audience === 'vip')          return apiFetch(ROUTES.crmSegments + '/vip');
+    if (audience === 'new')          return apiFetch(ROUTES.crmSegments + '/new');
+    if (audience === 'inactive_30d') return apiFetch(ROUTES.crmInactive + '?days=30');
+    if (audience === 'unpaid')       return apiFetch(ROUTES.reminders).then(r => (r && r.orders) || []);
+    return Promise.resolve([]);
+  })();
+
+  fetchPromise.then(rows => {
+    const list = Array.isArray(rows) ? rows : [];
+    if (statSelected) statSelected.textContent = list.length;
+    if (!list.length) {
+      recipientListEl.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">No customers match this audience.</div>';
+      return;
+    }
+    recipientListEl.innerHTML = list.map(c => {
+      const display = c.customer_name || c.customer_phone || c.phone || '—';
+      return `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:3px 0;">${escHtml(display)}</div>`;
+    }).join('');
+  }).catch(e => {
+    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
+    if (statSelected) statSelected.textContent = '—';
+  });
 }
 
 async function sendBroadcastSimple() {
@@ -2303,9 +2468,21 @@ async function sendBroadcastSimple() {
     vip:          'VIP customers',
     new:          'new customers',
     unpaid:       'customers with unpaid orders',
+    custom:       'the selected customers',
   };
 
-  if (!confirm(`Send to ${audienceLabels[audience] || audience}?`)) return;
+  // Validate custom selection before sending
+  if (audience === 'custom') {
+    if (!_bcSelectedPhones.size) {
+      toast('Select at least one customer first', true);
+      return;
+    }
+  }
+
+  const confirmLabel = audience === 'custom'
+    ? `${_bcSelectedPhones.size} selected customer${_bcSelectedPhones.size !== 1 ? 's' : ''}`
+    : audienceLabels[audience] || audience;
+  if (!confirm(`Send to ${confirmLabel}?`)) return;
 
   if (btn) btn.disabled = true;
   if (result) result.style.display = 'none';
@@ -2317,6 +2494,16 @@ async function sendBroadcastSimple() {
       r = await apiFetch(ROUTES.broadcast, {
         method: 'POST',
         body: JSON.stringify({ message: msg }),
+      });
+    } else if (audience === 'custom') {
+      r = await apiFetch(ROUTES.campaigns, {
+        method: 'POST',
+        body: JSON.stringify({
+          audience: 'custom',
+          message: msg,
+          phone_list: Array.from(_bcSelectedPhones),
+          dry_run: false,
+        }),
       });
     } else {
       r = await apiFetch(ROUTES.campaigns, {
@@ -2338,7 +2525,8 @@ async function sendBroadcastSimple() {
     if (statLast) statLast.textContent = 'Just now';
     if (ta) ta.value = '';
     updatePreview();
-    // reset audience to all
+    // reset audience + selection back to "all"
+    _bcSelectedPhones.clear();
     const allRadio = document.querySelector('input[name="bc-audience"][value="all"]');
     if (allRadio) { allRadio.checked = true; onBcAudienceChange(); }
   } catch (e) {

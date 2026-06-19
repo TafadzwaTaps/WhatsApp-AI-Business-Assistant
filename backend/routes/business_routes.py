@@ -482,6 +482,36 @@ def crm_segment_customers(segment: str, user=Depends(require_business)):
     return crud.get_customers_by_segment(user["business_id"], segment)
 
 
+class CustomerNameUpdate(BaseModel):
+    customer_name: str
+
+
+@router.patch("/crm/customers/{phone}/name")
+def crm_update_customer_name(phone: str, body: CustomerNameUpdate, user=Depends(require_business)):
+    """
+    Save or update a customer's display name, keyed by phone number.
+    Lets a business owner attach a human-friendly name to a phone number so
+    customers are recognisable across the Customers list, CRM segments, and
+    campaign recipient picker — instead of being shown only as raw digits.
+    """
+    name = (body.customer_name or "").strip()
+    if not name:
+        raise HTTPException(400, "Name cannot be empty")
+    if len(name) > 100:
+        raise HTTPException(400, "Name is too long (max 100 characters)")
+    try:
+        updated = crud.update_customer_name(phone, user["business_id"], name)
+        try:
+            from crud.analytics import _cache_invalidate_business
+            _cache_invalidate_business(user["business_id"])
+        except Exception:
+            pass
+        return {"ok": True, "phone": phone, "customer_name": updated.get("customer_name", name)}
+    except Exception as exc:
+        log.error("crm_update_customer_name failed phone=%s: %s", phone, exc)
+        raise HTTPException(500, f"Could not save name: {exc}")
+
+
 @router.get("/crm/inactive")
 def crm_inactive(days: int = 30, user=Depends(require_business)):
     if days < 1 or days > 365: raise HTTPException(400, "days must be between 1 and 365")
@@ -736,18 +766,32 @@ def analytics_handoff_stats(user=Depends(require_business)):
 
     # ── Handoffs initiated today ───────────────────────────────────────────────
     total_today  = 0
+    today_start  = _dt.datetime.now(_dt.timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0).isoformat()
+    agent_msgs_today = []
     try:
-        today_start = _dt.datetime.now(_dt.timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0).isoformat()
-        res = (
+        # Fix: sender_type/sender_name are optional columns on `messages`
+        # (added in a later migration). Querying them unconditionally threw
+        # an uncaught exception when the live DB hadn't been migrated yet,
+        # which 500'd this entire endpoint and left the whole Handoff tab
+        # permanently stuck on "—" with no error shown to the user.
+        from crud.messages import _has_messages_col
+        select_cols = "id, created_at"
+        if _has_messages_col("sender_name"):
+            select_cols += ", sender_name"
+        if _has_messages_col("sender_type"):
+            select_cols += ", sender_type"
+
+        query = (
             _sb.table("messages")
-            .select("id, sender_name, sender_type, created_at")
+            .select(select_cols)
             .eq("business_id", bid)
             .eq("direction", "outgoing")
-            .eq("sender_type", "agent")
             .gte("created_at", today_start)
-            .execute()
         )
+        if _has_messages_col("sender_type"):
+            query = query.eq("sender_type", "agent")
+        res = query.execute()
         agent_msgs_today = res.data or []
     except Exception as exc:
         log.warning("handoff_stats: messages query failed: %s", exc)

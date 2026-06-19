@@ -800,9 +800,28 @@
                 <input type="radio" name="bc-audience" value="unpaid" onchange="onBcAudienceChange()"/>
                 <span>⏳ Unpaid orders</span>
               </label>
+              <label class="audience-chip">
+                <input type="radio" name="bc-audience" value="custom" onchange="onBcAudienceChange()"/>
+                <span>✅ Selected customers</span>
+              </label>
             </div>
             <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:8px;">
               Sending to: <span id="bc-audience-count" style="color:var(--green);font-weight:700;">all customers</span>
+            </div>
+
+            <!-- Customer picker — shown only when "Selected customers" is chosen -->
+            <div id="bc-customer-picker" style="display:none;margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--surface2);">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <input type="text" id="bc-picker-search" placeholder="Search by name or phone…"
+                       oninput="renderCustomerPicker()"
+                       style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;
+                              padding:6px 10px;color:var(--text);font-family:var(--mono);font-size:12px;margin-right:8px;"/>
+                <button type="button" class="panel-action" style="font-size:11px;padding:4px 10px;" onclick="bcSelectAll(true)">Select all</button>
+                <button type="button" class="panel-action" style="font-size:11px;padding:4px 10px;margin-left:6px;" onclick="bcSelectAll(false)">Clear</button>
+              </div>
+              <div id="bc-picker-list" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
+                <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px;">Loading customers…</div>
+              </div>
             </div>
           </div>
 
@@ -824,6 +843,13 @@
           <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
             <div>📱 Recipients: <span id="stat-selected" style="color:var(--green);font-weight:700;">—</span></div>
             <div>📬 Last sent: <span id="stat-last">Never</span></div>
+          </div>
+          <!-- Live recipient list — shows exactly who will receive the message -->
+          <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Recipient list</div>
+            <div id="bc-recipient-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
+              <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">Select an audience to preview recipients.</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1571,6 +1597,16 @@
       <button class="customer-drawer-close" onclick="closeDrawer()">✕</button>
     </div>
     <div class="customer-drawer-body">
+      <!-- Editable name — phone numbers alone make customers hard to recognise -->
+      <div style="margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Customer name</div>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="drawer-name-input" placeholder="Add a name…" maxlength="100"
+                 style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                        padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:13px;"/>
+          <button class="btn btn-ghost" style="font-size:12px;padding:8px 14px;" onclick="saveDrawerName()">Save</button>
+        </div>
+      </div>
       <div class="customer-drawer-stats">
         <div class="drawer-stat">
           <div class="drawer-stat-val" id="drawer-orders">—</div>

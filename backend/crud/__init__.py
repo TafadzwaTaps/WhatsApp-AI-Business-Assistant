@@ -70,6 +70,7 @@ from crud.customers import (  # noqa: F401
     clear_cart,
     get_user_memory,
     save_user_memory,
+    update_customer_name,
     _has_memory_col,
 )
 

@@ -296,6 +296,24 @@ def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
         raise
 
 
+def update_customer_name(phone: str, business_id: int, customer_name: str) -> dict:
+    """
+    Set or update a customer's display name.
+
+    Customers are identified by phone number, which is good for accuracy but
+    not human-friendly when reviewing the Customers list, CRM segments, or
+    campaign recipient picker. This lets a business owner attach a name to
+    any phone number so it shows up everywhere customer_name is displayed.
+
+    Reuses save_user_memory() so it benefits from the same 42P10 fallback
+    (manual select-then-update-or-insert when the unique constraint on
+    user_memory is missing) — name saves are never silently dropped.
+    """
+    existing = get_user_memory(phone, business_id) or {}
+    existing["customer_name"] = (customer_name or "").strip()[:100]
+    return save_user_memory(phone, business_id, existing)
+
+
 # Cache for user_memory columns
 _memory_columns: set | None = None
 
