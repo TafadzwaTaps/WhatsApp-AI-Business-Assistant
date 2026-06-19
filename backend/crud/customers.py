@@ -238,12 +238,62 @@ def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
         if _has_memory_col(col):
             row[col] = val
 
-    res = (
-        supabase.table("user_memory")
-        .upsert(row, on_conflict="phone,business_id")
-        .execute()
-    )
-    return _one("user_memory", res)
+    try:
+        res = (
+            supabase.table("user_memory")
+            .upsert(row, on_conflict="phone,business_id")
+            .execute()
+        )
+        return _one("user_memory", res)
+    except Exception as exc:
+        # Fix: PostgREST returns 42P10 "no unique or exclusion constraint
+        # matching the ON CONFLICT specification" when the database is
+        # missing a UNIQUE(phone, business_id) constraint on user_memory.
+        # This caused EVERY upsert to fail silently (caller wraps this in
+        # try/except), so customers were never written to user_memory at
+        # all — the root cause of "Synced 0 customers from chats".
+        #
+        # Permanent fix: run this SQL once in Supabase:
+        #   ALTER TABLE user_memory
+        #     ADD CONSTRAINT user_memory_phone_business_id_key
+        #     UNIQUE (phone, business_id);
+        #
+        # Until that migration runs, fall back to manual select-then-write
+        # so customer data is never silently dropped.
+        if "42P10" in str(exc) or "no unique or exclusion constraint" in str(exc):
+            log.warning(
+                "save_user_memory: upsert failed (missing unique constraint) — "
+                "falling back to manual select-then-write. Run the migration "
+                "in core.db or ask support to add UNIQUE(phone, business_id) "
+                "on user_memory. phone=%s business_id=%s", phone, business_id,
+            )
+            try:
+                existing = (
+                    supabase.table("user_memory")
+                    .select("phone")
+                    .eq("phone", phone)
+                    .eq("business_id", business_id)
+                    .limit(1)
+                    .execute()
+                )
+                if existing.data:
+                    res2 = (
+                        supabase.table("user_memory")
+                        .update(row)
+                        .eq("phone", phone)
+                        .eq("business_id", business_id)
+                        .execute()
+                    )
+                else:
+                    res2 = supabase.table("user_memory").insert(row).execute()
+                return _one("user_memory", res2)
+            except Exception as fallback_exc:
+                log.error(
+                    "save_user_memory: fallback also failed phone=%s business_id=%s: %s",
+                    phone, business_id, fallback_exc,
+                )
+                raise
+        raise
 
 
 # Cache for user_memory columns

@@ -255,6 +255,7 @@ def _process_payment(
     )
     from services._ai_state import (
         _set_awaiting_payment, _set_awaiting_fulfillment, _write_state_data,
+        _get_session,
     )
     from services._ai_memory import _update_order_history
 
@@ -276,12 +277,99 @@ def _process_payment(
         log.info("order created  id=%s  method=%s", order.get("id", "?"), method)
     except ValueError as exc:
         log.warning("order blocked: %s", exc)
+        exc_str = str(exc)
+
+        # Fix: "Product 'X' not found in business id=N" was repeating forever
+        # because the bad item stayed in the cart and the customer kept
+        # retrying the same broken checkout. Self-heal by removing the
+        # specific item that failed lookup, so the *next* checkout attempt
+        # (with the remaining valid items) can actually succeed.
+        import re as _re
+        m = _re.search(r"Product '([^']+)' not found", exc_str)
+        if m:
+            bad_name = m.group(1).strip().lower()
+            try:
+                from services._ai_state import _write_state_data, _get_session
+                remaining = [
+                    item for item in cart
+                    if (item.get("name") or "").strip().lower() != bad_name
+                ]
+                _write_state_data(phone, business_id, {"cart": remaining, "cart_snapshot": remaining})
+            except Exception as cleanup_exc:
+                log.warning("cart auto-cleanup failed: %s", cleanup_exc)
+                remaining = []
+
+            if remaining:
+                items_left = "\n".join(
+                    f"  • {i.get('name','?')} ×{i.get('qty',1)} — ${float(i.get('price',0))*int(i.get('qty',1)):.2f}"
+                    for i in remaining
+                )
+                return (
+                    f"⚠️ Sorry, *{m.group(1)}* is no longer available and has been "
+                    f"removed from your cart.\n\n"
+                    f"🛒 *Updated Cart:*\n{items_left}\n\n"
+                    f"Type *checkout* to try again, or *menu* to add something else."
+                )
+            else:
+                try:
+                    from services._ai_state import _reset_state as _rs
+                    _rs(phone, business_id)
+                except Exception:
+                    pass
+                return (
+                    f"⚠️ Sorry, *{m.group(1)}* is no longer available and was your "
+                    f"only cart item — your cart is now empty.\n\n"
+                    f"Type *menu* to see what's available. 😊"
+                )
+
         return (
-            f"⚠️ Couldn't place your order:\n_{exc}_\n\n"
+            f"⚠️ Couldn't place your order:\n_{exc_str}_\n\n"
             "Please adjust your cart and try *checkout* again."
         )
     except Exception as exc:
         log.exception("order creation error: %s", exc)
+
+        # Fix: track consecutive checkout failures so the customer isn't
+        # stuck retrying forever — escalate to a human after repeated errors.
+        fail_count = 1
+        try:
+            session = _get_session(phone, business_id)
+            fail_count = int(session.get("checkout_fail_count", 0)) + 1
+            _write_state_data(phone, business_id, {
+                "session": {**session, "checkout_fail_count": fail_count}
+            })
+        except Exception:
+            pass
+
+        if fail_count >= 2:
+            # Use the same handoff pattern as the existing "talk to a human"
+            # request flow in ai_new.py (P-2.5) — there is no standalone
+            # trigger_handoff() helper; handoff is initiated by setting state
+            # directly and notifying the dashboard.
+            try:
+                from services._ai_state import _set_human_handoff
+                from services.whatsapp_catalog import generate_ticket_number
+                from workflows import human_handoff as _hh
+
+                _set_human_handoff(phone, business_id)
+                customer = crud.get_or_create_customer(phone, business_id)
+                cust_id  = customer.get("id") if customer else 0
+                ticket   = generate_ticket_number(cust_id, business_id)
+                _write_state_data(phone, business_id, {
+                    "state": "human_handoff",
+                    "session": {"ticket": ticket, "handoff_reason": "Repeated checkout failures"},
+                })
+                _hh.notify_dashboard(phone, business_id, business_name)
+            except Exception as handoff_exc:
+                log.warning("auto-escalation to human handoff failed: %s", handoff_exc)
+
+            return (
+                "❌ We're having trouble processing your order right now.\n\n"
+                "I've notified the business owner to help you directly — "
+                "they'll be with you shortly. 🙏\n\n"
+                "Your cart is saved, so nothing is lost."
+            )
+
         return (
             "❌ Something went wrong saving your order.\n\n"
             "Your cart is still saved — please try *checkout* again in a moment."

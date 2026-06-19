@@ -18,6 +18,10 @@ _CANCEL_EXACT = {
     "never mind", "go back", "no thanks", "nope",
     "cancel order", "cancel my order", "i changed my mind",
     "changed my mind", "don't want", "dont want",
+    # Fix: customers naturally say these when stuck — must trigger the same
+    # cancel/reset path, not be ignored as unrecognized text.
+    "end conversation", "end chat", "exit", "leave",
+    "i'm done", "im done", "forget it",
 }
 
 

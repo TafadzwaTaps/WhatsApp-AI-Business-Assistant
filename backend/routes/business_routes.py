@@ -645,18 +645,14 @@ async def notify_low_stock_to_owner(user=Depends(require_business)):
         raise HTTPException(500, str(exc))
 
 
-@router.get("/analytics/{business_id}")
-def get_analytics(business_id: int, user=Depends(get_current_user)):
-    if user["role"] != "superadmin" and user.get("business_id") != business_id:
-        raise HTTPException(403, "Access denied")
-    business = crud.get_business_by_id(business_id)
-    if not business: raise HTTPException(404, "Business not found")
-    try:
-        stats = crud.get_dashboard_stats(business_id)
-        stats["business_name"] = business.get("name", "")
-        return stats
-    except Exception as exc:
-        raise HTTPException(500, "Failed to load analytics")
+
+
+# NOTE: /analytics/{business_id} (parameterized int route) was moved below
+# all literal /analytics/* routes. FastAPI matches routes in registration
+# order — having {business_id}: int registered first caused every literal
+# path like /analytics/repeat-customers and /analytics/satisfaction to be
+# captured as business_id="repeat-customers", fail int coercion, and return
+# 422 Unprocessable Entity instead of reaching the real handler.
 
 
 # ── Voice transcribe ──────────────────────────────────────────────────────────
@@ -930,6 +926,24 @@ def analytics_satisfaction(user=Depends(require_business)):
     from crud.analytics import get_satisfaction_score
     return get_satisfaction_score(user["business_id"])
 
+
+# Parameterized route registered LAST among /analytics/* paths on purpose —
+# see note above. Must come after every literal /analytics/<word> route or
+# it will shadow them and cause 422s on valid string-suffixed paths.
+@router.get("/analytics/{business_id}")
+def get_analytics(business_id: int, user=Depends(get_current_user)):
+    if user["role"] != "superadmin" and user.get("business_id") != business_id:
+        raise HTTPException(403, "Access denied")
+    business = crud.get_business_by_id(business_id)
+    if not business: raise HTTPException(404, "Business not found")
+    try:
+        stats = crud.get_dashboard_stats(business_id)
+        stats["business_name"] = business.get("name", "")
+        return stats
+    except Exception as exc:
+        raise HTTPException(500, "Failed to load analytics")
+
+
 @router.get("/trial/status")
 def trial_status(user=Depends(require_business)):
     """
@@ -987,7 +1001,23 @@ def crm_backfill_from_chats(user=Depends(require_business)):
                 continue
             try:
                 seen_at = row.get("last_seen") or row.get("created_at") or datetime.now(timezone.utc).isoformat()
-                supabase.table("user_memory").upsert({
+                # Fix: was upsert(on_conflict="phone,business_id") which fails
+                # with PostgREST error 42P10 ("no unique or exclusion
+                # constraint matching the ON CONFLICT specification") because
+                # user_memory has no UNIQUE(phone, business_id) constraint.
+                # This caused every single backfill insert to fail silently,
+                # producing "Synced 0 customers from chats" even with real
+                # customers present.
+                #
+                # Since `phone` was already filtered against existing_phones
+                # above, every row reaching here is confirmed new — a plain
+                # insert() is correct and avoids the broken ON CONFLICT path
+                # entirely. (Permanent fix: add the unique constraint via
+                # `ALTER TABLE user_memory ADD CONSTRAINT
+                # user_memory_phone_business_id_key UNIQUE (phone,
+                # business_id);` — once that's run, on_conflict-based
+                # upserts elsewhere in the app will also work correctly.)
+                supabase.table("user_memory").insert({
                     "phone":          phone,
                     "business_id":    bid,
                     "frequent_items": {},
@@ -997,7 +1027,7 @@ def crm_backfill_from_chats(user=Depends(require_business)):
                     "order_count":    0,
                     "last_seen":      seen_at,
                     "updated_at":     datetime.now(timezone.utc).isoformat(),
-                }, on_conflict="phone,business_id").execute()
+                }).execute()
                 created += 1
             except Exception as row_exc:
                 log.warning("backfill: failed for phone=%s: %s", phone, row_exc)
