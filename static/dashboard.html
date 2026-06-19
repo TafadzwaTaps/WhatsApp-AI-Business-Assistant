@@ -1490,7 +1490,10 @@
     <div class="panel full">
       <div class="panel-header">
         <div class="panel-title">All Customers</div>
-        <button class="panel-action" onclick="loadCrm()">↻ Refresh</button>
+        <div style="display:flex;gap:8px;">
+          <button class="panel-action" onclick="backfillCrm()" title="Sync customers from WhatsApp conversations that don't have orders yet">⚡ Sync from Chats</button>
+          <button class="panel-action" onclick="loadCrm()">↻ Refresh</button>
+        </div>
       </div>
       <div class="panel-body">
         <table>

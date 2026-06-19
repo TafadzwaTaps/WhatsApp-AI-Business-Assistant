@@ -4158,3 +4158,24 @@ function copyStoreLink() {
     toast('✅ Store link copied!');
   });
 }
+
+
+// Sync customers from chat_messages into user_memory (fixes missing customers
+// who have conversations but no completed orders yet).
+async function backfillCrm() {
+  const btn = event?.target;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Syncing…'; }
+  try {
+    const res = await apiFetch('/crm/backfill-from-chats', { method: 'POST' });
+    if (res?.ok) {
+      toast(`✅ Synced ${res.created} customer${res.created !== 1 ? 's' : ''} from chats`);
+      loadCrm();
+    } else {
+      toast('Sync failed', true);
+    }
+  } catch (e) {
+    toast('Sync error: ' + e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Sync from Chats'; }
+  }
+}

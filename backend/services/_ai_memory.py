@@ -15,9 +15,21 @@ log = logging.getLogger(__name__)
 # ── Memory ────────────────────────────────────────────────────────────────────
 
 def _get_memory(phone: str, business_id: int) -> dict:
-    """Return customer memory. Falls back to a safe default on any error."""
+    """
+    Return customer memory. Falls back to a safe default on any error.
+
+    Fix: customers who message the bot but never complete an order were
+    invisible in the CRM/Customers dashboard, because no user_memory row
+    existed until _update_order_history() ran after a purchase. Now, on
+    first contact (no existing row), a row is created immediately with
+    order_count=0 so every customer who has ever messaged appears in the
+    CRM segments, Customers page, and Conversations list consistently.
+    """
     try:
-        mem = crud.get_user_memory(phone, business_id) or {}
+        existing = crud.get_user_memory(phone, business_id)
+        is_new   = not existing or not existing.get("updated_at")
+
+        mem = existing or {}
         mem.setdefault("frequent_items", {})
         mem.setdefault("last_orders",    [])
         mem.setdefault("customer_name",  "")
@@ -25,6 +37,16 @@ def _get_memory(phone: str, business_id: int) -> dict:
         mem.setdefault("order_count",    0)
         mem.setdefault("last_seen",      "")
         mem.setdefault("last_rating",    "")
+
+        if is_new:
+            # First contact — create the row now so this customer is visible
+            # in the CRM immediately, not only after their first order.
+            mem["last_seen"] = datetime.now(timezone.utc).isoformat()
+            try:
+                crud.save_user_memory(phone, business_id, mem)
+            except Exception as save_exc:
+                log.warning("_get_memory: could not create row on first contact: %s", save_exc)
+
         return mem
     except Exception as exc:
         log.warning("_get_memory failed: %s", exc)

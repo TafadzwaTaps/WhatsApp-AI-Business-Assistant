@@ -938,3 +938,81 @@ def trial_status(user=Depends(require_business)):
     """
     from core.plan_guard import get_trial_status_response
     return get_trial_status_response(user["business_id"])
+
+@router.post("/crm/backfill-from-chats")
+def crm_backfill_from_chats(user=Depends(require_business)):
+    """
+    One-time fix: create user_memory rows for customers who have chat_messages
+    (active conversations) but no user_memory row yet — they were invisible
+    in the CRM/Customers page even though they had real conversations.
+
+    Safe to call multiple times — upsert on (phone, business_id), only fills
+    in missing rows, never overwrites existing order/spend data.
+    """
+    bid = user["business_id"]
+    try:
+        from core.db import supabase
+        from datetime import datetime, timezone
+
+        # Get all unique phones with chat activity
+        chats_res = (
+            supabase.table("chat_messages")
+            .select("phone, created_at")
+            .eq("business_id", bid)
+            .order("created_at")
+            .execute()
+        )
+        chat_rows = chats_res.data or []
+
+        # Get phones that already have a user_memory row
+        mem_res = (
+            supabase.table("user_memory")
+            .select("phone")
+            .eq("business_id", bid)
+            .execute()
+        )
+        existing_phones = {r["phone"] for r in (mem_res.data or [])}
+
+        # Find first-seen timestamp per phone (chat_rows already ordered ascending)
+        first_seen: dict = {}
+        for row in chat_rows:
+            phone = row.get("phone")
+            if phone and phone not in first_seen:
+                first_seen[phone] = row.get("created_at")
+
+        created = 0
+        for phone, seen_at in first_seen.items():
+            if phone in existing_phones:
+                continue
+            try:
+                supabase.table("user_memory").upsert({
+                    "phone":          phone,
+                    "business_id":    bid,
+                    "frequent_items": {},
+                    "last_orders":    [],
+                    "customer_name":  "",
+                    "total_spent":    0.0,
+                    "order_count":    0,
+                    "last_seen":      seen_at or datetime.now(timezone.utc).isoformat(),
+                    "updated_at":     datetime.now(timezone.utc).isoformat(),
+                }, on_conflict="phone,business_id").execute()
+                created += 1
+            except Exception as row_exc:
+                log.warning("backfill: failed for phone=%s: %s", phone, row_exc)
+
+        # Clear cache so the Customers page reflects new rows immediately
+        try:
+            from crud.analytics import _cache_invalidate_business
+            _cache_invalidate_business(bid)
+        except Exception:
+            pass
+
+        return {
+            "ok":               True,
+            "total_chat_phones": len(first_seen),
+            "already_existed":   len(existing_phones),
+            "created":           created,
+        }
+    except Exception as exc:
+        log.error("crm_backfill_from_chats error: %s", exc)
+        raise HTTPException(500, f"Backfill failed: {exc}")
