@@ -2113,7 +2113,7 @@ async function updateOrderStatus(orderId) {
   if (!pick || pick === cur) return;
   if (!statuses.includes(pick)) { toast('Invalid status', true); return; }
   try {
-    await apiFetch(`/orders/${orderId}/status`, { method: 'PATCH', body: JSON.stringify({ status: pick }) });
+    await apiFetch(`/orders/${orderId}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
     toast(`✅ ORDER-${orderId} → ${pick}`);
     await loadOrders();
   } catch (e) { toast('Update failed: ' + e.message, true); }

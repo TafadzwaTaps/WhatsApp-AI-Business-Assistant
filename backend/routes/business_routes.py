@@ -942,9 +942,12 @@ def trial_status(user=Depends(require_business)):
 @router.post("/crm/backfill-from-chats")
 def crm_backfill_from_chats(user=Depends(require_business)):
     """
-    One-time fix: create user_memory rows for customers who have chat_messages
-    (active conversations) but no user_memory row yet — they were invisible
-    in the CRM/Customers page even though they had real conversations.
+    One-time fix: create user_memory rows for customers who appear in the
+    "customers" table (this is the actual source of the Conversations page —
+    crud.get_chat_conversations() reads from "customers", not "chat_messages")
+    but have no user_memory row yet. These customers had active conversations
+    but were invisible in the CRM/Customers page because the CRM only reads
+    user_memory.
 
     Safe to call multiple times — upsert on (phone, business_id), only fills
     in missing rows, never overwrites existing order/spend data.
@@ -954,15 +957,15 @@ def crm_backfill_from_chats(user=Depends(require_business)):
         from core.db import supabase
         from datetime import datetime, timezone
 
-        # Get all unique phones with chat activity
-        chats_res = (
-            supabase.table("chat_messages")
-            .select("phone, created_at")
+        # Get all customers for this business — this is the same table the
+        # Conversations page reads from (crud.get_chat_conversations).
+        cust_res = (
+            supabase.table("customers")
+            .select("phone, created_at, last_seen")
             .eq("business_id", bid)
-            .order("created_at")
             .execute()
         )
-        chat_rows = chats_res.data or []
+        customer_rows = cust_res.data or []
 
         # Get phones that already have a user_memory row
         mem_res = (
@@ -973,18 +976,17 @@ def crm_backfill_from_chats(user=Depends(require_business)):
         )
         existing_phones = {r["phone"] for r in (mem_res.data or [])}
 
-        # Find first-seen timestamp per phone (chat_rows already ordered ascending)
-        first_seen: dict = {}
-        for row in chat_rows:
-            phone = row.get("phone")
-            if phone and phone not in first_seen:
-                first_seen[phone] = row.get("created_at")
-
         created = 0
-        for phone, seen_at in first_seen.items():
+        skipped_no_phone = 0
+        for row in customer_rows:
+            phone = row.get("phone")
+            if not phone:
+                skipped_no_phone += 1
+                continue
             if phone in existing_phones:
                 continue
             try:
+                seen_at = row.get("last_seen") or row.get("created_at") or datetime.now(timezone.utc).isoformat()
                 supabase.table("user_memory").upsert({
                     "phone":          phone,
                     "business_id":    bid,
@@ -993,7 +995,7 @@ def crm_backfill_from_chats(user=Depends(require_business)):
                     "customer_name":  "",
                     "total_spent":    0.0,
                     "order_count":    0,
-                    "last_seen":      seen_at or datetime.now(timezone.utc).isoformat(),
+                    "last_seen":      seen_at,
                     "updated_at":     datetime.now(timezone.utc).isoformat(),
                 }, on_conflict="phone,business_id").execute()
                 created += 1
@@ -1008,10 +1010,11 @@ def crm_backfill_from_chats(user=Depends(require_business)):
             pass
 
         return {
-            "ok":               True,
-            "total_chat_phones": len(first_seen),
+            "ok":                True,
+            "total_customers":   len(customer_rows),
             "already_existed":   len(existing_phones),
             "created":           created,
+            "skipped_no_phone":  skipped_no_phone,
         }
     except Exception as exc:
         log.error("crm_backfill_from_chats error: %s", exc)
