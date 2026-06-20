@@ -38,14 +38,45 @@ def _hex_darken(hex_colour: str, amount: int = 30) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
+_ALWAYS_SAFE_FIELDS = "id,name,category,currency_symbol"
+_OPTIONAL_FIELDS     = ("tagline", "logo_url", "theme_colour")
+_columns_cache: set | None = None
+
+
+def _get_businesses_columns() -> set:
+    """Probe the live businesses table schema once, cache the result."""
+    global _columns_cache
+    if _columns_cache is None:
+        try:
+            from core.db import supabase
+            res = supabase.table("businesses").select("*").limit(1).execute()
+            _columns_cache = set(res.data[0].keys()) if res.data else set(_ALWAYS_SAFE_FIELDS.split(","))
+        except Exception:
+            _columns_cache = set()
+    return _columns_cache
+
+
 def _get_business_and_products(slug: str) -> tuple[dict, list]:
     """Fetch public business data and products. Returns ({}, []) on error."""
     try:
         from core.db import supabase
         name_pattern = _slug_to_name(slug)
+
+        # Build the select field list from columns confirmed to exist —
+        # tagline/logo_url/theme_colour were previously hardcoded even
+        # though they don't exist on the live table yet. Supabase rejects
+        # a .select() naming any unknown column for the WHOLE query, which
+        # the except below silently swallowed, making every /site/{slug}
+        # page show the "not found" fallback even for real, active
+        # businesses with products. This degrades gracefully today and
+        # auto-upgrades once the optional columns are migrated.
+        cols   = _get_businesses_columns()
+        extra  = [f for f in _OPTIONAL_FIELDS if f in cols]
+        fields = ",".join(_ALWAYS_SAFE_FIELDS.split(",") + extra)
+
         biz_res = (
             supabase.table("businesses")
-            .select("id,name,category,tagline,logo_url,theme_colour,currency_symbol")
+            .select(fields)
             .eq("is_active", True)
             .ilike("name", f"%{name_pattern}%")
             .limit(1)

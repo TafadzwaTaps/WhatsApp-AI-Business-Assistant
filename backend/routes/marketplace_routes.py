@@ -32,13 +32,48 @@ router = APIRouter()
 # Static files served exclusively via app.mount("/static", StaticFiles(...))
 # All page routes below use RedirectResponse — no manual file I/O, no path issues.
 
-# Public-safe fields only — never exposes credentials/tokens
-_BIZ_PUBLIC_FIELDS = (
-    "id,name,category,tagline,logo_url,theme_colour,"
-    "currency,currency_symbol,onboarding_completed"
-)
+# Public-safe fields only — never exposes credentials/tokens.
+#
+# IMPORTANT: this list is built dynamically (see _get_biz_public_fields below)
+# rather than hardcoded. tagline, logo_url, and theme_colour were added to
+# this constant in an earlier session assuming a migration had been run —
+# it hadn't. Supabase rejects a .select() that names a column which doesn't
+# exist on the table with a single error for the WHOLE query (PGRST204-style),
+# which the broad except Exception here silently swallowed, returning an
+# empty directory/store every time even though the businesses existed and
+# were active. Probing the schema first means every endpoint below keeps
+# working today, and automatically picks up the optional columns the moment
+# their migration is run — no further code change needed.
+_ALWAYS_SAFE_BIZ_FIELDS = "id,name,category,currency,currency_symbol,onboarding_completed"
+_OPTIONAL_BIZ_FIELDS    = ("tagline", "logo_url", "theme_colour")
 
 _PRODUCT_PUBLIC_FIELDS = "id,name,price,description,category,image_url,stock"
+
+_biz_columns_cache: set | None = None
+
+
+def _get_biz_columns() -> set:
+    """Probe the live businesses table schema once, cache the result."""
+    global _biz_columns_cache
+    if _biz_columns_cache is None:
+        try:
+            from core.db import supabase
+            res = supabase.table("businesses").select("*").limit(1).execute()
+            if res.data:
+                _biz_columns_cache = set(res.data[0].keys())
+            else:
+                _biz_columns_cache = set(_ALWAYS_SAFE_BIZ_FIELDS.split(","))
+        except Exception:
+            _biz_columns_cache = set()
+    return _biz_columns_cache
+
+
+def _get_biz_public_fields() -> str:
+    """Build the select() field list from columns confirmed to exist."""
+    cols = _get_biz_columns()
+    extra = [f for f in _OPTIONAL_BIZ_FIELDS if f in cols]
+    fields = _ALWAYS_SAFE_BIZ_FIELDS.split(",") + extra
+    return ",".join(fields)
 
 
 def _slug_to_name(slug: str) -> str:
@@ -89,7 +124,7 @@ def api_directory():
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select(_BIZ_PUBLIC_FIELDS)
+            .select(_get_biz_public_fields())
             .eq("is_active", True)
             .order("display_order", desc=False, nullsfirst=True)
             .order("id", desc=False)
@@ -113,7 +148,7 @@ def api_store(slug: str):
         # wrong business with similar name; fall back to ilike contains-match
         res = (
             supabase.table("businesses")
-            .select(_BIZ_PUBLIC_FIELDS)
+            .select(_get_biz_public_fields())
             .eq("is_active", True)
             .ilike("name", name_pattern)       # exact ci match: "flavoury foods"
             .limit(1)
@@ -123,7 +158,7 @@ def api_store(slug: str):
             # Fallback 1: contains match on space-expanded slug
             res = (
                 supabase.table("businesses")
-                .select(_BIZ_PUBLIC_FIELDS)
+                .select(_get_biz_public_fields())
                 .eq("is_active", True)
                 .ilike("name", f"%{name_pattern}%")
                 .limit(1)
@@ -136,7 +171,7 @@ def api_store(slug: str):
             slug_compact = slug.replace("-", "")
             res = (
                 supabase.table("businesses")
-                .select(_BIZ_PUBLIC_FIELDS)
+                .select(_get_biz_public_fields())
                 .eq("is_active", True)
                 .ilike("name", f"%{slug_compact}%")
                 .limit(1)
