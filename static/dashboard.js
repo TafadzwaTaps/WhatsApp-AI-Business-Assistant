@@ -233,6 +233,13 @@ function logout() {
    Cache is per-session (memory only), invalidated on page reload. */
 const _meCache = { data: null, ts: 0, ttl: 60000 };
 
+// Global currency symbol — every dashboard money display reads this instead
+// of hardcoding '$'. Kept in sync with the business's saved currency_symbol
+// every time /me is fetched (see getCachedMe below). Defaults to '$' so
+// nothing breaks before the first /me call resolves.
+window.CURRENT_CURRENCY_SYMBOL = '$';
+function getCurrencySymbol() { return window.CURRENT_CURRENCY_SYMBOL || '$'; }
+
 async function getCachedMe() {
   const now = Date.now();
   if (_meCache.data && (now - _meCache.ts) < _meCache.ttl) {
@@ -243,6 +250,7 @@ async function getCachedMe() {
     if (result) {
       _meCache.data = result;
       _meCache.ts   = now;
+      if (result.currency_symbol) window.CURRENT_CURRENCY_SYMBOL = result.currency_symbol;
     }
     return result;
   } catch (e) {
@@ -402,7 +410,7 @@ async function loadAdminData() {
     _s('sa-businesses', stats.businesses ?? '—');
     _s('sa-active', stats.active_businesses ?? '—');
     _s('sa-orders', stats.total_orders ?? '—');
-    _s('sa-revenue', '$' + (stats.total_revenue||0).toFixed(2));
+    _s('sa-revenue', getCurrencySymbol() + (stats.total_revenue||0).toFixed(2));
     const bizList = Array.isArray(businesses) ? businesses : [];
     renderBizTable(bizList, 'sa-biz-overview', false);
     renderBizTable(bizList, 'sa-biz-table', true);
@@ -476,7 +484,7 @@ async function loadOrders() {
     const statO = document.getElementById('stat-orders');
     const statR = document.getElementById('stat-revenue');
     if (statO) statO.textContent = orders.length;
-    if (statR) statR.textContent = '$' + orders.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
+    if (statR) statR.textContent = getCurrencySymbol() + orders.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
   } catch(e) {
     ['orders-body','recent-orders-body'].forEach(id => {
       const el = document.getElementById(id);
@@ -498,7 +506,7 @@ function renderOrders(orders, bodyId, showStatus) {
     <td>${escHtml(o.customer_phone||'—')}</td>
     <td>${escHtml(o.product_name||'—')}</td>
     <td>${o.quantity||0}</td>
-    <td><span class="badge badge-green">$${(o.total_price||0).toFixed(2)}</span></td>
+    <td><span class="badge badge-green">${getCurrencySymbol()}${(o.total_price||0).toFixed(2)}</span></td>
     ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml(status)}</span></td>`:''}
     <td>${fmtTime(o.created_at || o.createdAt || o.timestamp)}</td>
   </tr>`;
@@ -658,7 +666,7 @@ function _renderProductTable(products) {
       <td style="width:44px">${thumb}</td>
       <td><strong style="font-size:13px;">${escHtml(p.name||'—')}</strong>${p.description?`<div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:2px;">${escHtml(p.description.substring(0,60))}${p.description.length>60?'…':''}</div>`:''}</td>
       <td>${catDisplay}</td>
-      <td><span class="badge badge-green">$${(p.price||0).toFixed(2)}</span></td>
+      <td><span class="badge badge-green">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</span></td>
       <td>${stockDisplay}</td>
       <td>${_prodStatusBadge(p)}</td>
       <td>
@@ -688,7 +696,7 @@ function _renderProductGrid(products) {
       </div>
       <div class="product-card-body">
         <div class="product-card-name">${escHtml(p.name||'—')}</div>
-        <div class="product-card-price">$${(p.price||0).toFixed(2)}</div>
+        <div class="product-card-price">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</div>
         ${typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : ''}
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
@@ -1189,6 +1197,11 @@ async function loadSettings() {
     _setVal('set-hours',         b.business_hours || '');
     _setVal('set-instagram',     b.instagram || '');
     _setVal('set-facebook',      b.facebook || '');
+    // Multi-language toggle — restore saved state from features_json
+    const translationToggle = document.getElementById('set-translation-enabled');
+    if (translationToggle) {
+      translationToggle.checked = !!(b.features_json && b.features_json.translation_enabled);
+    }
   } catch(e) { console.warn('loadSettings /me:', e.message); }
 
   // Load payment settings
@@ -1300,6 +1313,17 @@ const _CURRENCY_SYMBOLS = {
 };
 function _currencySymbolFor(code) { return _CURRENCY_SYMBOLS[code] || '$'; }
 
+// Re-render every section that displays money so a currency symbol change
+// applies instantly across the dashboard without requiring a page reload.
+// Safe to call anytime — each function re-fetches and re-renders its own
+// section; sections not currently visible just update invisibly.
+function refreshAllMoneyDisplays() {
+  try { loadOrders();  } catch(_) {}
+  try { loadProducts();} catch(_) {}
+  try { loadCrm();     } catch(_) {}
+  try { _postLoginInit && loadRepeatCustomerStat && loadRepeatCustomerStat(); } catch(_) {}
+}
+
 function updateCurrencySymbol(code) {
   const symEl = document.getElementById('set-currency-symbol');
   // Only auto-fill if the user hasn't set a custom override
@@ -1398,16 +1422,19 @@ async function savePaymentOptions() {
   const btn = document.querySelector('[onclick="savePaymentOptions()"]');
   const currency = _getVal('set-currency');
   if (!currency) { toast('Select a currency', true); return; }
+  const newSymbol = _getVal('set-currency-symbol') || _currencySymbolFor(currency);
   try {
     setLoading(btn, true);
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
       currency:        currency,
-      currency_symbol: _getVal('set-currency-symbol') || undefined,
+      currency_symbol: newSymbol || undefined,
       cash_enabled:    document.getElementById('set-cash-enabled')?.checked,
       pickup_enabled:  document.getElementById('set-pickup-enabled')?.checked,
     })});
     toast('✅ Payment options saved');
     invalidateMeCache();   // force next /me read to reflect the new values everywhere
+    window.CURRENT_CURRENCY_SYMBOL = newSymbol;   // apply immediately, no reload needed
+    refreshAllMoneyDisplays();
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
 }
@@ -1574,7 +1601,7 @@ function checkPendingCheckout() {
 }
 
 // ── INIT ──────────────────────────────────────────────────
-function init(){
+async function init(){
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
   const savedFont = localStorage.getItem('wazi_font');
   setTheme(savedTheme, true);
@@ -1582,6 +1609,13 @@ function init(){
 
   buildSidebar();
   checkStatus();
+
+  // Load currency symbol BEFORE any money rendering, so the first paint of
+  // Orders/Products/stats is correct rather than briefly flashing '$' and
+  // never refreshing (this was the root cause of currency "not applying
+  // across the system" — it simply wasn't fetched early/at all).
+  if (token) { try { await getCachedMe(); } catch (_) {} }
+
   if(userRole==='superadmin'){loadAdminData();}
   else{loadOrders();loadProducts();loadConversations();loadCustomerStats();}
   // H4: redirect to Stripe checkout if user just signed up from pricing page
@@ -1871,7 +1905,7 @@ async function loadCrm() {
         <td style="font-family:var(--mono);font-size:12px;">${escHtml(c.phone || '—')}</td>
         <td>${escHtml(c.customer_name || '—')}</td>
         <td>${c.order_count || 0}</td>
-        <td style="color:var(--green);">$${parseFloat(c.total_spent || 0).toFixed(2)}</td>
+        <td style="color:var(--green);">${getCurrencySymbol()}${parseFloat(c.total_spent || 0).toFixed(2)}</td>
         <td style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
         <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="openCustomerDrawer(_crmTableData[${i}])">View</button></td>
       </tr>`;
@@ -1943,7 +1977,7 @@ function openCustomerDrawer(customer) {
   document.getElementById('drawer-phone').textContent    = phone;
   document.getElementById('drawer-segment').textContent  = seg.label;
   document.getElementById('drawer-orders').textContent   = customer.order_count || 0;
-  document.getElementById('drawer-spent').textContent    = '$' + parseFloat(customer.total_spent||0).toFixed(2);
+  document.getElementById('drawer-spent').textContent    = getCurrencySymbol() + parseFloat(customer.total_spent||0).toFixed(2);
   document.getElementById('drawer-last').textContent     = customer.last_seen ? fmtTime(customer.last_seen) : '—';
   const nameInput = document.getElementById('drawer-name-input');
   if (nameInput) nameInput.value = customer.customer_name || '';
@@ -1991,7 +2025,7 @@ async function loadDrawerOrders(phone) {
       `<div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px;">
         <span><span class="badge badge-amber" style="font-size:10px;">#${o.id}</span></span>
         <span style="color:var(--text-dim);">${escHtml(o.product_name||'—')}</span>
-        <span style="color:var(--green);">$${parseFloat(o.total_price||0).toFixed(2)}</span>
+        <span style="color:var(--green);">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}</span>
         <span style="color:var(--text-dim);">${fmtTime(o.created_at)}</span>
       </div>`
     ).join('');
@@ -2059,7 +2093,7 @@ async function loadReminders() {
       return `<tr>
         <td><span class="badge badge-amber">#${o.order_id||'—'}</span></td>
         <td style="font-family:var(--mono);font-size:11px;">${escHtml(o.customer_phone||'—')}</td>
-        <td><span class="badge badge-green">$${parseFloat(o.total_price||0).toFixed(2)}</span></td>
+        <td><span class="badge badge-green">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}</span></td>
         <td style="font-family:var(--mono);font-size:11px;">${escHtml(o.payment_method||'—')}</td>
         <td><span style="color:${tierColor[tier]||'var(--text)'};font-family:var(--mono);font-size:11px;font-weight:700;">Tier ${tier}</span></td>
         <td style="font-family:var(--mono);font-size:11px;">${age}h ago</td>
@@ -2138,7 +2172,7 @@ function renderKanban(orders) {
         <div class="kanban-card" onclick="updateOrderStatus(${o.id})">
           <div class="kanban-card-id">#${o.id}</div>
           <div class="kanban-card-name">${escHtml(o.customer_phone||'—')}</div>
-          <div class="kanban-card-total">$${parseFloat(o.total_price||0).toFixed(2)}</div>
+          <div class="kanban-card-total">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}</div>
           <div class="kanban-card-time">${fmtTime(o.created_at)}</div>
         </div>`).join('')
       : '<div class="kanban-empty">—</div>';
@@ -2183,7 +2217,7 @@ loadOrders = (function(_prev5) {
     const statO = document.getElementById('stat-orders');
     const statR = document.getElementById('stat-revenue');
     if (statO) statO.textContent = _ordersData.length;
-    if (statR) statR.textContent = '$' + _ordersData.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
+    if (statR) statR.textContent = getCurrencySymbol() + _ordersData.reduce((s,o)=>s+(o.total_price||0),0).toFixed(2);
     if (_ordersView === 'kanban') renderKanban(_ordersData);
     // loadOverviewExtras() is called by the outer wrapper — not here
   } catch(e) {
@@ -2218,7 +2252,7 @@ async function loadAnalyticsCharts() {
     if (stats) {
       const map = {
         'stat-orders':    stats.total_orders,
-        'stat-revenue':   stats.total_revenue != null ? '$' + parseFloat(stats.total_revenue).toFixed(2) : null,
+        'stat-revenue':   stats.total_revenue != null ? getCurrencySymbol() + parseFloat(stats.total_revenue).toFixed(2) : null,
         'stat-ai':        stats.ai_handled,
         'stat-pending':   stats.pending_orders,
       };
@@ -3265,7 +3299,7 @@ function renderReferralTab(data) {
   if (linkEl)    linkEl.textContent    = link;
   if (totalEl)   totalEl.textContent   = total;
   if (convEl)    convEl.textContent    = conv;
-  if (pendingEl) pendingEl.textContent = `$${parseFloat(pending).toFixed(2)}`;
+  if (pendingEl) pendingEl.textContent = `${getCurrencySymbol()}${parseFloat(pending).toFixed(2)}`;
 
   // Show nav badge if there are referrals
   const badge = document.getElementById('nav-ref-badge');
@@ -3501,7 +3535,7 @@ function viewProduct(id) {
   if (!p) return;
   const info = [
     `📦 ${p.name}`,
-    `💲 Price: $${(p.price||0).toFixed(2)}`,
+    `💲 Price: ${getCurrencySymbol()}${(p.price||0).toFixed(2)}`,
     p.category   ? `🏷 Category: ${p.category}` : '',
     typeof p.stock === 'number' ? `📊 Stock: ${p.stock}` : '',
     p.description ? `📝 ${p.description}` : '',
@@ -3534,7 +3568,7 @@ function generateCatalog() {
   const name = bizName || 'Our Store';
   const lines = [`📋 *${name} — Product Catalog*\n`];
   _allProducts.forEach((p, i) => {
-    lines.push(`${i+1}. *${p.name}* — $${(p.price||0).toFixed(2)}${p.description?' | '+p.description:''}`);
+    lines.push(`${i+1}. *${p.name}* — ${getCurrencySymbol()}${(p.price||0).toFixed(2)}${p.description?' | '+p.description:''}`);
   });
   lines.push(`\nType a product name or number to order! 😊`);
   const text = lines.join('\n');
@@ -3596,7 +3630,7 @@ async function loadProductAnalytics() {
     raEl.innerHTML = recent.map(p => `
       <div class="prod-analytics-item">
         <span>${escHtml(p.name)}</span>
-        <span class="prod-analytics-item-val">$${(p.price||0).toFixed(2)}</span>
+        <span class="prod-analytics-item-val">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</span>
       </div>`).join('') || '<div style="color:var(--text-dim);">No products yet.</div>';
   }
 
@@ -3665,9 +3699,9 @@ function aiPricingAdvice() {
   if (!price) { toast('Enter a price first', true); return; }
   const margin = cat.includes('food') ? 0.65 : 0.55;
   const cost   = (price * (1 - margin)).toFixed(2);
-  const advice = `💲 Pricing analysis for $${price.toFixed(2)}:\n\n`
-    + `• Estimated cost at ${(margin*100).toFixed(0)}% margin: $${cost}\n`
-    + `• Suggested range: $${(price*0.85).toFixed(2)} – $${(price*1.2).toFixed(2)}\n`
+  const advice = `💲 Pricing analysis for ${getCurrencySymbol()}${price.toFixed(2)}:\n\n`
+    + `• Estimated cost at ${(margin*100).toFixed(0)}% margin: ${getCurrencySymbol()}${cost}\n`
+    + `• Suggested range: ${getCurrencySymbol()}${(price*0.85).toFixed(2)} – ${getCurrencySymbol()}${(price*1.2).toFixed(2)}\n`
     + `• Consider bundling with complementary items to increase basket size.`;
   _showAiOutput(advice);
 }
@@ -3679,10 +3713,10 @@ function aiProductInsights() {
   const avgPrice = total ? (_allProducts.reduce((s,p) => s+(p.price||0), 0) / total).toFixed(2) : 0;
   const insights = `📊 Product Performance Insights:\n\n`
     + `• Total products: ${total}\n`
-    + `• Average price: $${avgPrice}\n`
+    + `• Average price: ${getCurrencySymbol()}${avgPrice}\n`
     + (oos ? `• ⚠️ ${oos} product${oos>1?'s':''} out of stock — restock to avoid lost sales\n` : `• ✅ All products in stock\n`)
     + (low ? `• ⚠️ ${low} product${low>1?'s':''} running low — consider restocking soon\n` : '')
-    + `\nTip: Products priced under $5 tend to have higher order frequency.`;
+    + `\nTip: Lower-priced products tend to have higher order frequency.`;
   _showAiOutput(insights);
 }
 
@@ -3965,7 +3999,7 @@ async function checkFirstOrderCelebration() {
       detailEl.innerHTML = `
         <div>📦 Order #${first.id || '—'}</div>
         <div style="margin-top:4px;color:var(--text)">
-          ${item.name || 'Order'} — $${parseFloat(first.total_price || 0).toFixed(2)}
+          ${item.name || 'Order'} — ${getCurrencySymbol()}${parseFloat(first.total_price || 0).toFixed(2)}
         </div>
         <div style="margin-top:4px;">Customer: ${first.customer_phone || '—'}</div>
       `;
@@ -4075,6 +4109,28 @@ async function saveGrowthSetting(key, enabled) {
     showToast(`${key === 'cart_recovery' ? 'Cart Recovery' : 'Re-engagement'} ${enabled ? 'enabled' : 'disabled'}`);
   } catch (e) {
     showToast('Failed to save setting', true);
+  }
+}
+
+// Multi-language: toggle services.translation_layer's per-business opt-in
+// flag (features_json.translation_enabled). Same pattern as Growth
+// Automation above — additive, does not touch any other features_json key.
+async function saveTranslationToggle(enabled) {
+  try {
+    const biz      = await apiFetch('/me').catch(() => ({}));
+    const features = biz?.features_json || {};
+    features['translation_enabled'] = enabled;
+
+    await apiFetch('/me', {
+      method: 'PATCH',
+      body: JSON.stringify({ features_json: features }),
+    });
+    showToast(`Multi-language replies ${enabled ? 'enabled' : 'disabled'}`);
+  } catch (e) {
+    showToast('Failed to save setting', true);
+    // Revert the toggle visually since the save failed
+    const el = document.getElementById('set-translation-enabled');
+    if (el) el.checked = !enabled;
   }
 }
 
