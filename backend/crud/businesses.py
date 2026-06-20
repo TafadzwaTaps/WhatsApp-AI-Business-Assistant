@@ -168,6 +168,23 @@ def update_business(business_id: int, data) -> Optional[dict]:
         else:
             del update_dict["whatsapp_token"]
 
+    # Drop any field whose column doesn't exist yet on the live businesses
+    # table. Without this, a single unmigrated column (e.g. cash_enabled,
+    # pickup_enabled before their ALTER TABLE has been run) causes Supabase
+    # to reject the ENTIRE update with PGRST204 — meaning unrelated fields
+    # in the same save (currency, name, etc.) silently fail too. This keeps
+    # the save working for every column that DOES exist, and just skips
+    # the ones that don't, until the migration below is applied.
+    unknown_cols = [k for k in update_dict if not _has_business_col(k)]
+    if unknown_cols:
+        log.warning(
+            "update_business: dropping unmigrated column(s) %s for business_id=%s "
+            "— run the pending ALTER TABLE migration to enable them",
+            unknown_cols, business_id,
+        )
+        for k in unknown_cols:
+            update_dict.pop(k, None)
+
     if not update_dict:
         return get_business_by_id(business_id)
 
@@ -178,6 +195,31 @@ def update_business(business_id: int, data) -> Optional[dict]:
         .execute()
     )
     return _one("businesses", res)
+
+
+# Cache for businesses table columns — same pattern as _has_memory_col
+# (crud/customers.py) and _has_messages_col (crud/messages.py).
+_business_columns: set | None = None
+
+
+def _has_business_col(col: str) -> bool:
+    global _business_columns
+    if _business_columns is None:
+        try:
+            res = supabase.table("businesses").select("*").limit(1).execute()
+            if res.data:
+                _business_columns = set(res.data[0].keys())
+            else:
+                # No rows to introspect — fall back to a conservative known-safe
+                # set rather than blocking every update.
+                _business_columns = {
+                    "id", "name", "owner_username", "owner_password",
+                    "whatsapp_phone_id", "whatsapp_token", "is_active",
+                    "created_at", "category", "currency", "currency_symbol",
+                }
+        except Exception:
+            _business_columns = set()
+    return col in _business_columns
 
 
 def delete_business(business_id: int) -> Optional[dict]:

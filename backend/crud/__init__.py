@@ -32,6 +32,7 @@ from crud.businesses import (  # noqa: F401
     get_business_payment_settings,
     update_business,
     delete_business,
+    _has_business_col,
 )
 
 # ── Products ──────────────────────────────────────────────────────────────────

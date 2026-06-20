@@ -306,6 +306,11 @@ ALTER TABLE businesses
   ADD COLUMN IF NOT EXISTS logo_url    TEXT,
   ADD COLUMN IF NOT EXISTS theme_colour TEXT DEFAULT '#00c853';
 
+-- Cash & Currency settings panel (Store Settings → Payments tab)
+ALTER TABLE businesses
+  ADD COLUMN IF NOT EXISTS cash_enabled    BOOLEAN DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS pickup_enabled  BOOLEAN DEFAULT TRUE;
+
 -- Multi-language support
 ALTER TABLE user_memory
   ADD COLUMN IF NOT EXISTS preferred_language TEXT DEFAULT 'en';
