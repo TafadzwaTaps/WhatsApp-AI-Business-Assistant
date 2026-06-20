@@ -112,6 +112,55 @@
   </div>
 </div>
 
+<!-- CURRENCY CONVERSION MODAL -->
+<div class="modal-overlay" id="currency-convert-modal">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-title">💱 Convert My Prices</div>
+    <div id="ccm-step-select">
+      <p style="font-size:13px;color:var(--text-dim);font-family:var(--mono);line-height:1.6;margin-bottom:16px;">
+        This converts every product's price from your current currency to your
+        selected currency above, using today's live exchange rate.
+        Nothing changes until you review and confirm.
+      </p>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;font-family:var(--mono);font-size:13px;">
+        <span id="ccm-from-label" style="font-weight:700;">USD</span>
+        <span style="color:var(--text-dim);">→</span>
+        <span id="ccm-to-label" style="font-weight:700;color:var(--green);">PLN</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeCurrencyConvertModal()">Cancel</button>
+        <button class="btn btn-primary" id="ccm-preview-btn" onclick="loadCurrencyConvertPreview()">Preview Conversion</button>
+      </div>
+    </div>
+
+    <div id="ccm-step-preview" style="display:none;">
+      <p style="font-size:13px;color:var(--text-dim);font-family:var(--mono);line-height:1.6;margin-bottom:8px;">
+        Rate: 1 <span id="ccm-rate-from"></span> = <span id="ccm-rate-value"></span> <span id="ccm-rate-to"></span>
+      </p>
+      <div id="ccm-preview-list" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px;">
+        <!-- populated by JS -->
+      </div>
+      <p style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;">
+        Prices are rounded to 2 decimal places. This only updates product prices —
+        existing orders and past sales records are not changed.
+      </p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeCurrencyConvertModal()">Cancel</button>
+        <button class="btn btn-primary" id="ccm-confirm-btn" onclick="confirmCurrencyConversion()">
+          ✅ Confirm &amp; Update All Prices
+        </button>
+      </div>
+    </div>
+
+    <div id="ccm-step-result" style="display:none;">
+      <div id="ccm-result-message" style="font-family:var(--mono);font-size:13px;line-height:1.7;"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="closeCurrencyConvertModal()">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MOBILE SIDEBAR TOGGLE -->
 <button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle menu">☰</button>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
@@ -1233,6 +1282,16 @@
               <label class="toggle-switch"><input type="checkbox" id="set-pickup-enabled" checked/><span class="toggle-slider"></span></label>
             </div>
             <button class="btn btn-primary" onclick="savePaymentOptions()" style="margin-top:12px;">Save Options</button>
+
+            <hr style="border:none;border-top:1px solid var(--border);margin:20px 0;"/>
+            <div style="font-size:12px;font-family:var(--mono);color:var(--text-dim);margin-bottom:10px;line-height:1.6;">
+              Changing currency above only relabels prices with a new symbol —
+              it doesn't convert the actual numbers. Use this to convert every
+              product's price using today's real exchange rate.
+            </div>
+            <button class="btn btn-ghost" onclick="openCurrencyConvertModal()" style="font-size:13px;">
+              💱 Convert My Prices…
+            </button>
           </div>
         </div>
         <div class="panel">

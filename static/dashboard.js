@@ -1439,6 +1439,125 @@ async function savePaymentOptions() {
   finally { setLoading(btn, false); }
 }
 
+// ── CURRENCY CONVERSION (Convert My Prices) ───────────────────────────────
+// "from" currency = the business's currently SAVED currency (fetched fresh
+// from /me, not the dropdown — the owner may have changed the dropdown
+// without saving yet). "to" currency = whatever is currently selected in
+// the dropdown right now. This avoids any ambiguity about direction.
+let _ccmPreviewData = null;   // {rate, from_currency, to_currency, items[]}
+
+async function openCurrencyConvertModal() {
+  const toCurrency = _getVal('set-currency');
+  if (!toCurrency) { toast('Select a target currency first', true); return; }
+
+  invalidateMeCache();
+  const biz = await getCachedMe().catch(() => null);
+  const fromCurrency = (biz && biz.currency) || 'USD';
+
+  if (fromCurrency === toCurrency) {
+    toast('Pick a different currency to convert to', true);
+    return;
+  }
+
+  // Reset modal to step 1 every time it opens
+  document.getElementById('ccm-step-select').style.display  = 'block';
+  document.getElementById('ccm-step-preview').style.display = 'none';
+  document.getElementById('ccm-step-result').style.display  = 'none';
+  document.getElementById('ccm-from-label').textContent = fromCurrency;
+  document.getElementById('ccm-to-label').textContent   = toCurrency;
+  _ccmPreviewData = null;
+
+  document.getElementById('currency-convert-modal').classList.add('open');
+}
+
+function closeCurrencyConvertModal() {
+  document.getElementById('currency-convert-modal').classList.remove('open');
+}
+
+async function loadCurrencyConvertPreview() {
+  const fromCurrency = document.getElementById('ccm-from-label').textContent;
+  const toCurrency   = document.getElementById('ccm-to-label').textContent;
+  const btn = document.getElementById('ccm-preview-btn');
+
+  try {
+    setLoading(btn, true);
+    const res = await apiFetch('/products/convert-currency/preview', {
+      method: 'POST',
+      body: JSON.stringify({ from_currency: fromCurrency, to_currency: toCurrency }),
+    });
+    _ccmPreviewData = res;
+
+    if (!res.items || !res.items.length) {
+      document.getElementById('ccm-preview-list').innerHTML =
+        '<div style="padding:16px;font-family:var(--mono);font-size:12px;color:var(--text-dim);">No products to convert yet.</div>';
+    } else {
+      document.getElementById('ccm-preview-list').innerHTML = res.items.map(it => `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;">
+          <span>${escHtml(it.name || ('Product #' + it.id))}</span>
+          <span>
+            <span style="color:var(--text-dim);text-decoration:line-through;">${fromCurrency} ${it.old_price.toFixed(2)}</span>
+            <span style="margin:0 6px;color:var(--text-dim);">→</span>
+            <span style="color:var(--green);font-weight:700;">${toCurrency} ${it.new_price.toFixed(2)}</span>
+          </span>
+        </div>`).join('');
+    }
+
+    document.getElementById('ccm-rate-from').textContent  = fromCurrency;
+    document.getElementById('ccm-rate-to').textContent    = toCurrency;
+    document.getElementById('ccm-rate-value').textContent = res.rate.toFixed(4);
+
+    document.getElementById('ccm-step-select').style.display  = 'none';
+    document.getElementById('ccm-step-preview').style.display = 'block';
+  } catch (e) {
+    toast('Could not fetch exchange rate: ' + e.message, true);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
+async function confirmCurrencyConversion() {
+  if (!_ccmPreviewData) { toast('Preview expired — please try again', true); return; }
+  const btn = document.getElementById('ccm-confirm-btn');
+
+  if (!confirm(
+    `This will update the price of ${_ccmPreviewData.items.length} product(s) ` +
+    `from ${_ccmPreviewData.from_currency} to ${_ccmPreviewData.to_currency}. Continue?`
+  )) return;
+
+  try {
+    setLoading(btn, true);
+    const res = await apiFetch('/products/convert-currency/apply', {
+      method: 'POST',
+      body: JSON.stringify({
+        from_currency: _ccmPreviewData.from_currency,
+        to_currency:   _ccmPreviewData.to_currency,
+        rate:          _ccmPreviewData.rate,
+      }),
+    });
+
+    const newSymbol = _currencySymbolFor(res.to_currency);
+    window.CURRENT_CURRENCY_SYMBOL = newSymbol;
+    invalidateMeCache();
+
+    const resultEl = document.getElementById('ccm-result-message');
+    resultEl.innerHTML = res.failed_count > 0
+      ? `✅ Updated ${res.updated_count} product${res.updated_count !== 1 ? 's' : ''}. ` +
+        `⚠️ ${res.failed_count} could not be updated — please check those manually.`
+      : `✅ All ${res.updated_count} product price${res.updated_count !== 1 ? 's' : ''} updated to ${res.to_currency}.`;
+
+    document.getElementById('ccm-step-preview').style.display = 'none';
+    document.getElementById('ccm-step-result').style.display  = 'block';
+
+    toast(`✅ Prices converted to ${res.to_currency}`);
+    refreshAllMoneyDisplays();
+    loadSettings();   // refresh currency dropdown/symbol display to match saved state
+  } catch (e) {
+    toast('Conversion failed: ' + e.message, true);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 // ── DELIVERY SETTINGS ─────────────────────────────────────
 async function saveDeliverySettings() {
   const btn = document.querySelector('[onclick="saveDeliverySettings()"]');

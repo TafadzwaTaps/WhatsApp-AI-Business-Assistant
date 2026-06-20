@@ -353,6 +353,140 @@ def delete_product(product_id: int, user=Depends(require_business)):
     return {"deleted": product_id, "name": p.get("name", "")}
 
 
+# ── Currency conversion (preview + confirm-and-apply) ──────────────────────────
+# Changing a business's currency in Settings only ever relabelled the symbol
+# (19.50 USD became "19.50 zł" instead of the real ~80 PLN). These two
+# endpoints let a business owner explicitly convert their product prices
+# using a live exchange rate, with a mandatory preview step first — nothing
+# is written until the owner reviews old→new prices and confirms.
+
+class CurrencyConvertPreviewRequest(BaseModel):
+    from_currency: str
+    to_currency:   str
+
+
+@router.post("/products/convert-currency/preview")
+def preview_currency_conversion(
+    body: CurrencyConvertPreviewRequest, user=Depends(require_business)
+):
+    """
+    Read-only. Returns the live exchange rate and, for every product owned
+    by this business, the old price and what it would become if converted.
+    Does NOT modify any data — purely a preview for the owner to review.
+    """
+    from services.fx_rates import get_exchange_rate
+
+    from_cur = (body.from_currency or "").upper().strip()
+    to_cur   = (body.to_currency or "").upper().strip()
+    if not from_cur or not to_cur:
+        raise HTTPException(422, "from_currency and to_currency are required")
+
+    if from_cur == to_cur:
+        return {"rate": 1.0, "from_currency": from_cur, "to_currency": to_cur, "items": []}
+
+    rate = get_exchange_rate(from_cur, to_cur)
+    if rate is None:
+        raise HTTPException(
+            503,
+            f"Could not fetch an exchange rate for {from_cur} → {to_cur} right now. "
+            f"Please try again in a moment.",
+        )
+
+    products = crud.get_products(user["business_id"]) or []
+    items = []
+    for p in products:
+        old_price = float(p.get("price") or 0)
+        new_price = round(old_price * rate, 2)
+        items.append({
+            "id":        p.get("id"),
+            "name":      p.get("name", ""),
+            "old_price": old_price,
+            "new_price": new_price,
+        })
+
+    return {
+        "rate":          rate,
+        "from_currency": from_cur,
+        "to_currency":   to_cur,
+        "items":         items,
+    }
+
+
+class CurrencyConvertApplyRequest(BaseModel):
+    from_currency: str
+    to_currency:   str
+    rate:          float   # the exact rate shown in the preview, re-confirmed
+                            # here so a stale/changed rate can't silently apply
+                            # different numbers than what the owner reviewed
+
+
+@router.post("/products/convert-currency/apply")
+def apply_currency_conversion(
+    body: CurrencyConvertApplyRequest, user=Depends(require_business)
+):
+    """
+    Applies the previously previewed conversion: updates every product's
+    price for this business using the exact rate the owner confirmed, then
+    updates the business's currency. Each product update is independently
+    try/excepted so one failure doesn't abort the whole batch — the
+    response reports exactly which products succeeded and which didn't.
+    """
+    bid = user["business_id"]
+    from_cur = (body.from_currency or "").upper().strip()
+    to_cur   = (body.to_currency or "").upper().strip()
+    rate     = body.rate
+
+    if not from_cur or not to_cur:
+        raise HTTPException(422, "from_currency and to_currency are required")
+    if rate is None or rate <= 0:
+        raise HTTPException(422, "A valid positive rate is required")
+
+    products = crud.get_products(bid) or []
+    updated, failed = [], []
+
+    for p in products:
+        pid = p.get("id")
+        try:
+            old_price = float(p.get("price") or 0)
+            new_price = round(old_price * rate, 2)
+            crud.update_product(pid, bid, {"price": new_price})
+            updated.append({"id": pid, "name": p.get("name", ""),
+                             "old_price": old_price, "new_price": new_price})
+        except Exception as exc:
+            log.warning("convert_currency: failed for product=%s biz=%s: %s", pid, bid, exc)
+            failed.append({"id": pid, "name": p.get("name", "")})
+
+    # Update the business's own currency/symbol now that products are converted.
+    # crud.update_business() already filters out any column that doesn't
+    # exist yet on the live table (see crud/businesses.py _has_business_col),
+    # so this is safe even before any pending schema migration runs.
+    try:
+        symbol_map = {"USD": "$", "EUR": "€", "GBP": "£", "PLN": "zł", "ZAR": "R"}
+        crud.update_business(bid, BusinessUpdate(
+            currency=to_cur,
+            currency_symbol=symbol_map.get(to_cur),
+        ))
+    except Exception as exc:
+        log.warning("convert_currency: business currency update failed biz=%s: %s", bid, exc)
+
+    try:
+        from crud.analytics import _cache_invalidate_business
+        _cache_invalidate_business(bid)
+    except Exception:
+        pass
+
+    return {
+        "ok":            True,
+        "from_currency": from_cur,
+        "to_currency":   to_cur,
+        "rate":          rate,
+        "updated_count": len(updated),
+        "failed_count":  len(failed),
+        "updated":       updated,
+        "failed":        failed,
+    }
+
+
 # ── Orders ────────────────────────────────────────────────────────────────────
 
 class OrderCreateRequest(BaseModel):
