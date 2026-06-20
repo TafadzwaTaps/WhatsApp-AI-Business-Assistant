@@ -55,6 +55,7 @@ let bizId       = parseInt(localStorage.getItem('wazi_business_id') || '0', 10);
 })();
 let activePhone = null;
 let customerPhones = [];
+let _crmTableData  = [];   // cache of /crm/segments/all rows for safe View button lookups
 
 // ── MOBILE SIDEBAR TOGGLE ─────────────────────────────────
 function toggleSidebar() {
@@ -1173,6 +1174,12 @@ async function loadSettings() {
     // Currency
     if (b.currency) _setVal('set-currency', b.currency);
     if (b.currency_symbol) _setVal('set-currency-symbol', b.currency_symbol);
+    // Cash & Currency toggles — restore saved state (was previously never
+    // read back, so toggles always showed their hardcoded HTML default)
+    const cashToggle   = document.getElementById('set-cash-enabled');
+    const pickupToggle = document.getElementById('set-pickup-enabled');
+    if (cashToggle)   cashToggle.checked   = b.cash_enabled   !== false;  // default true if unset
+    if (pickupToggle) pickupToggle.checked = b.pickup_enabled !== false; // default true if unset
     _setVal('set-description',   b.description || '');
     _setVal('set-contact-phone', b.contact_phone || '');
     _setVal('set-support-email', b.support_email || '');
@@ -1388,7 +1395,21 @@ async function savePayPalSettings() {
 }
 
 async function savePaymentOptions() {
-  toast('✅ Payment options saved');
+  const btn = document.querySelector('[onclick="savePaymentOptions()"]');
+  const currency = _getVal('set-currency');
+  if (!currency) { toast('Select a currency', true); return; }
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      currency:        currency,
+      currency_symbol: _getVal('set-currency-symbol') || undefined,
+      cash_enabled:    document.getElementById('set-cash-enabled')?.checked,
+      pickup_enabled:  document.getElementById('set-pickup-enabled')?.checked,
+    })});
+    toast('✅ Payment options saved');
+    invalidateMeCache();   // force next /me read to reflect the new values everywhere
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
 }
 
 // ── DELIVERY SETTINGS ─────────────────────────────────────
@@ -1839,11 +1860,12 @@ async function loadCrm() {
   try {
     const rows = await apiFetch(ROUTES.crmSegments + '/all');
     const data = Array.isArray(rows) ? rows : [];
+    _crmTableData = data;   // cache for openCustomerDrawer(index) — avoids unsafe JSON-in-HTML-attribute
     if (!data.length) {
       tbody.innerHTML = '<tr><td colspan="6"><div class="empty">No customers yet.</div></td></tr>';
       return;
     }
-    tbody.innerHTML = data.map(c => {
+    tbody.innerHTML = data.map((c, i) => {
       const seg = getSegmentLabel(c.order_count || 0, c.total_spent || 0);
       return `<tr>
         <td style="font-family:var(--mono);font-size:12px;">${escHtml(c.phone || '—')}</td>
@@ -1851,7 +1873,7 @@ async function loadCrm() {
         <td>${c.order_count || 0}</td>
         <td style="color:var(--green);">$${parseFloat(c.total_spent || 0).toFixed(2)}</td>
         <td style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
-        <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="openCustomerDrawer(${JSON.stringify(c)})">View</button></td>
+        <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="openCustomerDrawer(_crmTableData[${i}])">View</button></td>
       </tr>`;
     }).join('');
   } catch (e) {

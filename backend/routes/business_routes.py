@@ -53,6 +53,12 @@ class BusinessUpdate(BaseModel):
     features_json:     Optional[dict] = None  # arbitrary feature flags, stored as JSONB
     # H5: allow business owners to add/update their contact email
     owner_email:       Optional[str]  = None
+    # Cash & Currency panel: these existed on the business record (used in
+    # get_me's setdefault) but had no field here to receive updates through
+    # — meaning Cash on Delivery / Pickup Available toggles always silently
+    # reverted on reload because they were never actually persisted.
+    cash_enabled:      Optional[bool] = None
+    pickup_enabled:    Optional[bool] = None
 
 
 @router.get("/me")
