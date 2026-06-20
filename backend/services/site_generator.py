@@ -42,6 +42,10 @@ _ALWAYS_SAFE_FIELDS = "id,name,category,currency_symbol"
 _OPTIONAL_FIELDS     = ("tagline", "logo_url", "theme_colour")
 _columns_cache: set | None = None
 
+_ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
+_OPTIONAL_PRODUCT_FIELDS    = ("description", "image_url", "category", "stock")
+_product_columns_cache: set | None = None
+
 
 def _get_businesses_columns() -> set:
     """Probe the live businesses table schema once, cache the result."""
@@ -54,6 +58,19 @@ def _get_businesses_columns() -> set:
         except Exception:
             _columns_cache = set()
     return _columns_cache
+
+
+def _get_products_columns() -> set:
+    """Probe the live products table schema once, cache the result."""
+    global _product_columns_cache
+    if _product_columns_cache is None:
+        try:
+            from core.db import supabase
+            res = supabase.table("products").select("*").limit(1).execute()
+            _product_columns_cache = set(res.data[0].keys()) if res.data else set(_ALWAYS_SAFE_PRODUCT_FIELDS.split(","))
+        except Exception:
+            _product_columns_cache = set()
+    return _product_columns_cache
 
 
 def _get_business_and_products(slug: str) -> tuple[dict, list]:
@@ -85,9 +102,18 @@ def _get_business_and_products(slug: str) -> tuple[dict, list]:
         if not biz_res.data:
             return {}, []
         biz = biz_res.data[0]
+
+        # Same fix as the businesses select above — description doesn't
+        # exist on the live products table yet, and was previously
+        # hardcoded here too. This broke /site/{slug} for every business
+        # with products (uncaught 400 -> swallowed by except -> empty page).
+        prod_cols  = _get_products_columns()
+        prod_extra = [f for f in _OPTIONAL_PRODUCT_FIELDS if f in prod_cols]
+        prod_fields = ",".join(_ALWAYS_SAFE_PRODUCT_FIELDS.split(",") + prod_extra)
+
         prod_res = (
             supabase.table("products")
-            .select("id,name,price,description,image_url,category,stock")
+            .select(prod_fields)
             .eq("business_id", biz["id"])
             .execute()
         )

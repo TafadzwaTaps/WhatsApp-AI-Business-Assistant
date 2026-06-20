@@ -29,35 +29,86 @@ log    = logging.getLogger("wazibot")
 router = APIRouter()
 
 
-def _find_static_dir() -> str:
+# Static files served exclusively via app.mount("/static", StaticFiles(...))
+# All page routes below use RedirectResponse — no manual file I/O, no path issues.
+
+# Public-safe fields only — never exposes credentials/tokens.
+#
+# IMPORTANT: this list is built dynamically (see _get_biz_public_fields below)
+# rather than hardcoded. tagline, logo_url, and theme_colour were added to
+# this constant in an earlier session assuming a migration had been run —
+# it hadn't. Supabase rejects a .select() that names a column which doesn't
+# exist on the table with a single error for the WHOLE query (PGRST204-style),
+# which the broad except Exception here silently swallowed, returning an
+# empty directory/store every time even though the businesses existed and
+# were active. Probing the schema first means every endpoint below keeps
+# working today, and automatically picks up the optional columns the moment
+# their migration is run — no further code change needed.
+_ALWAYS_SAFE_BIZ_FIELDS = "id,name,category,currency,currency_symbol,onboarding_completed"
+_OPTIONAL_BIZ_FIELDS    = ("tagline", "logo_url", "theme_colour")
+
+_ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
+_OPTIONAL_PRODUCT_FIELDS    = ("description", "category", "image_url", "stock")
+
+_biz_columns_cache: set | None = None
+_product_columns_cache: set | None = None
+
+
+def _get_biz_columns() -> set:
+    """Probe the live businesses table schema once, cache the result."""
+    global _biz_columns_cache
+    if _biz_columns_cache is None:
+        try:
+            from core.db import supabase
+            res = supabase.table("businesses").select("*").limit(1).execute()
+            if res.data:
+                _biz_columns_cache = set(res.data[0].keys())
+            else:
+                _biz_columns_cache = set(_ALWAYS_SAFE_BIZ_FIELDS.split(","))
+        except Exception:
+            _biz_columns_cache = set()
+    return _biz_columns_cache
+
+
+def _get_biz_public_fields() -> str:
+    """Build the select() field list from columns confirmed to exist."""
+    cols = _get_biz_columns()
+    extra = [f for f in _OPTIONAL_BIZ_FIELDS if f in cols]
+    fields = _ALWAYS_SAFE_BIZ_FIELDS.split(",") + extra
+    return ",".join(fields)
+
+
+def _get_product_columns() -> set:
+    """Probe the live products table schema once, cache the result."""
+    global _product_columns_cache
+    if _product_columns_cache is None:
+        try:
+            from core.db import supabase
+            res = supabase.table("products").select("*").limit(1).execute()
+            if res.data:
+                _product_columns_cache = set(res.data[0].keys())
+            else:
+                _product_columns_cache = set(_ALWAYS_SAFE_PRODUCT_FIELDS.split(","))
+        except Exception:
+            _product_columns_cache = set()
+    return _product_columns_cache
+
+
+def _get_product_public_fields() -> str:
     """
-    Find static/ directory. Checks env var WAZIBOT_STATIC_DIR first (set by
-    main.py at startup), then falls back to filesystem search.
+    Build the select() field list from columns confirmed to exist.
+
+    Fix: "description" was hardcoded here even though it doesn't exist on
+    the live products table yet. Supabase rejects a .select() naming any
+    unknown column for the WHOLE query — this took down /api/store/{slug}
+    entirely (500 error, "Store not found" shown to customers) even though
+    the business and its products were real and active. Same root cause
+    and fix pattern as _get_biz_public_fields above.
     """
-    env_path = os.environ.get("WAZIBOT_STATIC_DIR", "").strip()
-    if env_path and os.path.isdir(env_path):
-        return env_path
-    base = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(base, "static"),
-        os.path.join(base, "..", "static"),
-        os.path.join(base, "..", "..", "static"),
-    ]
-    for c in candidates:
-        p = os.path.abspath(c)
-        if os.path.isdir(p):
-            return p
-    return os.path.abspath(os.path.join(base, "..", "static"))
-
-STATIC_DIR = _find_static_dir()
-
-# Public-safe fields only — never exposes credentials/tokens
-_BIZ_PUBLIC_FIELDS = (
-    "id,name,category,tagline,logo_url,theme_colour,"
-    "currency,currency_symbol,onboarding_completed"
-)
-
-_PRODUCT_PUBLIC_FIELDS = "id,name,price,description,category,image_url,stock"
+    cols  = _get_product_columns()
+    extra = [f for f in _OPTIONAL_PRODUCT_FIELDS if f in cols]
+    fields = _ALWAYS_SAFE_PRODUCT_FIELDS.split(",") + extra
+    return ",".join(fields)
 
 
 def _slug_to_name(slug: str) -> str:
@@ -108,7 +159,7 @@ def api_directory():
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select(_BIZ_PUBLIC_FIELDS)
+            .select(_get_biz_public_fields())
             .eq("is_active", True)
             .order("display_order", desc=False, nullsfirst=True)
             .order("id", desc=False)
@@ -132,7 +183,7 @@ def api_store(slug: str):
         # wrong business with similar name; fall back to ilike contains-match
         res = (
             supabase.table("businesses")
-            .select(_BIZ_PUBLIC_FIELDS)
+            .select(_get_biz_public_fields())
             .eq("is_active", True)
             .ilike("name", name_pattern)       # exact ci match: "flavoury foods"
             .limit(1)
@@ -142,7 +193,7 @@ def api_store(slug: str):
             # Fallback 1: contains match on space-expanded slug
             res = (
                 supabase.table("businesses")
-                .select(_BIZ_PUBLIC_FIELDS)
+                .select(_get_biz_public_fields())
                 .eq("is_active", True)
                 .ilike("name", f"%{name_pattern}%")
                 .limit(1)
@@ -155,7 +206,7 @@ def api_store(slug: str):
             slug_compact = slug.replace("-", "")
             res = (
                 supabase.table("businesses")
-                .select(_BIZ_PUBLIC_FIELDS)
+                .select(_get_biz_public_fields())
                 .eq("is_active", True)
                 .ilike("name", f"%{slug_compact}%")
                 .limit(1)
@@ -167,7 +218,7 @@ def api_store(slug: str):
 
         prod_res = (
             supabase.table("products")
-            .select(_PRODUCT_PUBLIC_FIELDS)
+            .select(_get_product_public_fields())
             .eq("business_id", res.data[0]["id"])
             .execute()
         )
@@ -184,17 +235,11 @@ def api_store(slug: str):
 # HTML pages (serve SPAs from static/)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _serve_static(filename: str) -> HTMLResponse:
-    path = os.path.join(STATIC_DIR, filename)
-    if os.path.exists(path):
-        return HTMLResponse(open(path).read())
-    return HTMLResponse(f"<html><body><p>File not found: {filename}</p></body></html>", status_code=404)
+# _serve_static removed — use RedirectResponse to /static/ instead
 
 
-@router.get("/directory", response_class=HTMLResponse, include_in_schema=False)
-async def directory_page():
-    """Public marketplace directory SPA."""
-    return _serve_static("marketplace.html")
+# /directory page route is registered in main.py (more reliable — main.py
+# is always deployed). This router handles only /api/directory and /api/store/* API routes.
 
 
 # /store/{slug} and /menu/{slug} are served by main.py fallback routes.
@@ -208,4 +253,5 @@ async def site_page(slug: str):
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)
-        return _serve_static("store.html")
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/static/store.html", status_code=302)

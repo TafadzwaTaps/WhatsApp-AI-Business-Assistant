@@ -315,6 +315,10 @@ ALTER TABLE businesses
 ALTER TABLE user_memory
   ADD COLUMN IF NOT EXISTS preferred_language TEXT DEFAULT 'en';
 
+-- Product descriptions (public store / AI website / marketplace pages)
+ALTER TABLE products
+  ADD COLUMN IF NOT EXISTS description TEXT;
+
 -- Agent identity (if not already done)
 ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS agent_id TEXT;
