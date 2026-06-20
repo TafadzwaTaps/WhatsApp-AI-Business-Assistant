@@ -1316,6 +1316,30 @@
             <button class="btn btn-primary" onclick="saveAISettings()">Save</button>
           </div>
         </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">🌐 Multi-language Replies</div></div>
+          <div class="panel-body">
+            <div class="toggle-row">
+              <div><span class="toggle-label">Enable Translation</span>
+                <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-top:2px;">
+                  Customers can ask the bot to reply in another language
+                </div>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="set-translation-enabled" onchange="saveTranslationToggle(this.checked)"/>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div style="font-size:12px;font-family:var(--mono);color:var(--text-dim);margin-top:10px;line-height:1.6;">
+              When enabled, a customer can type things like <em>"translate to french"</em>,
+              <em>"switch to shona"</em>, or just write a greeting in their language
+              (e.g. <em>"Sawubona"</em>) and the bot will remember their preference
+              and reply in that language going forward.
+              <br><br>
+              Supported: English, Shona, Ndebele, Swahili, French, Portuguese, Spanish.
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 

@@ -287,6 +287,41 @@ async def receive_message(request: Request):
                 send_whatsapp(phone_number_id, token, customer_phone, reply)
             return {"status": "ok"}
 
+        # ── Multi-language: explicit customer language-switch request ──────
+        # New module, additive only — never touches generate_reply() or the
+        # AI conversation state. If the customer explicitly asks to switch
+        # reply language ("translate to french", "switch to shona", etc.),
+        # acknowledge immediately and skip the normal AI turn for this
+        # message, exactly like the voice-note short-circuit above.
+        try:
+            from services.language_commands import detect_language_switch_command
+            switch_reply = detect_language_switch_command(text, customer_phone, business["id"])
+        except Exception as exc:
+            log.debug("language switch check failed (ignored): %s", exc)
+            switch_reply = None
+
+        if switch_reply:
+            try:
+                out_msg = crud.create_message(
+                    customer["id"], business["id"], switch_reply, "outgoing", sender_type="ai",
+                )
+            except Exception as exc:
+                log.warning("STEP 7 language-switch-reply failed: %s", exc)
+            if token:
+                send_whatsapp(phone_number_id, token, customer_phone, switch_reply)
+            return {"status": "ok"}
+
+        # ── Multi-language: passive detection from natural phrasing ────────
+        # Already-built helper in translation_layer.py, previously never
+        # called anywhere. Fire-and-forget — only writes preferred_language
+        # if a recognised greeting/phrase is detected; never blocks or
+        # alters this turn's AI reply.
+        try:
+            from services.translation_layer import detect_and_set_language
+            detect_and_set_language(text, customer_phone, business["id"])
+        except Exception as exc:
+            log.debug("detect_and_set_language failed (ignored): %s", exc)
+
         business_phone_id = business.get("whatsapp_phone_id", "")
         msg_from          = msg_obj.get("from", "")
         is_from_agent     = bool(business_phone_id and msg_from and msg_from == business_phone_id)
@@ -316,6 +351,20 @@ async def receive_message(request: Request):
             message_is_from_agent=is_from_agent,
             business_config=biz_config,
         )
+
+        # ── Multi-language: passive translation wrapper ────────────────────
+        # Applied AFTER generate_reply() returns, exactly per
+        # services/translation_layer.py's documented usage. No-op unless the
+        # business has opted in (features_json.translation_enabled) and the
+        # customer has a non-English preferred_language on file — which is
+        # set either by detect_and_set_language() picking up on greeting
+        # phrases, or explicitly via the language-switch command above.
+        try:
+            from services.translation_layer import maybe_translate
+            reply = maybe_translate(reply, customer_phone, business["id"])
+        except Exception as exc:
+            log.debug("maybe_translate failed (using original reply): %s", exc)
+
         _log_event(
             "ai.request" if reply else "ai.suppressed",
             phone=customer_phone, biz=business["id"],
