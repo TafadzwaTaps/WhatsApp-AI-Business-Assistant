@@ -1045,7 +1045,7 @@
       <button class="stab"         data-tab="delivery"  onclick="switchSettingsTab('delivery',this)">🚚 Delivery</button>
       <button class="stab"         data-tab="ai"        onclick="switchSettingsTab('ai',this)">🤖 AI</button>
       <button class="stab"         data-tab="store"     onclick="switchSettingsTab('store',this)">🏪 Store</button>
-      <button class="stab"         data-tab="appearance" onclick="switchSettingsTab('appearance',this)">🎨 Appearance</button>
+      <button class="stab"         data-tab="appearance" onclick="switchSettingsTab('appearance',this);loadSiteGeneratorSettings()">🎨 Appearance</button>
       <button class="stab"         data-tab="referrals" onclick="switchSettingsTab('referrals',this);loadReferralTab()">🔗 Referrals</button>
     </div>
 
@@ -1479,6 +1479,103 @@
                 <option value="Georgia,serif">Georgia</option>
               </select>
             </div>
+          </div>
+        </div>
+
+        <!-- ═══ Public Website Generator (/site/{slug}) ════════════════════
+             Separate from the Dashboard Appearance panel above — this
+             customizes the public AI-generated website shown to customers,
+             not the WaziBot dashboard itself. Saved into
+             features_json.site_generator via PATCH /me (no schema migration
+             needed — same pattern as Growth Automation / Multi-language). -->
+        <div class="panel" style="grid-column:1/-1;">
+          <div class="panel-header">
+            <div class="panel-title">✨ Public Website Generator</div>
+            <a id="sg-preview-link" href="/site/" target="_blank" class="panel-action">👁 Preview Site →</a>
+          </div>
+          <div class="panel-body">
+            <div style="font-size:12px;font-family:var(--mono);color:var(--text-dim);margin-bottom:18px;line-height:1.6;">
+              Customize the look of your public website at <span style="color:var(--green);">wazibot.com/site/your-business</span>.
+              Changes apply instantly — no need to regenerate anything.
+            </div>
+
+            <div class="form-group">
+              <label>Theme Style</label>
+              <div class="sg-theme-grid" id="sg-theme-grid">
+                <button type="button" class="sg-theme-card" data-theme="dark_modern" onclick="sgSelectTheme('dark_modern')">
+                  <div class="sg-theme-swatch" style="background:#0a0a0a;color:#f0f0f0;">Aa</div>
+                  <span>Dark Modern</span>
+                </button>
+                <button type="button" class="sg-theme-card" data-theme="light_clean" onclick="sgSelectTheme('light_clean')">
+                  <div class="sg-theme-swatch" style="background:#ffffff;color:#1a1a1a;border:1px solid #ddd;">Aa</div>
+                  <span>Light Clean</span>
+                </button>
+                <button type="button" class="sg-theme-card" data-theme="vibrant" onclick="sgSelectTheme('vibrant')">
+                  <div class="sg-theme-swatch" style="background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;">Aa</div>
+                  <span>Vibrant</span>
+                </button>
+                <button type="button" class="sg-theme-card" data-theme="warm" onclick="sgSelectTheme('warm')">
+                  <div class="sg-theme-swatch" style="background:linear-gradient(135deg,#c2410c,#92400e);color:#fff;">Aa</div>
+                  <span>Warm</span>
+                </button>
+                <button type="button" class="sg-theme-card" data-theme="minimal" onclick="sgSelectTheme('minimal')">
+                  <div class="sg-theme-swatch" style="background:#fafafa;color:#111;border:1px solid #ddd;">Aa</div>
+                  <span>Minimal</span>
+                </button>
+                <button type="button" class="sg-theme-card" data-theme="luxury" onclick="sgSelectTheme('luxury')">
+                  <div class="sg-theme-swatch" style="background:#0d0d0d;color:#d4af37;border:1px solid #d4af37;">Aa</div>
+                  <span>Luxury</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top:18px;">
+              <label>Font Style</label>
+              <select id="sg-font-select" style="margin-top:4px;">
+                <option value="poppins">Poppins (Modern)</option>
+                <option value="inter">Inter (Default)</option>
+                <option value="montserrat">Montserrat</option>
+                <option value="open_sans">Open Sans</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="margin-top:18px;">
+              <label>Layout Style</label>
+              <div style="display:flex;gap:10px;margin-top:4px;">
+                <button type="button" class="sg-layout-btn" data-layout="standard" onclick="sgSelectLayout('standard')">Standard</button>
+                <button type="button" class="sg-layout-btn" data-layout="wide" onclick="sgSelectLayout('wide')">Wide</button>
+                <button type="button" class="sg-layout-btn" data-layout="compact" onclick="sgSelectLayout('compact')">Compact</button>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-top:18px;">
+              <label>Business Hours <span style="opacity:.6;font-weight:400;">(shown on site if filled in)</span></label>
+              <input type="text" id="sg-hours" placeholder="e.g. 8:00 AM – 8:00 PM" style="margin-top:4px;"/>
+            </div>
+            <div class="form-group" style="margin-top:14px;">
+              <label>Location <span style="opacity:.6;font-weight:400;">(shown on site if filled in)</span></label>
+              <input type="text" id="sg-location" placeholder="e.g. Harare, Zimbabwe" style="margin-top:4px;"/>
+            </div>
+
+            <div style="margin-top:20px;padding-top:18px;border-top:1px solid var(--border);">
+              <div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-family:var(--mono);margin-bottom:10px;">Advanced Options</div>
+              <div class="toggle-row"><span class="toggle-label">Show Business Hours</span>
+                <label class="toggle-switch"><input type="checkbox" id="sg-show-hours" checked/><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row"><span class="toggle-label">Show Location</span>
+                <label class="toggle-switch"><input type="checkbox" id="sg-show-location" checked/><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row"><span class="toggle-label">Show Customer Reviews</span>
+                <label class="toggle-switch"><input type="checkbox" id="sg-show-reviews"/><span class="toggle-slider"></span></label>
+              </div>
+              <div class="toggle-row"><span class="toggle-label">Enable Online Ordering CTA</span>
+                <label class="toggle-switch"><input type="checkbox" id="sg-show-ordering" checked/><span class="toggle-slider"></span></label>
+              </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveSiteGeneratorSettings()" style="margin-top:20px;width:100%;">
+              Save Website Settings
+            </button>
           </div>
         </div>
       </div>

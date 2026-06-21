@@ -1553,3 +1553,60 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
 @media (max-width: 420px) {
   .prod-kpi-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* ── Public Website Generator (Settings → Appearance) ───────────────────── */
+.sg-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+.sg-theme-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transition: border-color .15s, transform .1s;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.sg-theme-card:hover { transform: translateY(-2px); }
+.sg-theme-card.active {
+  border-color: var(--green);
+  box-shadow: 0 0 0 1px var(--green);
+}
+.sg-theme-swatch {
+  width: 100%;
+  height: 44px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-family: var(--sans);
+  font-size: 14px;
+}
+.sg-layout-btn {
+  flex: 1;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.sg-layout-btn:hover { border-color: var(--text-dim); color: var(--text); }
+.sg-layout-btn.active {
+  background: var(--green-dim, rgba(34,197,94,0.12));
+  border-color: var(--green);
+  color: var(--green);
+}

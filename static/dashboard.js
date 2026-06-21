@@ -4253,6 +4253,93 @@ async function saveTranslationToggle(enabled) {
   }
 }
 
+// ── Public Website Generator (Settings → Appearance) ───────────────────────
+// Stored in features_json.site_generator — same additive pattern as
+// translation_enabled / cart_recovery_enabled above. No schema change.
+let _sgSelectedTheme  = 'dark_modern';
+let _sgSelectedLayout = 'standard';
+
+function sgSelectTheme(theme) {
+  _sgSelectedTheme = theme;
+  document.querySelectorAll('.sg-theme-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.theme === theme);
+  });
+}
+
+function sgSelectLayout(layout) {
+  _sgSelectedLayout = layout;
+  document.querySelectorAll('.sg-layout-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.layout === layout);
+  });
+}
+
+async function loadSiteGeneratorSettings() {
+  try {
+    const biz = await getCachedMe();
+    if (!biz) return;
+
+    // Build the preview link from the business slug (matches backend
+    // _name_to_slug logic: lowercase, non-alphanumerics → hyphens)
+    const slug = (biz.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const previewLink = document.getElementById('sg-preview-link');
+    if (previewLink && slug) previewLink.href = '/site/' + slug;
+
+    const cfg = (biz.features_json && biz.features_json.site_generator) || {};
+
+    sgSelectTheme(cfg.theme_style || 'dark_modern');
+    sgSelectLayout(cfg.layout || 'standard');
+
+    const fontSel = document.getElementById('sg-font-select');
+    if (fontSel) fontSel.value = cfg.font || 'inter';
+
+    _setVal('sg-hours', cfg.business_hours || '');
+    _setVal('sg-location', cfg.location || '');
+
+    const showHours    = document.getElementById('sg-show-hours');
+    const showLocation = document.getElementById('sg-show-location');
+    const showReviews  = document.getElementById('sg-show-reviews');
+    const showOrdering = document.getElementById('sg-show-ordering');
+    if (showHours)    showHours.checked    = cfg.show_hours    !== false;
+    if (showLocation) showLocation.checked = cfg.show_location !== false;
+    if (showReviews)  showReviews.checked  = !!cfg.show_reviews;
+    if (showOrdering) showOrdering.checked = cfg.show_ordering !== false;
+  } catch (e) {
+    console.warn('loadSiteGeneratorSettings:', e.message);
+  }
+}
+
+async function saveSiteGeneratorSettings() {
+  const btn = document.querySelector('[onclick="saveSiteGeneratorSettings()"]');
+  try {
+    setLoading(btn, true);
+    const biz      = await apiFetch('/me').catch(() => ({}));
+    const features = biz?.features_json || {};
+
+    features['site_generator'] = {
+      theme_style:     _sgSelectedTheme,
+      font:             _getVal('sg-font-select') || 'inter',
+      layout:           _sgSelectedLayout,
+      business_hours:   _getVal('sg-hours') || '',
+      location:         _getVal('sg-location') || '',
+      show_hours:       document.getElementById('sg-show-hours')?.checked    ?? true,
+      show_location:    document.getElementById('sg-show-location')?.checked ?? true,
+      show_reviews:     document.getElementById('sg-show-reviews')?.checked  ?? false,
+      show_ordering:    document.getElementById('sg-show-ordering')?.checked ?? true,
+    };
+
+    await apiFetch('/me', {
+      method: 'PATCH',
+      body: JSON.stringify({ features_json: features }),
+    });
+    invalidateMeCache();
+    showToast('✅ Website settings saved');
+  } catch (e) {
+    showToast('Failed to save website settings: ' + e.message, true);
+  } finally {
+    setLoading(btn, false);
+  }
+}
+
 
 /* ══ HOOK ALL FEATURES INTO EXISTING LOAD FLOWS ═════════════════════════════
    These integrate with the existing showSection() / loadCustomerStats()
