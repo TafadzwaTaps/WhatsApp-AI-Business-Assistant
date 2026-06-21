@@ -47,9 +47,11 @@ router = APIRouter()
 _ALWAYS_SAFE_BIZ_FIELDS = "id,name,category,currency,currency_symbol,onboarding_completed"
 _OPTIONAL_BIZ_FIELDS    = ("tagline", "logo_url", "theme_colour")
 
-_PRODUCT_PUBLIC_FIELDS = "id,name,price,description,category,image_url,stock"
+_ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
+_OPTIONAL_PRODUCT_FIELDS    = ("description", "category", "image_url", "stock")
 
 _biz_columns_cache: set | None = None
+_product_columns_cache: set | None = None
 
 
 def _get_biz_columns() -> set:
@@ -73,6 +75,39 @@ def _get_biz_public_fields() -> str:
     cols = _get_biz_columns()
     extra = [f for f in _OPTIONAL_BIZ_FIELDS if f in cols]
     fields = _ALWAYS_SAFE_BIZ_FIELDS.split(",") + extra
+    return ",".join(fields)
+
+
+def _get_product_columns() -> set:
+    """Probe the live products table schema once, cache the result."""
+    global _product_columns_cache
+    if _product_columns_cache is None:
+        try:
+            from core.db import supabase
+            res = supabase.table("products").select("*").limit(1).execute()
+            if res.data:
+                _product_columns_cache = set(res.data[0].keys())
+            else:
+                _product_columns_cache = set(_ALWAYS_SAFE_PRODUCT_FIELDS.split(","))
+        except Exception:
+            _product_columns_cache = set()
+    return _product_columns_cache
+
+
+def _get_product_public_fields() -> str:
+    """
+    Build the select() field list from columns confirmed to exist.
+
+    Fix: "description" was hardcoded here even though it doesn't exist on
+    the live products table yet. Supabase rejects a .select() naming any
+    unknown column for the WHOLE query — this took down /api/store/{slug}
+    entirely (500 error, "Store not found" shown to customers) even though
+    the business and its products were real and active. Same root cause
+    and fix pattern as _get_biz_public_fields above.
+    """
+    cols  = _get_product_columns()
+    extra = [f for f in _OPTIONAL_PRODUCT_FIELDS if f in cols]
+    fields = _ALWAYS_SAFE_PRODUCT_FIELDS.split(",") + extra
     return ",".join(fields)
 
 
@@ -183,7 +218,7 @@ def api_store(slug: str):
 
         prod_res = (
             supabase.table("products")
-            .select(_PRODUCT_PUBLIC_FIELDS)
+            .select(_get_product_public_fields())
             .eq("business_id", res.data[0]["id"])
             .execute()
         )
