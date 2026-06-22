@@ -97,6 +97,31 @@ def billing_cancel(body: CancelRequest, user=Depends(require_business)):
     return result
 
 
+@router.post("/billing/portal")
+def billing_portal(user=Depends(require_business)):
+    """Create a Stripe Customer Portal session so users can manage their subscription,
+    update payment method, view invoices — all without leaving WaziBot."""
+    from billing.stripe_service import _stripe, get_subscription_status
+    import os
+    stripe = _stripe()
+    if not stripe:
+        raise HTTPException(503, "Stripe not configured on this server")
+    status = get_subscription_status(user["business_id"])
+    customer_id = status.get("stripe_customer_id")
+    if not customer_id:
+        raise HTTPException(400, "No Stripe customer found — upgrade first to create one")
+    base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+    try:
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=f"{base}/static/dashboard.html",
+        )
+        return {"url": session.url}
+    except Exception as exc:
+        log.error("Stripe portal error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request):
     """

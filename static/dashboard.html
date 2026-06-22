@@ -1225,26 +1225,46 @@
           </div>
         </div>
         <div class="panel">
-          <div class="panel-header"><div class="panel-title">💳 Stripe</div></div>
+          <div class="panel-header">
+            <div class="panel-title">💳 Card Payments (Stripe)</div>
+            <span id="stripe-badge" style="font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:20px;background:var(--surface2);color:var(--text-dim);">Loading…</span>
+          </div>
           <div class="panel-body">
-            <div class="form-group">
-              <label>Stripe Publishable Key <span style="color:var(--text-dim);font-weight:400">(starts with pk_)</span></label>
-              <input type="text" id="set-stripe-pub-key" placeholder="pk_live_…" autocomplete="off"/>
+            <!-- Current plan / billing status -->
+            <div id="stripe-status-block" style="margin-bottom:18px;">
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+                <div>
+                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Current Plan</div>
+                  <div id="stripe-plan-label" style="font-size:20px;font-weight:700;color:var(--green);margin-top:2px;">—</div>
+                </div>
+                <div style="flex:1;"></div>
+                <div style="text-align:right;">
+                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Status</div>
+                  <div id="stripe-billing-status" style="font-size:13px;font-weight:600;margin-top:2px;">—</div>
+                </div>
+              </div>
+              <div id="stripe-trial-info" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--amber);font-size:12px;font-family:var(--mono);color:var(--amber);line-height:1.6;"></div>
             </div>
-            <div class="form-group" style="margin-top:10px;">
-              <label>Stripe Secret Key <span style="color:var(--text-dim);font-weight:400">(starts with sk_ — keep private)</span></label>
-              <input type="password" id="set-stripe-secret-key" placeholder="sk_live_…" autocomplete="off"/>
+
+            <!-- What Stripe unlocks -->
+            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.8;">
+              Card payments let your customers pay via Google Pay, Apple Pay, Link, credit/debit card, Klarna, Afterpay, and Affirm — all inside a secure hosted checkout page.
             </div>
-            <div class="form-group" style="margin-top:10px;">
-              <label>Stripe Webhook Secret <span style="color:var(--text-dim);font-weight:400">(whsec_… from Stripe dashboard)</span></label>
-              <input type="password" id="set-stripe-webhook-secret" placeholder="whsec_…" autocomplete="off"/>
+
+            <!-- Action buttons -->
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button class="btn btn-primary" id="stripe-upgrade-btn" onclick="stripeUpgrade()" style="display:none;">
+                ⚡ Upgrade Plan
+              </button>
+              <button class="btn btn-ghost" id="stripe-manage-btn" onclick="stripeManage()" style="display:none;">
+                ⚙ Manage Subscription
+              </button>
+              <button class="btn btn-ghost" id="stripe-cancel-btn" onclick="stripeCancel()" style="display:none;color:var(--red,#ff5252);">
+                Cancel Plan
+              </button>
             </div>
-            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin:10px 0 14px;line-height:1.6;">
-              Used for card payments and subscriptions. Keys are encrypted at rest.<br>
-              Get your keys at <a href="https://dashboard.stripe.com/apikeys" target="_blank" style="color:var(--green);">dashboard.stripe.com/apikeys</a>
-            </div>
-            <button class="btn btn-primary" onclick="saveStripeSettings()">Save Stripe Keys</button>
-            <div id="stripe-settings-status" style="margin-top:12px;font-size:11px;font-family:var(--mono);"></div>
+
+            <div id="stripe-action-status" style="margin-top:12px;font-size:11px;font-family:var(--mono);"></div>
           </div>
         </div>
 
@@ -1322,7 +1342,6 @@
           <div class="panel-header"><div class="panel-title">Status</div></div>
           <div class="panel-body">
             <div id="payment-settings-status" style="font-size:12px;font-family:var(--mono);line-height:2;"></div>
-            <div id="stripe-connection-status" style="font-size:12px;font-family:var(--mono);line-height:2;margin-top:4px;"></div>
           </div>
         </div>
       </div>

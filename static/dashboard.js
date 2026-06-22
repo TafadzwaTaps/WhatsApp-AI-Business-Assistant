@@ -1223,25 +1223,8 @@ async function loadSettings() {
     }
   } catch(e) { console.warn('loadSettings payments:', e.message); }
 
-  // Load Stripe settings status
-  try {
-    const stripe = await apiFetch('/me/payment-settings/stripe');
-    if (stripe) {
-      const statusEl = document.getElementById('stripe-connection-status');
-      if (statusEl) {
-        const parts = [];
-        if (stripe.secret_key_configured) parts.push('✅ Stripe secret key set');
-        else parts.push('⚠️ Stripe not configured');
-        if (stripe.webhook_configured) parts.push('✅ Webhook secret set');
-        statusEl.innerHTML = parts.map(p => `<div style="color:${p.startsWith('✅')?'var(--green)':'var(--amber)'}">${p}</div>`).join('');
-      }
-      // Populate pub key (safe to show)
-      if (stripe.pub_key) _setVal('set-stripe-pub-key', stripe.pub_key);
-      // Mask secret/webhook if configured
-      if (stripe.secret_key_configured) _setVal('set-stripe-secret-key', '••••••••(saved)');
-      if (stripe.webhook_configured) _setVal('set-stripe-webhook-secret', '••••••••(saved)');
-    }
-  } catch(e) { /* Stripe not yet configured — silently skip */ }
+  // Load Stripe billing status
+  loadStripeBillingStatus();
 
   // Appearance — font: prefer Supabase (already loaded above in b.features_json),
   // fall back to localStorage, fall back to default Syne.
@@ -1442,36 +1425,101 @@ async function savePayPalSettings() {
   finally { setLoading(btn, false); }
 }
 
-// ── Stripe Settings ──────────────────────────────────────────────────────────
-async function saveStripeSettings() {
-  const pubKey    = _getVal('set-stripe-pub-key').trim();
-  const secretKey = _getVal('set-stripe-secret-key').trim();
-  const whSecret  = _getVal('set-stripe-webhook-secret').trim();
-  if (!pubKey && !secretKey) { toast('Enter at least one Stripe key', true); return; }
-  if (pubKey && !pubKey.startsWith('pk_')) { toast('Publishable key must start with pk_', true); return; }
-  if (secretKey && !secretKey.startsWith('sk_')) { toast('Secret key must start with sk_', true); return; }
-  const btn = document.querySelector('[onclick="saveStripeSettings()"]');
+// ── Stripe Billing ───────────────────────────────────────────────────────────
+// WaziBot uses a single platform Stripe account (keys live in server env vars).
+// Users never handle keys — they just see their plan status and upgrade/manage.
+
+async function loadStripeBillingStatus() {
+  const badge      = document.getElementById('stripe-badge');
+  const planLabel  = document.getElementById('stripe-plan-label');
+  const statusEl   = document.getElementById('stripe-billing-status');
+  const trialEl    = document.getElementById('stripe-trial-info');
+  const upgradeBtn = document.getElementById('stripe-upgrade-btn');
+  const manageBtn  = document.getElementById('stripe-manage-btn');
+  const cancelBtn  = document.getElementById('stripe-cancel-btn');
   try {
-    setLoading(btn, true);
-    await apiFetch('/me/payment-settings/stripe', { method: 'POST', body: JSON.stringify({
-      stripe_pub_key:        pubKey    || undefined,
-      stripe_secret_key:     secretKey || undefined,
-      stripe_webhook_secret: whSecret  || undefined,
-    })});
-    const statusEl = document.getElementById('stripe-connection-status');
-    if (statusEl) statusEl.innerHTML = '<div style="color:var(--green)">✅ Stripe keys saved</div>';
-    // Mask the secret key after save — show only last 4 chars
-    if (secretKey) {
-      const el = document.getElementById('set-stripe-secret-key');
-      if (el) el.value = '••••••••' + secretKey.slice(-4);
+    const s = await apiFetch('/billing/status');
+    if (!s) return;
+
+    const tier   = (s.tier || 'free').charAt(0).toUpperCase() + (s.tier || 'free').slice(1);
+    const status = s.billing_status || 'active';
+
+    if (planLabel) planLabel.textContent = tier;
+
+    // Status badge colour
+    const statusColors = { active:'var(--green)', trialing:'var(--amber)', past_due:'#ff5252', canceled:'var(--text-dim)' };
+    if (statusEl) {
+      statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1).replace('_',' ');
+      statusEl.style.color = statusColors[status] || 'var(--text)';
     }
-    if (whSecret) {
-      const el = document.getElementById('set-stripe-webhook-secret');
-      if (el) el.value = '••••••••' + whSecret.slice(-4);
+    if (badge) {
+      badge.textContent = status === 'active' ? '✅ Active' : status === 'trialing' ? '🟡 Trial' : status === 'past_due' ? '🔴 Past Due' : '⚫ Inactive';
+      badge.style.color = statusColors[status] || 'var(--text-dim)';
     }
-    toast('✅ Stripe keys saved');
-  } catch(e) { toast('Failed: ' + e.message, true); }
-  finally { setLoading(btn, false); }
+
+    // Trial countdown
+    if (trialEl) {
+      if (status === 'trialing' && s.trial_ends_at) {
+        const daysLeft = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
+        trialEl.style.display = 'block';
+        trialEl.textContent = daysLeft > 0
+          ? `⏳ Trial ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''} — upgrade to keep access to all features.`
+          : '⚠️ Trial has ended — upgrade now to restore access.';
+      } else {
+        trialEl.style.display = 'none';
+      }
+    }
+
+    // Show correct action buttons
+    const isFreeOrTrial = s.tier === 'free' || status === 'trialing' || status === 'canceled';
+    const hasActiveSub  = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
+    if (upgradeBtn) upgradeBtn.style.display = isFreeOrTrial ? 'inline-flex' : 'none';
+    if (manageBtn)  manageBtn.style.display  = hasActiveSub  ? 'inline-flex' : 'none';
+    if (cancelBtn)  cancelBtn.style.display  = hasActiveSub  ? 'inline-flex' : 'none';
+
+  } catch(e) {
+    if (badge) { badge.textContent = '⚠️ Unavailable'; badge.style.color = 'var(--text-dim)'; }
+  }
+}
+
+async function stripeUpgrade() {
+  // Redirect to the pricing page — let user pick a plan there
+  window.location.href = '/static/pricing.html';
+}
+
+async function stripeManage() {
+  // Create a Stripe customer portal session and redirect
+  const btn = document.getElementById('stripe-manage-btn');
+  const statusEl = document.getElementById('stripe-action-status');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+    const result = await apiFetch('/billing/portal', { method: 'POST' });
+    if (result && result.url) {
+      window.open(result.url, '_blank');
+    } else {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ Portal not available — contact support.</span>';
+    }
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚙ Manage Subscription'; }
+  }
+}
+
+async function stripeCancel() {
+  if (!confirm('Cancel your subscription? You keep access until the end of your billing period.')) return;
+  const btn = document.getElementById('stripe-cancel-btn');
+  const statusEl = document.getElementById('stripe-action-status');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+    await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Subscription cancelled — access continues until period end.</span>';
+    setTimeout(loadStripeBillingStatus, 1500);
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Cancel Plan'; }
+  }
 }
 
 async function savePaymentOptions() {
