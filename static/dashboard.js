@@ -1223,9 +1223,33 @@ async function loadSettings() {
     }
   } catch(e) { console.warn('loadSettings payments:', e.message); }
 
-  // Appearance
+  // Load Stripe settings status
+  try {
+    const stripe = await apiFetch('/me/payment-settings/stripe');
+    if (stripe) {
+      const statusEl = document.getElementById('stripe-connection-status');
+      if (statusEl) {
+        const parts = [];
+        if (stripe.secret_key_configured) parts.push('✅ Stripe secret key set');
+        else parts.push('⚠️ Stripe not configured');
+        if (stripe.webhook_configured) parts.push('✅ Webhook secret set');
+        statusEl.innerHTML = parts.map(p => `<div style="color:${p.startsWith('✅')?'var(--green)':'var(--amber)'}">${p}</div>`).join('');
+      }
+      // Populate pub key (safe to show)
+      if (stripe.pub_key) _setVal('set-stripe-pub-key', stripe.pub_key);
+      // Mask secret/webhook if configured
+      if (stripe.secret_key_configured) _setVal('set-stripe-secret-key', '••••••••(saved)');
+      if (stripe.webhook_configured) _setVal('set-stripe-webhook-secret', '••••••••(saved)');
+    }
+  } catch(e) { /* Stripe not yet configured — silently skip */ }
+
+  // Appearance — font: prefer Supabase (already loaded above in b.features_json),
+  // fall back to localStorage, fall back to default Syne.
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
-  const savedFont  = localStorage.getItem('wazi_font') || "'Syne',sans-serif";
+  const _dbFont = (typeof b !== 'undefined' && b && b.features_json && b.features_json.dashboard_font)
+                  ? b.features_json.dashboard_font : null;
+  const savedFont = _dbFont || localStorage.getItem('wazi_font') || "'Syne',sans-serif";
+  if (_dbFont) localStorage.setItem('wazi_font', _dbFont); // keep in sync
   setTheme(savedTheme, true);
   const fontSel = document.getElementById('font-select');
   if (fontSel) { fontSel.value = savedFont; applyFont(savedFont, true); }
@@ -1414,6 +1438,38 @@ async function savePayPalSettings() {
     setLoading(btn, true);
     await apiFetch('/me/payment-settings/paypal', { method: 'POST', body: JSON.stringify({ paypal_email: email }) });
     toast('✅ PayPal email saved — customers will send to ' + email);
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+// ── Stripe Settings ──────────────────────────────────────────────────────────
+async function saveStripeSettings() {
+  const pubKey    = _getVal('set-stripe-pub-key').trim();
+  const secretKey = _getVal('set-stripe-secret-key').trim();
+  const whSecret  = _getVal('set-stripe-webhook-secret').trim();
+  if (!pubKey && !secretKey) { toast('Enter at least one Stripe key', true); return; }
+  if (pubKey && !pubKey.startsWith('pk_')) { toast('Publishable key must start with pk_', true); return; }
+  if (secretKey && !secretKey.startsWith('sk_')) { toast('Secret key must start with sk_', true); return; }
+  const btn = document.querySelector('[onclick="saveStripeSettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me/payment-settings/stripe', { method: 'POST', body: JSON.stringify({
+      stripe_pub_key:        pubKey    || undefined,
+      stripe_secret_key:     secretKey || undefined,
+      stripe_webhook_secret: whSecret  || undefined,
+    })});
+    const statusEl = document.getElementById('stripe-connection-status');
+    if (statusEl) statusEl.innerHTML = '<div style="color:var(--green)">✅ Stripe keys saved</div>';
+    // Mask the secret key after save — show only last 4 chars
+    if (secretKey) {
+      const el = document.getElementById('set-stripe-secret-key');
+      if (el) el.value = '••••••••' + secretKey.slice(-4);
+    }
+    if (whSecret) {
+      const el = document.getElementById('set-stripe-webhook-secret');
+      if (el) el.value = '••••••••' + whSecret.slice(-4);
+    }
+    toast('✅ Stripe keys saved');
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
 }
@@ -1661,6 +1717,16 @@ function setTheme(theme, silent=false) {
 function applyFont(font, silent=false) {
   document.body.style.fontFamily = font;
   localStorage.setItem('wazi_font', font);
+  // Also persist to Supabase so font survives clearing localStorage / new devices.
+  // Fire-and-forget — merges into existing features_json, never wipes other keys.
+  if (!silent) {
+    apiFetch('/me').then(b => {
+      const existing = (b && b.features_json) ? b.features_json : {};
+      return apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+        features_json: { ...existing, dashboard_font: font }
+      }) });
+    }).catch(() => {});
+  }
 }
 
 // ── UTILS ─────────────────────────────────────────────────

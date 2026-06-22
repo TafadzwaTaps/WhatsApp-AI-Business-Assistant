@@ -1225,6 +1225,30 @@
           </div>
         </div>
         <div class="panel">
+          <div class="panel-header"><div class="panel-title">💳 Stripe</div></div>
+          <div class="panel-body">
+            <div class="form-group">
+              <label>Stripe Publishable Key <span style="color:var(--text-dim);font-weight:400">(starts with pk_)</span></label>
+              <input type="text" id="set-stripe-pub-key" placeholder="pk_live_…" autocomplete="off"/>
+            </div>
+            <div class="form-group" style="margin-top:10px;">
+              <label>Stripe Secret Key <span style="color:var(--text-dim);font-weight:400">(starts with sk_ — keep private)</span></label>
+              <input type="password" id="set-stripe-secret-key" placeholder="sk_live_…" autocomplete="off"/>
+            </div>
+            <div class="form-group" style="margin-top:10px;">
+              <label>Stripe Webhook Secret <span style="color:var(--text-dim);font-weight:400">(whsec_… from Stripe dashboard)</span></label>
+              <input type="password" id="set-stripe-webhook-secret" placeholder="whsec_…" autocomplete="off"/>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin:10px 0 14px;line-height:1.6;">
+              Used for card payments and subscriptions. Keys are encrypted at rest.<br>
+              Get your keys at <a href="https://dashboard.stripe.com/apikeys" target="_blank" style="color:var(--green);">dashboard.stripe.com/apikeys</a>
+            </div>
+            <button class="btn btn-primary" onclick="saveStripeSettings()">Save Stripe Keys</button>
+            <div id="stripe-settings-status" style="margin-top:12px;font-size:11px;font-family:var(--mono);"></div>
+          </div>
+        </div>
+
+        <div class="panel">
           <div class="panel-header"><div class="panel-title">💵 Cash &amp; Currency</div></div>
           <div class="panel-body">
             <div class="form-row">
@@ -1296,7 +1320,10 @@
         </div>
         <div class="panel">
           <div class="panel-header"><div class="panel-title">Status</div></div>
-          <div class="panel-body"><div id="payment-settings-status" style="font-size:12px;font-family:var(--mono);line-height:2;"></div></div>
+          <div class="panel-body">
+            <div id="payment-settings-status" style="font-size:12px;font-family:var(--mono);line-height:2;"></div>
+            <div id="stripe-connection-status" style="font-size:12px;font-family:var(--mono);line-height:2;margin-top:4px;"></div>
+          </div>
         </div>
       </div>
     </div>

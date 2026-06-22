@@ -59,6 +59,21 @@ class BusinessUpdate(BaseModel):
     # reverted on reload because they were never actually persisted.
     cash_enabled:      Optional[bool] = None
     pickup_enabled:    Optional[bool] = None
+    # Profile fields — were missing from BusinessUpdate so saveProfile() calls
+    # sent them but Pydantic silently dropped them, causing them to be erased
+    # on every reload (they appeared to save but were never actually persisted).
+    description:       Optional[str]  = None
+    contact_phone:     Optional[str]  = None
+    support_email:     Optional[str]  = None
+    address:           Optional[str]  = None
+    city:              Optional[str]  = None
+    business_hours:    Optional[str]  = None
+    instagram:         Optional[str]  = None
+    facebook:          Optional[str]  = None
+    # Stripe billing fields
+    stripe_customer_id:     Optional[str]  = None
+    stripe_subscription_id: Optional[str]  = None
+    stripe_plan:            Optional[str]  = None
 
 
 @router.get("/me")
@@ -213,6 +228,58 @@ def update_paypal_settings(data: PayPalSettingsUpdate, user=Depends(require_busi
     b = crud.update_business(user["business_id"], _D())
     if not b: raise HTTPException(500, "Failed to save PayPal settings")
     return {"ok": True, "message": f"PayPal email saved. Customers will send money to {email}.", "paypal_email": email}
+
+
+# ── Stripe settings ──────────────────────────────────────────────────────────
+
+class StripeSettingsUpdate(BaseModel):
+    stripe_pub_key:        Optional[str] = None
+    stripe_secret_key:     Optional[str] = None
+    stripe_webhook_secret: Optional[str] = None
+
+@router.post("/me/payment-settings/stripe")
+def update_stripe_settings(data: StripeSettingsUpdate, user=Depends(require_business)):
+    """Save Stripe API keys into features_json (encrypted fields go here).
+    We store them in features_json rather than top-level columns so no schema
+    migration is required. Secret/webhook keys are stored as-is — consider
+    encrypting them using core.crypto if needed in future.
+    """
+    bid = user["business_id"]
+    b = crud.get_business_by_id(bid)
+    if not b:
+        raise HTTPException(404, "Business not found")
+    existing_fj = b.get("features_json") or {}
+    stripe_cfg = existing_fj.get("stripe", {}) if isinstance(existing_fj.get("stripe"), dict) else {}
+    if data.stripe_pub_key:
+        stripe_cfg["pub_key"] = data.stripe_pub_key.strip()
+    if data.stripe_secret_key:
+        stripe_cfg["secret_key"] = data.stripe_secret_key.strip()
+    if data.stripe_webhook_secret:
+        stripe_cfg["webhook_secret"] = data.stripe_webhook_secret.strip()
+    new_fj = {**existing_fj, "stripe": stripe_cfg}
+    class _D:
+        def dict(self, **_): return {"features_json": new_fj}
+    result = crud.update_business(bid, _D())
+    if not result:
+        raise HTTPException(500, "Failed to save Stripe settings")
+    configured = bool(stripe_cfg.get("secret_key"))
+    return {"ok": True, "configured": configured, "message": "Stripe keys saved." if configured else "Stripe public key saved."}
+
+@router.get("/me/payment-settings/stripe")
+def get_stripe_settings(user=Depends(require_business)):
+    """Return Stripe config status (never return secret keys to client)."""
+    b = crud.get_business_by_id(user["business_id"])
+    if not b:
+        raise HTTPException(404, "Business not found")
+    fj = b.get("features_json") or {}
+    stripe_cfg = fj.get("stripe", {}) if isinstance(fj.get("stripe"), dict) else {}
+    return {
+        "pub_key_configured":     bool(stripe_cfg.get("pub_key")),
+        "secret_key_configured":  bool(stripe_cfg.get("secret_key")),
+        "webhook_configured":     bool(stripe_cfg.get("webhook_secret")),
+        # Return masked pub key (safe to expose)
+        "pub_key": stripe_cfg.get("pub_key", ""),
+    }
 
 
 @router.get("/me/payment")
