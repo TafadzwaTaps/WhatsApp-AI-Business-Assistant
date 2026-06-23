@@ -246,7 +246,7 @@
       <span style="font-size:18px;flex-shrink:0;">⏰</span>
       <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);">
         <strong style="color:var(--amber);">Your trial has ended.</strong>
-        Upgrade to keep your premium features — your data is safe.
+        Upgrade to keep your analytics, campaigns, and AI tools — your data is safe.
       </div>
       <a href="/pricing"
          style="background:var(--amber);color:#000;font-weight:800;font-size:12px;
@@ -1226,35 +1226,52 @@
         </div>
         <div class="panel">
           <div class="panel-header">
-            <div class="panel-title">💳 Card Payments (Stripe)</div>
+            <div class="panel-title">💳 Online Payments</div>
             <span id="stripe-badge" style="font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:20px;background:var(--surface2);color:var(--text-dim);">Loading…</span>
           </div>
           <div class="panel-body">
-            <!-- Current plan / billing status -->
+
+            <!-- Payment methods available to ALL plans -->
+            <div style="margin-bottom:18px;">
+              <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Accepted Payment Methods</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">💳 Visa</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">💳 Mastercard</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;"> Apple Pay</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">G Pay</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">🔗 Link</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">Klarna</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">Afterpay</span>
+                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">BLIK</span>
+              </div>
+            </div>
+
+            <!-- Value message — no gating language -->
+            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:18px;line-height:1.8;padding:12px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--green);">
+              ✅ Online payments are available on all plans including your free trial.<br>
+              Customers can pay using their preferred payment method through a secure checkout powered by Stripe.
+            </div>
+
+            <!-- Connection status + subscription info -->
             <div id="stripe-status-block" style="margin-bottom:18px;">
               <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                 <div>
-                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Current Plan</div>
-                  <div id="stripe-plan-label" style="font-size:20px;font-weight:700;color:var(--green);margin-top:2px;">—</div>
+                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Payments</div>
+                  <div id="stripe-plan-label" style="font-size:16px;font-weight:700;color:var(--green);margin-top:2px;">—</div>
                 </div>
                 <div style="flex:1;"></div>
                 <div style="text-align:right;">
-                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Status</div>
+                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Subscription</div>
                   <div id="stripe-billing-status" style="font-size:13px;font-weight:600;margin-top:2px;">—</div>
                 </div>
               </div>
-              <div id="stripe-trial-info" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--amber);font-size:12px;font-family:var(--mono);color:var(--amber);line-height:1.6;"></div>
+              <div id="stripe-trial-info" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--green);font-size:12px;font-family:var(--mono);color:var(--green);line-height:1.6;"></div>
             </div>
 
-            <!-- What Stripe unlocks -->
-            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.8;">
-              Card payments let your customers pay via Google Pay, Apple Pay, Link, credit/debit card, Klarna, Afterpay, and Affirm — all inside a secure hosted checkout page.
-            </div>
-
-            <!-- Action buttons -->
+            <!-- Subscription management (separate from payment access) -->
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
               <button class="btn btn-primary" id="stripe-upgrade-btn" onclick="stripeUpgrade()" style="display:none;">
-                ⚡ Upgrade Plan
+                ⚡ Upgrade for More Features
               </button>
               <button class="btn btn-ghost" id="stripe-manage-btn" onclick="stripeManage()" style="display:none;">
                 ⚙ Manage Subscription

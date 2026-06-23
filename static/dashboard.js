@@ -1443,42 +1443,52 @@ async function loadStripeBillingStatus() {
 
     const tier   = (s.tier || 'free').charAt(0).toUpperCase() + (s.tier || 'free').slice(1);
     const status = s.billing_status || 'active';
+    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', canceled:'var(--text-dim)' };
 
-    if (planLabel) planLabel.textContent = tier;
+    // Payment access label — payments are available on ALL plans, always show as connected
+    if (planLabel) {
+      planLabel.textContent = '✅ Connected';
+      planLabel.style.color = 'var(--green)';
+    }
 
-    // Status badge colour
-    const statusColors = { active:'var(--green)', trialing:'var(--amber)', past_due:'#ff5252', canceled:'var(--text-dim)' };
+    // Subscription status (separate from payment access)
     if (statusEl) {
-      statusEl.textContent = status.charAt(0).toUpperCase() + status.slice(1).replace('_',' ');
+      statusEl.textContent = `${tier} plan`;
       statusEl.style.color = statusColors[status] || 'var(--text)';
     }
+
+    // Badge shows payment readiness — always ready regardless of plan
     if (badge) {
-      badge.textContent = status === 'active' ? '✅ Active' : status === 'trialing' ? '🟡 Trial' : status === 'past_due' ? '🔴 Past Due' : '⚫ Inactive';
-      badge.style.color = statusColors[status] || 'var(--text-dim)';
+      badge.textContent = '✅ Payments Active';
+      badge.style.color = 'var(--green)';
     }
 
-    // Trial countdown
+    // Trial info — positive framing, payments work during trial
     if (trialEl) {
       if (status === 'trialing' && s.trial_ends_at) {
         const daysLeft = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
         trialEl.style.display = 'block';
         trialEl.textContent = daysLeft > 0
-          ? `⏳ Trial ends in ${daysLeft} day${daysLeft !== 1 ? 's' : ''} — upgrade to keep access to all features.`
-          : '⚠️ Trial has ended — upgrade now to restore access.';
+          ? `✅ Payments active during your ${daysLeft}-day trial. Upgrade for analytics, campaigns, and AI tools.`
+          : `✅ Trial ended — payments still work. Upgrade to unlock analytics, campaigns, and AI automations.`;
       } else {
         trialEl.style.display = 'none';
       }
     }
 
-    // Show correct action buttons
-    const isFreeOrTrial = s.tier === 'free' || status === 'trialing' || status === 'canceled';
-    const hasActiveSub  = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
-    if (upgradeBtn) upgradeBtn.style.display = isFreeOrTrial ? 'inline-flex' : 'none';
-    if (manageBtn)  manageBtn.style.display  = hasActiveSub  ? 'inline-flex' : 'none';
-    if (cancelBtn)  cancelBtn.style.display  = hasActiveSub  ? 'inline-flex' : 'none';
+    // Subscription management buttons — upgrade is for MORE FEATURES, not payment access
+    // Upgrade shown on free/trial/canceled — framed as "get more features", not "unlock payments"
+    const canUpgrade  = s.tier === 'free' || status === 'trialing' || status === 'canceled';
+    const hasActiveSub = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
+    if (upgradeBtn) upgradeBtn.style.display = canUpgrade   ? 'inline-flex' : 'none';
+    if (manageBtn)  manageBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
+    if (cancelBtn)  cancelBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
 
   } catch(e) {
-    if (badge) { badge.textContent = '⚠️ Unavailable'; badge.style.color = 'var(--text-dim)'; }
+    // Stripe config missing server-side — payments still shown as available
+    // since the issue is server config, not plan restrictions
+    if (badge)     { badge.textContent = '⚙ Setup Required'; badge.style.color = 'var(--amber)'; }
+    if (planLabel) { planLabel.textContent = 'Configure Stripe'; planLabel.style.color = 'var(--amber)'; }
   }
 }
 
