@@ -70,7 +70,7 @@ def _wa_url(phone: str, text: str = "") -> str:
 
 _ALWAYS_SAFE_FIELDS = "id,name,category,currency_symbol,features_json"
 _OPTIONAL_FIELDS     = ("tagline", "logo_url", "theme_colour", "contact_phone",
-                        "ecocash_number", "paypal_email")
+                        "ecocash_number", "paypal_email", "use_shared_number")
 _columns_cache: set | None = None
 
 _ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
@@ -329,9 +329,9 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
   </section>"""
 
 
-def _products_section_html(products: list, currency_sym: str) -> str:
+def _products_section_html(products: list, currency_sym: str, wa_phone: str = "", biz_name: str = "") -> str:
     cat_filter = _category_filter_html(products)
-    cards      = "\n".join(_product_card_html(p, currency_sym) for p in products) if products else (
+    cards      = "\n".join(_product_card_html(p, currency_sym, wa_phone, biz_name) for p in products) if products else (
         '<p class="empty-msg">Products coming soon. Contact us on WhatsApp!</p>'
     )
     label = "🍽 Our Menu" if any(
@@ -349,7 +349,7 @@ def _products_section_html(products: list, currency_sym: str) -> str:
   </section>"""
 
 
-def _product_card_html(p: dict, currency_sym: str) -> str:
+def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name: str = "") -> str:
     name      = _e(p.get("name", "Product"))
     price     = float(p.get("price") or 0)
     desc      = _e(p.get("description") or "")
@@ -369,7 +369,7 @@ def _product_card_html(p: dict, currency_sym: str) -> str:
         '<div class="prod-img-ph">📦</div>'
     )
     desc_html = f'<p class="prod-desc">{desc}</p>' if desc else ""
-    wa_text   = f"Hi! I'd like to order {p.get('name','')}"
+    order_text = f"Hi! I'd like to order {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to order {p.get('name','')}"
 
     return (
         f'<div class="prod-card" data-category="{_e(category)}">'
@@ -380,7 +380,7 @@ def _product_card_html(p: dict, currency_sym: str) -> str:
         f'<div class="prod-foot">'
         f'<span class="prod-price">{_e(currency_sym)}{price:.2f}</span>'
         f'{badge}'
-        f'<a class="btn-order" href="{_wa_url("", wa_text)}" target="_blank" rel="noopener">+ Order</a>'
+        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">+ Order</a>'
         f'</div></div></div>'
     )
 
@@ -508,7 +508,9 @@ def _gallery_html(products: list) -> str:
 
 def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
     name  = biz.get("name", "Our Business")
-    phone = biz.get("contact_phone", "") or wa_phone
+    # Show real contact phone for display; WA button always routes to wa_phone
+    # (which may be the shared number) so messages land in the right inbox.
+    phone = biz.get("contact_phone", "") or ""
 
     items = []
     if phone:
@@ -784,7 +786,15 @@ def generate_site_html(slug: str) -> str:
     theme        = biz.get("theme_colour") or "#00c853"
     theme_dark   = _hex_darken(theme)
     currency_sym = biz.get("currency_symbol", "$")
-    wa_phone     = biz.get("contact_phone") or biz.get("ecocash_number") or ""
+    # Resolve the correct WhatsApp number to link to:
+    # - use_shared_number=True (or no dedicated number set): route to WaziBot shared inbox
+    #   so messages land in the platform inbox and get routed to this business automatically.
+    #   The pre-filled message MUST include the business name so the shared inbox can route it.
+    # - use_shared_number=False AND contact_phone set: use the business's own dedicated line.
+    SHARED_WA_NUMBER = "447774128484"  # WaziBot shared UK number (no + prefix for wa.me)
+    use_shared       = biz.get("use_shared_number", True)
+    dedicated_phone  = re.sub(r"[^\d]", "", biz.get("contact_phone") or "")
+    wa_phone         = dedicated_phone if (not use_shared and dedicated_phone) else SHARED_WA_NUMBER
 
     settings   = _get_site_settings(biz.get("features_json"))
     palette    = THEME_PRESETS.get(settings["theme_style"], THEME_PRESETS["dark_modern"])
@@ -809,7 +819,7 @@ def generate_site_html(slug: str) -> str:
     seo           = _seo_tags(name, category, tagline, slug)
     nav           = _nav_html(sections, name)
     hero          = _hero_html(biz, settings, wa_phone)
-    products_sec  = _products_section_html(products, currency_sym)
+    products_sec  = _products_section_html(products, currency_sym, wa_phone, name)
     about_sec     = _about_html(biz, settings)
     reviews_sec   = _reviews_html(reviews)
     gallery_sec   = _gallery_html(products) if sections["gallery"] else ""
