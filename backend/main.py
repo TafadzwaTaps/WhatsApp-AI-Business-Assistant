@@ -397,7 +397,7 @@ marketplace_router = None
 _SAAS_ROUTERS_LOADED = False
 
 try:
-    from routes.billing_routes import router as billing_router
+    from routes_saas.billing_routes import router as billing_router
     log.info("SaaS billing_router loaded")
 except Exception as _e:
     log.warning("SaaS billing_routes failed: %s: %s", type(_e).__name__, _e)

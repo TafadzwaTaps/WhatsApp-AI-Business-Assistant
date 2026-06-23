@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from typing import Optional
 import logging
 
+from core.auth import require_business
+
 log = logging.getLogger(__name__)
 router = APIRouter()
 
