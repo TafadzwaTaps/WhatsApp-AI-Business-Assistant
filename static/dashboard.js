@@ -1429,8 +1429,81 @@ async function savePayPalSettings() {
 // WaziBot uses a single platform Stripe account (keys live in server env vars).
 // Users never handle keys — they just see their plan status and upgrade/manage.
 
+// ── Stripe Connect + Billing (Phases 1–4) ────────────────────────────────────
+
 async function loadStripeBillingStatus() {
-  const badge      = document.getElementById('stripe-badge');
+  // Load both Connect status and subscription status in parallel
+  await Promise.all([loadStripeConnectStatus(), loadStripeSubscriptionStatus()]);
+}
+
+async function loadStripeConnectStatus() {
+  const badge          = document.getElementById('stripe-badge');
+  const connectSection = document.getElementById('stripe-connect-section');
+  const connectedSection = document.getElementById('stripe-connected-section');
+
+  try {
+    const s = await apiFetch('/billing/connect/status');
+
+    if (s && s.connected) {
+      // Show connected section
+      if (connectSection)   connectSection.style.display   = 'none';
+      if (connectedSection) connectedSection.style.display = 'block';
+      if (badge) {
+        badge.textContent = '✅ Connected';
+        badge.style.color = 'var(--green)';
+        badge.style.background = 'rgba(0,200,83,.12)';
+      }
+
+      // Status badges
+      const chargesBadge = document.getElementById('sc-charges-badge');
+      const payoutsBadge = document.getElementById('sc-payouts-badge');
+      const verifyBadge  = document.getElementById('sc-verify-badge');
+      if (chargesBadge) {
+        chargesBadge.textContent = `Charges: ${s.charges_enabled ? '✅ Enabled' : '⏳ Pending'}`;
+        chargesBadge.style.color = s.charges_enabled ? 'var(--green)' : 'var(--amber)';
+      }
+      if (payoutsBadge) {
+        payoutsBadge.textContent = `Payouts: ${s.payouts_enabled ? '✅ Enabled' : '⏳ Pending'}`;
+        payoutsBadge.style.color = s.payouts_enabled ? 'var(--green)' : 'var(--amber)';
+      }
+      if (verifyBadge) {
+        const vMap = { active:'✅ Active', pending:'⏳ Verification Pending', incomplete:'⚠ Incomplete' };
+        verifyBadge.textContent = `Status: ${vMap[s.verification_status] || s.verification_status}`;
+        verifyBadge.style.color = s.verification_status === 'active' ? 'var(--green)' : 'var(--amber)';
+      }
+
+      // Load payment analytics
+      loadStripeAnalytics();
+
+    } else {
+      // Not connected — show connect prompt
+      if (connectSection)   connectSection.style.display   = 'block';
+      if (connectedSection) connectedSection.style.display = 'none';
+      if (badge) {
+        badge.textContent = '⚡ Not Connected';
+        badge.style.color = 'var(--amber)';
+      }
+    }
+  } catch(e) {
+    if (badge) { badge.textContent = '⚙ Setup Required'; badge.style.color = 'var(--text-dim)'; }
+    if (connectSection) connectSection.style.display = 'block';
+  }
+}
+
+async function loadStripeAnalytics() {
+  try {
+    const a = await apiFetch('/billing/analytics');
+    if (!a) return;
+    const sym = (window._bizCurrencySym || '$');
+    const _el = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
+    _el('sc-total-revenue', `${sym}${(a.total_revenue||0).toFixed(2)}`);
+    _el('sc-orders-paid',   a.orders_paid || '0');
+    _el('sc-last-payment',  a.last_payment ? new Date(a.last_payment*1000).toLocaleDateString() : '—');
+    _el('sc-last-payout',   a.last_payout  ? new Date(a.last_payout*1000).toLocaleDateString()  : '—');
+  } catch(e) { /* analytics unavailable — silently skip */ }
+}
+
+async function loadStripeSubscriptionStatus() {
   const planLabel  = document.getElementById('stripe-plan-label');
   const statusEl   = document.getElementById('stripe-billing-status');
   const trialEl    = document.getElementById('stripe-trial-info');
@@ -1440,55 +1513,61 @@ async function loadStripeBillingStatus() {
   try {
     const s = await apiFetch('/billing/status');
     if (!s) return;
-
     const tier   = (s.tier || 'free').charAt(0).toUpperCase() + (s.tier || 'free').slice(1);
     const status = s.billing_status || 'active';
     const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', canceled:'var(--text-dim)' };
-
-    // Payment access label — payments are available on ALL plans, always show as connected
-    if (planLabel) {
-      planLabel.textContent = '✅ Connected';
-      planLabel.style.color = 'var(--green)';
-    }
-
-    // Subscription status (separate from payment access)
-    if (statusEl) {
-      statusEl.textContent = `${tier} plan`;
-      statusEl.style.color = statusColors[status] || 'var(--text)';
-    }
-
-    // Badge shows payment readiness — always ready regardless of plan
-    if (badge) {
-      badge.textContent = '✅ Payments Active';
-      badge.style.color = 'var(--green)';
-    }
-
-    // Trial info — positive framing, payments work during trial
+    if (planLabel) { planLabel.textContent = `${tier} Plan`; planLabel.style.color = statusColors[status] || 'var(--text)'; }
+    if (statusEl)  { statusEl.textContent  = status.charAt(0).toUpperCase()+status.slice(1).replace('_',' '); statusEl.style.color = statusColors[status] || 'var(--text-dim)'; }
     if (trialEl) {
       if (status === 'trialing' && s.trial_ends_at) {
-        const daysLeft = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
+        const days = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
         trialEl.style.display = 'block';
-        trialEl.textContent = daysLeft > 0
-          ? `✅ Payments active during your ${daysLeft}-day trial. Upgrade for analytics, campaigns, and AI tools.`
-          : `✅ Trial ended — payments still work. Upgrade to unlock analytics, campaigns, and AI automations.`;
-      } else {
-        trialEl.style.display = 'none';
-      }
+        trialEl.textContent = days > 0
+          ? `✅ ${days} trial day${days!==1?'s':''} remaining — payments work throughout your trial.`
+          : `✅ Trial ended — payments still active. Upgrade for analytics & AI automations.`;
+      } else { trialEl.style.display = 'none'; }
     }
-
-    // Subscription management buttons — upgrade is for MORE FEATURES, not payment access
-    // Upgrade shown on free/trial/canceled — framed as "get more features", not "unlock payments"
-    const canUpgrade  = s.tier === 'free' || status === 'trialing' || status === 'canceled';
+    const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'canceled';
     const hasActiveSub = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
     if (upgradeBtn) upgradeBtn.style.display = canUpgrade   ? 'inline-flex' : 'none';
     if (manageBtn)  manageBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
     if (cancelBtn)  cancelBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
+  } catch(e) { /* subscription status unavailable */ }
+}
 
+async function stripeConnect() {
+  const btn = document.getElementById('stripe-connect-btn');
+  const statusEl = document.getElementById('stripe-action-status');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Opening Stripe…'; }
+    const result = await apiFetch('/billing/connect', { method: 'POST' });
+    if (result && result.url) {
+      window.location.href = result.url;  // Stripe onboarding — full redirect
+    } else {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Could not start Stripe setup') + '</span>';
+    }
   } catch(e) {
-    // Stripe config missing server-side — payments still shown as available
-    // since the issue is server config, not plan restrictions
-    if (badge)     { badge.textContent = '⚙ Setup Required'; badge.style.color = 'var(--amber)'; }
-    if (planLabel) { planLabel.textContent = 'Configure Stripe'; planLabel.style.color = 'var(--amber)'; }
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Connect Stripe Account'; }
+  }
+}
+
+async function stripeConnectDashboard() {
+  const btn = document.getElementById('stripe-express-btn');
+  const statusEl = document.getElementById('stripe-action-status');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
+    const result = await apiFetch('/billing/connect/dashboard', { method: 'POST' });
+    if (result && result.url) {
+      window.open(result.url, '_blank');
+    } else {
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Dashboard not available') + '</span>';
+    }
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📊 Open Stripe Dashboard'; }
   }
 }
 
@@ -1852,6 +1931,19 @@ async function init(){
 
   buildSidebar();
   checkStatus();
+
+  // Handle Stripe Connect return from onboarding
+  const _urlParams = new URLSearchParams(window.location.search);
+  if (_urlParams.get('stripe_connect') === 'success') {
+    toast('✅ Stripe account connected! Loading your payment status…');
+    // Remove param from URL without reload
+    window.history.replaceState({}, '', window.location.pathname);
+    // Reload connect status after short delay (Stripe may need a moment to propagate)
+    setTimeout(loadStripeConnectStatus, 2000);
+  } else if (_urlParams.get('stripe_connect') === 'refresh') {
+    toast('↩ Stripe setup incomplete — you can reconnect anytime from Settings → Payments.', true);
+    window.history.replaceState({}, '', window.location.pathname);
+  }
 
   // Load currency symbol BEFORE any money rendering, so the first paint of
   // Orders/Products/stats is correct rather than briefly flashing '$' and

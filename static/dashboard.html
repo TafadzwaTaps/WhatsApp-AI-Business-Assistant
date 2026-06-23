@@ -1231,54 +1231,95 @@
           </div>
           <div class="panel-body">
 
-            <!-- Payment methods available to ALL plans -->
+            <!-- Payment method logos — always visible, all plans -->
             <div style="margin-bottom:18px;">
               <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">Accepted Payment Methods</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">💳 Visa</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">💳 Mastercard</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;"> Apple Pay</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">G Pay</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">🔗 Link</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">Klarna</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">Afterpay</span>
-                <span style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;">BLIK</span>
+                <span class="pm-badge">💳 Visa</span>
+                <span class="pm-badge">💳 Mastercard</span>
+                <span class="pm-badge"> Apple Pay</span>
+                <span class="pm-badge">G Pay</span>
+                <span class="pm-badge">🔗 Link</span>
+                <span class="pm-badge">Klarna</span>
+                <span class="pm-badge">Afterpay</span>
+                <span class="pm-badge">BLIK</span>
               </div>
             </div>
 
-            <!-- Value message — no gating language -->
-            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:18px;line-height:1.8;padding:12px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--green);">
-              ✅ Online payments are available on all plans including your free trial.<br>
-              Customers can pay using their preferred payment method through a secure checkout powered by Stripe.
+            <!-- Trust line (Phase 5) -->
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:18px;display:flex;align-items:center;gap:8px;">
+              <span style="color:var(--green)">🔒</span>
+              Payments processed securely by Stripe &mdash; PCI DSS Level 1 Certified
             </div>
 
-            <!-- Connection status + subscription info -->
-            <div id="stripe-status-block" style="margin-bottom:18px;">
-              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-                <div>
-                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Payments</div>
-                  <div id="stripe-plan-label" style="font-size:16px;font-weight:700;color:var(--green);margin-top:2px;">—</div>
+            <!-- Connect section: shown when NOT connected -->
+            <div id="stripe-connect-section" style="display:none;">
+              <div style="padding:18px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);margin-bottom:16px;">
+                <div style="font-size:14px;font-weight:700;margin-bottom:6px;">Accept card payments on your storefront</div>
+                <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);line-height:1.8;margin-bottom:16px;">
+                  Connect your Stripe account to accept Visa, Mastercard, Apple Pay, Google Pay,
+                  Klarna, Afterpay and more. Funds go directly to your bank account.<br>
+                  Available on all plans — free trial included.
                 </div>
-                <div style="flex:1;"></div>
-                <div style="text-align:right;">
-                  <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Subscription</div>
-                  <div id="stripe-billing-status" style="font-size:13px;font-weight:600;margin-top:2px;">—</div>
+                <button class="btn btn-primary" onclick="stripeConnect()" id="stripe-connect-btn">
+                  ⚡ Connect Stripe Account
+                </button>
+              </div>
+            </div>
+
+            <!-- Connected section: shown when connected -->
+            <div id="stripe-connected-section" style="display:none;">
+              <!-- Status badges -->
+              <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+                <span id="sc-charges-badge" style="font-size:11px;padding:4px 12px;border-radius:20px;font-family:var(--mono);font-weight:600;background:var(--surface2);color:var(--text-dim);">Charges: —</span>
+                <span id="sc-payouts-badge" style="font-size:11px;padding:4px 12px;border-radius:20px;font-family:var(--mono);font-weight:600;background:var(--surface2);color:var(--text-dim);">Payouts: —</span>
+                <span id="sc-verify-badge" style="font-size:11px;padding:4px 12px;border-radius:20px;font-family:var(--mono);font-weight:600;background:var(--surface2);color:var(--text-dim);">Status: —</span>
+              </div>
+
+              <!-- Payment analytics (Phase 4) -->
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;">
+                <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;">
+                  <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Total Revenue</div>
+                  <div id="sc-total-revenue" style="font-size:22px;font-weight:700;color:var(--green);margin-top:4px;">—</div>
+                </div>
+                <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;">
+                  <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Orders Paid</div>
+                  <div id="sc-orders-paid" style="font-size:22px;font-weight:700;color:var(--green);margin-top:4px;">—</div>
+                </div>
+                <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;">
+                  <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Last Payment</div>
+                  <div id="sc-last-payment" style="font-size:13px;font-weight:600;margin-top:4px;">—</div>
+                </div>
+                <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:14px;">
+                  <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;">Last Payout</div>
+                  <div id="sc-last-payout" style="font-size:13px;font-weight:600;margin-top:4px;">—</div>
                 </div>
               </div>
-              <div id="stripe-trial-info" style="display:none;margin-top:10px;padding:10px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--green);font-size:12px;font-family:var(--mono);color:var(--green);line-height:1.6;"></div>
+
+              <!-- Account management buttons -->
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button class="btn btn-ghost" onclick="stripeConnectDashboard()" id="stripe-express-btn">
+                  📊 Open Stripe Dashboard
+                </button>
+                <button class="btn btn-ghost" onclick="stripeConnect()" style="font-size:12px;">
+                  🔄 Reconnect / Update
+                </button>
+              </div>
             </div>
 
-            <!-- Subscription management (separate from payment access) -->
-            <div style="display:flex;gap:10px;flex-wrap:wrap;">
-              <button class="btn btn-primary" id="stripe-upgrade-btn" onclick="stripeUpgrade()" style="display:none;">
-                ⚡ Upgrade for More Features
-              </button>
-              <button class="btn btn-ghost" id="stripe-manage-btn" onclick="stripeManage()" style="display:none;">
-                ⚙ Manage Subscription
-              </button>
-              <button class="btn btn-ghost" id="stripe-cancel-btn" onclick="stripeCancel()" style="display:none;color:var(--red,#ff5252);">
-                Cancel Plan
-              </button>
+            <!-- Subscription management — separate from payment access -->
+            <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+              <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;">WaziBot Subscription</div>
+              <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
+                <div id="stripe-plan-label" style="font-size:15px;font-weight:700;color:var(--green);">—</div>
+                <div id="stripe-billing-status" style="font-size:12px;font-family:var(--mono);color:var(--text-dim);">—</div>
+              </div>
+              <div id="stripe-trial-info" style="display:none;margin-bottom:12px;font-size:12px;font-family:var(--mono);color:var(--green);line-height:1.6;"></div>
+              <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                <button class="btn btn-primary" id="stripe-upgrade-btn" onclick="stripeUpgrade()" style="display:none;">⚡ Upgrade for More Features</button>
+                <button class="btn btn-ghost"   id="stripe-manage-btn"  onclick="stripeManage()"  style="display:none;">⚙ Manage Subscription</button>
+                <button class="btn btn-ghost"   id="stripe-cancel-btn"  onclick="stripeCancel()"  style="display:none;color:var(--red,#ff5252);">Cancel Plan</button>
+              </div>
             </div>
 
             <div id="stripe-action-status" style="margin-top:12px;font-size:11px;font-family:var(--mono);"></div>

@@ -329,9 +329,9 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
   </section>"""
 
 
-def _products_section_html(products: list, currency_sym: str, wa_phone: str = "", biz_name: str = "") -> str:
+def _products_section_html(products: list, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0) -> str:
     cat_filter = _category_filter_html(products)
-    cards      = "\n".join(_product_card_html(p, currency_sym, wa_phone, biz_name) for p in products) if products else (
+    cards      = "\n".join(_product_card_html(p, currency_sym, wa_phone, biz_name, business_id) for p in products) if products else (
         '<p class="empty-msg">Products coming soon. Contact us on WhatsApp!</p>'
     )
     label = "🍽 Our Menu" if any(
@@ -349,7 +349,7 @@ def _products_section_html(products: list, currency_sym: str, wa_phone: str = ""
   </section>"""
 
 
-def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name: str = "") -> str:
+def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0) -> str:
     name      = _e(p.get("name", "Product"))
     price     = float(p.get("price") or 0)
     desc      = _e(p.get("description") or "")
@@ -371,8 +371,18 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
     desc_html = f'<p class="prod-desc">{desc}</p>' if desc else ""
     order_text = f"Hi! I'd like to order {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to order {p.get('name','')}"
 
+    buy_now_js = (
+        f"wzBuyNow({business_id},{repr(str(p.get('id','')))},{repr(str(name))},{price},'{_e(currency_sym)}')"
+        if business_id else ""
+    )
+    buy_btn = (
+        f'<button class="btn-buy" onclick="{buy_now_js}" {"" if available else "disabled"}>💳 Buy Now</button>'
+        if business_id else ""
+    )
     return (
-        f'<div class="prod-card" data-category="{_e(category)}">'
+        f'<div class="prod-card" data-category="{_e(category)}" data-id="{_e(str(p.get("id","")))}"'
+        f' data-name="{_e(name)}" data-price="{price}" data-img="{_e(p.get("image_url",""))}"'
+        f' data-desc="{_e(str(p.get("description",""))[:120])}">'
         f'{img_html}'
         f'<div class="prod-body">'
         f'<h3 class="prod-name">{name}</h3>'
@@ -380,7 +390,8 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         f'<div class="prod-foot">'
         f'<span class="prod-price">{_e(currency_sym)}{price:.2f}</span>'
         f'{badge}'
-        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">+ Order</a>'
+        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">💬 Order</a>'
+        f'{buy_btn}'
         f'</div></div></div>'
     )
 
@@ -660,10 +671,15 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
 .stock-badge{{font-size:11px;padding:3px 8px;border-radius:4px}}
 .stock-badge.in{{background:rgba(0,200,83,.15);color:#00c853}}
 .stock-badge.out{{background:rgba(239,68,68,.15);color:#ef4444}}
-.btn-order{{margin-left:auto;background:var(--brand);color:#fff;padding:8px 14px;
-            border-radius:var(--r2);font-size:13px;font-weight:600;
-            text-decoration:none;white-space:nowrap;transition:opacity .2s}}
-.btn-order:hover{{opacity:.85}}
+.btn-order{{background:var(--surface2);color:var(--brand);border:1px solid var(--brand);
+            padding:7px 12px;border-radius:var(--r2);font-size:12px;font-weight:600;
+            text-decoration:none;white-space:nowrap;transition:all .15s}}
+.btn-order:hover{{background:var(--brand);color:#fff}}
+.btn-buy{{background:var(--brand);color:#fff;border:none;padding:8px 14px;
+           border-radius:var(--r2);font-size:13px;font-weight:700;
+           cursor:pointer;white-space:nowrap;transition:opacity .2s}}
+.btn-buy:hover{{opacity:.85}}
+.btn-buy:disabled{{opacity:.4;cursor:not-allowed}}
 
 /* ── About ── */
 .about-grid{{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center}}
@@ -748,6 +764,82 @@ footer a{{color:var(--brand);text-decoration:none}}
 
 # ── JS ────────────────────────────────────────────────────────────────────────
 
+_BUY_NOW_JS_TEMPLATE = """
+<div id="wz-cart-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
+  <div style="background:{bg};border-radius:16px;padding:28px;width:min(420px,94vw);max-height:90vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+      <h3 style="font-size:18px;font-weight:700">Checkout</h3>
+      <button onclick="document.getElementById('wz-cart-overlay').style.display='none'"
+        style="background:none;border:none;font-size:22px;cursor:pointer;color:{muted}">✕</button>
+    </div>
+    <div id="wz-cart-items" style="margin-bottom:20px;border-bottom:1px solid {border};padding-bottom:16px;"></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;">
+      <span style="font-weight:600">Total</span>
+      <span id="wz-cart-total" style="font-weight:700;font-size:18px;color:{brand}"></span>
+    </div>
+    <button id="wz-checkout-btn" onclick="wzCheckout()" style="width:100%;background:{brand};color:#fff;border:none;padding:14px;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;">
+      💳 Pay Securely
+    </button>
+    <div style="text-align:center;margin-top:12px;font-size:11px;color:{muted};">
+      🔒 Payments processed securely by Stripe &bull; SSL Encrypted
+    </div>
+  </div>
+</div>
+
+<script>
+const _wzBizId = {biz_id};
+const _wzCurrSym = '{curr_sym}';
+let _wzCart = [];
+
+function wzBuyNow(bizId, prodId, name, price, currSym) {{
+  _wzCart = [{{ id: prodId, name, price, quantity: 1 }}];
+  _wzShowCart(currSym || _wzCurrSym);
+}}
+
+function _wzShowCart(sym) {{
+  const overlay = document.getElementById('wz-cart-overlay');
+  const itemsEl = document.getElementById('wz-cart-items');
+  const totalEl = document.getElementById('wz-cart-total');
+  if (!overlay) return;
+  let total = 0;
+  itemsEl.innerHTML = _wzCart.map(i => {{
+    total += i.price * i.quantity;
+    return `<div style="display:flex;justify-content:space-between;padding:8px 0;">
+      <span>${{i.name}}</span>
+      <span style="font-weight:600">${{sym}}${{(i.price*i.quantity).toFixed(2)}}</span>
+    </div>`;
+  }}).join('');
+  totalEl.textContent = sym + total.toFixed(2);
+  overlay.style.display = 'flex';
+}}
+
+async function wzCheckout() {{
+  const btn = document.getElementById('wz-checkout-btn');
+  try {{
+    if (btn) {{ btn.disabled=true; btn.textContent='Redirecting to Stripe…'; }}
+    const res = await fetch('/billing/product-checkout', {{
+      method: 'POST',
+      headers: {{ 'Content-Type': 'application/json' }},
+      body: JSON.stringify({{
+        items:    _wzCart.map(i => ({{ name:i.name, price:i.price, quantity:i.quantity }})),
+        currency: '{currency_code}',
+      }})
+    }});
+    const data = await res.json();
+    if (data.url) {{
+      window.location.href = data.url;
+    }} else {{
+      alert('Checkout unavailable: ' + (data.detail || data.error || 'Please try WhatsApp ordering instead.'));
+      if (btn) {{ btn.disabled=false; btn.textContent='💳 Pay Securely'; }}
+    }}
+  }} catch(e) {{
+    alert('Could not connect to checkout. Please use WhatsApp to order.');
+    if (btn) {{ btn.disabled=false; btn.textContent='💳 Pay Securely'; }}
+  }}
+}}
+</script>
+"""
+
 _JS = """
 <script>
 function _wzFilter(btn,cat){
@@ -819,12 +911,26 @@ def generate_site_html(slug: str) -> str:
     seo           = _seo_tags(name, category, tagline, slug)
     nav           = _nav_html(sections, name)
     hero          = _hero_html(biz, settings, wa_phone)
-    products_sec  = _products_section_html(products, currency_sym, wa_phone, name)
+    products_sec  = _products_section_html(products, currency_sym, wa_phone, name, biz['id'])
     about_sec     = _about_html(biz, settings)
     reviews_sec   = _reviews_html(reviews)
     gallery_sec   = _gallery_html(products) if sections["gallery"] else ""
     contact_sec   = _contact_html(biz, settings, wa_phone)
     wa_sticky     = _sticky_wa_btn(wa_phone, name)
+
+    # Buy Now cart overlay — inject with real values
+    p = palette
+    buy_now_html = (
+        _BUY_NOW_JS_TEMPLATE
+        .replace("{bg}",           p["surface"])
+        .replace("{muted}",        p["muted"])
+        .replace("{border}",       p["border"])
+        .replace("{brand}",        theme)
+        .replace("{biz_id}",       str(biz["id"]))
+        .replace("{curr_sym}",     currency_sym.replace("'", "\'"))
+        .replace("{currency_code}", currency.lower()[:3] if (currency := biz.get("currency","usd")) else "usd")
+    ) if settings["show_ordering"] else ""
+
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -847,8 +953,10 @@ def generate_site_html(slug: str) -> str:
   <footer>
     <p>Powered by <a href="https://wazibot-api-assistant.onrender.com" target="_blank">WaziBot</a>
        &mdash; AI Employee for WhatsApp Businesses</p>
+    <p style="margin-top:8px;font-size:11px;opacity:.6;">🔒 Payments processed securely by Stripe &bull; PCI DSS Level 1 &bull; SSL Encrypted</p>
   </footer>
 {wa_sticky}
+{buy_now_html}
 {_JS}
 </body>
 </html>"""

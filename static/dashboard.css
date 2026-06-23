@@ -1610,3 +1610,4 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   border-color: var(--green);
   color: var(--green);
 }
+.pm-badge{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12px;font-weight:600;white-space:nowrap}
