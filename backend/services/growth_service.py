@@ -259,18 +259,18 @@ def get_referral_stats(business_id: int) -> dict:
     try:
         res = (
             supabase.table("referrals")
-            .select("id, status, commission_amount")
+            .select("id, status")           # commission_amount does not exist in referrals
             .eq("referrer_business_id", business_id)
             .execute()
         )
         rows      = res.data or []
         total     = len(rows)
-        converted = sum(1 for r in rows if r.get("status") in ("converted", "paid"))
-        pending   = sum(float(r.get("commission_amount") or 0)
-                        for r in rows if r.get("status") == "pending_reward")
+        # "signed_up" is the status set by record_referral on signup
+        converted = sum(1 for r in rows if r.get("status") in ("converted", "paid", "signed_up"))
+        pending   = 0.0  # commission data lives in commissions table, not referrals
     except Exception as exc:
-        # Table doesn't exist yet — that's OK, we still show code + link
-        log.debug("get_referral_stats: referrals table not ready: %s", exc)
+        # Log at warning so silent failures are visible in Render logs
+        log.warning("get_referral_stats: referrals query failed: %s", exc)
 
     return {
         "referral_code":   code,
