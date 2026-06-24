@@ -833,6 +833,7 @@ function wzCheckout() {{
     method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
     body: JSON.stringify({{
+      business_id: _wzBizId,
       items:    _wzCart.map(function(i) {{ return {{ name: i.name, price: i.price, quantity: i.quantity }}; }}),
       currency: _wzCurrCode
     }})

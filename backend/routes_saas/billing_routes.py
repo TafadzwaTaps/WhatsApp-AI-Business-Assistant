@@ -160,6 +160,7 @@ def billing_connect_dashboard(user=Depends(require_business)):
 # ── Product Checkout — Customer purchases (Phase 2 & 3) ──────────────────────
 
 class ProductCheckoutRequest(BaseModel):
+    business_id:    int        # public endpoint — business identified by ID from storefront
     items:          list       # [{"name", "price", "quantity", "description"?, "image_url"?}]
     currency:       str = "usd"
     customer_email: str = ""
@@ -167,14 +168,18 @@ class ProductCheckoutRequest(BaseModel):
     cancel_url:     str = ""
 
 @router.post("/billing/product-checkout")
-def billing_product_checkout(body: ProductCheckoutRequest, user=Depends(require_business)):
+def billing_product_checkout(body: ProductCheckoutRequest):
     """
-    Create a Stripe Checkout Session for a customer buying products.
-    Available on ALL plans — no tier gate.
+    Public endpoint — no auth required.
+    Called by storefront customers who are not logged in to WaziBot.
+    business_id comes from the storefront page (embedded at generation time).
+    Rate limiting is handled upstream by the Render/Cloudflare layer.
     """
+    if not body.business_id or body.business_id < 1:
+        raise HTTPException(400, "Invalid business_id")
     from billing.stripe_service import create_product_checkout_session
     result = create_product_checkout_session(
-        business_id    = user["business_id"],
+        business_id    = body.business_id,
         items          = body.items,
         currency       = body.currency,
         customer_email = body.customer_email,
