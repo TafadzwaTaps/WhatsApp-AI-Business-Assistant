@@ -764,82 +764,95 @@ footer a{{color:var(--brand);text-decoration:none}}
 
 # ── JS ────────────────────────────────────────────────────────────────────────
 
-_BUY_NOW_JS_TEMPLATE = """
+def _buy_now_html(biz_id: int, currency_sym: str, currency_code: str, palette: dict, theme: str) -> str:
+    """Generate the Buy Now cart overlay + JS as a self-contained HTML block.
+    Uses a plain Python f-string so no fragile .replace() chain is needed.
+    All JS brace literals use {{ }} escaping.
+    """
+    p = palette
+    bg     = p["surface"]
+    muted  = p["muted"]
+    border = p["border"]
+    curr   = currency_code.lower()[:3] if currency_code else "usd"
+    # Escape currency symbol for safe JS string embedding
+    sym_js = currency_sym.replace("\\", "\\\\").replace("'", "\\'")
+    return f"""
 <div id="wz-cart-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:{bg};border-radius:16px;padding:28px;width:min(420px,94vw);max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-      <h3 style="font-size:18px;font-weight:700">Checkout</h3>
+      <h3 style="font-size:18px;font-weight:700;color:{p['text']}">Checkout</h3>
       <button onclick="document.getElementById('wz-cart-overlay').style.display='none'"
-        style="background:none;border:none;font-size:22px;cursor:pointer;color:{muted}">✕</button>
+        style="background:none;border:none;font-size:22px;cursor:pointer;color:{muted}">&#x2715;</button>
     </div>
-    <div id="wz-cart-items" style="margin-bottom:20px;border-bottom:1px solid {border};padding-bottom:16px;"></div>
-    <div style="display:flex;justify-content:space-between;margin-bottom:20px;">
+    <div id="wz-cart-items" style="margin-bottom:20px;border-bottom:1px solid {border};padding-bottom:16px;color:{p['text']}"></div>
+    <div style="display:flex;justify-content:space-between;margin-bottom:20px;color:{p['text']}">
       <span style="font-weight:600">Total</span>
-      <span id="wz-cart-total" style="font-weight:700;font-size:18px;color:{brand}"></span>
+      <span id="wz-cart-total" style="font-weight:700;font-size:18px;color:{theme}"></span>
     </div>
-    <button id="wz-checkout-btn" onclick="wzCheckout()" style="width:100%;background:{brand};color:#fff;border:none;padding:14px;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;">
-      💳 Pay Securely
+    <button id="wz-checkout-btn" onclick="wzCheckout()"
+      style="width:100%;background:{theme};color:#fff;border:none;padding:14px;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;">
+      &#x1F4B3; Pay Securely
     </button>
     <div style="text-align:center;margin-top:12px;font-size:11px;color:{muted};">
-      🔒 Payments processed securely by Stripe &bull; SSL Encrypted
+      &#x1F512; Payments processed securely by Stripe &bull; SSL Encrypted
     </div>
   </div>
 </div>
-
 <script>
-const _wzBizId = {biz_id};
-const _wzCurrSym = '{curr_sym}';
-let _wzCart = [];
+var _wzBizId   = {biz_id};
+var _wzCurrSym = '{sym_js}';
+var _wzCurrCode= '{curr}';
+var _wzCart    = [];
 
-function wzBuyNow(bizId, prodId, name, price, currSym) {{
-  _wzCart = [{{ id: prodId, name, price, quantity: 1 }}];
+function wzBuyNow(bizId, prodId, prodName, price, currSym) {{
+  _wzCart = [{{ id: prodId, name: prodName, price: parseFloat(price), quantity: 1 }}];
   _wzShowCart(currSym || _wzCurrSym);
 }}
 
 function _wzShowCart(sym) {{
-  const overlay = document.getElementById('wz-cart-overlay');
-  const itemsEl = document.getElementById('wz-cart-items');
-  const totalEl = document.getElementById('wz-cart-total');
+  var overlay  = document.getElementById('wz-cart-overlay');
+  var itemsEl  = document.getElementById('wz-cart-items');
+  var totalEl  = document.getElementById('wz-cart-total');
   if (!overlay) return;
-  let total = 0;
-  itemsEl.innerHTML = _wzCart.map(i => {{
+  var total = 0;
+  itemsEl.innerHTML = _wzCart.map(function(i) {{
     total += i.price * i.quantity;
-    return `<div style="display:flex;justify-content:space-between;padding:8px 0;">
-      <span>${{i.name}}</span>
-      <span style="font-weight:600">${{sym}}${{(i.price*i.quantity).toFixed(2)}}</span>
-    </div>`;
+    return '<div style="display:flex;justify-content:space-between;padding:8px 0;">'
+      + '<span>' + i.name + '</span>'
+      + '<span style="font-weight:600">' + sym + (i.price * i.quantity).toFixed(2) + '</span>'
+      + '</div>';
   }}).join('');
-  totalEl.textContent = sym + total.toFixed(2);
+  if (totalEl) totalEl.textContent = sym + total.toFixed(2);
   overlay.style.display = 'flex';
 }}
 
-async function wzCheckout() {{
-  const btn = document.getElementById('wz-checkout-btn');
-  try {{
-    if (btn) {{ btn.disabled=true; btn.textContent='Redirecting to Stripe…'; }}
-    const res = await fetch('/billing/product-checkout', {{
-      method: 'POST',
-      headers: {{ 'Content-Type': 'application/json' }},
-      body: JSON.stringify({{
-        items:    _wzCart.map(i => ({{ name:i.name, price:i.price, quantity:i.quantity }})),
-        currency: '{currency_code}',
-      }})
-    }});
-    const data = await res.json();
+function wzCheckout() {{
+  var btn = document.getElementById('wz-checkout-btn');
+  if (btn) {{ btn.disabled = true; btn.textContent = 'Redirecting to Stripe…'; }}
+  fetch('/billing/product-checkout', {{
+    method: 'POST',
+    headers: {{ 'Content-Type': 'application/json' }},
+    body: JSON.stringify({{
+      items:    _wzCart.map(function(i) {{ return {{ name: i.name, price: i.price, quantity: i.quantity }}; }}),
+      currency: _wzCurrCode
+    }})
+  }})
+  .then(function(r) {{ return r.json(); }})
+  .then(function(data) {{
     if (data.url) {{
       window.location.href = data.url;
     }} else {{
       alert('Checkout unavailable: ' + (data.detail || data.error || 'Please try WhatsApp ordering instead.'));
-      if (btn) {{ btn.disabled=false; btn.textContent='💳 Pay Securely'; }}
+      if (btn) {{ btn.disabled = false; btn.textContent = '💳 Pay Securely'; }}
     }}
-  }} catch(e) {{
+  }})
+  .catch(function() {{
     alert('Could not connect to checkout. Please use WhatsApp to order.');
-    if (btn) {{ btn.disabled=false; btn.textContent='💳 Pay Securely'; }}
-  }}
+    if (btn) {{ btn.disabled = false; btn.textContent = '💳 Pay Securely'; }}
+  }});
 }}
 </script>
 """
-
 _JS = """
 <script>
 function _wzFilter(btn,cat){
@@ -918,17 +931,15 @@ def generate_site_html(slug: str) -> str:
     contact_sec   = _contact_html(biz, settings, wa_phone)
     wa_sticky     = _sticky_wa_btn(wa_phone, name)
 
-    # Buy Now cart overlay — inject with real values
-    p = palette
+    # Buy Now cart overlay — clean function call, no fragile string replacement
     buy_now_html = (
-        _BUY_NOW_JS_TEMPLATE
-        .replace("{bg}",           p["surface"])
-        .replace("{muted}",        p["muted"])
-        .replace("{border}",       p["border"])
-        .replace("{brand}",        theme)
-        .replace("{biz_id}",       str(biz["id"]))
-        .replace("{curr_sym}",     currency_sym.replace("'", "\'"))
-        .replace("{currency_code}", currency.lower()[:3] if (currency := biz.get("currency","usd")) else "usd")
+        _buy_now_html(
+            biz_id        = biz["id"],
+            currency_sym  = currency_sym,
+            currency_code = biz.get("currency", "usd") or "usd",
+            palette       = palette,
+            theme         = theme,
+        )
     ) if settings["show_ordering"] else ""
 
 
@@ -944,6 +955,7 @@ def generate_site_html(slug: str) -> str:
 </head>
 <body>
 {nav}
+{buy_now_html}
 {hero}
 {products_sec}
 {about_sec}
@@ -956,7 +968,6 @@ def generate_site_html(slug: str) -> str:
     <p style="margin-top:8px;font-size:11px;opacity:.6;">🔒 Payments processed securely by Stripe &bull; PCI DSS Level 1 &bull; SSL Encrypted</p>
   </footer>
 {wa_sticky}
-{buy_now_html}
 {_JS}
 </body>
 </html>"""
