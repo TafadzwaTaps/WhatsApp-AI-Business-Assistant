@@ -31,7 +31,9 @@ from __future__ import annotations
 
 import os
 import logging
+import warnings
 from typing import Optional
+warnings.filterwarnings("ignore", message=".*Accounts v2.*", category=UserWarning)
 
 log = logging.getLogger(__name__)
 
@@ -637,21 +639,19 @@ def create_product_checkout_session(
             return {"error": "No valid items with price > 0"}
 
         params: dict = {
-            "mode":                  "payment",
-            "line_items":            line_items,
-            "success_url":           success_url,
-            "cancel_url":            cancel_url,
-            # dynamic_payment_methods = Stripe auto-shows all eligible methods
-            # (Cards, Apple Pay, Google Pay, Link, Klarna, Afterpay, BLIK, etc.)
-            "payment_method_types":  None,   # removed — use automatic_payment_methods
-            "automatic_payment_methods": {"enabled": True},
+            "mode":       "payment",
+            "line_items": line_items,
+            "success_url": success_url,
+            "cancel_url":  cancel_url,
+            # Explicitly list payment methods — this version of the Stripe SDK
+            # does not support automatic_payment_methods on checkout sessions.
+            # card covers Visa/Mastercard/Apple Pay/Google Pay/Link automatically.
+            "payment_method_types": ["card", "klarna", "afterpay_clearpay"],
             "metadata": {
                 "wazibot_business_id": str(business_id),
                 "source":              "storefront",
             },
         }
-        # Remove the None key (Stripe API rejects unknown None values)
-        del params["payment_method_types"]
 
         if customer_email:
             params["customer_email"] = customer_email
@@ -710,18 +710,20 @@ def get_payment_analytics(business_id: int) -> dict:
             limit=100,
             stripe_account=account_id,
         )
-        intents = pi_list.get("data", [])
-        paid    = [p for p in intents if p.get("status") == "succeeded"]
+        # StripeObject: iterate directly — it's a ListObject, not a plain dict
+        intents = list(pi_list.auto_paging_iter()) if hasattr(pi_list, 'auto_paging_iter') else list(pi_list)
+        paid    = [p for p in intents if getattr(p, "status", None) == "succeeded"]
 
-        total_revenue = sum(p.get("amount", 0) for p in paid) / 100
-        last_payment  = paid[0].get("created") if paid else None
+        total_revenue = sum(getattr(p, "amount", 0) or 0 for p in paid) / 100
+        last_payment  = getattr(paid[0], "created", None) if paid else None
 
         # Fetch last payout
         last_payout = None
         try:
             payouts = stripe.Payout.list(limit=1, stripe_account=account_id)
-            if payouts.get("data"):
-                last_payout = payouts["data"][0].get("arrival_date")
+            payout_data = list(payouts)
+            if payout_data:
+                last_payout = getattr(payout_data[0], "arrival_date", None)
         except Exception:
             pass
 
