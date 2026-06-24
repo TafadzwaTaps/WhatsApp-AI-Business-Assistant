@@ -433,9 +433,17 @@ def get_satisfaction_score(business_id: int) -> dict:
             .execute()
         )
         rows = res.data or []
+        def _to_float(val) -> float | None:
+            """Safely convert a rating value to float. Returns None if blank or non-numeric."""
+            if val is None: return None
+            s = str(val).strip()
+            if not s: return None
+            try: return float(s)
+            except (ValueError, TypeError): return None
+
         ratings = [
-            float(r["last_rating"]) for r in rows
-            if r.get("last_rating") is not None
+            v for r in rows
+            if (v := _to_float(r.get("last_rating"))) is not None
         ]
         avg = round(sum(ratings) / len(ratings), 1) if ratings else None
         return {

@@ -497,7 +497,9 @@ def create_connect_account(business_id: int, business_name: str, email: str) -> 
             return_url=f"{base}/static/dashboard.html?stripe_connect=success",
             type="account_onboarding",
         )
-        return {"url": link["url"], "account_id": existing}
+        # StripeObject: use getattr, fall back to dict-style as last resort
+        link_url = getattr(link, "url", None) or link.get("url", "")
+        return {"url": link_url, "account_id": existing}
     except Exception as exc:
         log.error("create_connect_account error: %s", exc)
         return {"error": str(exc)}
@@ -521,15 +523,20 @@ def get_connect_account_status(business_id: int) -> dict:
             return {"connected": False}
 
         acct = stripe.Account.retrieve(account_id)
+        # StripeObject supports both attribute and dict-style access;
+        # use getattr with fallback to avoid AttributeError on missing fields
+        charges_enabled   = getattr(acct, "charges_enabled",   False) or False
+        payouts_enabled   = getattr(acct, "payouts_enabled",   False) or False
+        details_submitted = getattr(acct, "details_submitted", False) or False
         return {
             "connected":           True,
             "account_id":          account_id,
-            "charges_enabled":     acct.get("charges_enabled", False),
-            "payouts_enabled":     acct.get("payouts_enabled", False),
-            "details_submitted":   acct.get("details_submitted", False),
+            "charges_enabled":     charges_enabled,
+            "payouts_enabled":     payouts_enabled,
+            "details_submitted":   details_submitted,
             "verification_status": (
-                "active"   if acct.get("charges_enabled") else
-                "pending"  if acct.get("details_submitted") else
+                "active"      if charges_enabled   else
+                "pending"     if details_submitted else
                 "incomplete"
             ),
             "dashboard_url": f"https://dashboard.stripe.com/{account_id}",
@@ -553,7 +560,8 @@ def create_connect_dashboard_link(business_id: int) -> dict:
         if not account_id:
             return {"error": "No Stripe account connected"}
         link = stripe.Account.create_login_link(account_id)
-        return {"url": link["url"]}
+        link_url = getattr(link, "url", None) or link.get("url", "")
+        return {"url": link_url}
     except Exception as exc:
         log.error("create_connect_dashboard_link error: %s", exc)
         return {"error": str(exc)}
