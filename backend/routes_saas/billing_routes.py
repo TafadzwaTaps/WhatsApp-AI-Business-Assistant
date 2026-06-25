@@ -118,7 +118,8 @@ def billing_portal(user=Depends(require_business)):
             customer=customer_id,
             return_url=f"{base}/static/dashboard.html",
         )
-        return {"url": session.url}
+        url = getattr(session, "url", None) or (session.get("url") if isinstance(session, dict) else "")
+        return {"url": url}
     except Exception as exc:
         log.error("Stripe portal error: %s", exc)
         raise HTTPException(500, str(exc))

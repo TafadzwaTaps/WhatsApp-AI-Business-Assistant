@@ -1496,7 +1496,13 @@ async function loadStripeAnalytics() {
     if (!a) return;
     const sym = (window._bizCurrencySym || '$');
     const _el = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
-    _el('sc-total-revenue', `${sym}${(a.total_revenue||0).toFixed(2)}`);
+    // Show available + pending balance split
+    const available = (a.available_balance || 0).toFixed(2);
+    const pending   = (a.pending_balance   || 0).toFixed(2);
+    const totalDisp = pending > 0
+      ? `${sym}${available} + ${sym}${pending} pending`
+      : `${sym}${(a.total_revenue||0).toFixed(2)}`;
+    _el('sc-total-revenue', totalDisp);
     _el('sc-orders-paid',   a.orders_paid || '0');
     _el('sc-last-payment',  a.last_payment ? new Date(a.last_payment*1000).toLocaleDateString() : '—');
     _el('sc-last-payout',   a.last_payout  ? new Date(a.last_payout*1000).toLocaleDateString()  : '—');

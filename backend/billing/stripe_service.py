@@ -139,17 +139,32 @@ TIERS: dict[str, dict] = {
 }
 
 
+_stripe_module = None  # module-level cache — avoid re-importing every call
+
 def _stripe():
-    """Lazy-load stripe. Returns None (graceful no-op) if not configured."""
+    """
+    Lazy-load and configure the Stripe SDK.
+    Returns None (graceful no-op) if STRIPE_SECRET_KEY is not set or stripe
+    package is not installed. Sets explicit api_version so behaviour never
+    changes on silent Stripe API upgrades.
+    """
+    global _stripe_module
     key = os.getenv("STRIPE_SECRET_KEY", "")
     if not key:
         return None
+    if _stripe_module is not None:
+        _stripe_module.api_key = key   # refresh key in case env changed
+        return _stripe_module
     try:
         import stripe as _s
-        _s.api_key = key
+        _s.api_key        = key
+        _s.api_version    = "2024-06-20"   # pin version — never break on Stripe upgrades
+        _s.max_network_retries = 3         # auto-retry transient network errors
+        _stripe_module = _s
+        log.info("Stripe SDK loaded  version=%s", _s.api_version)
         return _s
     except ImportError:
-        log.warning("stripe package not installed — pip install stripe")
+        log.warning("stripe package not installed — add stripe>=7.0.0 to requirements.txt")
         return None
 
 
@@ -180,19 +195,32 @@ def get_or_create_stripe_customer(
         if existing:
             return existing
 
+        # Search Stripe first — avoids creating duplicate customers if a previous
+        # DB write failed (race condition: Stripe customer created, DB update crashed)
+        if owner_email:
+            existing_list = stripe.Customer.search(
+                query=f'metadata["wazibot_business_id"]:"{business_id}"',
+                limit=1,
+            )
+            found = getattr(existing_list, "data", [])
+            if found:
+                cid = getattr(found[0], "id", None) or found[0].get("id")
+                supabase.table("businesses").update(
+                    {"stripe_customer_id": cid}
+                ).eq("id", business_id).execute()
+                log.info("Stripe customer recovered  business=%s  customer=%s", business_id, cid)
+                return cid
+
         customer = stripe.Customer.create(
-            email=owner_email,
+            email=owner_email or None,
             name=business_name,
             metadata={"wazibot_business_id": str(business_id)},
         )
-        cid = customer["id"]
+        cid = getattr(customer, "id", None) or customer["id"]
 
-        try:
-            supabase.table("businesses").update(
-                {"stripe_customer_id": cid}
-            ).eq("id", business_id).execute()
-        except Exception as exc:
-            log.debug("stripe_customer_id column may not exist yet: %s", exc)
+        supabase.table("businesses").update(
+            {"stripe_customer_id": cid}
+        ).eq("id", business_id).execute()
 
         log.info("Stripe customer created  business=%s  customer=%s", business_id, cid)
         return cid
@@ -245,7 +273,9 @@ def create_checkout_session(
 
         session = stripe.checkout.Session.create(**params)
         log.info("Checkout session created  business=%s  tier=%s", business_id, tier)
-        return {"url": session["url"], "session_id": session["id"]}
+        url  = getattr(session, "url", None) or session.get("url", "")
+        sid  = getattr(session, "id",  None) or session.get("id",  "")
+        return {"url": url, "session_id": sid}
     except Exception as exc:
         log.error("create_checkout_session error: %s", exc)
         return {"error": str(exc)}
@@ -338,9 +368,13 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
         log.warning("Stripe webhook verification failed: %s", exc)
         return {"error": "Invalid signature", "status": 400}
 
-    etype = event["type"]
-    data  = event["data"]["object"]
-    log.info("Stripe webhook  type=%s  id=%s", etype, event["id"])
+    etype = getattr(event, "type", None) or event.get("type", "")
+    obj   = getattr(event, "data", None)
+    data  = getattr(obj, "object", None) if obj else None
+    if data is None and isinstance(event, dict):
+        data = (event.get("data") or {}).get("object", {})
+    event_id = getattr(event, "id", None) or event.get("id", "")
+    log.info("Stripe webhook  type=%s  id=%s", etype, event_id)
 
     handlers = {
         "checkout.session.completed":     _on_checkout_completed,
@@ -359,9 +393,20 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
     return {"ok": True, "event": etype}
 
 
-def _bid_from_meta(obj: dict) -> Optional[int]:
-    for src in [obj.get("metadata") or {}, (obj.get("subscription_data") or {}).get("metadata") or {}]:
-        v = src.get("wazibot_business_id")
+def _bid_from_meta(obj) -> Optional[int]:
+    """Extract business_id from Stripe event metadata. Handles StripeObject and dict."""
+    def _get(o, key):
+        if o is None: return None
+        return getattr(o, key, None) if not isinstance(o, dict) else o.get(key)
+
+    sources = [
+        _get(obj, "metadata"),
+        _get(_get(obj, "subscription_data"), "metadata"),
+        _get(_get(obj, "payment_intent"), "metadata"),
+    ]
+    for src in sources:
+        if not src: continue
+        v = _get(src, "wazibot_business_id")
         if v:
             try: return int(v)
             except (ValueError, TypeError): pass
@@ -474,9 +519,13 @@ def create_connect_account(business_id: int, business_name: str, email: str) -> 
         existing = (res.data or [{}])[0].get("stripe_account_id")
 
         if not existing:
+            # country defaults to the platform's country (PL).
+            # Merchants in other countries should contact support for manual override.
+            # capabilities requested: card_payments + transfers are the minimum
+            # needed for destination charges to work.
             account = stripe.Account.create(
                 type="express",
-                email=email,
+                email=email or None,
                 business_profile={"name": business_name},
                 metadata={"wazibot_business_id": str(business_id)},
                 capabilities={
@@ -484,7 +533,7 @@ def create_connect_account(business_id: int, business_name: str, email: str) -> 
                     "transfers":     {"requested": True},
                 },
             )
-            existing = account["id"]
+            existing = getattr(account, "id", None) or account.get("id")
             supabase.table("businesses").update(
                 {"stripe_account_id": existing}
             ).eq("id", business_id).execute()
@@ -638,34 +687,95 @@ def create_product_checkout_session(
         if not line_items:
             return {"error": "No valid items with price > 0"}
 
+        # Payment method selection for Europe / Poland:
+        #
+        # ALWAYS INCLUDED:
+        #   card   — Visa / Mastercard / Amex. Also enables Apple Pay and Google Pay
+        #            automatically when customer's device/browser supports it.
+        #            Link is presented automatically for returning Stripe Link users.
+        #
+        # POLAND-SPECIFIC (only for PLN or when merchant is PL-based):
+        #   blik   — Most popular payment method in Poland (instant bank payment).
+        #            Only works with PLN currency.
+        #   p24    — Przelewy24 bank transfer network, dominant in PL.
+        #            Works with PLN and EUR.
+        #
+        # EU-WIDE (works for EUR and most EU currencies):
+        #   klarna — Buy now pay later, widely used in PL/EU.
+        #            Available for PLN, EUR, SEK, NOK, DKK, GBP.
+        #
+        # EXPLICITLY EXCLUDED:
+        #   afterpay_clearpay — AU/CA/NZ/UK/US merchants ONLY. Crashes for PL accounts.
+        #   affirm            — US ONLY.
+        #   blik with EUR     — BLIK requires PLN.
+        #
+        # FUTURE (PayU/Revolut — not via Stripe, separate integration):
+        #   payu    — Dominant in PL/CEE, separate API, not a Stripe method.
+        #   revolut — Revolut Business Pay, separate integration.
+
+        is_pln    = currency_code == "pln"
+        is_eur    = currency_code == "eur"
+
+        payment_methods = ["card"]   # always — covers Visa/MC/Apple Pay/Google Pay/Link
+
+        if is_pln:
+            payment_methods.append("blik")   # #1 in Poland, PLN only
+            payment_methods.append("p24")    # Przelewy24, PLN only
+            payment_methods.append("klarna") # BNPL, available in PL for PLN
+
+        elif is_eur:
+            payment_methods.append("p24")    # p24 also works in EUR
+            payment_methods.append("klarna") # klarna works in EUR across EU
+
+        # For other currencies (USD, GBP, ZWL etc.) — card only is safe
+        # This correctly handles Zimbabwean USD merchants without breaking
+
+        import hashlib, time
+        # Idempotency key: prevents duplicate sessions if customer double-clicks
+        idem_key = hashlib.sha256(
+            f"{business_id}:{','.join(i.get('name','') for i in items)}:{int(time.time())//60}".encode()
+        ).hexdigest()[:32]
+
         params: dict = {
-            "mode":       "payment",
-            "line_items": line_items,
-            "success_url": success_url,
-            "cancel_url":  cancel_url,
-            # Explicitly list payment methods — this version of the Stripe SDK
-            # does not support automatic_payment_methods on checkout sessions.
-            # card covers Visa/Mastercard/Apple Pay/Google Pay/Link automatically.
-            "payment_method_types": ["card", "klarna", "afterpay_clearpay"],
+            "mode":                 "payment",
+            "line_items":           line_items,
+            "success_url":          success_url,
+            "cancel_url":           cancel_url,
+            "payment_method_types": payment_methods,
             "metadata": {
                 "wazibot_business_id": str(business_id),
                 "source":              "storefront",
+                "currency":            currency_code,
             },
         }
 
         if customer_email:
             params["customer_email"] = customer_email
 
-        # Destination charge: money goes to merchant's Stripe account
+        # Destination charge: money goes directly to merchant's connected account.
+        # IMPORTANT: When using destination charges, the platform account (yours)
+        # is the merchant of record and handles disputes. The connected account
+        # receives the funds minus the platform fee (currently 0%).
+        # Future: add application_fee_amount here for platform revenue.
         if account_id:
             params["payment_intent_data"] = {
-                "transfer_data": {"destination": account_id}
+                "transfer_data":    {"destination": account_id},
+                # "application_fee_amount": int(total_amount * 0.02),  # future: 2% platform fee
+                "metadata": {
+                    "wazibot_business_id": str(business_id),
+                    "source":              "storefront",
+                },
             }
 
-        session = stripe.checkout.Session.create(**params)
-        log.info("Product checkout session  business=%s  items=%s  account=%s",
-                 business_id, len(line_items), account_id or "platform")
-        return {"url": session["url"], "session_id": session["id"]}
+        session = stripe.checkout.Session.create(
+            **params,
+            idempotency_key=idem_key,
+        )
+        url = getattr(session, "url", None) or session.get("url", "")
+        sid = getattr(session, "id",  None) or session.get("id",  "")
+        log.info("Product checkout session  business=%s  items=%s  methods=%s  account=%s",
+                 business_id, len(line_items), payment_methods, account_id or "platform")
+        return {"url": url, "session_id": sid}
 
     except Exception as exc:
         log.error("create_product_checkout_session error: %s", exc)
@@ -705,36 +815,50 @@ def get_payment_analytics(business_id: int) -> dict:
         if not account_id:
             return empty
 
-        # Fetch recent payment intents from connected account
-        pi_list = stripe.PaymentIntent.list(
-            limit=100,
-            stripe_account=account_id,
-        )
-        # StripeObject: iterate directly — it's a ListObject, not a plain dict
-        intents = list(pi_list.auto_paging_iter()) if hasattr(pi_list, 'auto_paging_iter') else list(pi_list)
-        paid    = [p for p in intents if getattr(p, "status", None) == "succeeded"]
+        # Use Stripe Balance for revenue (reliable, single API call)
+        # and Charges list for order count + last payment (limited to 100 recent)
+        balance = stripe.Balance.retrieve(stripe_account=account_id)
+        available = getattr(balance, "available", []) or []
+        pending   = getattr(balance, "pending",   []) or []
 
-        total_revenue = sum(getattr(p, "amount", 0) or 0 for p in paid) / 100
-        last_payment  = getattr(paid[0], "created", None) if paid else None
+        def _sum_balance(items):
+            total = 0
+            for b in items:
+                amt = getattr(b, "amount", None)
+                if amt is None and isinstance(b, dict): amt = b.get("amount", 0)
+                total += (amt or 0)
+            return total / 100
 
-        # Fetch last payout
+        available_total = _sum_balance(available)
+        pending_total   = _sum_balance(pending)
+
+        # Recent charges for order count and last payment timestamp
+        charges = stripe.Charge.list(limit=100, stripe_account=account_id)
+        charge_list = list(charges.auto_paging_iter()) if hasattr(charges, "auto_paging_iter") else list(charges)
+        paid_charges = [c for c in charge_list if getattr(c, "paid", False) and not getattr(c, "refunded", False)]
+
+        last_payment = getattr(paid_charges[0], "created", None) if paid_charges else None
+
+        # Last payout
         last_payout = None
         try:
-            payouts = stripe.Payout.list(limit=1, stripe_account=account_id)
-            payout_data = list(payouts)
-            if payout_data:
-                last_payout = getattr(payout_data[0], "arrival_date", None)
+            payouts     = stripe.Payout.list(limit=1, stripe_account=account_id)
+            payout_list = list(payouts)
+            if payout_list:
+                last_payout = getattr(payout_list[0], "arrival_date", None)
         except Exception:
             pass
 
         return {
-            "total_revenue": round(total_revenue, 2),
-            "orders_paid":   len(paid),
-            "last_payment":  last_payment,
-            "last_payout":   last_payout,
-            "currency":      currency,
-            "connected":     True,
-            "account_id":    account_id,
+            "total_revenue":    round(available_total + pending_total, 2),
+            "available_balance": round(available_total, 2),
+            "pending_balance":   round(pending_total,   2),
+            "orders_paid":      len(paid_charges),
+            "last_payment":     last_payment,
+            "last_payout":      last_payout,
+            "currency":         currency,
+            "connected":        True,
+            "account_id":       account_id,
         }
     except Exception as exc:
         log.warning("get_payment_analytics error: %s", exc)
