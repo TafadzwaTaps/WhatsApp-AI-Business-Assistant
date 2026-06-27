@@ -1810,6 +1810,112 @@
     </div><!-- /stab-referrals -->
   </div><!-- /section-settings -->
 
+  <!-- MARKETING KIT SECTION -->
+  <div id="section-marketing-kit" class="section">
+    <div class="topbar">
+      <div class="page-title">📣 <span>Marketing Kit</span></div>
+    </div>
+    <div class="panels-grid">
+
+      <!-- Card 1: WhatsApp Chat Link -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">💬 WhatsApp Chat Link</div></div>
+        <div class="panel-body">
+          <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:8px;line-height:1.6;">
+            Share this link anywhere. When customers tap it, WhatsApp opens with your order message ready.
+          </div>
+          <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-family:var(--mono);font-size:11px;color:var(--green);word-break:break-all;margin-bottom:12px;" id="mkt-wa-link">—</div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-primary" onclick="mktCopy('mkt-wa-link')" style="flex:1;">📋 Copy Link</button>
+            <button class="btn btn-ghost" onclick="mktOpen()" style="flex:1;">↗ Open</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 2: QR Code -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">📲 QR Code</div>
+          <button class="panel-action" onclick="mktRefreshQR()">🔄 Refresh</button>
+        </div>
+        <div class="panel-body" style="text-align:center;">
+          <div id="mkt-qr-loading" style="padding:32px;color:var(--text-dim);font-family:var(--mono);font-size:12px;">Generating QR…</div>
+          <img id="mkt-qr-img" src="" alt="WhatsApp QR Code"
+               style="display:none;max-width:220px;border-radius:12px;border:3px solid var(--border);margin-bottom:16px;">
+          <div id="mkt-qr-error" style="display:none;color:#ff5252;font-size:12px;font-family:var(--mono);padding:16px;"></div>
+          <div style="display:flex;gap:8px;justify-content:center;margin-top:12px;">
+            <a id="mkt-qr-download" href="/marketing/qr/download" style="display:none;" class="btn btn-primary" style="flex:1;">⬇ Download PNG</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 3: Starter Keyword -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">🔑 Starter Keyword</div></div>
+        <div class="panel-body">
+          <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.7;">
+            Customers can send this message directly to the shared WaziBot number to start ordering from your store — no link needed.
+          </div>
+          <div style="background:var(--surface2);border:2px solid var(--green);border-radius:10px;padding:16px;text-align:center;margin-bottom:14px;">
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:6px;">SEND THIS TO WAZIBOT</div>
+            <div style="font-size:20px;font-weight:700;color:var(--green);font-family:var(--mono);letter-spacing:.04em;" id="mkt-keyword">—</div>
+            <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:6px;" id="mkt-shared-number">—</div>
+          </div>
+          <button class="btn btn-primary" onclick="mktCopy('mkt-keyword')" style="width:100%;">📋 Copy Keyword</button>
+        </div>
+      </div>
+
+      <!-- Card 4: Print Assets -->
+      <div class="panel">
+        <div class="panel-header"><div class="panel-title">🖨 Print Assets</div></div>
+        <div class="panel-body">
+          <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.7;">
+            Download and print your QR code for different uses. All use the same QR — place it wherever customers can scan it.
+          </div>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            <a id="mkt-dl-table"   href="/marketing/qr/download" class="btn btn-ghost" style="text-align:center;text-decoration:none;">🍽 Table QR (Counter)</a>
+            <a id="mkt-dl-flyer"   href="/marketing/qr/download" class="btn btn-ghost" style="text-align:center;text-decoration:none;">📄 Flyer QR</a>
+            <a id="mkt-dl-receipt" href="/marketing/qr/download" class="btn btn-ghost" style="text-align:center;text-decoration:none;">🧾 Receipt QR</a>
+          </div>
+          <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:12px;text-align:center;">
+            Branded PDF templates coming soon
+          </div>
+        </div>
+      </div>
+
+      <!-- Card 5: Success Tips (Feature 7) -->
+      <div class="panel" style="grid-column:1/-1;">
+        <div class="panel-header"><div class="panel-title">✅ How to Get More Customers</div></div>
+        <div class="panel-body">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;">
+            <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;border:1px solid var(--border);font-size:12px;line-height:1.8;">
+              <div style="font-weight:700;margin-bottom:6px;color:var(--green);">📍 Physical Location</div>
+              ✔ Print the QR on A4<br>
+              ✔ Place it on your counter<br>
+              ✔ Put it on tables<br>
+              ✔ Add it to receipts
+            </div>
+            <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;border:1px solid var(--border);font-size:12px;line-height:1.8;">
+              <div style="font-weight:700;margin-bottom:6px;color:var(--green);">📱 Social Media</div>
+              ✔ Add link to Instagram bio<br>
+              ✔ Post QR on Facebook<br>
+              ✔ Add to WhatsApp status<br>
+              ✔ Share in WhatsApp groups
+            </div>
+            <div style="background:var(--surface2);border-radius:8px;padding:12px 14px;border:1px solid var(--border);font-size:12px;line-height:1.8;">
+              <div style="font-weight:700;margin-bottom:6px;color:var(--green);">💬 How It Works</div>
+              ✔ Customer scans QR<br>
+              ✔ WhatsApp opens automatically<br>
+              ✔ Message is pre-filled<br>
+              ✔ They just tap Send to order
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /section-marketing-kit -->
+
   <!-- CUSTOMERS SECTION (simple view) -->
   <div id="section-crm" class="section">
     <div class="topbar">

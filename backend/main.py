@@ -433,6 +433,14 @@ app.include_router(business_router)
 app.include_router(chat_router)
 app.include_router(growth_router)
 app.include_router(expansion_router)
+
+# Marketing Kit router (Features 1-8: QR, deep links, keyword)
+try:
+    from routes.marketing_routes import router as marketing_router
+    app.include_router(marketing_router)
+    log.info("marketing_router loaded")
+except Exception as _e:
+    log.warning("marketing_routes failed to load: %s", _e)
 app.include_router(ux_router)
 
 # SaaS extension routers — only registered if import succeeded

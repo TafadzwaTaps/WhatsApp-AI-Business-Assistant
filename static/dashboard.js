@@ -363,6 +363,7 @@ function buildSidebar() {
       <button class="nav-item" onclick="showSection('growth-automation',this);closeSidebar()"><span class="icon">🚀</span> Growth</button>
       <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
       <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
+      <button class="nav-item" onclick="showSection('marketing-kit',this);loadMarketingKit();closeSidebar()"><span class="icon">📣</span> Marketing Kit</button>
       <div class="nav-section">Growth</div>
       <button class="nav-item" onclick="showSection('settings',this);switchSettingsTab('referrals',null);loadReferralTab();closeSidebar()"><span class="icon">🔗</span> Referrals <span id="nav-ref-badge" class="nav-badge nav-badge-green" style="display:none"></span></button>`;
   }
@@ -1926,6 +1927,98 @@ function checkPendingCheckout() {
       console.warn('H4: pending checkout redirect failed:', e);
     }
   }, 1500);
+}
+
+// ── Marketing Kit ─────────────────────────────────────────────────────────────
+
+let _mktData = null;
+
+async function loadMarketingKit() {
+  if (_mktData) { renderMarketingKit(_mktData); return; }
+  try {
+    _mktData = await apiFetch('/marketing/kit');
+    renderMarketingKit(_mktData);
+    loadMarketingQR();
+  } catch(e) { console.warn('Marketing kit load failed:', e.message); }
+}
+
+function renderMarketingKit(data) {
+  if (!data || data.error) return;
+  const _el = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
+  _el('mkt-wa-link', data.whatsapp_link || '—');
+  _el('mkt-keyword',  data.keyword       || '—');
+  _el('mkt-shared-number', `Send to WaziBot: ${data.shared_number || ''}`);
+  // Wire download buttons to authenticated blob download
+  ['mkt-dl-table','mkt-dl-flyer','mkt-dl-receipt','mkt-qr-download'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.href = '#'; el.onclick = (e) => { e.preventDefault(); mktDownloadQR(); }; }
+  });
+}
+
+async function loadMarketingQR() {
+  const img = document.getElementById('mkt-qr-img');
+  const loading = document.getElementById('mkt-qr-loading');
+  const errEl   = document.getElementById('mkt-qr-error');
+  const dlBtn   = document.getElementById('mkt-qr-download');
+  if (!img) return;
+  try {
+    const token = localStorage.getItem('wazi_token') || '';
+    const resp  = await fetch('/marketing/qr', { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!resp.ok) throw new Error(await resp.text());
+    const blob = await resp.blob();
+    img.src = URL.createObjectURL(blob);
+    img.style.display   = 'block';
+    if (loading) loading.style.display = 'none';
+    if (errEl)   errEl.style.display   = 'none';
+    if (dlBtn)   dlBtn.style.display   = 'inline-flex';
+  } catch(e) {
+    if (loading) loading.style.display = 'none';
+    if (errEl) { errEl.textContent = 'Could not generate QR: ' + e.message; errEl.style.display = 'block'; }
+  }
+}
+
+async function mktDownloadQR() {
+  try {
+    const token = localStorage.getItem('wazi_token') || '';
+    const resp  = await fetch('/marketing/qr/download', { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!resp.ok) throw new Error('Download failed');
+    const blob  = await resp.blob();
+    const url   = URL.createObjectURL(blob);
+    const fname = (_mktData?.slug || 'business') + '-whatsapp-qr.png';
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast('QR downloaded: ' + fname);
+  } catch(e) { toast('Download failed: ' + e.message, true); }
+}
+
+function mktRefreshQR() {
+  _mktData = null;
+  const img = document.getElementById('mkt-qr-img');
+  const loading = document.getElementById('mkt-qr-loading');
+  if (img) { img.src = ''; img.style.display = 'none'; }
+  if (loading) loading.style.display = 'block';
+  loadMarketingKit();
+}
+
+function mktCopy(elementId) {
+  const el = document.getElementById(elementId);
+  const text = (el?.textContent || el?.value || '').trim();
+  if (!text || text === '—') { toast('Nothing to copy', true); return; }
+  navigator.clipboard.writeText(text)
+    .then(() => toast('Copied!'))
+    .catch(() => {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      document.execCommand('copy'); document.body.removeChild(ta);
+      toast('Copied!');
+    });
+}
+
+function mktOpen() {
+  if (_mktData?.whatsapp_link) window.open(_mktData.whatsapp_link, '_blank');
+  else toast('Link not loaded yet', true);
 }
 
 // ── INIT ──────────────────────────────────────────────────
