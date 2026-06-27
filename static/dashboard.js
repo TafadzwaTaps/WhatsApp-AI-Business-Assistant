@@ -3624,29 +3624,79 @@ async function loadReferralTab() {
 }
 
 function renderReferralTab(data) {
-  const code    = data.referral_code   || '—';
-  const link    = data.referral_link   || '—';
-  const total   = data.total_referrals ?? '0';
-  const conv    = data.converted       ?? '0';
-  const pending = data.pending_reward  ?? 0;
+  const code      = data.referral_code      || '—';
+  const link      = data.referral_link      || '—';
+  const total     = data.total_referrals    ?? '0';
+  const conv      = data.converted          ?? '0';
+  const available = parseFloat(data.available_balance  ?? data.pending_reward ?? 0);
+  const totalEarned = available + parseFloat(data.total_withdrawn ?? 0) + parseFloat(data.pending_balance ?? 0);
+  const MIN_WITHDRAW = 5.00;
 
-  const codeEl    = document.getElementById('ref-code-display');
-  const linkEl    = document.getElementById('ref-link-display');
-  const totalEl   = document.getElementById('ref-stat-total');
-  const convEl    = document.getElementById('ref-stat-converted');
-  const pendingEl = document.getElementById('ref-stat-pending');
+  const _el = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
 
-  if (codeEl)    codeEl.textContent    = code;
-  if (linkEl)    linkEl.textContent    = link;
-  if (totalEl)   totalEl.textContent   = total;
-  if (convEl)    convEl.textContent    = conv;
-  if (pendingEl) pendingEl.textContent = `${getCurrencySymbol()}${parseFloat(pending).toFixed(2)}`;
+  _el('ref-code-display',    code);
+  _el('ref-link-display',    link);
+  _el('ref-stat-total',      total);
+  _el('ref-stat-converted',  conv);
+  _el('ref-stat-available',  `$${available.toFixed(2)}`);
+  _el('ref-stat-pending',    `$${totalEarned.toFixed(2)}`);
+  _el('ref-withdraw-available', `$${available.toFixed(2)}`);
 
-  // Show nav badge if there are referrals
+  // Progress bar toward $5.00 minimum withdrawal
+  const pct = Math.min(100, (available / MIN_WITHDRAW) * 100);
+  const bar = document.getElementById('ref-progress-bar');
+  const lbl = document.getElementById('ref-progress-label');
+  const needed = document.getElementById('ref-refs-needed');
+  if (bar) bar.style.width = pct + '%';
+  if (lbl) lbl.textContent = `$${available.toFixed(2)} / $${MIN_WITHDRAW.toFixed(2)}`;
+  if (needed) {
+    const refsLeft = Math.max(0, Math.ceil((MIN_WITHDRAW - available) / 0.20));
+    needed.textContent = refsLeft > 0 ? `${refsLeft} more referral${refsLeft !== 1 ? 's' : ''} to unlock withdrawal` : '✅ Ready to withdraw!';
+    needed.style.color = refsLeft === 0 ? 'var(--green)' : 'var(--text-dim)';
+  }
+
+  // Show/hide withdrawal panel based on available balance
+  const withdrawPanel = document.getElementById('ref-withdraw-panel');
+  if (withdrawPanel) withdrawPanel.style.display = available >= MIN_WITHDRAW ? 'block' : 'none';
+
+  // Pre-fill withdrawal amount with available balance (capped to available)
+  const amtInput = document.getElementById('ref-withdraw-amount');
+  if (amtInput && available >= MIN_WITHDRAW) amtInput.value = available.toFixed(2);
+
+  // Nav badge
   const badge = document.getElementById('nav-ref-badge');
   if (badge && parseInt(total) > 0) {
-    badge.textContent    = total;
-    badge.style.display  = 'inline-flex';
+    badge.textContent   = total;
+    badge.style.display = 'inline-flex';
+  }
+}
+
+async function submitReferralWithdrawal() {
+  const email  = (document.getElementById('ref-paypal-email')?.value  || '').trim();
+  const amount = parseFloat(document.getElementById('ref-withdraw-amount')?.value || '0');
+  const btn    = document.getElementById('ref-withdraw-btn');
+  const status = document.getElementById('ref-withdraw-status');
+
+  if (!email || !email.includes('@')) { toast('Enter a valid PayPal email', true); return; }
+  if (amount < 5.00) { toast('Minimum withdrawal is $5.00', true); return; }
+  if (!confirm(`Request payout of $${amount.toFixed(2)} to ${email}?`)) return;
+
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Submitting…'; }
+    const result = await apiFetch('/me/referral/withdraw', {
+      method: 'POST',
+      body:   JSON.stringify({ paypal_email: email, amount }),
+    });
+    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${result.message}</div>`;
+    toast('✅ Payout requested!');
+    // Refresh stats
+    _refData = null;
+    setTimeout(loadReferralTab, 1000);
+  } catch(e) {
+    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${e.message}</span>`;
+    toast(e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '💸 Request Payout'; }
   }
 }
 

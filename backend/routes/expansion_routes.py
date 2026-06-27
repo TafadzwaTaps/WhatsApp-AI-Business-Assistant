@@ -303,6 +303,120 @@ def get_referral(user=Depends(require_business)):
     return get_referral_stats(user["business_id"])
 
 
+# ── Referral credit withdrawal ────────────────────────────────────────────────
+
+class WithdrawRequest(BaseModel):
+    paypal_email:  str
+    amount:        float  # must be >= 5.00
+
+@router.get("/me/referral/balance")
+def get_referral_balance(user=Depends(require_business)):
+    """Return current referral credit balance for this business."""
+    from services.growth_service import get_referral_stats
+    stats = get_referral_stats(user["business_id"])
+    return {
+        "available_balance":   stats.get("available_balance", 0.0),
+        "pending_balance":     stats.get("pending_balance",   0.0),
+        "total_withdrawn":     stats.get("total_withdrawn",   0.0),
+        "can_withdraw":        stats.get("can_withdraw",      False),
+        "min_withdrawal":      5.00,
+        "credit_per_referral": 0.20,
+    }
+
+
+@router.post("/me/referral/withdraw")
+def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_business)):
+    """
+    Request a PayPal payout of referral credits.
+    Rules:
+      - Minimum withdrawal: $5.00
+      - Only available credits (not pending) can be withdrawn
+      - Payouts are processed manually within 3-5 business days
+    """
+    from core.db import supabase
+    from services.growth_service import get_referral_stats
+
+    bid = user["business_id"]
+
+    # Validate email
+    if not body.paypal_email or "@" not in body.paypal_email:
+        raise HTTPException(400, "Valid PayPal email required")
+
+    # Validate amount
+    if body.amount < 5.00:
+        raise HTTPException(400, f"Minimum withdrawal is $5.00. You requested ${body.amount:.2f}.")
+
+    # Check available balance
+    stats = get_referral_stats(bid)
+    available = stats.get("available_balance", 0.0)
+
+    if available < 5.00:
+        raise HTTPException(400,
+            f"Insufficient balance. Available: ${available:.2f}. Minimum: $5.00. "
+            f"Keep referring to build your balance — each referral earns you $0.20.")
+
+    if body.amount > available:
+        raise HTTPException(400,
+            f"Requested ${body.amount:.2f} exceeds available balance of ${available:.2f}.")
+
+    try:
+        from datetime import datetime, timezone as tz
+        now = datetime.now(tz.utc).isoformat()
+
+        # Create withdrawal request
+        withdrawal = supabase.table("referral_withdrawals").insert({
+            "business_id":  bid,
+            "amount":       round(body.amount, 2),
+            "paypal_email": body.paypal_email.strip().lower(),
+            "status":       "pending",
+            "requested_at": now,
+            "admin_note":   None,
+        }).execute()
+
+        # Mark credits as withdrawn (up to the requested amount)
+        credits_res = (
+            supabase.table("referral_credits")
+            .select("id, amount")
+            .eq("business_id", bid)
+            .eq("status", "available")
+            .order("created_at", desc=False)
+            .execute()
+        )
+        remaining = round(body.amount, 2)
+        for credit in (credits_res.data or []):
+            if remaining <= 0:
+                break
+            credit_amt = float(credit.get("amount", 0))
+            if credit_amt <= remaining:
+                supabase.table("referral_credits").update(
+                    {"status": "withdrawn", "withdrawn_at": now}
+                ).eq("id", credit["id"]).execute()
+                remaining -= credit_amt
+            else:
+                # Partial — split not needed at $0.20 granularity, just mark whole credit
+                supabase.table("referral_credits").update(
+                    {"status": "withdrawn", "withdrawn_at": now}
+                ).eq("id", credit["id"]).execute()
+                remaining = 0
+
+        log.info("Withdrawal requested  business=%s  amount=%.2f  paypal=%s",
+                 bid, body.amount, body.paypal_email)
+
+        return {
+            "ok":           True,
+            "amount":       round(body.amount, 2),
+            "paypal_email": body.paypal_email.strip().lower(),
+            "status":       "pending",
+            "message":      f"Withdrawal of ${body.amount:.2f} requested. "
+                            f"We'll send it to {body.paypal_email} within 3-5 business days.",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("referral withdrawal error  business=%s  error=%s", bid, exc)
+        raise HTTPException(500, "Failed to process withdrawal request. Please try again.")
+
+
 @router.post("/affiliates", status_code=201)
 def create_affiliate_endpoint(
     name:           str,

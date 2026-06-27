@@ -1718,10 +1718,54 @@
               <div class="stat-card"><div class="stat-label">Total Referrals</div><div class="stat-value" id="ref-stat-total">—</div><div class="stat-sub">Signed up</div></div>
               <div class="stat-card"><div class="stat-label">Converted</div><div class="stat-value" id="ref-stat-converted">—</div><div class="stat-sub">Active accounts</div></div>
             </div>
-            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center;">
-              <div style="font-size:11px;color:var(--text-muted);font-family:var(--mono);margin-bottom:4px;">PENDING REWARD</div>
-              <div style="font-size:22px;font-weight:700;color:var(--green);" id="ref-stat-pending">$0.00</div>
+            <!-- Credit balance breakdown -->
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);font-family:var(--mono);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;">Available</div>
+                <div style="font-size:20px;font-weight:700;color:var(--green);" id="ref-stat-available">$0.00</div>
+                <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">Ready to withdraw</div>
+              </div>
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center;">
+                <div style="font-size:10px;color:var(--text-muted);font-family:var(--mono);margin-bottom:4px;text-transform:uppercase;letter-spacing:.05em;">Total Earned</div>
+                <div style="font-size:20px;font-weight:700;color:var(--text);" id="ref-stat-pending">$0.00</div>
+                <div style="font-size:10px;color:var(--text-dim);margin-top:2px;">$0.20 per referral</div>
+              </div>
             </div>
+            <!-- Progress to withdrawal -->
+            <div style="margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;font-size:10px;font-family:var(--mono);color:var(--text-dim);margin-bottom:6px;">
+                <span>Progress to withdrawal</span><span id="ref-progress-label">$0.00 / $5.00</span>
+              </div>
+              <div style="background:var(--surface2);border-radius:20px;height:6px;overflow:hidden;">
+                <div id="ref-progress-bar" style="background:var(--green);height:100%;border-radius:20px;width:0%;transition:width .4s;"></div>
+              </div>
+              <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:4px;">
+                Minimum withdrawal: $5.00 via PayPal &bull; <span id="ref-refs-needed">25 referrals needed</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Withdrawal panel -->
+        <div class="panel" id="ref-withdraw-panel" style="display:none;">
+          <div class="panel-header"><div class="panel-title">💸 Withdraw Earnings</div></div>
+          <div class="panel-body">
+            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.7;padding:10px 14px;background:var(--surface2);border-radius:8px;border-left:3px solid var(--green);">
+              ✅ You have <strong id="ref-withdraw-available" style="color:var(--green);">$0.00</strong> available to withdraw.<br>
+              Payouts are sent via PayPal within 3–5 business days.
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+              <label>Your PayPal Email</label>
+              <input type="email" id="ref-paypal-email" placeholder="yourname@paypal.com" autocomplete="email"/>
+            </div>
+            <div class="form-group" style="margin-bottom:16px;">
+              <label>Amount to Withdraw (min $5.00)</label>
+              <input type="number" id="ref-withdraw-amount" placeholder="5.00" min="5" step="0.01"/>
+            </div>
+            <button class="btn btn-primary" onclick="submitReferralWithdrawal()" id="ref-withdraw-btn" style="width:100%;">
+              💸 Request Payout
+            </button>
+            <div id="ref-withdraw-status" style="margin-top:12px;font-size:12px;font-family:var(--mono);"></div>
           </div>
         </div>
         <div class="panel" style="grid-column:1/-1;">
@@ -1757,7 +1801,7 @@
               <div style="text-align:center;padding:14px;background:var(--surface2);border-radius:10px;border:1px solid var(--border);">
                 <div style="font-size:24px;margin-bottom:8px;">3️⃣</div>
                 <div style="font-size:12px;font-weight:600;margin-bottom:4px;">You Earn Rewards</div>
-                <div style="font-size:11px;color:var(--text-dim);">Track your referrals and pending rewards right here in the dashboard.</div>
+                <div style="font-size:11px;color:var(--text-dim);">Earn <strong style="color:var(--green);">$0.20</strong> per signup, instantly. Withdraw via PayPal once you reach $5.00.</div>
               </div>
             </div>
           </div>

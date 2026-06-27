@@ -272,12 +272,41 @@ def get_referral_stats(business_id: int) -> dict:
         # Log at warning so silent failures are visible in Render logs
         log.warning("get_referral_stats: referrals query failed: %s", exc)
 
+    # Step 3: Fetch real credit balance from referral_credits table
+    available_balance = 0.0
+    pending_balance   = 0.0
+    total_withdrawn   = 0.0
+    try:
+        credits_res = (
+            supabase.table("referral_credits")
+            .select("amount, status")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        for row in (credits_res.data or []):
+            amt = float(row.get("amount") or 0)
+            s   = row.get("status", "")
+            if s == "available":
+                available_balance += amt
+            elif s == "pending":
+                pending_balance += amt
+            elif s == "withdrawn":
+                total_withdrawn += amt
+    except Exception as exc:
+        log.warning("get_referral_stats: credits query failed: %s", exc)
+
     return {
-        "referral_code":   code,
-        "referral_link":   link,
-        "total_referrals": total,
-        "converted":       converted,
-        "pending_reward":  round(pending, 2),
+        "referral_code":      code,
+        "referral_link":      link,
+        "total_referrals":    total,
+        "converted":          converted,
+        "available_balance":  round(available_balance, 2),
+        "pending_balance":    round(pending_balance,   2),
+        "total_withdrawn":    round(total_withdrawn,   2),
+        "pending_reward":     round(available_balance + pending_balance, 2),  # backwards compat
+        "min_withdrawal":     5.00,
+        "credit_per_referral": 0.20,
+        "can_withdraw":       available_balance >= 5.00,
     }
 
 
@@ -317,6 +346,36 @@ def record_referral(new_business_id: int, referral_code: str) -> bool:
         supabase.table("businesses").update(
             {"referred_by": referral_code.upper()}
         ).eq("id", new_business_id).execute()
+
+        # Credit $0.20 to the referrer immediately as "available"
+        # (simple model: credit on signup, not on paid conversion,
+        #  to keep it honest — $0.20 is low enough to not need conversion gating)
+        try:
+            # Get the referral row id we just inserted
+            ref_row = (
+                supabase.table("referrals")
+                .select("id")
+                .eq("referrer_business_id", referrer_id)
+                .eq("referred_business_id", new_business_id)
+                .limit(1)
+                .execute()
+            )
+            ref_id = (ref_row.data or [{}])[0].get("id")
+
+            from datetime import datetime, timezone as tz
+            supabase.table("referral_credits").insert({
+                "business_id":  referrer_id,
+                "referral_id":  ref_id,
+                "amount":       0.20,
+                "status":       "available",
+                "note":         f"Referral signup: business #{new_business_id}",
+                "available_at": datetime.now(tz.utc).isoformat(),
+            }).execute()
+            log.info("referral credit issued  referrer=%s  amount=0.20", referrer_id)
+        except Exception as credit_exc:
+            # Never fail the referral record if credit insert fails
+            log.error("referral credit insert failed  referrer=%s  error=%s",
+                      referrer_id, credit_exc)
 
         log.info("referral recorded  referrer=%s  new_biz=%s  code=%s",
                  referrer_id, new_business_id, referral_code)
