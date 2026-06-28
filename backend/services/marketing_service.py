@@ -95,7 +95,12 @@ def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4) -> 
             "and redeploy."
         )
 
-    wa_link = generate_whatsapp_link(business_name)
+    # QR codes point to /qr/{slug} (tracking redirect) instead of directly
+    # to WhatsApp — this lets us count QR scans before the WhatsApp redirect.
+    import os
+    base_url = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+    slug     = _name_to_slug(business_name)
+    qr_target_url = f"{base_url}/qr/{slug}"
 
     qr = qrcode.QRCode(
         version=None,           # auto-size
@@ -103,7 +108,7 @@ def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4) -> 
         box_size=box_size,
         border=border,
     )
-    qr.add_data(wa_link)
+    qr.add_data(qr_target_url)
     qr.make(fit=True)
 
     # Try Pillow first (better quality), fall back to pure-PNG

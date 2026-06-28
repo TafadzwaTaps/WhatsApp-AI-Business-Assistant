@@ -1226,6 +1226,7 @@ async function loadSettings() {
 
   // Load Stripe billing status
   loadStripeBillingStatus();
+  loadAcquisitionStats();
 
   // Appearance — font: prefer Supabase (already loaded above in b.features_json),
   // fall back to localStorage, fall back to default Syne.
@@ -1927,6 +1928,39 @@ function checkPendingCheckout() {
       console.warn('H4: pending checkout redirect failed:', e);
     }
   }, 1500);
+}
+
+// ── Customer Acquisition Analytics ───────────────────────────────────────────
+
+async function loadAcquisitionStats() {
+  try {
+    const a = await apiFetch('/analytics/acquisition');
+    if (!a) return;
+
+    const _el = (id, val) => { const e = document.getElementById(id); if(e) e.textContent = val; };
+
+    _el('acq-qr-total',    a.qr_scans             ?? '0');
+    _el('acq-link-total',  a.whatsapp_clicks       ?? '0');
+    _el('acq-conv-total',  a.conversations_started ?? '0');
+    _el('acq-orders',      a.orders                ?? '0');
+    _el('acq-conversion',  (a.conversion_rate ?? 0) + '%');
+    _el('acq-qr-today',    a.today?.qr_scans       ?? '0');
+    _el('acq-link-today',  a.today?.whatsapp_clicks ?? '0');
+    _el('acq-conv-today',  a.today?.conversations_started ?? '0');
+
+    // Funnel bars — relative to QR scans as 100%
+    const max = Math.max(a.qr_scans || 1, 1);
+    const _bar = (id, val) => {
+      const el = document.getElementById(id);
+      if (el) el.style.width = Math.min(100, Math.round(val / max * 100)) + '%';
+    };
+    _bar('acq-bar-qr',    a.qr_scans             || 0);
+    _bar('acq-bar-conv',  a.conversations_started || 0);
+    _bar('acq-bar-orders', a.orders              || 0);
+
+  } catch(e) {
+    console.warn('Acquisition stats load failed:', e.message);
+  }
 }
 
 // ── Marketing Kit ─────────────────────────────────────────────────────────────

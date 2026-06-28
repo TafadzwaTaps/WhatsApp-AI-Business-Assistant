@@ -243,6 +243,16 @@ async def receive_message(request: Request):
         log.exception("👤 STEP 4 FAIL: %s", exc)
         return {"status": "ok"}
 
+    # ACQUISITION TRACKING — record conversation_started on first ever message.
+    # Runs after customer creation so we know the customer exists.
+    # Fire-and-forget — never block the webhook response.
+    # The acquisition_service deduplicates internally (one event per phone per biz).
+    try:
+        from services.acquisition_service import record_conversation_started
+        record_conversation_started(business["id"], customer_phone)
+    except Exception:
+        pass  # analytics must never crash the webhook
+
     # STEP 5: Save incoming message
     in_msg: dict = {}
     try:

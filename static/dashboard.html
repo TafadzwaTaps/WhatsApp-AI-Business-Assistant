@@ -286,6 +286,65 @@
       <div class="stat-card"><div class="stat-label">Repeat Rate</div><div class="stat-value" id="stat-repeat-rate">—</div><div class="stat-sub" id="stat-repeat-sub">Customers who reordered</div></div>
       <!-- Sprint 5: Customer satisfaction score -->
       <div class="stat-card"><div class="stat-label">⭐ Satisfaction</div><div class="stat-value" id="stat-satisfaction">—</div><div class="stat-sub" id="stat-satisfaction-sub">Avg customer rating</div></div>
+
+      <!-- Customer Acquisition Analytics card — matches existing stat-card style -->
+      <div class="panel" style="grid-column:1/-1;margin-top:8px;">
+        <div class="panel-header">
+          <div class="panel-title">📊 Customer Acquisition</div>
+          <span style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">QR → Chat → Orders</span>
+        </div>
+        <div class="panel-body" style="padding:12px 0 0;">
+          <!-- Funnel stats row -->
+          <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px;">
+            <div class="stat-card">
+              <div class="stat-label">📲 QR Scans</div>
+              <div class="stat-value" id="acq-qr-total">—</div>
+              <div class="stat-sub"><span id="acq-qr-today">—</span> today</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">💬 Link Clicks</div>
+              <div class="stat-value" id="acq-link-total">—</div>
+              <div class="stat-sub"><span id="acq-link-today">—</span> today</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">🗣 Conversations</div>
+              <div class="stat-value" id="acq-conv-total">—</div>
+              <div class="stat-sub"><span id="acq-conv-today">—</span> today</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-label">🛒 Orders</div>
+              <div class="stat-value" id="acq-orders">—</div>
+              <div class="stat-sub">All time</div>
+            </div>
+            <div class="stat-card green">
+              <div class="stat-label">🎯 Conversion</div>
+              <div class="stat-value" id="acq-conversion">—</div>
+              <div class="stat-sub">QR scans → orders</div>
+            </div>
+          </div>
+          <!-- Visual funnel bar -->
+          <div style="padding:0 0 14px;font-size:11px;font-family:var(--mono);color:var(--text-dim);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <span style="width:90px;text-align:right;">QR Scans</span>
+              <div style="flex:1;background:var(--surface2);border-radius:4px;height:8px;overflow:hidden;">
+                <div id="acq-bar-qr" style="background:var(--green);height:100%;width:0%;border-radius:4px;transition:width .5s;"></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <span style="width:90px;text-align:right;">Conversations</span>
+              <div style="flex:1;background:var(--surface2);border-radius:4px;height:8px;overflow:hidden;">
+                <div id="acq-bar-conv" style="background:var(--amber);height:100%;width:0%;border-radius:4px;transition:width .5s;"></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="width:90px;text-align:right;">Orders</span>
+              <div style="flex:1;background:var(--surface2);border-radius:4px;height:8px;overflow:hidden;">
+                <div id="acq-bar-orders" style="background:var(--purple,#a78bfa);height:100%;width:0%;border-radius:4px;transition:width .5s;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ═══ Feature 8: BUSINESS HEALTH WIDGET ═══════════════════════════════ -->
