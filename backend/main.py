@@ -429,18 +429,32 @@ else:
 app.include_router(auth_router)
 app.include_router(webhook_router)
 app.include_router(admin_router)
-app.include_router(business_router)
-app.include_router(chat_router)
-app.include_router(growth_router)
-app.include_router(expansion_router)
 
-# Marketing Kit router (Features 1-8: QR, deep links, keyword)
+# ── Route-shadowing fix ────────────────────────────────────────────────────
+# business_router registers GET /analytics/{business_id} (an int path param,
+# used as a catch-all fallback). FastAPI matches routes in registration
+# order, so ANY literal /analytics/<word> path defined in a router included
+# AFTER business_router (e.g. marketing_router's /analytics/acquisition)
+# would incorrectly fall through to /analytics/{business_id} first — FastAPI
+# then tries to coerce "acquisition" to int and raises a 422 Validation
+# Error before the real handler ever runs.
+#
+# Fix: register marketing_router BEFORE business_router so its literal
+# /analytics/acquisition path wins the match. This must stay before
+# business_router for as long as business_router keeps a parameterized
+# /analytics/{business_id} route — see the note above that route definition
+# in business_routes.py for the matching half of this fix.
 try:
     from routes.marketing_routes import router as marketing_router
     app.include_router(marketing_router)
     log.info("marketing_router loaded")
 except Exception as _e:
     log.warning("marketing_routes failed to load: %s", _e)
+
+app.include_router(business_router)
+app.include_router(chat_router)
+app.include_router(growth_router)
+app.include_router(expansion_router)
 app.include_router(ux_router)
 
 # SaaS extension routers — only registered if import succeeded
