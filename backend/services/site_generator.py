@@ -43,6 +43,12 @@ def _slug_to_name(slug: str) -> str:
     return slug.replace("-", " ")
 
 
+def _name_to_slug(name: str) -> str:
+    """'Flavoury Foods (Pvt) Ltd' -> 'flavoury-foods-pvt-ltd'"""
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+
+
 def _hex_darken(hex_colour: str, amount: int = 30) -> str:
     hex_colour = hex_colour.lstrip("#")
     if len(hex_colour) != 6:
@@ -310,9 +316,11 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
         chips.append(f'<span class="info-chip">📍 {_e(settings["location"])}</span>')
     chips_html = f'<div class="info-chips">{"".join(chips)}</div>' if chips else ""
 
-    wa_href = _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
+    # Route hero CTA through /go/{slug} to track WhatsApp link clicks (acquisition analytics)
+    _hero_slug = _name_to_slug(biz.get("name", ""))
+    wa_href = f"/go/{_e(_hero_slug)}" if _hero_slug else _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
     cta = (
-        f'<a class="hero-cta" href="{wa_href}" target="_blank" rel="noopener">'
+        f'<a class="hero-cta" href="{wa_href}" rel="noopener">'
         f'💬 Order on WhatsApp</a>'
     ) if settings["show_ordering"] else ""
 
@@ -546,12 +554,13 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
   </section>"""
 
 
-def _sticky_wa_btn(wa_phone: str, biz_name: str) -> str:
+def _sticky_wa_btn(wa_phone: str, biz_name: str, slug: str = "") -> str:
     if not wa_phone:
         return ""
-    wa_href = _wa_url(wa_phone, f"Hi {biz_name}! I'd like to order.")
+    # Route through /go/{slug} to track WhatsApp link clicks (acquisition analytics)
+    href = f"/go/{_e(slug)}" if slug else _wa_url(wa_phone, f"Hi {biz_name}! I'd like to order.")
     return (
-        f'<a class="wa-sticky" href="{wa_href}" target="_blank" rel="noopener" '
+        f'<a class="wa-sticky" href="{href}" rel="noopener" '
         f'aria-label="Chat on WhatsApp" title="Order on WhatsApp">💬</a>'
     )
 
@@ -930,7 +939,7 @@ def generate_site_html(slug: str) -> str:
     reviews_sec   = _reviews_html(reviews)
     gallery_sec   = _gallery_html(products) if sections["gallery"] else ""
     contact_sec   = _contact_html(biz, settings, wa_phone)
-    wa_sticky     = _sticky_wa_btn(wa_phone, name)
+    wa_sticky     = _sticky_wa_btn(wa_phone, name, slug=_name_to_slug(name))
 
     # Buy Now cart overlay — clean function call, no fragile string replacement
     buy_now_html = (
