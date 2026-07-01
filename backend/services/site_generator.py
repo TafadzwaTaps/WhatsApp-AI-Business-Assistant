@@ -310,11 +310,9 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
         chips.append(f'<span class="info-chip">📍 {_e(settings["location"])}</span>')
     chips_html = f'<div class="info-chips">{"".join(chips)}</div>' if chips else ""
 
-    # Route hero CTA through /go/{slug} to track WhatsApp link clicks
-    _slug = _name_to_slug(biz.get("name", ""))
-    wa_href = f"/go/{_e(_slug)}" if _slug else _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
+    wa_href = _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
     cta = (
-        f'<a class="hero-cta" href="{wa_href}" rel="noopener">'
+        f'<a class="hero-cta" href="{wa_href}" target="_blank" rel="noopener">'
         f'💬 Order on WhatsApp</a>'
     ) if settings["show_ordering"] else ""
 
@@ -548,19 +546,12 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
   </section>"""
 
 
-def _sticky_wa_btn(wa_phone: str, biz_name: str, slug: str = "") -> str:
+def _sticky_wa_btn(wa_phone: str, biz_name: str) -> str:
     if not wa_phone:
         return ""
-    # Route through /go/{slug} to track WhatsApp link clicks (acquisition analytics).
-    # Falls back to direct wa.me link if slug unavailable.
-    if slug:
-        href = f"/go/{_e(slug)}"
-        target = "_blank"
-    else:
-        href = _wa_url(wa_phone, f"Hi {biz_name}! I'd like to order.")
-        target = "_blank"
+    wa_href = _wa_url(wa_phone, f"Hi {biz_name}! I'd like to order.")
     return (
-        f'<a class="wa-sticky" href="{href}" target="{target}" rel="noopener" '
+        f'<a class="wa-sticky" href="{wa_href}" target="_blank" rel="noopener" '
         f'aria-label="Chat on WhatsApp" title="Order on WhatsApp">💬</a>'
     )
 
@@ -939,7 +930,7 @@ def generate_site_html(slug: str) -> str:
     reviews_sec   = _reviews_html(reviews)
     gallery_sec   = _gallery_html(products) if sections["gallery"] else ""
     contact_sec   = _contact_html(biz, settings, wa_phone)
-    wa_sticky     = _sticky_wa_btn(wa_phone, name, slug=_name_to_slug(name))
+    wa_sticky     = _sticky_wa_btn(wa_phone, name)
 
     # Buy Now cart overlay — clean function call, no fragile string replacement
     buy_now_html = (
