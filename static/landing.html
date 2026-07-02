@@ -737,9 +737,9 @@ footer {
   <div class="nav-links">
     <a href="#features" class="nav-link">Features</a>
     <a href="#how-it-works" class="nav-link">How it works</a>
-    <a href="#pricing" class="nav-link">Pricing</a>
+    <a href="/static/pricing.html" class="nav-link">Pricing</a>
     <a href="/dashboard" class="nav-login">Sign in</a>
-    <a href="/signup" class="nav-cta">Get Started Free →</a>
+    <a href="/static/signup.html" class="nav-cta">Get Started Free →</a>
   </div>
 
         <button class="nav-hamburger" id="hamburger-btn" onclick="document.querySelector('.nav-links').classList.toggle('mobile-open');this.textContent=document.querySelector('.nav-links').classList.contains('mobile-open')?'✕':'☰'" aria-label="Toggle navigation">☰</button>
@@ -758,7 +758,7 @@ footer {
     WaziBot connects to your WhatsApp Business account and automatically handles customer enquiries, takes orders, and sends promos — no code, no fuss.
   </p>
   <div class="hero-actions">
-    <a href="/signup" class="btn-hero-primary">🚀 Start for free</a>
+    <a href="/static/signup.html" class="btn-hero-primary">🚀 Start for free</a>
     <a href="/dashboard" class="btn-hero-secondary">Already have an account →</a>
   </div>
 
@@ -981,35 +981,60 @@ footer {
   <h2 class="section-title">Simple, <span class="green">honest pricing</span></h2>
   <p class="section-sub">Start free and grow into a plan that suits your business.</p>
 
-  <div class="pricing-grid">
+  <div class="pricing-grid" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr));">
+
+    <!-- Free Trial -->
+    <div class="price-card" style="border-color:rgba(245,158,11,0.35);">
+      <div class="price-tag" style="background:rgba(245,158,11,0.15);border-color:rgba(245,158,11,0.35);color:#f59e0b;">No card needed</div>
+      <div class="price-name">Free Trial</div>
+      <div class="price-amount"><span>$</span>0</div>
+      <div class="price-period">30 days — full access</div>
+      <hr class="price-divider"/>
+      <div class="price-features">
+        <div class="price-feature"><span class="check">✓</span> 30-day full access</div>
+        <div class="price-feature"><span class="check">✓</span> Shared WhatsApp number</div>
+        <div class="price-feature"><span class="check">✓</span> AI auto-replies</div>
+        <div class="price-feature"><span class="check">✓</span> Unlimited products</div>
+        <div class="price-feature"><span class="check">✓</span> Full dashboard &amp; analytics</div>
+        <div class="price-feature"><span class="check">✓</span> Broadcast campaigns</div>
+        <div class="price-feature"><span class="check">✓</span> Live inbox &amp; chat</div>
+        <div class="price-feature"><span class="check">✓</span> No credit card required</div>
+      </div>
+      <a href="/static/signup.html" class="btn-price btn-price-outline" style="border-color:rgba(245,158,11,0.4);color:#f59e0b;">Start free trial →</a>
+    </div>
+
+    <!-- Starter -->
     <div class="price-card">
       <div class="price-name">Starter</div>
-      <div class="price-amount"><span>$</span>0</div>
-      <div class="price-period">Free forever</div>
+      <div class="price-amount"><span>$</span>1.99</div>
+      <div class="price-period">per month</div>
       <hr class="price-divider"/>
       <div class="price-features">
         <div class="price-feature"><span class="check">✓</span> Shared WhatsApp number</div>
         <div class="price-feature"><span class="check">✓</span> AI auto-replies</div>
-        <div class="price-feature"><span class="check">✓</span> Up to 10 products</div>
+        <div class="price-feature"><span class="check">✓</span> Up to 20 products</div>
+        <div class="price-feature"><span class="check">✓</span> 200 AI messages/day</div>
         <div class="price-feature"><span class="check">✓</span> Order tracking</div>
         <div class="price-feature"><span class="check">✓</span> Basic dashboard</div>
         <div class="price-feature"><span class="check">✓</span> Public store page</div>
-        <div class="price-feature locked"><span class="cross">✗</span> Broadcast messages</div>
+        <div class="price-feature locked"><span class="cross">✗</span> Advanced analytics</div>
+        <div class="price-feature locked"><span class="cross">✗</span> Broadcast campaigns</div>
         <div class="price-feature locked"><span class="cross">✗</span> Live inbox &amp; chat</div>
-        <div class="price-feature locked"><span class="cross">✗</span> Dedicated WhatsApp number</div>
       </div>
-      <a href="/signup" class="btn-price btn-price-outline">Get started →</a>
+      <a href="/static/pricing.html" class="btn-price btn-price-outline">Get started →</a>
+      <p class="price-save-note">Annual: <a href="/static/pricing.html">$19/year</a> (save 20%)</p>
     </div>
 
+    <!-- Growth — featured -->
     <div class="price-card featured">
       <span class="price-tag">Most popular</span>
       <div class="price-name">Growth</div>
       <div class="price-amount"><span>$</span>12</div>
-      <div class="price-period">per month · 14-day free trial</div>
+      <div class="price-period">per month</div>
       <hr class="price-divider"/>
       <div class="price-features">
         <div class="price-feature"><span class="check">✓</span> Your own WhatsApp number</div>
-        <div class="price-feature"><span class="check">✓</span> AI auto-replies</div>
+        <div class="price-feature"><span class="check">✓</span> Unlimited AI auto-replies</div>
         <div class="price-feature"><span class="check">✓</span> Unlimited products</div>
         <div class="price-feature"><span class="check">✓</span> Order tracking</div>
         <div class="price-feature"><span class="check">✓</span> Full dashboard &amp; analytics</div>
@@ -1017,10 +1042,11 @@ footer {
         <div class="price-feature"><span class="check">✓</span> Live inbox &amp; chat</div>
         <div class="price-feature"><span class="check">✓</span> Human handoff &amp; tickets</div>
       </div>
-      <a href="/signup" class="btn-price btn-price-primary">Start free trial →</a>
-      <p class="price-save-note">Save 20% with annual billing · <a href="/signup">$115/year</a></p>
+      <a href="/static/pricing.html" class="btn-price btn-price-primary">Start Growth →</a>
+      <p class="price-save-note">Save 20% with annual billing · <a href="/static/pricing.html">$115/year</a></p>
     </div>
 
+    <!-- Enterprise -->
     <div class="price-card">
       <div class="price-name">Enterprise</div>
       <div class="price-amount" style="font-size:24px;padding-top:6px;">Custom</div>
@@ -1038,6 +1064,7 @@ footer {
       <a href="mailto:hello@wazibot.com" class="btn-price btn-price-outline">Contact us →</a>
       <p class="trial-note">For agencies and high-volume businesses</p>
     </div>
+
   </div>
 </section>
 
@@ -1047,7 +1074,7 @@ footer {
   <h2 class="cta-title">Get your bot <span class="green">live today</span></h2>
   <p class="cta-sub">Free to start. No credit card. No code. Just your business on autopilot.</p>
   <div class="hero-actions">
-    <a href="/signup" class="btn-hero-primary">🚀 Create your free account</a>
+    <a href="/static/signup.html" class="btn-hero-primary">🚀 Create your free account</a>
     <a href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener" class="btn-demo-wa">💬 Try the demo first</a>
   </div>
   <p style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">
@@ -1066,7 +1093,7 @@ footer {
     <a href="#how-it-works">How it works</a>
     <a href="#pricing">Pricing</a>
     <a href="/directory">Marketplace</a>
-    <a href="/signup">Sign up</a>
+    <a href="/static/signup.html">Sign up</a>
     <a href="/dashboard">Sign in</a>
   </div>
   <div style="width:100%;border-top:1px solid var(--border);padding-top:20px;margin-top:8px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;">
