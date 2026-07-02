@@ -166,18 +166,53 @@
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 
 <!-- SIDEBAR -->
-<aside class="sidebar">
-  <div class="logo">
-    <div class="logo-name">WaziBot</div>
-    <div class="logo-sub" id="sidebar-role-label">Dashboard</div>
-    <div class="logo-role" id="sidebar-role-badge"></div>
+<aside class="sidebar" id="sidebar" role="complementary" aria-label="Main navigation">
+  <!-- Header: logo + collapse toggle -->
+  <div class="sb-header">
+    <a href="/static/dashboard.html" class="sb-logo" style="text-decoration:none;">
+      <span class="sb-logo-mark">W</span>
+      <span class="sb-logo-text">WaziBot</span>
+    </a>
+    <button class="sb-collapse-btn" id="sb-collapse-btn" onclick="sidebarToggleCollapse()" title="Collapse sidebar" aria-label="Toggle sidebar width">
+      <span class="sb-collapse-icon">‹</span>
+    </button>
   </div>
-  <nav class="nav" id="sidebar-nav"></nav>
-  <div class="sidebar-footer">
-    <div class="footer-user" id="footer-user"></div>
-    <div class="api-indicator"><span class="spin" id="api-spin"></span><span id="api-status-text">Connecting...</span></div>
-    <button onclick="copy('12345')">Copy</button>
-    <button class="btn-logout" onclick="logout()">⏻ Sign Out</button>
+
+  <!-- Business name strip -->
+  <div class="sb-biz-strip">
+    <div class="sb-biz-name" id="sidebar-role-label">Business</div>
+    <div id="sidebar-role-badge"></div>
+  </div>
+
+  <!-- Search -->
+  <div class="sb-search-wrap">
+    <div class="sb-search">
+      <span class="sb-search-icon">⌕</span>
+      <input type="text" id="sb-search" class="sb-search-input"
+             placeholder="Search…" oninput="sidebarSearch(this.value)"
+             autocomplete="off" aria-label="Search navigation"/>
+    </div>
+  </div>
+
+  <!-- Scrollable nav -->
+  <nav class="sb-nav" id="sidebar-nav" role="navigation" aria-label="Main navigation"></nav>
+
+  <!-- Footer: plan chip, user, sign out — always visible -->
+  <div class="sb-footer">
+    <div class="sb-plan-chip" id="sb-plan-chip" onclick="window.location.href='/static/pricing.html'" style="cursor:pointer;" title="View plans"></div>
+    <div class="sb-user" id="footer-user">
+      <div class="sb-user-avatar" id="sb-user-avatar">W</div>
+      <div class="sb-user-info">
+        <div class="sb-user-name" id="sb-footer-biz-name">Dashboard</div>
+        <div class="sb-api-status">
+          <span class="sb-api-dot" id="api-spin"></span>
+          <span id="api-status-text">Connecting…</span>
+        </div>
+      </div>
+    </div>
+    <button class="sb-signout" onclick="logout()" aria-label="Sign out">
+      <span>⏻</span><span class="sb-btn-label">Sign Out</span>
+    </button>
   </div>
 </aside>
 
