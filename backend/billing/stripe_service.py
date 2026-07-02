@@ -40,128 +40,144 @@ log = logging.getLogger(__name__)
 # ── Tier definitions ──────────────────────────────────────────────────────────
 
 TIERS: dict[str, dict] = {
+    # ── Free (post-trial, limited) ────────────────────────────────────────────
     "free": {
-        "label":            "Free",
-        "price_monthly":    0,
-        "price_annual":     0,
-        "messages_per_day": 50,
-        "products_limit":   10,
-        "campaigns":        False,
-        "analytics":        False,
-        "multi_agent":      False,
-        "api_access":       False,
-        "priority_support": False,
-        "ai_roles":         False,
-        "catalog_images":   False,
-        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_FREE_MONTHLY", ""),
-        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_FREE_ANNUAL", ""),
-    },
-    "starter": {
-        "label":            "Starter",
-        "price_monthly":    9,
-        "price_annual":     86,     # 9 * 12 * 0.8 = 86.40 → 86
-        "messages_per_day": -1,
-        "products_limit":   25,
-        "campaigns":        False,
-        "analytics":        False,
-        "multi_agent":      False,
-        "api_access":       False,
-        "priority_support": False,
-        "ai_roles":         False,
-        "catalog_images":   False,
-        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY", ""),
-        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL", ""),
-    },
-    "growth": {
-        "label":            "Growth",
-        "price_monthly":    29,
-        "price_annual":     278,    # 29 * 12 * 0.8
-        "messages_per_day": -1,
-        "products_limit":   -1,
-        "campaigns":        True,
-        "analytics":        True,
-        "multi_agent":      False,
-        "api_access":       False,
-        "priority_support": False,
-        "ai_roles":         True,
-        "catalog_images":   True,
-        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_GROWTH_MONTHLY", ""),
-        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_GROWTH_ANNUAL", ""),
-    },
-    "pro": {
-        "label":            "Pro",
-        "price_monthly":    79,    # H6 fix: was incorrectly set to 29 (same as Growth)
-        "price_annual":     758,   # 79 * 12 * 0.8 = 758.40 → 758
-        "messages_per_day": -1,   # unlimited
-        "products_limit":   100,
-        "campaigns":        True,
-        "analytics":        True,
-        "multi_agent":      False,
-        "api_access":       False,
-        "priority_support": False,
-        "ai_roles":         True,
-        "catalog_images":   True,
-        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_PRO_MONTHLY", ""),
-        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_PRO_ANNUAL", ""),
-    },
-    "business": {
-        "label":            "Business",
-        "price_monthly":    79,
-        "price_annual":     790,
-        "messages_per_day": -1,
-        "products_limit":   -1,   # unlimited
-        "campaigns":        True,
-        "analytics":        True,
-        "multi_agent":      True,
-        "api_access":       True,
-        "priority_support": True,
-        "ai_roles":         True,
-        "catalog_images":   True,
-        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_BUSINESS_MONTHLY", ""),
-        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_BUSINESS_ANNUAL", ""),
-    },
-    "enterprise": {
-        "label":            "Enterprise",
-        "price_monthly":    0,    # custom pricing — contacted separately
-        "price_annual":     0,
-        "messages_per_day": -1,
-        "products_limit":   -1,
-        "campaigns":        True,
-        "analytics":        True,
-        "multi_agent":      True,
-        "api_access":       True,
-        "priority_support": True,
-        "ai_roles":         True,
-        "catalog_images":   True,
+        "label":               "Free",
+        "price_monthly":       0,
+        "price_annual":        0,
+        "trial_days":          0,
+        "messages_per_day":    30,
+        "products_limit":      5,
+        "campaigns":           False,
+        "analytics":           False,
+        "multi_agent":         False,
+        "api_access":          False,
+        "priority_support":    False,
+        "ai_roles":            False,
+        "catalog_images":      False,
+        "broadcasts_per_month":0,
+        "contacts_limit":      50,
         "stripe_price_id_monthly": "",
         "stripe_price_id_annual":  "",
+    },
+    # ── Trial (30-day, full access) ───────────────────────────────────────────
+    "trial": {
+        "label":               "Free Trial",
+        "price_monthly":       0,
+        "price_annual":        0,
+        "trial_days":          30,
+        "messages_per_day":    -1,
+        "products_limit":      -1,
+        "campaigns":           True,
+        "analytics":           True,
+        "multi_agent":         False,
+        "api_access":          False,
+        "priority_support":    False,
+        "ai_roles":            True,
+        "catalog_images":      True,
+        "broadcasts_per_month":5,
+        "contacts_limit":      -1,
+        "stripe_price_id_monthly": "",
+        "stripe_price_id_annual":  "",
+    },
+    # ── Starter — $1.99/month ─────────────────────────────────────────────────
+    "starter": {
+        "label":               "Starter",
+        "price_monthly":       1.99,
+        "price_annual":        19,
+        "trial_days":          0,
+        "messages_per_day":    200,
+        "products_limit":      20,
+        "campaigns":           False,
+        "analytics":           False,
+        "multi_agent":         False,
+        "api_access":          False,
+        "priority_support":    False,
+        "ai_roles":            False,
+        "catalog_images":      True,
+        "broadcasts_per_month":2,
+        "contacts_limit":      200,
+        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY", ""),
+        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  ""),
+    },
+    # ── Growth — $12/month (most popular) ────────────────────────────────────
+    "growth": {
+        "label":               "Growth",
+        "price_monthly":       12,
+        "price_annual":        115,
+        "trial_days":          0,
+        "messages_per_day":    -1,
+        "products_limit":      -1,
+        "campaigns":           True,
+        "analytics":           True,
+        "multi_agent":         False,
+        "api_access":          False,
+        "priority_support":    False,
+        "ai_roles":            True,
+        "catalog_images":      True,
+        "broadcasts_per_month":-1,
+        "contacts_limit":      -1,
+        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_GROWTH_MONTHLY", ""),
+        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",  ""),
+    },
+    # ── Enterprise — custom pricing ───────────────────────────────────────────
+    "enterprise": {
+        "label":               "Enterprise",
+        "price_monthly":       0,
+        "price_annual":        0,
+        "trial_days":          0,
+        "messages_per_day":    -1,
+        "products_limit":      -1,
+        "campaigns":           True,
+        "analytics":           True,
+        "multi_agent":         True,
+        "api_access":          True,
+        "priority_support":    True,
+        "ai_roles":            True,
+        "catalog_images":      True,
+        "broadcasts_per_month":-1,
+        "contacts_limit":      -1,
+        "stripe_price_id_monthly": "",
+        "stripe_price_id_annual":  "",
+    },
+    # Legacy aliases (kept for backward compat with webhooks that stored 'pro'/'business')
+    "pro": {
+        "label": "Growth", "price_monthly": 12, "price_annual": 115,
+        "trial_days": 0, "messages_per_day": -1, "products_limit": -1,
+        "campaigns": True, "analytics": True, "multi_agent": False,
+        "api_access": False, "priority_support": False, "ai_roles": True,
+        "catalog_images": True, "broadcasts_per_month": -1, "contacts_limit": -1,
+        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_GROWTH_MONTHLY", ""),
+        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",  ""),
+    },
+    "business": {
+        "label": "Growth", "price_monthly": 12, "price_annual": 115,
+        "trial_days": 0, "messages_per_day": -1, "products_limit": -1,
+        "campaigns": True, "analytics": True, "multi_agent": True,
+        "api_access": True, "priority_support": True, "ai_roles": True,
+        "catalog_images": True, "broadcasts_per_month": -1, "contacts_limit": -1,
+        "stripe_price_id_monthly": os.getenv("STRIPE_PRICE_BUSINESS_MONTHLY", ""),
+        "stripe_price_id_annual":  os.getenv("STRIPE_PRICE_BUSINESS_ANNUAL",  ""),
     },
 }
 
 
-_stripe_module = None  # module-level cache — avoid re-importing every call
+_stripe_module = None
 
 def _stripe():
-    """
-    Lazy-load and configure the Stripe SDK.
-    Returns None (graceful no-op) if STRIPE_SECRET_KEY is not set or stripe
-    package is not installed. Sets explicit api_version so behaviour never
-    changes on silent Stripe API upgrades.
-    """
     global _stripe_module
     key = os.getenv("STRIPE_SECRET_KEY", "")
     if not key:
         return None
     if _stripe_module is not None:
-        _stripe_module.api_key = key   # refresh key in case env changed
+        _stripe_module.api_key = key
         return _stripe_module
     try:
         import stripe as _s
-        _s.api_key        = key
-        _s.api_version    = "2024-06-20"   # pin version — never break on Stripe upgrades
-        _s.max_network_retries = 3         # auto-retry transient network errors
+        _s.api_key             = key
+        _s.api_version         = "2024-06-20"
+        _s.max_network_retries = 3
         _stripe_module = _s
-        log.info("Stripe SDK loaded  version=%s", _s.api_version)
         return _s
     except ImportError:
         log.warning("stripe package not installed — add stripe>=7.0.0 to requirements.txt")
@@ -195,32 +211,19 @@ def get_or_create_stripe_customer(
         if existing:
             return existing
 
-        # Search Stripe first — avoids creating duplicate customers if a previous
-        # DB write failed (race condition: Stripe customer created, DB update crashed)
-        if owner_email:
-            existing_list = stripe.Customer.search(
-                query=f'metadata["wazibot_business_id"]:"{business_id}"',
-                limit=1,
-            )
-            found = getattr(existing_list, "data", [])
-            if found:
-                cid = getattr(found[0], "id", None) or found[0].get("id")
-                supabase.table("businesses").update(
-                    {"stripe_customer_id": cid}
-                ).eq("id", business_id).execute()
-                log.info("Stripe customer recovered  business=%s  customer=%s", business_id, cid)
-                return cid
-
         customer = stripe.Customer.create(
-            email=owner_email or None,
+            email=owner_email,
             name=business_name,
             metadata={"wazibot_business_id": str(business_id)},
         )
-        cid = getattr(customer, "id", None) or customer["id"]
+        cid = customer["id"]
 
-        supabase.table("businesses").update(
-            {"stripe_customer_id": cid}
-        ).eq("id", business_id).execute()
+        try:
+            supabase.table("businesses").update(
+                {"stripe_customer_id": cid}
+            ).eq("id", business_id).execute()
+        except Exception as exc:
+            log.debug("stripe_customer_id column may not exist yet: %s", exc)
 
         log.info("Stripe customer created  business=%s  customer=%s", business_id, cid)
         return cid
@@ -273,9 +276,7 @@ def create_checkout_session(
 
         session = stripe.checkout.Session.create(**params)
         log.info("Checkout session created  business=%s  tier=%s", business_id, tier)
-        url  = getattr(session, "url", None) or session.get("url", "")
-        sid  = getattr(session, "id",  None) or session.get("id",  "")
-        return {"url": url, "session_id": sid}
+        return {"url": session["url"], "session_id": session["id"]}
     except Exception as exc:
         log.error("create_checkout_session error: %s", exc)
         return {"error": str(exc)}
@@ -368,13 +369,9 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
         log.warning("Stripe webhook verification failed: %s", exc)
         return {"error": "Invalid signature", "status": 400}
 
-    etype = getattr(event, "type", None) or event.get("type", "")
-    obj   = getattr(event, "data", None)
-    data  = getattr(obj, "object", None) if obj else None
-    if data is None and isinstance(event, dict):
-        data = (event.get("data") or {}).get("object", {})
-    event_id = getattr(event, "id", None) or event.get("id", "")
-    log.info("Stripe webhook  type=%s  id=%s", etype, event_id)
+    etype = event["type"]
+    data  = event["data"]["object"]
+    log.info("Stripe webhook  type=%s  id=%s", etype, event["id"])
 
     handlers = {
         "checkout.session.completed":     _on_checkout_completed,
@@ -393,20 +390,9 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
     return {"ok": True, "event": etype}
 
 
-def _bid_from_meta(obj) -> Optional[int]:
-    """Extract business_id from Stripe event metadata. Handles StripeObject and dict."""
-    def _get(o, key):
-        if o is None: return None
-        return getattr(o, key, None) if not isinstance(o, dict) else o.get(key)
-
-    sources = [
-        _get(obj, "metadata"),
-        _get(_get(obj, "subscription_data"), "metadata"),
-        _get(_get(obj, "payment_intent"), "metadata"),
-    ]
-    for src in sources:
-        if not src: continue
-        v = _get(src, "wazibot_business_id")
+def _bid_from_meta(obj: dict) -> Optional[int]:
+    for src in [obj.get("metadata") or {}, (obj.get("subscription_data") or {}).get("metadata") or {}]:
+        v = src.get("wazibot_business_id")
         if v:
             try: return int(v)
             except (ValueError, TypeError): pass
@@ -493,373 +479,3 @@ COMMENT ON COLUMN businesses.stripe_customer_id     IS 'Stripe Customer ID (cus_
 COMMENT ON COLUMN businesses.stripe_subscription_id IS 'Stripe Subscription ID (sub_...)';
 COMMENT ON COLUMN businesses.features_json          IS 'Override feature flags (optional, future use)';
 """
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# STRIPE CONNECT — Merchant onboarding (Phase 1)
-# Each WaziBot merchant gets their own Stripe account via Connect.
-# Funds go directly to the merchant; WaziBot takes a platform fee (optional).
-# ════════════════════════════════════════════════════════════════════════════
-
-def create_connect_account(business_id: int, business_name: str, email: str) -> dict:
-    """
-    Create a Stripe Connect Express account for a merchant and return an
-    onboarding link. Idempotent — returns existing account if already created.
-    """
-    stripe = _stripe()
-    if not stripe:
-        return {"error": "Stripe not configured on server — add STRIPE_SECRET_KEY"}
-    try:
-        from core.db import supabase
-
-        # Check if account already exists
-        res = (supabase.table("businesses")
-               .select("stripe_account_id")
-               .eq("id", business_id).limit(1).execute())
-        existing = (res.data or [{}])[0].get("stripe_account_id")
-
-        if not existing:
-            # country defaults to the platform's country (PL).
-            # Merchants in other countries should contact support for manual override.
-            # capabilities requested: card_payments + transfers are the minimum
-            # needed for destination charges to work.
-            account = stripe.Account.create(
-                type="express",
-                email=email or None,
-                business_profile={"name": business_name},
-                metadata={"wazibot_business_id": str(business_id)},
-                capabilities={
-                    "card_payments": {"requested": True},
-                    "transfers":     {"requested": True},
-                },
-            )
-            existing = getattr(account, "id", None) or account.get("id")
-            supabase.table("businesses").update(
-                {"stripe_account_id": existing}
-            ).eq("id", business_id).execute()
-            log.info("Stripe Connect account created  business=%s  account=%s",
-                     business_id, existing)
-
-        # Always generate a fresh onboarding link (they expire)
-        base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
-        link = stripe.AccountLink.create(
-            account=existing,
-            refresh_url=f"{base}/static/dashboard.html?stripe_connect=refresh",
-            return_url=f"{base}/static/dashboard.html?stripe_connect=success",
-            type="account_onboarding",
-        )
-        # StripeObject: use getattr, fall back to dict-style as last resort
-        link_url = getattr(link, "url", None) or link.get("url", "")
-        return {"url": link_url, "account_id": existing}
-    except Exception as exc:
-        log.error("create_connect_account error: %s", exc)
-        return {"error": str(exc)}
-
-
-def get_connect_account_status(business_id: int) -> dict:
-    """
-    Return the current Stripe Connect status for a merchant.
-    Returns safe defaults if not connected or Stripe unavailable.
-    """
-    stripe = _stripe()
-    if not stripe:
-        return {"connected": False, "error": "Stripe not configured"}
-    try:
-        from core.db import supabase
-        res = (supabase.table("businesses")
-               .select("stripe_account_id")
-               .eq("id", business_id).limit(1).execute())
-        account_id = (res.data or [{}])[0].get("stripe_account_id")
-        if not account_id:
-            return {"connected": False}
-
-        acct = stripe.Account.retrieve(account_id)
-        # StripeObject supports both attribute and dict-style access;
-        # use getattr with fallback to avoid AttributeError on missing fields
-        charges_enabled   = getattr(acct, "charges_enabled",   False) or False
-        payouts_enabled   = getattr(acct, "payouts_enabled",   False) or False
-        details_submitted = getattr(acct, "details_submitted", False) or False
-        return {
-            "connected":           True,
-            "account_id":          account_id,
-            "charges_enabled":     charges_enabled,
-            "payouts_enabled":     payouts_enabled,
-            "details_submitted":   details_submitted,
-            "verification_status": (
-                "active"      if charges_enabled   else
-                "pending"     if details_submitted else
-                "incomplete"
-            ),
-            "dashboard_url": f"https://dashboard.stripe.com/{account_id}",
-        }
-    except Exception as exc:
-        log.warning("get_connect_account_status error: %s", exc)
-        return {"connected": False, "error": str(exc)}
-
-
-def create_connect_dashboard_link(business_id: int) -> dict:
-    """Generate a Stripe Express Dashboard login link for a connected merchant."""
-    stripe = _stripe()
-    if not stripe:
-        return {"error": "Stripe not configured"}
-    try:
-        from core.db import supabase
-        res = (supabase.table("businesses")
-               .select("stripe_account_id")
-               .eq("id", business_id).limit(1).execute())
-        account_id = (res.data or [{}])[0].get("stripe_account_id")
-        if not account_id:
-            return {"error": "No Stripe account connected"}
-        link = stripe.Account.create_login_link(account_id)
-        link_url = getattr(link, "url", None) or link.get("url", "")
-        return {"url": link_url}
-    except Exception as exc:
-        log.error("create_connect_dashboard_link error: %s", exc)
-        return {"error": str(exc)}
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# CUSTOMER CHECKOUT — Product purchases (Phase 2 & 3)
-# Creates a Stripe Checkout Session for a customer buying products.
-# Uses the merchant's connected account via destination charges.
-# Dynamic payment methods = Stripe auto-selects based on customer location.
-# ════════════════════════════════════════════════════════════════════════════
-
-def create_product_checkout_session(
-    business_id:   int,
-    items:         list[dict],   # [{"name": str, "price": float, "quantity": int}]
-    currency:      str = "usd",
-    customer_email: str = "",
-    success_url:   str = "",
-    cancel_url:    str = "",
-) -> dict:
-    """
-    Create a Stripe Checkout Session for a customer purchasing products
-    from a WaziBot merchant storefront.
-
-    Uses 'payment' mode (one-time) with dynamic payment methods so Stripe
-    auto-presents: Cards, Apple Pay, Google Pay, Link, Klarna, Afterpay,
-    BLIK, and any locally-supported method.
-
-    If the merchant has a connected Stripe account, uses destination charges
-    so funds land directly in their account. Falls back to platform account
-    if merchant hasn't connected yet.
-    """
-    stripe = _stripe()
-    if not stripe:
-        return {"error": "Stripe not configured on server"}
-    if not items:
-        return {"error": "No items provided"}
-
-    try:
-        from core.db import supabase
-        res = (supabase.table("businesses")
-               .select("stripe_account_id, name")
-               .eq("id", business_id).limit(1).execute())
-        biz_data   = (res.data or [{}])[0]
-        account_id = biz_data.get("stripe_account_id")
-
-        base        = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
-        success_url = success_url or f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url  = cancel_url  or f"{base}/billing/cancel-page"
-
-        currency_code = (currency or "usd").lower()[:3]
-
-        # Build line items — Stripe requires integer amounts (cents/pence)
-        line_items = []
-        for item in items:
-            unit_amount = int(round(float(item.get("price", 0)) * 100))
-            if unit_amount <= 0:
-                continue
-            line_items.append({
-                "price_data": {
-                    "currency":     currency_code,
-                    "unit_amount":  unit_amount,
-                    "product_data": {
-                        "name":        str(item.get("name", "Product"))[:500],
-                        "description": str(item.get("description", ""))[:500] or None,
-                        "images":      [item["image_url"]] if item.get("image_url") else [],
-                    },
-                },
-                "quantity": max(1, int(item.get("quantity", 1))),
-            })
-
-        if not line_items:
-            return {"error": "No valid items with price > 0"}
-
-        # Payment method selection for Europe / Poland:
-        #
-        # ALWAYS INCLUDED:
-        #   card   — Visa / Mastercard / Amex. Also enables Apple Pay and Google Pay
-        #            automatically when customer's device/browser supports it.
-        #            Link is presented automatically for returning Stripe Link users.
-        #
-        # POLAND-SPECIFIC (only for PLN or when merchant is PL-based):
-        #   blik   — Most popular payment method in Poland (instant bank payment).
-        #            Only works with PLN currency.
-        #   p24    — Przelewy24 bank transfer network, dominant in PL.
-        #            Works with PLN and EUR.
-        #
-        # EU-WIDE (works for EUR and most EU currencies):
-        #   klarna — Buy now pay later, widely used in PL/EU.
-        #            Available for PLN, EUR, SEK, NOK, DKK, GBP.
-        #
-        # EXPLICITLY EXCLUDED:
-        #   afterpay_clearpay — AU/CA/NZ/UK/US merchants ONLY. Crashes for PL accounts.
-        #   affirm            — US ONLY.
-        #   blik with EUR     — BLIK requires PLN.
-        #
-        # FUTURE (PayU/Revolut — not via Stripe, separate integration):
-        #   payu    — Dominant in PL/CEE, separate API, not a Stripe method.
-        #   revolut — Revolut Business Pay, separate integration.
-
-        is_pln    = currency_code == "pln"
-        is_eur    = currency_code == "eur"
-
-        payment_methods = ["card"]   # always — covers Visa/MC/Apple Pay/Google Pay/Link
-
-        if is_pln:
-            payment_methods.append("blik")   # #1 in Poland, PLN only
-            payment_methods.append("p24")    # Przelewy24, PLN only
-            payment_methods.append("klarna") # BNPL, available in PL for PLN
-
-        elif is_eur:
-            payment_methods.append("p24")    # p24 also works in EUR
-            payment_methods.append("klarna") # klarna works in EUR across EU
-
-        # For other currencies (USD, GBP, ZWL etc.) — card only is safe
-        # This correctly handles Zimbabwean USD merchants without breaking
-
-        import hashlib, time
-        # Idempotency key: prevents duplicate sessions if customer double-clicks
-        idem_key = hashlib.sha256(
-            f"{business_id}:{','.join(i.get('name','') for i in items)}:{int(time.time())//60}".encode()
-        ).hexdigest()[:32]
-
-        params: dict = {
-            "mode":                 "payment",
-            "line_items":           line_items,
-            "success_url":          success_url,
-            "cancel_url":           cancel_url,
-            "payment_method_types": payment_methods,
-            "metadata": {
-                "wazibot_business_id": str(business_id),
-                "source":              "storefront",
-                "currency":            currency_code,
-            },
-        }
-
-        if customer_email:
-            params["customer_email"] = customer_email
-
-        # Destination charge: money goes directly to merchant's connected account.
-        # IMPORTANT: When using destination charges, the platform account (yours)
-        # is the merchant of record and handles disputes. The connected account
-        # receives the funds minus the platform fee (currently 0%).
-        # Future: add application_fee_amount here for platform revenue.
-        if account_id:
-            params["payment_intent_data"] = {
-                "transfer_data":    {"destination": account_id},
-                # "application_fee_amount": int(total_amount * 0.02),  # future: 2% platform fee
-                "metadata": {
-                    "wazibot_business_id": str(business_id),
-                    "source":              "storefront",
-                },
-            }
-
-        session = stripe.checkout.Session.create(
-            **params,
-            idempotency_key=idem_key,
-        )
-        url = getattr(session, "url", None) or session.get("url", "")
-        sid = getattr(session, "id",  None) or session.get("id",  "")
-        log.info("Product checkout session  business=%s  items=%s  methods=%s  account=%s",
-                 business_id, len(line_items), payment_methods, account_id or "platform")
-        return {"url": url, "session_id": sid}
-
-    except Exception as exc:
-        log.error("create_product_checkout_session error: %s", exc)
-        return {"error": str(exc)}
-
-
-# ════════════════════════════════════════════════════════════════════════════
-# PAYMENT ANALYTICS — Merchant revenue dashboard (Phase 4)
-# ════════════════════════════════════════════════════════════════════════════
-
-def get_payment_analytics(business_id: int) -> dict:
-    """
-    Return payment analytics for a merchant's connected Stripe account.
-    Uses Stripe Balance and PaymentIntents APIs.
-    Returns safe zeros if not connected or Stripe unavailable.
-    """
-    stripe = _stripe()
-    empty = {
-        "total_revenue": 0.0,
-        "orders_paid":   0,
-        "last_payment":  None,
-        "last_payout":   None,
-        "currency":      "usd",
-        "connected":     False,
-    }
-    if not stripe:
-        return empty
-    try:
-        from core.db import supabase
-        res = (supabase.table("businesses")
-               .select("stripe_account_id, currency")
-               .eq("id", business_id).limit(1).execute())
-        biz        = (res.data or [{}])[0]
-        account_id = biz.get("stripe_account_id")
-        currency   = (biz.get("currency") or "usd").lower()
-
-        if not account_id:
-            return empty
-
-        # Use Stripe Balance for revenue (reliable, single API call)
-        # and Charges list for order count + last payment (limited to 100 recent)
-        balance = stripe.Balance.retrieve(stripe_account=account_id)
-        available = getattr(balance, "available", []) or []
-        pending   = getattr(balance, "pending",   []) or []
-
-        def _sum_balance(items):
-            total = 0
-            for b in items:
-                amt = getattr(b, "amount", None)
-                if amt is None and isinstance(b, dict): amt = b.get("amount", 0)
-                total += (amt or 0)
-            return total / 100
-
-        available_total = _sum_balance(available)
-        pending_total   = _sum_balance(pending)
-
-        # Recent charges for order count and last payment timestamp
-        charges = stripe.Charge.list(limit=100, stripe_account=account_id)
-        charge_list = list(charges.auto_paging_iter()) if hasattr(charges, "auto_paging_iter") else list(charges)
-        paid_charges = [c for c in charge_list if getattr(c, "paid", False) and not getattr(c, "refunded", False)]
-
-        last_payment = getattr(paid_charges[0], "created", None) if paid_charges else None
-
-        # Last payout
-        last_payout = None
-        try:
-            payouts     = stripe.Payout.list(limit=1, stripe_account=account_id)
-            payout_list = list(payouts)
-            if payout_list:
-                last_payout = getattr(payout_list[0], "arrival_date", None)
-        except Exception:
-            pass
-
-        return {
-            "total_revenue":    round(available_total + pending_total, 2),
-            "available_balance": round(available_total, 2),
-            "pending_balance":   round(pending_total,   2),
-            "orders_paid":      len(paid_charges),
-            "last_payment":     last_payment,
-            "last_payout":      last_payout,
-            "currency":         currency,
-            "connected":        True,
-            "account_id":       account_id,
-        }
-    except Exception as exc:
-        log.warning("get_payment_analytics error: %s", exc)
-        return empty

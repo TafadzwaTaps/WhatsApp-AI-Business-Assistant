@@ -41,7 +41,7 @@ from typing import Optional
 
 log = logging.getLogger(__name__)
 
-TRIAL_DAYS = 14
+TRIAL_DAYS = 30   # 30-day free trial, no credit card required
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -86,9 +86,9 @@ def get_trial_status(business: dict) -> dict:
     if not trial_ends_raw:
         # No trial data — treat as unlimited free
         return {
-            "is_trial": True, "days_remaining": TRIAL_DAYS,
+            "is_trial": True, "days_remaining": TRIAL_DAYS, "post_trial_plan": "starter",
             "trial_ends_at": "", "is_expired": False,
-            "plan": plan, "banner_text": f"Trial — {TRIAL_DAYS} days remaining",
+            "plan": plan, "banner_text": f"Trial — {TRIAL_DAYS} days remaining. Upgrade from $1.99/mo after trial.",
         }
 
     try:

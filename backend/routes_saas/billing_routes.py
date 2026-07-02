@@ -28,7 +28,7 @@ router = APIRouter()
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 class CheckoutRequest(BaseModel):
-    tier:           str              # "pro" | "business" | "enterprise"
+    tier:           str              # "starter" | "growth" | "enterprise"
     billing_period: str = "monthly"  # "monthly" | "annual"
     success_url:    Optional[str] = None
     cancel_url:     Optional[str] = None
@@ -52,8 +52,12 @@ def billing_tiers():
     """Return all subscription tiers and their pricing — public endpoint."""
     from billing.stripe_service import TIERS
     # Exclude internal stripe_price_id fields from public response
+    # Only expose purchasable tiers to the frontend
+    PURCHASABLE = {"starter", "growth", "enterprise"}
     public_tiers = {}
     for k, v in TIERS.items():
+        if k not in PURCHASABLE:
+            continue
         public_tiers[k] = {f: val for f, val in v.items()
                            if not f.startswith("stripe_price_id")}
     return public_tiers
