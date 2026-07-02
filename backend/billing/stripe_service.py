@@ -345,6 +345,222 @@ def get_tier_features(business_id: int) -> dict:
     return get_subscription_status(business_id).get("features", TIERS["free"])
 
 
+# ── Stripe Connect — Merchant onboarding ──────────────────────────────────────
+# These were referenced by routes_saas/billing_routes.py but never implemented,
+# which caused every call to /billing/connect* to 500 with an ImportError.
+# Follows the same safe-by-default rule as the rest of this module: never
+# raise, always return a plain dict the route can pass straight through.
+
+def create_connect_account(business_id: int, business_name: str, owner_email: str) -> dict:
+    """
+    Create (or resume) a Stripe Connect Express account for a merchant and
+    return an onboarding link. Returns {"error": "..."} if Stripe isn't
+    configured or the call fails.
+    """
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured — add STRIPE_SECRET_KEY to env"}
+
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("stripe_connect_account_id")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        account_id = (res.data or [{}])[0].get("stripe_connect_account_id")
+
+        if not account_id:
+            account = stripe.Account.create(
+                type="express",
+                email=owner_email,
+                business_type="individual",
+                business_profile={"name": business_name} if business_name else None,
+                metadata={"wazibot_business_id": str(business_id)},
+            )
+            account_id = account["id"]
+            try:
+                supabase.table("businesses").update(
+                    {"stripe_connect_account_id": account_id}
+                ).eq("id", business_id).execute()
+            except Exception as exc:
+                log.debug("stripe_connect_account_id column may not exist yet: %s", exc)
+            log.info("Stripe Connect account created  business=%s  account=%s", business_id, account_id)
+
+        base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+        link = stripe.AccountLink.create(
+            account=account_id,
+            refresh_url=f"{base}/billing/connect/refresh",
+            return_url=f"{base}/billing/connect/return",
+            type="account_onboarding",
+        )
+        return {"url": link["url"], "account_id": account_id}
+    except Exception as exc:
+        log.error("create_connect_account error: %s", exc)
+        return {"error": str(exc)}
+
+
+def get_connect_account_status(business_id: int) -> dict:
+    """
+    Return Stripe Connect account status for a merchant.
+    Always returns a valid dict — defaults to "not connected" on any error
+    (missing column, Stripe not configured, account not found, etc.)
+    so the dashboard never sees a 500 here.
+    """
+    default = {"connected": False, "status": "not_connected", "charges_enabled": False,
+               "payouts_enabled": False, "account_id": None}
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("stripe_connect_account_id")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        account_id = (res.data or [{}])[0].get("stripe_connect_account_id")
+        if not account_id:
+            return default
+
+        stripe = _stripe()
+        if not stripe:
+            return {**default, "account_id": account_id, "status": "unconfigured"}
+
+        account = stripe.Account.retrieve(account_id)
+        charges_enabled = bool(account.get("charges_enabled"))
+        payouts_enabled = bool(account.get("payouts_enabled"))
+        return {
+            "connected":        True,
+            "status":           "active" if (charges_enabled and payouts_enabled) else "pending",
+            "charges_enabled":  charges_enabled,
+            "payouts_enabled":  payouts_enabled,
+            "account_id":       account_id,
+        }
+    except Exception as exc:
+        log.warning("get_connect_account_status error: %s — returning not_connected", exc)
+        return default
+
+
+def create_connect_dashboard_link(business_id: int) -> dict:
+    """Generate a Stripe Express Dashboard login link for this merchant."""
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured — add STRIPE_SECRET_KEY to env"}
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("stripe_connect_account_id")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        account_id = (res.data or [{}])[0].get("stripe_connect_account_id")
+        if not account_id:
+            return {"error": "No connected Stripe account found for this business"}
+        link = stripe.Account.create_login_link(account_id)
+        return {"url": link["url"]}
+    except Exception as exc:
+        log.error("create_connect_dashboard_link error: %s", exc)
+        return {"error": str(exc)}
+
+
+# ── Product checkout — customer purchases ─────────────────────────────────────
+
+def create_product_checkout_session(
+    business_id: int,
+    items: list,
+    currency: str = "usd",
+    customer_email: str = "",
+    success_url: str = "",
+    cancel_url: str = "",
+) -> dict:
+    """
+    Create a one-off Stripe Checkout Session for a storefront purchase,
+    routing funds to the merchant's connected account when one exists.
+    Returns {"url": "..."} on success, {"error": "..."} on failure.
+    """
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured — add STRIPE_SECRET_KEY to env"}
+    if not items:
+        return {"error": "No items provided"}
+
+    try:
+        line_items = []
+        for item in items:
+            unit_amount = int(round(float(item.get("price", 0)) * 100))
+            line_items.append({
+                "price_data": {
+                    "currency": currency,
+                    "unit_amount": unit_amount,
+                    "product_data": {
+                        "name": item.get("name", "Item"),
+                        "description": item.get("description") or None,
+                    },
+                },
+                "quantity": int(item.get("quantity", 1)),
+            })
+
+        base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+        success_url = success_url or f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
+        cancel_url  = cancel_url  or f"{base}/billing/cancel-page"
+
+        params: dict = {
+            "mode":        "payment",
+            "line_items":  line_items,
+            "success_url": success_url,
+            "cancel_url":  cancel_url,
+            "metadata":    {"wazibot_business_id": str(business_id)},
+        }
+        if customer_email:
+            params["customer_email"] = customer_email
+
+        status = get_connect_account_status(business_id)
+        if status.get("connected") and status.get("charges_enabled"):
+            params["payment_intent_data"] = {
+                "transfer_data": {"destination": status["account_id"]},
+            }
+
+        session = stripe.checkout.Session.create(**params)
+        log.info("Product checkout session created  business=%s", business_id)
+        return {"url": session["url"], "session_id": session["id"]}
+    except Exception as exc:
+        log.error("create_product_checkout_session error: %s", exc)
+        return {"error": str(exc)}
+
+
+# ── Payment analytics ──────────────────────────────────────────────────────────
+
+def get_payment_analytics(business_id: int) -> dict:
+    """
+    Return simple aggregate payment stats for a business.
+    Always returns a valid dict — defaults to zeroed-out stats on any error.
+    """
+    default = {"total_revenue": 0, "total_orders": 0, "currency": "usd"}
+    stripe = _stripe()
+    if not stripe:
+        return default
+    try:
+        status = get_connect_account_status(business_id)
+        account_id = status.get("account_id")
+        if not account_id:
+            return default
+
+        charges = stripe.Charge.list(limit=100, **({"stripe_account": account_id} if account_id else {}))
+        total = sum(c["amount"] for c in charges.get("data", []) if c.get("paid"))
+        return {
+            "total_revenue": total / 100,
+            "total_orders":  len(charges.get("data", [])),
+            "currency":      "usd",
+        }
+    except Exception as exc:
+        log.warning("get_payment_analytics error: %s — returning zeroed stats", exc)
+        return default
+
+
 # ── Webhook handler ───────────────────────────────────────────────────────────
 
 def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:

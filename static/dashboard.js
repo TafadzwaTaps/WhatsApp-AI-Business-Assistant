@@ -72,6 +72,53 @@ function closeSidebar() {
   overlay.classList.remove('open');
 }
 
+// ── DESKTOP SIDEBAR COLLAPSE ───────────────────────────────
+function sidebarToggleCollapse() {
+  const sidebar = document.querySelector('.sidebar');
+  if (!sidebar) return;
+  const collapsed = sidebar.classList.toggle('collapsed');
+  try { localStorage.setItem('wazi_sidebar_collapsed', collapsed ? '1' : '0'); } catch (_) {}
+}
+
+// Restore collapsed state on load
+(function() {
+  try {
+    if (localStorage.getItem('wazi_sidebar_collapsed') === '1') {
+      document.addEventListener('DOMContentLoaded', () => {
+        const sidebar = document.querySelector('.sidebar');
+        if (sidebar) sidebar.classList.add('collapsed');
+      });
+    }
+  } catch (_) {}
+})();
+
+// ── SIDEBAR SEARCH ─────────────────────────────────────────
+function sidebarSearch(query) {
+  const nav = document.getElementById('sidebar-nav');
+  if (!nav) return;
+  const q = (query || '').trim().toLowerCase();
+  const sections = nav.querySelectorAll('.nav-section');
+
+  nav.querySelectorAll('.nav-item').forEach(item => {
+    const text = item.textContent.toLowerCase();
+    item.style.display = (!q || text.includes(q)) ? '' : 'none';
+  });
+
+  // Hide section headers whose items are all filtered out
+  sections.forEach(section => {
+    let el = section.nextElementSibling;
+    let hasVisible = false;
+    while (el && !el.classList.contains('nav-section')) {
+      if (el.classList.contains('nav-item') && el.style.display !== 'none') {
+        hasVisible = true;
+        break;
+      }
+      el = el.nextElementSibling;
+    }
+    section.style.display = (!q || hasVisible) ? '' : 'none';
+  });
+}
+
 // ── AUTH ──────────────────────────────────────────────────
 function switchTab(tab) {
   document.querySelectorAll('.login-tab').forEach((t,i) => t.classList.toggle('active', (i===0&&tab==='login')||(i===1&&tab==='register')));
