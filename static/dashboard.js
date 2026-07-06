@@ -1,3 +1,4 @@
+/* build: 2026-07-06 09:13 UTC — domain: wazibothq.com */
 const API = 'https://wazibothq.com';
 const ROUTES = {
   login:         '/auth/login',
@@ -156,6 +157,10 @@ async function doLogin() {
     saveSession(data, username);
     const _ls = document.getElementById('login-screen');
     if (_ls) _ls.style.display = 'none';
+    const _sb0 = document.getElementById('sidebar');
+    const _sbt0 = document.getElementById('sidebar-toggle-btn');
+    if (_sb0)  _sb0.style.display  = '';
+    if (_sbt0) _sbt0.style.display = '';
     if (window.location.pathname !== '/dashboard') {
       window.location.href = '/dashboard';
       return;
@@ -200,6 +205,11 @@ async function doRegister() {
     const data = await res.json();
     saveSession(data, payload.username);
     const _ls2=document.getElementById('login-screen'); if(_ls2) _ls2.style.display='none';
+    // Show sidebar elements now that user is logged in
+    const _sb = document.getElementById('sidebar');
+    const _sbt = document.getElementById('sidebar-toggle-btn');
+    if (_sb)  _sb.style.display  = '';
+    if (_sbt) _sbt.style.display = '';
     init();
   } catch(e) { errEl.textContent = 'Cannot reach server'; }
 }
@@ -2103,6 +2113,8 @@ function mktOpen() {
 
 // ── INIT ──────────────────────────────────────────────────
 async function init(){
+  // Show help FAB now that user is logged in
+  try { injectDashboardHelp(); } catch(_) {}
   const savedTheme = localStorage.getItem('wazi_theme') || 'dark';
   const savedFont = localStorage.getItem('wazi_font');
   setTheme(savedTheme, true);
@@ -2165,6 +2177,10 @@ function _postLoginInit() {
 if (token && userRole) {
   const _ls4 = document.getElementById('login-screen');
   if (_ls4) _ls4.style.display = 'none';
+    const _sbX = document.getElementById('sidebar');
+    const _sbtX = document.getElementById('sidebar-toggle-btn');
+    if (_sbX)  _sbX.style.display  = '';
+    if (_sbtX) _sbtX.style.display = '';
   init();
 } else if (!token && refreshTok && userRole) {
   // Access token expired on load — try silent refresh before showing login
@@ -2173,6 +2189,10 @@ if (token && userRole) {
     if (ok) {
       const _ls5 = document.getElementById('login-screen');
       if (_ls5) _ls5.style.display = 'none';
+    const _sbX = document.getElementById('sidebar');
+    const _sbtX = document.getElementById('sidebar-toggle-btn');
+    if (_sbX)  _sbX.style.display  = '';
+    if (_sbtX) _sbtX.style.display = '';
       init();
     }
     // If refresh fails, login screen stays visible (default state)
@@ -3620,14 +3640,9 @@ async function loadSuccessNudges() {
 
 /* ── Help panel & Command palette (dashboard) ── */
 
-// Inject help FAB into dashboard if not present
-(function() {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', injectDashboardHelp);
-  } else {
-    injectDashboardHelp();
-  }
-})();
+// Inject help FAB — only after login (called from init() instead of on DOMContentLoaded)
+// The IIFE below is intentionally removed to prevent FAB showing on login screen.
+// injectDashboardHelp() is called inside init() which only runs post-login.
 
 function injectDashboardHelp() {
   if (document.getElementById('dash-help-fab')) return;
