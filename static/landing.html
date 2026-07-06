@@ -267,13 +267,7 @@ section {
 .badge-amber { background: rgba(245,158,11,0.1); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
 .badge-purple { background: rgba(167,139,250,0.1); color: var(--purple); border: 1px solid rgba(167,139,250,0.3); }
 
-/* ── DEMO TERMINAL ───────────────────────────────────── */
-.demo-section {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 32px;
-  align-items: center;
-}
+
 
 .terminal {
   background: var(--surface);
@@ -417,7 +411,7 @@ footer {
   .steps-grid { grid-template-columns: 1fr; }
   .features-grid { grid-template-columns: 1fr; }
   .feature-card.wide { grid-column: 1; }
-  .demo-section { grid-template-columns: 1fr; }
+
   .pricing-grid { grid-template-columns: 1fr; }
 }
 
@@ -580,36 +574,7 @@ footer {
   .hero-sub { font-size: 13px; }
 }
 
-/* ── LIVE DEMO NUDGE (CA-2) ───────────────────────────── */
-.demo-nudge {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--surface);
-  border: 1px solid var(--green-dim);
-  border-radius: 24px;
-  padding: 9px 18px;
-  font-family: var(--mono);
-  font-size: 12px;
-  color: var(--text-dim);
-  text-decoration: none;
-  margin-top: 20px;
-  transition: border-color 0.2s, color 0.2s;
-  cursor: pointer;
-}
-.demo-nudge:hover { border-color: var(--green); color: var(--text); }
-.demo-nudge .live-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--green);
-  flex-shrink: 0;
-  box-shadow: 0 0 0 0 rgba(34,197,94,0.5);
-  animation: livepulse 2s ease-in-out infinite;
-}
-@keyframes livepulse {
-  0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.5); }
-  50%      { box-shadow: 0 0 0 5px rgba(34,197,94,0); }
-}
-.demo-nudge .arrow { color: var(--green); }
+
 
 /* ── SOCIAL PROOF STRIP (CA-5) ────────────────────────── */
 .proof-strip {
@@ -697,24 +662,6 @@ footer {
   margin-top: 10px;
 }
 
-/* ── DEMO BOT CTA INSIDE DEMO SECTION ────────────────── */
-.btn-demo-wa {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: #25D366;
-  color: #fff;
-  font-family: var(--sans);
-  font-weight: 800;
-  font-size: 13px;
-  padding: 12px 22px;
-  border-radius: 9px;
-  text-decoration: none;
-  margin-top: 20px;
-  transition: all 0.15s;
-  box-shadow: 0 0 20px rgba(37,211,102,0.25);
-}
-.btn-demo-wa:hover { background: #20b95a; transform: translateY(-2px); }
 
 /* ── PLAN FEATURE LOCKED ──────────────────────────────── */
 .price-feature.locked { opacity: 0.35; }
@@ -762,12 +709,6 @@ footer {
     <a href="/dashboard" class="btn-hero-secondary">Already have an account →</a>
   </div>
 
-  <!-- Live demo nudge — lets prospects try the real AI before signing up -->
-  <a class="demo-nudge" href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener">
-    <span class="live-dot"></span>
-    <span>💬 Try the live demo on WhatsApp right now</span>
-    <span class="arrow">→</span>
-  </a>
 
   <div class="stats-row">
     <div class="stat-item">
@@ -858,67 +799,7 @@ footer {
   </div>
 </section>
 
-<hr class="section-divider"/>
 
-<!-- DEMO -->
-<section>
-  <div class="demo-section">
-    <div>
-      <div class="section-label">See it in action</div>
-      <h2 class="section-title">Your bot <span class="green">handles it</span></h2>
-      <p class="section-sub" style="margin-bottom:24px;">Customers message you on WhatsApp just like normal. WaziBot replies instantly — with your menu, your prices, and your business name.</p>
-      <div class="badge-row">
-        <span class="badge badge-green">✓ Greetings</span>
-        <span class="badge badge-green">✓ Menu requests</span>
-        <span class="badge badge-green">✓ Price queries</span>
-        <span class="badge badge-green">✓ Order placement</span>
-        <span class="badge badge-amber">✓ Delivery questions</span>
-        <span class="badge badge-amber">✓ Payment info</span>
-        <span class="badge badge-purple">✓ Opening hours</span>
-        <span class="badge badge-purple">✓ Location queries</span>
-      </div>
-      <a class="btn-demo-wa" href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener">
-        💬 Try the live demo bot
-      </a>
-    </div>
-    <div class="terminal">
-      <div class="terminal-bar">
-        <span class="dot dot-red"></span>
-        <span class="dot dot-amber"></span>
-        <span class="dot dot-green"></span>
-        <span class="terminal-title">WhatsApp · Mama's Kitchen Bot</span>
-      </div>
-      <div class="terminal-body">
-        <div class="msg-bubble msg-in">
-          Hi, what do you sell?
-          <div class="msg-time">10:42 AM</div>
-        </div>
-        <div class="msg-bubble msg-out">
-          Hi there! 👋 Welcome to <strong>Mama's Kitchen</strong>!<br/><br/>
-          📋 Here's our menu:<br/>
-          &nbsp;&nbsp;1. Sadza &amp; Stew — $2.50<br/>
-          &nbsp;&nbsp;2. Grilled Chicken — $4.00<br/>
-          &nbsp;&nbsp;3. Rice &amp; Beans — $2.00<br/><br/>
-          To order: <em>order sadza 2</em> 🛒
-          <div class="msg-time">10:42 AM · 🤖</div>
-        </div>
-        <div class="msg-bubble msg-in">
-          order sadza 2
-          <div class="msg-time">10:43 AM</div>
-        </div>
-        <div class="msg-bubble msg-out">
-          ✅ Order placed!<br/>Sadza &amp; Stew × 2 — $5.00<br/>We'll confirm shortly. 🙏
-          <div class="msg-time">10:43 AM · 🤖</div>
-        </div>
-        <div class="typing">
-          <span class="typing-dot"></span>
-          <span class="typing-dot"></span>
-          <span class="typing-dot"></span>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
 
 <hr class="section-divider"/>
 
@@ -1075,7 +956,6 @@ footer {
   <p class="cta-sub">Free to start. No credit card. No code. Just your business on autopilot.</p>
   <div class="hero-actions">
     <a href="/static/signup.html" class="btn-hero-primary">🚀 Create your free account</a>
-    <a href="https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot." target="_blank" rel="noopener" class="btn-demo-wa">💬 Try the demo first</a>
   </div>
   <p style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">
     Questions? <a href="mailto:hello@wazibot.com" style="color:var(--green)">hello@wazibot.com</a>
