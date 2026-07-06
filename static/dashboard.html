@@ -31,15 +31,13 @@
         <input type="password" id="login-password" placeholder="••••••••"
                autocomplete="current-password"
                onkeydown="if(event.key==='Enter') doLogin()"/>
-        <div style="text-align:right;margin-top:6px;">
-          <a href="/static/forgot-password.html"
-             style="font-size:11px;font-family:var(--mono);color:var(--text-dim);
-                    text-decoration:none;transition:color .15s;"
-             onmouseover="this.style.color='var(--green)'"
-             onmouseout="this.style.color='var(--text-dim)'">
-            Forgot password?
-          </a>
-        </div>
+      </div>
+      <div style="display:block;text-align:right;margin:-8px 0 14px;line-height:1;">
+        <a href="/static/forgot-password.html"
+           style="display:inline-block;font-size:12px;font-family:'DM Mono',monospace;
+                  color:#22c55e;text-decoration:none;">
+          Forgot password?
+        </a>
       </div>
       <button class="btn-login" onclick="doLogin()">Sign In →</button>
       <div style="text-align:center;margin-top:16px;font-size:12px;font-family:var(--mono);color:var(--text-dim);">
@@ -171,11 +169,11 @@
 </div>
 
 <!-- MOBILE SIDEBAR TOGGLE -->
-<button class="sidebar-toggle" onclick="toggleSidebar()" aria-label="Toggle menu">☰</button>
+<button class="sidebar-toggle" id="sidebar-toggle-btn" onclick="toggleSidebar()" aria-label="Toggle menu" style="display:none;">☰</button>
 <div class="sidebar-overlay" id="sidebar-overlay" onclick="closeSidebar()"></div>
 
 <!-- SIDEBAR -->
-<aside class="sidebar" id="sidebar" role="complementary" aria-label="Main navigation">
+<aside class="sidebar" id="sidebar" role="complementary" aria-label="Main navigation" style="display:none;">
   <!-- Header: logo + collapse toggle -->
   <div class="sb-header">
     <a href="/static/dashboard.html" class="sb-logo" style="text-decoration:none;">

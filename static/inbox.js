@@ -12,7 +12,7 @@
 console.info('[inbox.js] build 2026-06-12-authfix-1 loaded');
 
 /* ── CONFIG & SESSION ───────────────────────────────────── */
-const API = 'https://wazibot-api-assistant.onrender.com';
+const API = 'https://wazibothq.com';
 
 // Support both key names (dashboard saves as wazi_token / wazi_business_id)
 const token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token');
@@ -123,7 +123,7 @@ async function apiFetch(path, opts = {}) {
 function connectWS() {
   if (!bizId) return;
 
-  const wsUrl = `wss://wazibot-api-assistant.onrender.com/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
+  const wsUrl = `wss://wazibothq.com/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
   wsConn = new WebSocket(wsUrl);
 
   wsConn.onopen = () => {
