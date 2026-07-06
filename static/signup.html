@@ -132,6 +132,17 @@
   .btn-go:hover{background:var(--green-dim);}
 
   /* Mobile */
+  /* ── Plan option cards ─────────────────────────── */
+  .plan-opt{background:var(--surface2);border:1.5px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .15s,background .15s;}
+  .plan-opt.selected{border-color:var(--green);background:rgba(34,197,94,.06);}
+  .plan-opt:hover{border-color:rgba(34,197,94,.5);}
+  .plan-opt-inner{display:flex;align-items:center;gap:12px;}
+  .plan-opt-name{font-size:13px;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .plan-opt-desc{font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:1.5;}
+  .plan-opt-price{font-family:var(--mono);font-size:18px;font-weight:800;color:var(--green);white-space:nowrap;flex-shrink:0;}
+  .plan-opt-tag{font-size:9px;font-family:var(--mono);font-weight:700;padding:2px 7px;border-radius:10px;background:rgba(34,197,94,.15);color:var(--green);text-transform:uppercase;letter-spacing:.05em;}
+  .plan-opt-tag.popular{background:rgba(245,158,11,.15);color:var(--amber);}
+
   @media(max-width:768px){
     body{flex-direction:column;}
     .left{width:100%;min-height:auto;height:auto;position:static;padding:28px 24px;}
@@ -272,19 +283,58 @@
       </div>
     </div>
 
-    <!-- ── STEP 3: finish / no WhatsApp setup needed ── -->
+    <!-- ── STEP 3: plan + T&C ─────────────────────────── -->
     <div class="form-step" id="step3">
-      <div class="notice-box">
+      <div class="notice-box" style="margin-bottom:20px;">
         ✅ <strong>No WhatsApp setup needed!</strong><br>
         <span>Your store instantly uses the WaziBot shared WhatsApp number. Customers can order via WhatsApp right away.</span>
       </div>
+
+      <!-- Plan selector -->
       <div class="form-group">
-        <label>Confirm Username</label>
-        <input type="text" id="s-user-confirm" placeholder="Re-enter username" autocapitalize="none"/>
-        <div class="hint">Just confirm your username from step 1.</div>
-        <div class="ferr" id="ferr-confirm"></div>
+        <label>Choose your plan</label>
+        <div id="plan-picker" style="display:flex;flex-direction:column;gap:8px;margin-top:4px;">
+          <div class="plan-opt selected" id="plan-trial" onclick="selectPlan('trial')">
+            <div class="plan-opt-inner">
+              <div style="flex:1;">
+                <div class="plan-opt-name">🎁 Free Trial <span class="plan-opt-tag">Recommended</span></div>
+                <div class="plan-opt-desc">Full access for 30 days · No credit card required</div>
+              </div>
+              <div class="plan-opt-price">$0</div>
+            </div>
+          </div>
+          <div class="plan-opt" id="plan-starter" onclick="selectPlan('starter')">
+            <div class="plan-opt-inner">
+              <div style="flex:1;">
+                <div class="plan-opt-name">⚡ Starter</div>
+                <div class="plan-opt-desc">Shared number · 20 products · 200 AI msgs/day</div>
+              </div>
+              <div class="plan-opt-price">$5.99<span style="font-size:10px;">/mo</span></div>
+            </div>
+          </div>
+          <div class="plan-opt" id="plan-growth" onclick="selectPlan('growth')">
+            <div class="plan-opt-inner">
+              <div style="flex:1;">
+                <div class="plan-opt-name">🚀 Growth <span class="plan-opt-tag popular">Most popular</span></div>
+                <div class="plan-opt-desc">Dedicated number · unlimited everything · campaigns</div>
+              </div>
+              <div class="plan-opt-price">$12<span style="font-size:10px;">/mo</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="hint" style="margin-top:8px;">Upgrade or downgrade anytime from your dashboard.</div>
       </div>
-      <div class="btn-row" style="margin-top:14px;">
+
+      <!-- T&C checkbox -->
+      <div style="display:flex;align-items:flex-start;gap:10px;margin:12px 0;">
+        <input type="checkbox" id="s-terms" style="width:15px;height:15px;flex-shrink:0;margin-top:2px;accent-color:var(--green);cursor:pointer;"/>
+        <label for="s-terms" style="font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:none;letter-spacing:0;cursor:pointer;line-height:1.6;">
+          I agree to the <a href="/static/terms.html" target="_blank" style="color:var(--green);">Terms of Service</a> and <a href="/static/privacy.html" target="_blank" style="color:var(--green);">Privacy Policy</a>. Starter and Growth plans are paid — I understand pricing may change with notice.
+        </label>
+      </div>
+      <div class="ferr" id="ferr-terms" style="margin-bottom:8px;"></div>
+
+      <div class="btn-row" style="margin-top:10px;">
         <button class="btn-back" onclick="goTo(2)">← Back</button>
         <button class="btn-next" style="flex:1" id="submit-btn" onclick="submitForm()">🚀 Create Account</button>
       </div>
@@ -304,195 +354,193 @@
 
 <script>
 // ── Config ────────────────────────────────────────────────
-const API = 'https://wazibot-api-assistant.onrender.com';
+const API = 'https://wazibothq.com';
 
-// Read optional URL params passed from pricing page
-// e.g. /signup?tier=growth&billing_period=annual
 const _urlParams = new URLSearchParams(window.location.search);
 const _urlTier   = (_urlParams.get('tier')           || '').trim().toLowerCase();
 const _urlPeriod = (_urlParams.get('billing_period') || 'monthly').trim().toLowerCase();
 const _urlRef    = (_urlParams.get('ref')            || '').trim();
 
+let _selectedPlan = 'trial';
+
 const TITLES = [
   'Create your <span>account</span>',
   'Your <span>business</span>',
-  'You\'re almost <span>there</span>',
+  'Choose your <span>plan</span>',
 ];
 const SUBS = [
   'Free to start. No credit card needed.',
   'Customers will see this name on WhatsApp.',
-  'Review and create your account.',
+  'Start free or go straight to a paid plan.',
 ];
 
-// ── Navigation ────────────────────────────────────────────
+function selectPlan(plan) {
+  _selectedPlan = plan;
+  ['trial','starter','growth'].forEach(function(p) {
+    var el = document.getElementById('plan-' + p);
+    if (el) el.classList.toggle('selected', p === plan);
+  });
+}
+
+function initPlanPicker() {
+  var planFromUrl = _urlTier || 'trial';
+  selectPlan(['starter','growth'].indexOf(planFromUrl) !== -1 ? planFromUrl : 'trial');
+}
+
 function goTo(n) {
-  [1,2,3].forEach(i => {
-    document.getElementById(`step${i}`).classList.toggle('active', i === n);
-    const tab = document.getElementById(`tab${i}`);
+  [1,2,3].forEach(function(i) {
+    document.getElementById('step' + i).classList.toggle('active', i === n);
+    var tab = document.getElementById('tab' + i);
     tab.className = 'step' + (i === n ? ' active' : i < n ? ' done' : '');
   });
-  document.getElementById('progress').style.width = `${Math.round(n / 3 * 100)}%`;
+  document.getElementById('progress').style.width = Math.round(n / 3 * 100) + '%';
   document.getElementById('ftitle').innerHTML = TITLES[n - 1];
   document.getElementById('fsub').textContent  = SUBS[n - 1];
   document.getElementById('err-banner').style.display = 'none';
   clearErr();
-
-  // Pre-fill the confirm field on step 3
-  if (n === 3) {
-    const u = document.getElementById('s-user').value.trim();
-    document.getElementById('s-user-confirm').value = u;
-  }
 }
 
-// ── Validation helpers ────────────────────────────────────
 function clearErr() {
-  document.querySelectorAll('.ferr').forEach(e => e.textContent = '');
-  document.querySelectorAll('input').forEach(i => i.classList.remove('err'));
+  document.querySelectorAll('.ferr').forEach(function(e) { e.textContent = ''; });
+  document.querySelectorAll('input').forEach(function(i) { i.classList.remove('err'); });
   document.getElementById('err-banner').style.display = 'none';
 }
 
 function fieldErr(inputId, errId, msg) {
-  const el = document.getElementById(inputId);
-  if (el) el.classList.add('err');
-  const er = document.getElementById(errId);
-  if (er) er.textContent = msg;
+  var el = document.getElementById(inputId); if (el) el.classList.add('err');
+  var er = document.getElementById(errId);   if (er) er.textContent = msg;
 }
 
 function showBanner(msg) {
-  const b = document.getElementById('err-banner');
-  b.textContent = '⚠ ' + msg;
+  var b = document.getElementById('err-banner');
+  b.textContent = '\u26a0 ' + msg;
   b.style.display = 'block';
 }
 
-// ── Step advance with validation ─────────────────────────
 function next(to) {
   clearErr();
-
   if (to === 2) {
-    const u  = document.getElementById('s-user').value.trim();
-    const em = document.getElementById('s-email').value.trim();
-    const p  = document.getElementById('s-pass').value;
-    const p2 = document.getElementById('s-pass2').value;
-    let ok = true;
-    if (u.length < 3)      { fieldErr('s-user',  'ferr-user',  'At least 3 characters'); ok = false; }
-    else if (/\s/.test(u)) { fieldErr('s-user',  'ferr-user',  'No spaces allowed');      ok = false; }
+    var u  = document.getElementById('s-user').value.trim();
+    var em = document.getElementById('s-email').value.trim();
+    var p  = document.getElementById('s-pass').value;
+    var p2 = document.getElementById('s-pass2').value;
+    var ok = true;
+    if (u.length < 3)          { fieldErr('s-user',  'ferr-user',  'At least 3 characters'); ok = false; }
+    else if (/\s/.test(u))     { fieldErr('s-user',  'ferr-user',  'No spaces allowed');      ok = false; }
     if (!em || !em.includes('@')) { fieldErr('s-email', 'ferr-email', 'Enter a valid email address'); ok = false; }
-    if (p.length < 6)      { fieldErr('s-pass',  'ferr-pass',  'At least 6 characters'); ok = false; }
-    if (p !== p2)          { fieldErr('s-pass2', 'ferr-pass2', 'Passwords do not match'); ok = false; }
+    if (p.length < 6)          { fieldErr('s-pass',  'ferr-pass',  'At least 6 characters'); ok = false; }
+    if (p !== p2)              { fieldErr('s-pass2', 'ferr-pass2', 'Passwords do not match'); ok = false; }
     if (!ok) return;
   }
-
   if (to === 3) {
-    const b = document.getElementById('s-biz').value.trim();
+    var b = document.getElementById('s-biz').value.trim();
     if (b.length < 2) { fieldErr('s-biz', 'ferr-biz', 'Enter your business name'); return; }
   }
-
   goTo(to);
 }
 
-// ── Form submission ───────────────────────────────────────
 async function submitForm() {
   clearErr();
-
-  // Validate confirm field
-  const username  = document.getElementById('s-user').value.trim().toLowerCase();
-  const confirmed = document.getElementById('s-user-confirm').value.trim().toLowerCase();
-  if (confirmed !== username) {
-    fieldErr('s-user-confirm', 'ferr-confirm', 'Username does not match step 1');
+  var terms = document.getElementById('s-terms');
+  if (!terms || !terms.checked) {
+    var el = document.getElementById('ferr-terms');
+    if (el) el.textContent = 'Please accept the Terms of Service to continue.';
     return;
   }
-
-  const btn = document.getElementById('submit-btn');
+  var btn = document.getElementById('submit-btn');
   btn.disabled = true;
-  btn.textContent = 'Creating…';
+  btn.textContent = 'Creating\u2026';
 
-  const payload = {
+  var payload = {
     business_name:     document.getElementById('s-biz').value.trim(),
-    username:          username,
+    username:          document.getElementById('s-user').value.trim().toLowerCase(),
     password:          document.getElementById('s-pass').value,
     email:             document.getElementById('s-email').value.trim(),
     category:          document.getElementById('s-category').value || undefined,
-    use_shared_number: true,   // no Meta setup needed
-    // Pass tier/billing_period from pricing page URL params (e.g. ?tier=growth&billing_period=annual)
-    tier:              _urlTier,
-    billing_period:    _urlPeriod,
+    use_shared_number: true,
+    tier:              _selectedPlan !== 'trial' ? _selectedPlan : '',
+    billing_period:    _urlPeriod || 'monthly',
     ref_code:          _urlRef,
   };
 
   try {
-    const res  = await fetch(`${API}/auth/signup`, {
+    var res  = await fetch(API + '/auth/signup', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {'Content-Type': 'application/json'},
       body:    JSON.stringify(payload),
     });
-    const data = await res.json();
+    var data = await res.json();
 
     if (!res.ok) {
-      let msg = data.detail;
-      if (Array.isArray(msg)) msg = msg.map(e => e.msg).join(', ');
-      showBanner(msg || 'Signup failed — please try again.');
+      var msg = data.detail;
+      if (Array.isArray(msg)) msg = msg.map(function(e) { return e.msg; }).join(', ');
+      showBanner(msg || 'Signup failed \u2014 please try again.');
       btn.disabled = false;
-      btn.textContent = '🚀 Create Account';
+      btn.textContent = '\ud83d\ude80 Create Account';
       return;
     }
 
-    // Persist session
-    localStorage.setItem('wazi_token',       data.access_token);
-    localStorage.setItem('wazi_refresh',     data.refresh_token || '');
-    localStorage.setItem('wazi_role',        data.role);
-    localStorage.setItem('wazi_user',        payload.username);
-    localStorage.setItem('wazi_biz',         data.business_name);
-    if (data.business_id) {
-      localStorage.setItem('wazi_business_id', String(data.business_id));
-    }
-    // If user came from pricing page with a plan selected, store for checkout redirect
-    if (data.selected_tier) {
-      localStorage.setItem('wazi_pending_tier',   data.selected_tier);
-      localStorage.setItem('wazi_pending_period', data.billing_period || 'monthly');
-    }
+    localStorage.setItem('wazi_token',   data.access_token);
+    localStorage.setItem('wazi_refresh', data.refresh_token || '');
+    localStorage.setItem('wazi_role',    data.role);
+    localStorage.setItem('wazi_user',    payload.username);
+    localStorage.setItem('wazi_biz',     data.business_name);
+    if (data.business_id) localStorage.setItem('wazi_business_id', String(data.business_id));
 
     showSuccess(payload, data);
 
   } catch (e) {
     showBanner('Cannot reach server. Please check your connection.');
     btn.disabled = false;
-    btn.textContent = '🚀 Create Account';
+    btn.textContent = '\ud83d\ude80 Create Account';
   }
 }
 
-// ── Success screen ────────────────────────────────────────
 function showSuccess(payload, data) {
   document.querySelectorAll('.form-step, .steps, .progress-bar')
-    .forEach(el => el.style.display = 'none');
+    .forEach(function(el) { el.style.display = 'none'; });
   document.getElementById('ftitle').style.display  = 'none';
   document.getElementById('fsub').style.display    = 'none';
   document.getElementById('err-banner').style.display = 'none';
   document.getElementById('success').style.display = 'block';
 
+  var isPaid = _selectedPlan !== 'trial';
   document.getElementById('success-msg').innerHTML =
-    `<strong>${data.business_name}</strong> is ready. Your AI ordering bot is live on WhatsApp! 🎉`;
+    '<strong>' + data.business_name + '</strong> is ready. ' +
+    (isPaid ? "You'll be redirected to complete payment." : 'Your AI ordering bot is live! \ud83c\udf89');
 
-  document.getElementById('success-creds').innerHTML = `
-    <div class="cred-row">
-      <span class="cred-label">Business</span>
-      <span class="cred-value">${data.business_name}</span>
-    </div>
-    <div class="cred-row">
-      <span class="cred-label">Username</span>
-      <span class="cred-value">${payload.username}</span>
-    </div>
-    <div class="cred-row">
-      <span class="cred-label">Status</span>
-      <span class="cred-value">✅ Active</span>
-    </div>
-    <div class="cred-row">
-      <span class="cred-label">WhatsApp</span>
-      <span class="cred-value">🟢 Shared number connected</span>
-    </div>`;
+  document.getElementById('success-creds').innerHTML =
+    '<div class="cred-row"><span class="cred-label">Business</span><span class="cred-value">' + data.business_name + '</span></div>' +
+    '<div class="cred-row"><span class="cred-label">Username</span><span class="cred-value">' + payload.username + '</span></div>' +
+    '<div class="cred-row"><span class="cred-label">Plan</span><span class="cred-value">' +
+    (_selectedPlan === 'trial' ? '\ud83c\udf81 30-Day Free Trial' : _selectedPlan === 'growth' ? '\ud83d\ude80 Growth' : '\u26a1 Starter') +
+    '</span></div>' +
+    '<div class="cred-row"><span class="cred-label">WhatsApp</span><span class="cred-value">\ud83d\udfe2 Shared number connected</span></div>';
+
+  if (isPaid) {
+    var dashBtn = document.querySelector('.btn-go');
+    if (dashBtn) dashBtn.textContent = 'Complete Payment \u2192';
+    setTimeout(async function() {
+      try {
+        var resp = await fetch(API + '/billing/checkout', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + data.access_token},
+          body: JSON.stringify({tier: _selectedPlan, billing_period: payload.billing_period, country_code: ''})
+        });
+        var checkout = await resp.json();
+        if (checkout.url) { window.location.href = checkout.url; return; }
+      } catch(e) {}
+      window.location.href = '/static/dashboard.html';
+    }, 1800);
+  } else {
+    var dashBtn = document.querySelector('.btn-go');
+    if (dashBtn) dashBtn.onclick = function() { window.location.href = '/static/dashboard.html'; };
+  }
 }
 
-// ── Init ──────────────────────────────────────────────────
 goTo(1);
+initPlanPicker();
+
 </script>
 
 </body>
