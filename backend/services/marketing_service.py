@@ -98,7 +98,7 @@ def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4) -> 
     # QR codes point to /qr/{slug} (tracking redirect) instead of directly
     # to WhatsApp — this lets us count QR scans before the WhatsApp redirect.
     import os
-    base_url = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+    base_url = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
     slug     = _name_to_slug(business_name)
     qr_target_url = f"{base_url}/qr/{slug}"
 
@@ -252,7 +252,7 @@ def _bullet_features(business_type: str) -> str:
 def _get_cta(tone: str, include_cta: bool) -> str:
     if not include_cta:
         return ""
-    base_url = "https://wazibot-api-assistant.onrender.com/signup"
+    base_url = os.getenv("WAZIBOT_URL", "https://wazibothq.com") + "/signup"
     if tone == "urgent":
         return f"⚡ Start your free 14-day trial NOW → {base_url}"
     elif tone == "professional":

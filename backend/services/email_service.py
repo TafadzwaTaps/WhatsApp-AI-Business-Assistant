@@ -14,7 +14,7 @@ Required env var:
 
 Optional env vars:
   EMAIL_FROM       — sender address (default: noreply@wazibot.com)
-  WAZIBOT_URL      — base URL for links (default: https://wazibot-api-assistant.onrender.com)
+  WAZIBOT_URL      — base URL for links (default: https://wazibothq.com)
 
 Usage (after successful signup):
     from services.email_service import send_welcome_email
@@ -34,7 +34,7 @@ log = logging.getLogger("wazibot.email")
 
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 _EMAIL_FROM     = os.getenv("EMAIL_FROM", "WaziBot <noreply@wazibot.com>")
-_BASE_URL       = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+_BASE_URL       = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
 
 
 def _send(to: str, subject: str, html: str) -> bool:

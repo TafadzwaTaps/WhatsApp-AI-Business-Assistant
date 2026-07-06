@@ -121,7 +121,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com data:; "
             "img-src 'self' data: blob: https:; "
-            "connect-src 'self' https://wazibot-api-assistant.onrender.com wss:; "
+            "connect-src 'self' https://wazibothq.com wss:; "
             "frame-ancestors 'self'; "
         )
         return response
@@ -427,14 +427,6 @@ else:
     log.warning("No SaaS routers loaded — check warnings above")
 
 app.include_router(auth_router)
-
-# Password reset routes (forgot-password / reset-password)
-try:
-    from routes.password_reset_routes import router as password_reset_router
-    app.include_router(password_reset_router)
-    log.info("password_reset_router loaded")
-except Exception as _e:
-    log.warning("password_reset_routes failed to load: %s", _e)
 app.include_router(webhook_router)
 app.include_router(admin_router)
 

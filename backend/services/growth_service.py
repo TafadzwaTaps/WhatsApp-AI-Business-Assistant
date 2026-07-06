@@ -251,7 +251,7 @@ def get_referral_stats(business_id: int) -> dict:
         except Exception:
             pass
 
-    base_url = os.getenv("APP_BASE_URL", "https://wazibot-api-assistant.onrender.com")
+    base_url = os.getenv("WAZIBOT_URL", "https://wazibothq.com")  # consistent with all other services
     link     = f"{base_url}/signup?ref={code}"
 
     # Step 2: Fetch referral stats — table may not exist yet (migration pending)

@@ -1,4 +1,4 @@
-const API = 'https://wazibot-api-assistant.onrender.com';
+const API = 'https://wazibothq.com';
 const ROUTES = {
   login:         '/auth/login',
   register:      '/auth/signup',

@@ -568,7 +568,7 @@ def _sticky_wa_btn(wa_phone: str, biz_name: str, slug: str = "") -> str:
 def _seo_tags(name: str, category: str, tagline: str, slug: str) -> str:
     title = f"{_e(name)} | {_e(category)}" if category else _e(name)
     desc  = _e(tagline[:160])
-    url   = f"https://wazibot-api-assistant.onrender.com/site/{slug}"
+    url   = f"https://wazibothq.com/site/{slug}"
     json_ld = (
         '{"@context":"https://schema.org","@type":"LocalBusiness",'
         f'"name":"{_e(name)}","description":"{desc}","url":"{url}"'
@@ -973,7 +973,7 @@ def generate_site_html(slug: str) -> str:
 {gallery_sec}
 {contact_sec}
   <footer>
-    <p>Powered by <a href="https://wazibot-api-assistant.onrender.com" target="_blank">WaziBot</a>
+    <p>Powered by <a href="https://wazibothq.com" target="_blank">WaziBot</a>
        &mdash; AI Employee for WhatsApp Businesses</p>
     <p style="margin-top:8px;font-size:11px;opacity:.6;">🔒 Payments processed securely by Stripe &bull; PCI DSS Level 1 &bull; SSL Encrypted</p>
   </footer>

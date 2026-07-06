@@ -206,8 +206,8 @@ def create_paypal_order(order: dict) -> dict:
     result     = _base("paypal", order)
     ref        = _ref(order)
     total      = _total(order)
-    return_url = _env("PAYPAL_RETURN_URL", "https://wazibot-api-assistant.onrender.com/payments/paypal/success")
-    cancel_url = _env("PAYPAL_CANCEL_URL", "https://wazibot-api-assistant.onrender.com/payments/paypal/cancel")
+    return_url = _env("PAYPAL_RETURN_URL", "https://wazibothq.com/payments/paypal/success")
+    cancel_url = _env("PAYPAL_CANCEL_URL", "https://wazibothq.com/payments/paypal/cancel")
     biz_name   = order.get("business_name", "WaziBot")
 
     try:

@@ -258,7 +258,7 @@ def create_checkout_session(
     if not price_id:
         return {"error": f"No Stripe price configured for {tier}/{billing_period}. Add STRIPE_PRICE_{tier.upper()}_{billing_period.upper()} env var."}
 
-    base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+    base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
     success_url = success_url or f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url  = cancel_url  or f"{base}/billing/cancel"
 
@@ -389,7 +389,7 @@ def create_connect_account(business_id: int, business_name: str, owner_email: st
                 log.debug("stripe_connect_account_id column may not exist yet: %s", exc)
             log.info("Stripe Connect account created  business=%s  account=%s", business_id, account_id)
 
-        base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+        base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
         link = stripe.AccountLink.create(
             account=account_id,
             refresh_url=f"{base}/billing/connect/refresh",
@@ -504,7 +504,7 @@ def create_product_checkout_session(
                 "quantity": int(item.get("quantity", 1)),
             })
 
-        base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+        base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
         success_url = success_url or f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
         cancel_url  = cancel_url  or f"{base}/billing/cancel-page"
 
