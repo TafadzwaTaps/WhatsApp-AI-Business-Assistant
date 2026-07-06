@@ -83,8 +83,8 @@ TIERS: dict[str, dict] = {
     # ── Starter — $1.99/month ─────────────────────────────────────────────────
     "starter": {
         "label":               "Starter",
-        "price_monthly":       1.99,
-        "price_annual":        19,
+        "price_monthly":       4.99,
+        "price_annual":        48,      # $4/mo — save 20%
         "trial_days":          0,
         "messages_per_day":    200,
         "products_limit":      20,
@@ -162,6 +162,126 @@ TIERS: dict[str, dict] = {
 }
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# REGIONAL PRICING CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+# Plans and features are IDENTICAL across all regions.
+# Only the displayed price and Stripe checkout amount differ.
+# To add a country: add it to the appropriate PRICING_REGIONS tier.
+# To add a region tier: add a new entry to PRICING_REGIONS and
+#   create matching Stripe Price objects + env vars.
+#
+# Env vars per region tier:
+#   STRIPE_PRICE_STARTER_MONTHLY_B / _C     (region B/C monthly)
+#   STRIPE_PRICE_STARTER_ANNUAL_B  / _C     (region B/C annual)
+#   STRIPE_PRICE_GROWTH_MONTHLY_B  / _C
+#   STRIPE_PRICE_GROWTH_ANNUAL_B   / _C
+# ═══════════════════════════════════════════════════════════════════════════════
+
+PRICING_REGIONS: dict[str, dict] = {
+    # ── Tier A — Global / High-income markets ─────────────────────────────────
+    "A": {
+        "label":          "Global",
+        "countries":      {
+            "US","CA","GB","DE","AU","NZ","SE","NO","DK","FI","NL","BE",
+            "AT","CH","IE","FR","IT","ES","JP","SG","HK","AE","IL","KR",
+        },
+        "starter_monthly": 4.99,
+        "starter_annual":  48,
+        "growth_monthly":  12,
+        "growth_annual":   115,
+        "price_ids": {
+            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY",   ""),
+            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",    ""),
+            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",    ""),
+            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",     ""),
+        },
+    },
+    # ── Tier B — Mid-income markets ───────────────────────────────────────────
+    "B": {
+        "label":          "Regional",
+        "countries":      {
+            "PL","RO","PT","HR","SK","SI","CZ","HU","GR","BG","RS","UA",
+            "MY","TH","ID","PH","BR","MX","AR","CO","CL","TR","ZA","EG",
+            "MA","TN","VN",
+        },
+        "starter_monthly": 3.99,
+        "starter_annual":  38,
+        "growth_monthly":  10,
+        "growth_annual":   96,
+        "price_ids": {
+            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY_B", os.getenv("STRIPE_PRICE_STARTER_MONTHLY", "")),
+            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL_B",  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  "")),
+            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY_B",  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",  "")),
+            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL_B",   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",   "")),
+        },
+    },
+    # ── Tier C — Emerging markets ─────────────────────────────────────────────
+    "C": {
+        "label":          "Emerging",
+        "countries":      {
+            "ZW","ZM","ZA","KE","UG","TZ","NG","GH","ET","RW","SN","CI",
+            "IN","PK","BD","LK","NP","MM","KH","LA","AF",
+        },
+        "starter_monthly": 2.99,
+        "starter_annual":  29,
+        "growth_monthly":  8.99,
+        "growth_annual":   86,
+        "price_ids": {
+            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY_C", os.getenv("STRIPE_PRICE_STARTER_MONTHLY", "")),
+            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL_C",  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  "")),
+            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY_C",  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",  "")),
+            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL_C",   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",   "")),
+        },
+    },
+}
+
+# Reverse lookup: country code → region tier key
+_COUNTRY_TO_REGION: dict[str, str] = {}
+for _rk, _rv in PRICING_REGIONS.items():
+    for _cc in _rv["countries"]:
+        _COUNTRY_TO_REGION[_cc.upper()] = _rk
+
+
+def get_pricing_for_country(country_code: str) -> dict:
+    """
+    Return the pricing region dict for a given ISO-3166-1 alpha-2 country code.
+    Falls back to Tier A (global pricing) if country not found.
+    Never raises — pricing failures should never break checkout.
+    """
+    region_key = _COUNTRY_TO_REGION.get((country_code or "").strip().upper(), "A")
+    region = PRICING_REGIONS.get(region_key, PRICING_REGIONS["A"])
+    return {
+        "region":          region_key,
+        "region_label":    region["label"],
+        "starter_monthly": region["starter_monthly"],
+        "starter_annual":  region["starter_annual"],
+        "growth_monthly":  region["growth_monthly"],
+        "growth_annual":   region["growth_annual"],
+        "price_ids":       region["price_ids"],
+    }
+
+
+def get_price_id_for_checkout(tier: str, billing_period: str, country_code: str = "") -> str:
+    """
+    Return the Stripe Price ID for a given tier + period + country.
+    Prefers regional price ID; falls back to global price ID.
+    Falls back gracefully — never raises.
+    """
+    try:
+        region = get_pricing_for_country(country_code)
+        key    = f"{tier}_{billing_period}"   # e.g. "starter_monthly"
+        pid    = region["price_ids"].get(key, "")
+        if pid:
+            return pid
+    except Exception:
+        pass
+    # Ultimate fallback: global TIERS dict
+    tier_data = TIERS.get(tier, {})
+    return tier_data.get(f"stripe_price_id_{billing_period}", "")
+
+
 _stripe_module = None
 
 def _stripe():
@@ -235,16 +355,19 @@ def get_or_create_stripe_customer(
 # ── Checkout session ──────────────────────────────────────────────────────────
 
 def create_checkout_session(
-    business_id: int,
-    tier: str,
-    billing_period: str = "monthly",
-    success_url: str = "",
-    cancel_url:  str = "",
-    customer_email: str = "",
+    business_id:       int,
+    tier:              str,
+    billing_period:    str = "monthly",
+    success_url:       str = "",
+    cancel_url:        str = "",
+    customer_email:    str = "",
+    price_id_override: str = "",    # regional price ID — falls back to global if empty
 ) -> dict:
     """
     Create a Stripe Checkout Session for a subscription upgrade.
     Returns {"url": "..."} on success, {"error": "..."} on failure.
+
+    price_id_override: optional regional Stripe Price ID from get_price_id_for_checkout().
     """
     stripe = _stripe()
     if not stripe:
@@ -254,7 +377,8 @@ def create_checkout_session(
     if not tier_data:
         return {"error": f"Unknown tier: {tier}"}
 
-    price_id = tier_data.get(f"stripe_price_id_{billing_period}", "")
+    # Regional override → global tier price → error
+    price_id = (price_id_override or "").strip() or tier_data.get(f"stripe_price_id_{billing_period}", "")
     if not price_id:
         return {"error": f"No Stripe price configured for {tier}/{billing_period}. Add STRIPE_PRICE_{tier.upper()}_{billing_period.upper()} env var."}
 

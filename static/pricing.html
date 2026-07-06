@@ -8,145 +8,187 @@
 <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
 <style>
 :root{
-  --bg:#070d09;--surface:#0d1410;--surface2:#141f18;
-  --border:rgba(255,255,255,0.07);--green:#00c853;--green-dim:rgba(0,200,83,0.18);
-  --green-glow:rgba(0,200,83,0.12);--text:#e8f5e9;--text-dim:#7a9e85;
-  --amber:#f59e0b;--mono:'DM Mono',monospace;
+  --bg:#070d09;--surface:#0d1410;--surface2:#141f18;--surface3:#1a2a1e;
+  --border:rgba(255,255,255,0.07);--green:#22c55e;--green-dim:#16a34a;
+  --green-glow:rgba(34,197,94,0.12);--amber:#f59e0b;--red:#ef4444;
+  --text:#e8f5e9;--text-dim:#7a9e85;--mono:'DM Mono',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
 body{background:var(--bg);color:var(--text);font-family:'Syne',sans-serif;min-height:100vh;}
-a{color:inherit;text-decoration:none}
+a{text-decoration:none;color:inherit}
 
-/* Nav */
-nav{display:flex;align-items:center;justify-content:space-between;padding:16px 40px;
-    border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;
-    background:rgba(7,13,9,0.92);backdrop-filter:blur(12px);}
+/* ── Nav ────────────────────────────────────────────── */
+nav{display:flex;align-items:center;justify-content:space-between;
+    padding:16px 48px;border-bottom:1px solid var(--border);
+    position:sticky;top:0;z-index:100;
+    background:rgba(7,13,9,.92);backdrop-filter:blur(12px);}
 .nav-logo{font-size:20px;font-weight:800;color:var(--green);}
-.nav-links{display:flex;gap:8px;align-items:center;}
-.nav-link{font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px 16px;
-          border-radius:8px;transition:all .15s;}
+.nav-links{display:flex;gap:6px;align-items:center;}
+.nav-link{font-family:var(--mono);font-size:12px;color:var(--text-dim);
+          padding:8px 16px;border-radius:8px;transition:all .15s;}
 .nav-link:hover{color:var(--text);background:var(--surface2);}
 .nav-cta{background:var(--green);color:#000;font-weight:700;font-size:12px;
-         padding:9px 20px;border-radius:8px;}
+         padding:9px 20px;border-radius:8px;transition:opacity .15s;}
 .nav-cta:hover{opacity:.85;}
 
-/* Hero */
-.hero{text-align:center;padding:80px 40px 48px;}
-.hero-eyebrow{font-family:var(--mono);font-size:11px;color:var(--green);letter-spacing:3px;
-              text-transform:uppercase;margin-bottom:16px;}
-.hero-title{font-size:clamp(36px,6vw,64px);font-weight:800;line-height:1.1;margin-bottom:16px;}
-.hero-title span{color:var(--green);}
-.hero-sub{font-family:var(--mono);font-size:14px;color:var(--text-dim);max-width:480px;margin:0 auto 32px;}
+/* ── Hero ───────────────────────────────────────────── */
+.hero{text-align:center;padding:72px 24px 48px;}
+.eyebrow{font-family:var(--mono);font-size:11px;color:var(--green);
+         letter-spacing:3px;text-transform:uppercase;margin-bottom:16px;}
+.hero h1{font-size:clamp(34px,5vw,58px);font-weight:800;line-height:1.1;margin-bottom:14px;}
+.hero h1 span{color:var(--green);}
+.hero p{font-family:var(--mono);font-size:13px;color:var(--text-dim);
+        max-width:500px;margin:0 auto 32px;line-height:1.7;}
 
-/* Billing toggle */
-.toggle-wrap{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:48px;}
-.toggle-label{font-family:var(--mono);font-size:12px;color:var(--text-dim);}
-.toggle-label.active{color:var(--text);}
-.toggle{width:44px;height:24px;background:var(--surface2);border:1px solid var(--border);
-        border-radius:12px;cursor:pointer;position:relative;transition:background .2s;}
+/* ── Regional notice ────────────────────────────────── */
+.region-notice{display:inline-flex;align-items:center;gap:8px;
+               font-family:var(--mono);font-size:11px;color:var(--text-dim);
+               background:var(--surface);border:1px solid var(--border);
+               border-radius:20px;padding:6px 16px;margin-bottom:36px;}
+.region-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;}
+
+/* ── Toggle ─────────────────────────────────────────── */
+.toggle-wrap{display:flex;align-items:center;gap:12px;
+             justify-content:center;margin-bottom:48px;}
+.toggle-lbl{font-family:var(--mono);font-size:12px;color:var(--text-dim);}
+.toggle-lbl.on{color:var(--text);}
+.toggle{width:44px;height:24px;background:var(--surface2);
+        border:1px solid var(--border);border-radius:12px;
+        cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;}
 .toggle.on{background:var(--green);}
-.toggle-knob{width:18px;height:18px;background:#fff;border-radius:50%;position:absolute;
-             top:2px;left:3px;transition:left .2s;}
-.toggle.on .toggle-knob{left:23px;}
-.save-badge{background:rgba(245,158,11,.15);color:var(--amber);border:1px solid rgba(245,158,11,.3);
-            font-family:var(--mono);font-size:10px;padding:3px 8px;border-radius:20px;}
+.knob{width:18px;height:18px;background:#fff;border-radius:50%;
+      position:absolute;top:2px;left:3px;transition:left .2s;}
+.toggle.on .knob{left:23px;}
+.save-chip{background:rgba(245,158,11,.15);color:var(--amber);
+           border:1px solid rgba(245,158,11,.3);font-family:var(--mono);
+           font-size:10px;padding:3px 10px;border-radius:20px;}
 
-/* Plans grid */
-.plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:20px;
-       max-width:1100px;margin:0 auto;padding:0 24px 80px;}
-
-.plan{background:var(--surface);border:1px solid var(--border);border-radius:20px;
-      padding:32px;display:flex;flex-direction:column;gap:0;position:relative;
-      transition:border-color .2s,transform .2s;}
-.plan:hover{border-color:rgba(0,200,83,.3);transform:translateY(-2px);}
+/* ── Plans grid ─────────────────────────────────────── */
+.plans{display:grid;grid-template-columns:repeat(4,1fr);
+       gap:20px;max-width:1200px;margin:0 auto;padding:0 24px 80px;}
+.plan{background:var(--surface);border:1px solid var(--border);
+      border-radius:20px;padding:32px 28px;display:flex;
+      flex-direction:column;position:relative;
+      transition:border-color .2s,transform .2s,box-shadow .2s;}
+.plan:hover{transform:translateY(-4px);border-color:rgba(34,197,94,.3);
+            box-shadow:0 16px 48px rgba(0,0,0,.3);}
 .plan.featured{border-color:var(--green);background:var(--surface2);
                box-shadow:0 0 0 1px var(--green),0 20px 60px var(--green-glow);}
-.plan.trial-card{border-color:rgba(245,158,11,.35);background:var(--surface);}
-
-.popular-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);
-               background:var(--green);color:#000;font-family:var(--mono);font-size:10px;
-               font-weight:700;padding:4px 16px;border-radius:20px;white-space:nowrap;}
-.trial-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);
-             background:var(--amber);color:#000;font-family:var(--mono);font-size:10px;
-             font-weight:700;padding:4px 16px;border-radius:20px;white-space:nowrap;}
-
-.plan-name{font-family:var(--mono);font-size:11px;color:var(--text-dim);text-transform:uppercase;
-           letter-spacing:2px;margin-bottom:12px;}
-.plan-price-row{display:flex;align-items:flex-end;gap:4px;margin-bottom:4px;}
-.plan-curr{font-family:var(--mono);font-size:16px;color:var(--text-dim);margin-bottom:6px;}
-.plan-amount{font-size:48px;font-weight:800;line-height:1;}
-.plan-period{font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:4px;}
-.plan-annual-note{font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:20px;min-height:16px;}
-.plan-annual-note s{opacity:.5;}
-.plan-divider{height:1px;background:var(--border);margin:20px 0;}
-
-.plan-features{display:flex;flex-direction:column;gap:10px;flex:1;margin-bottom:28px;}
-.pf{display:flex;align-items:flex-start;gap:10px;font-family:var(--mono);font-size:12px;}
-.pf.locked{color:var(--text-dim);opacity:.5;}
-.ck{color:var(--green);flex-shrink:0;margin-top:1px;}
-.cx{color:var(--text-dim);flex-shrink:0;margin-top:1px;}
-.tick-val{color:var(--text);}
-.tick-sub{color:var(--text-dim);}
-
-.plan-cta{display:block;width:100%;padding:14px;border-radius:10px;text-align:center;
-          font-family:var(--mono);font-size:13px;font-weight:700;cursor:pointer;
-          border:none;transition:all .15s;text-decoration:none;}
-.cta-primary{background:var(--green);color:#000;}
-.cta-primary:hover{opacity:.85;}
+.plan.trial-card{border-color:rgba(245,158,11,.4);}
+.badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+       font-family:var(--mono);font-size:10px;font-weight:700;
+       padding:4px 16px;border-radius:20px;white-space:nowrap;}
+.badge.green{background:var(--green);color:#000;}
+.badge.amber{background:var(--amber);color:#000;}
+.plan-name{font-family:var(--mono);font-size:10px;color:var(--text-dim);
+           text-transform:uppercase;letter-spacing:2px;margin-bottom:12px;}
+.price-row{display:flex;align-items:flex-end;gap:3px;margin-bottom:4px;}
+.curr{font-family:var(--mono);font-size:15px;color:var(--text-dim);margin-bottom:5px;}
+.amount{font-size:44px;font-weight:800;line-height:1;transition:opacity .2s;}
+.period{font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:4px;}
+.annual-note{font-family:var(--mono);font-size:11px;color:var(--text-dim);
+             margin-bottom:20px;min-height:16px;}
+.annual-note s{opacity:.4;}
+.plan-sub{font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:20px;
+          font-family:var(--mono);}
+hr.div{border:none;border-top:1px solid var(--border);margin:16px 0;}
+.features{display:flex;flex-direction:column;gap:9px;flex:1;margin-bottom:24px;}
+.feat{display:flex;align-items:flex-start;gap:9px;
+      font-family:var(--mono);font-size:12px;color:var(--text-dim);}
+.feat.hi{color:var(--text);}
+.ck{color:var(--green);flex-shrink:0;margin-top:1px;font-size:13px;}
+.cx{color:var(--text-dim);opacity:.35;flex-shrink:0;margin-top:1px;}
+.cta{display:block;width:100%;padding:13px;border-radius:10px;
+     text-align:center;font-family:'Syne',sans-serif;font-size:13px;
+     font-weight:700;cursor:pointer;border:none;
+     transition:all .15s;text-decoration:none;}
+.cta-green{background:var(--green);color:#000;}
+.cta-green:hover{opacity:.85;}
 .cta-outline{background:transparent;border:1px solid var(--border);color:var(--text);}
 .cta-outline:hover{border-color:var(--green);color:var(--green);}
 .cta-amber{background:var(--amber);color:#000;}
 .cta-amber:hover{opacity:.85;}
+.save-line{text-align:center;font-family:var(--mono);font-size:11px;
+           color:var(--amber);margin-top:10px;min-height:16px;}
 
-.plan-save{text-align:center;font-family:var(--mono);font-size:11px;color:var(--amber);
-           margin-top:10px;min-height:16px;}
+/* ── Trust bar ───────────────────────────────────────── */
+.trust{display:flex;align-items:center;justify-content:center;
+       gap:24px;flex-wrap:wrap;padding:0 24px 64px;
+       font-family:var(--mono);font-size:12px;color:var(--text-dim);}
+.trust-item{display:flex;align-items:center;gap:6px;}
+.trust-icon{font-size:14px;}
 
-/* Comparison table */
-.compare-section{max-width:900px;margin:0 auto;padding:0 24px 80px;}
-.compare-title{font-size:28px;font-weight:800;text-align:center;margin-bottom:32px;}
+/* ── Comparison table ───────────────────────────────── */
+.section{max-width:1000px;margin:0 auto;padding:0 24px 80px;}
+.section-title{font-size:clamp(22px,3vw,30px);font-weight:800;
+               text-align:center;margin-bottom:32px;}
 table{width:100%;border-collapse:collapse;}
-th,td{padding:14px 16px;font-family:var(--mono);font-size:12px;text-align:center;
-      border-bottom:1px solid var(--border);}
+th,td{padding:13px 16px;font-family:var(--mono);font-size:12px;
+      text-align:center;border-bottom:1px solid var(--border);}
 th{color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:1px;}
 td:first-child,th:first-child{text-align:left;color:var(--text-dim);}
-.featured-col{color:var(--green) !important;}
+.col-featured{color:var(--green)!important;}
 tr:hover td{background:var(--surface2);}
 .tc{color:var(--green);}
-.tx{color:var(--text-dim);opacity:.4;}
+.tx{color:var(--text-dim);opacity:.3;}
+.t-lim{color:var(--amber);}
 
-/* FAQ */
-.faq-section{max-width:720px;margin:0 auto;padding:0 24px 80px;}
-.section-title{font-size:28px;font-weight:800;text-align:center;margin-bottom:32px;}
-.faq-item{background:var(--surface);border:1px solid var(--border);border-radius:12px;
-          overflow:hidden;margin-bottom:10px;}
-.faq-q{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;
-       cursor:pointer;font-family:var(--mono);font-size:13px;}
+/* ── Testimonials ───────────────────────────────────── */
+.testimonials{display:grid;grid-template-columns:repeat(3,1fr);
+              gap:20px;max-width:1100px;margin:0 auto;padding:0 24px 80px;}
+.tcard{background:var(--surface);border:1px solid var(--border);
+       border-radius:16px;padding:24px;transition:border-color .2s;}
+.tcard:hover{border-color:rgba(34,197,94,.3);}
+.tquote{font-size:13px;color:var(--text-dim);line-height:1.7;
+        margin-bottom:16px;font-style:italic;}
+.tauthor{display:flex;align-items:center;gap:10px;}
+.tavatar{width:36px;height:36px;border-radius:50%;background:var(--green);
+         color:#000;font-size:14px;font-weight:800;
+         display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.tname{font-family:var(--mono);font-size:12px;font-weight:700;}
+.trole{font-family:var(--mono);font-size:10px;color:var(--text-dim);}
+.tstars{color:var(--amber);font-size:14px;margin-bottom:10px;}
+
+/* ── FAQ ────────────────────────────────────────────── */
+.faq-wrap{max-width:720px;margin:0 auto;padding:0 24px 80px;}
+.faq-item{background:var(--surface);border:1px solid var(--border);
+          border-radius:12px;overflow:hidden;margin-bottom:10px;}
+.faq-q{display:flex;justify-content:space-between;align-items:center;
+       padding:16px 20px;cursor:pointer;font-family:var(--mono);font-size:13px;
+       transition:background .15s;}
 .faq-q:hover{background:var(--surface2);}
-.arrow{transition:transform .2s;color:var(--text-dim);}
-.faq-q.open .arrow{transform:rotate(90deg);}
-.faq-a{display:none;padding:0 20px 16px;font-family:var(--mono);font-size:12px;
-       color:var(--text-dim);line-height:1.8;}
+.faq-arrow{transition:transform .2s;color:var(--text-dim);}
+.faq-q.open .faq-arrow{transform:rotate(90deg);}
+.faq-a{display:none;padding:0 20px 16px;font-family:var(--mono);
+       font-size:12px;color:var(--text-dim);line-height:1.8;}
 .faq-q.open + .faq-a{display:block;}
 
-/* CTA Banner */
-.cta-banner{text-align:center;padding:80px 24px;background:var(--surface);
-            border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
-.cta-banner h2{font-size:clamp(24px,4vw,38px);font-weight:800;margin-bottom:12px;}
-.cta-banner p{font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-bottom:28px;}
-.cta-main{background:var(--green);color:#000;font-weight:800;font-size:15px;
-          padding:14px 36px;border-radius:10px;display:inline-block;
-          box-shadow:0 0 24px var(--green-glow);transition:all .15s;}
-.cta-main:hover{opacity:.85;transform:translateY(-1px);}
+/* ── Pricing notice ─────────────────────────────────── */
+.notice{max-width:720px;margin:0 auto 80px;padding:0 24px;}
+.notice-box{background:var(--surface);border:1px solid var(--border);
+            border-radius:12px;padding:24px 28px;}
+.notice-title{font-family:var(--mono);font-size:11px;text-transform:uppercase;
+              letter-spacing:2px;color:var(--text-dim);margin-bottom:10px;}
+.notice-text{font-family:var(--mono);font-size:12px;color:var(--text-dim);
+             line-height:1.8;}
 
-footer{text-align:center;padding:28px;font-family:var(--mono);font-size:11px;color:var(--text-dim);
-       border-top:1px solid var(--border);}
+/* ── CTA banner ──────────────────────────────────────── */
+.cta-banner{text-align:center;padding:80px 24px;
+            background:var(--surface);border-top:1px solid var(--border);}
+.cta-banner h2{font-size:clamp(24px,4vw,36px);font-weight:800;margin-bottom:12px;}
+.cta-banner p{font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:28px;}
+.cta-big{background:var(--green);color:#000;font-weight:800;font-size:15px;
+         padding:15px 40px;border-radius:10px;display:inline-block;
+         box-shadow:0 0 28px var(--green-glow);transition:all .15s;}
+.cta-big:hover{opacity:.85;transform:translateY(-1px);}
 
-@media(max-width:640px){
-  nav{padding:12px 16px;}
-  .hero{padding:48px 16px 32px;}
-  .plans{grid-template-columns:1fr;padding:0 16px 48px;}
-  .plan-amount{font-size:40px;}
-}
+footer{text-align:center;padding:28px;font-family:var(--mono);
+       font-size:11px;color:var(--text-dim);border-top:1px solid var(--border);}
+footer a{color:var(--green);}
+
+@media(max-width:1024px){.plans{grid-template-columns:repeat(2,1fr);}.testimonials{grid-template-columns:1fr 1fr;}}
+@media(max-width:640px){nav{padding:12px 16px;}.plans{grid-template-columns:1fr;padding:0 16px 48px;}.testimonials{grid-template-columns:1fr;}.trust{gap:14px;font-size:11px;}}
 </style>
 </head>
 <body>
@@ -155,278 +197,338 @@ footer{text-align:center;padding:28px;font-family:var(--mono);font-size:11px;col
   <a href="/" class="nav-logo">WaziBot</a>
   <div class="nav-links">
     <a href="/static/dashboard.html" class="nav-link">Dashboard</a>
-    <a href="/directory" class="nav-link">Directory</a>
     <a href="/static/signup.html" class="nav-cta">Start free trial →</a>
   </div>
 </nav>
 
 <div class="hero">
-  <div class="hero-eyebrow">Pricing</div>
-  <h1 class="hero-title">Simple, <span>honest</span> pricing</h1>
-  <p class="hero-sub">Start free for 30 days. No credit card required. Upgrade when you're ready.</p>
+  <div class="eyebrow">Pricing</div>
+  <h1>Simple, <span>honest</span> pricing</h1>
+  <p>Start free for 30 days. No credit card required. Upgrade when ready.</p>
+  <div class="region-notice" id="region-notice">
+    <span class="region-dot"></span>
+    <span id="region-text">Detecting your region…</span>
+  </div>
   <div class="toggle-wrap">
-    <span class="toggle-label active" id="lbl-monthly">Monthly</span>
-    <div class="toggle" id="billing-toggle" onclick="toggleBilling()"><div class="toggle-knob"></div></div>
-    <span class="toggle-label" id="lbl-annual">Annual <span class="save-badge">Save 20%</span></span>
+    <span class="toggle-lbl on" id="lbl-mo">Monthly</span>
+    <div class="toggle" id="billing-tog" onclick="toggleBilling()"><div class="knob"></div></div>
+    <span class="toggle-lbl" id="lbl-yr">Annual &nbsp;<span class="save-chip">Save 20%</span></span>
   </div>
 </div>
 
-<div class="plans">
-
+<div class="plans" id="plans-grid">
   <!-- Free Trial -->
   <div class="plan trial-card">
-    <div class="trial-badge">Start here — no card needed</div>
+    <div class="badge amber">Start here · no card needed</div>
     <div class="plan-name">Free Trial</div>
-    <div class="plan-price-row">
-      <span class="plan-amount">$0</span>
+    <div class="price-row"><span class="amount">$0</span></div>
+    <div class="period">30 days · full access</div>
+    <div class="annual-note">&nbsp;</div>
+    <div class="plan-sub">Experience the complete WaziBot platform free for 30 days.</div>
+    <hr class="div"/>
+    <div class="features">
+      <div class="feat hi"><span class="ck">✓</span>30-day full access</div>
+      <div class="feat hi"><span class="ck">✓</span>No credit card required</div>
+      <div class="feat"><span class="ck">✓</span>Shared WhatsApp number</div>
+      <div class="feat"><span class="ck">✓</span>AI auto-replies</div>
+      <div class="feat"><span class="ck">✓</span>Unlimited products</div>
+      <div class="feat"><span class="ck">✓</span>Full dashboard &amp; analytics</div>
+      <div class="feat"><span class="ck">✓</span>Broadcast campaigns</div>
+      <div class="feat"><span class="ck">✓</span>Live inbox &amp; chat</div>
+      <div class="feat"><span class="ck">✓</span>QR code ordering</div>
+      <div class="feat"><span class="ck">✓</span>Storefront website</div>
+      <div class="feat"><span class="ck">✓</span>All Growth features included</div>
     </div>
-    <div class="plan-period">30 days free</div>
-    <div class="plan-annual-note">Full access. No credit card.</div>
-    <div class="plan-divider"></div>
-    <div class="plan-features">
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">30-day full access</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Shared WhatsApp number</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">AI auto-replies</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Unlimited products</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Order tracking</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Full dashboard & analytics</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Broadcast campaigns</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Live inbox & chat</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Public store page</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">No setup fees</span></div>
-    </div>
-    <a href="/static/signup.html" class="plan-cta cta-amber">Start free trial →</a>
+    <a href="/static/signup.html" class="cta cta-amber">Start Free Trial →</a>
   </div>
 
   <!-- Starter -->
   <div class="plan">
     <div class="plan-name">Starter</div>
-    <div class="plan-price-row">
-      <span class="plan-curr">$</span>
-      <span class="plan-amount" id="price-starter">1.99</span>
+    <div class="price-row">
+      <span class="curr">$</span>
+      <span class="amount" id="p-starter">4.99</span>
     </div>
-    <div class="plan-period">per month</div>
-    <div class="plan-annual-note" id="note-starter">Billed monthly</div>
-    <div class="plan-divider"></div>
-    <div class="plan-features">
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Shared WhatsApp number</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">AI auto-replies</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Up to 20 products</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">200 AI messages/day</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Order tracking</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Basic dashboard</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Public store page</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Up to 200 contacts</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">2 broadcasts/month</span></div>
-      <div class="pf locked"><span class="cx">✗</span>Advanced analytics</div>
-      <div class="pf locked"><span class="cx">✗</span>Broadcast campaigns</div>
-      <div class="pf locked"><span class="cx">✗</span>Live inbox & chat</div>
+    <div class="period">per month</div>
+    <div class="annual-note" id="note-starter">Billed monthly</div>
+    <div class="plan-sub">Perfect for solo entrepreneurs and small businesses.</div>
+    <hr class="div"/>
+    <div class="features">
+      <div class="feat"><span class="ck">✓</span>Shared WhatsApp number</div>
+      <div class="feat"><span class="ck">✓</span>AI auto-replies</div>
+      <div class="feat"><span class="ck">✓</span>Up to 100 products</div>
+      <div class="feat"><span class="ck">✓</span>Public storefront &amp; QR ordering</div>
+      <div class="feat"><span class="ck">✓</span>Live inbox</div>
+      <div class="feat"><span class="ck">✓</span>Order management</div>
+      <div class="feat"><span class="ck">✓</span>Basic analytics</div>
+      <div class="feat"><span class="ck">✓</span>500 AI conversations/month</div>
+      <div class="feat"><span class="ck">✓</span>1 staff member</div>
+      <div class="feat cx"><span class="cx">✗</span>Broadcast campaigns</div>
+      <div class="feat cx"><span class="cx">✗</span>Dedicated WhatsApp number</div>
     </div>
-    <button class="plan-cta cta-outline" onclick="checkout('starter')">Get started →</button>
-    <div class="plan-save" id="save-starter"></div>
+    <button class="cta cta-outline" onclick="checkout('starter')">Get Started →</button>
+    <div class="save-line" id="save-starter"></div>
   </div>
 
-  <!-- Growth — featured -->
+  <!-- Growth -->
   <div class="plan featured">
-    <div class="popular-badge">Most popular</div>
+    <div class="badge green">Most Popular</div>
     <div class="plan-name">Growth</div>
-    <div class="plan-price-row">
-      <span class="plan-curr">$</span>
-      <span class="plan-amount" id="price-growth">12</span>
+    <div class="price-row">
+      <span class="curr">$</span>
+      <span class="amount" id="p-growth">12</span>
     </div>
-    <div class="plan-period">per month · no trial needed</div>
-    <div class="plan-annual-note" id="note-growth">Billed monthly</div>
-    <div class="plan-divider"></div>
-    <div class="plan-features">
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Your own WhatsApp number</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Unlimited AI auto-replies</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Unlimited products</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Order tracking & management</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Full dashboard & analytics</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Broadcast campaigns</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Live inbox & chat</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Human handoff & tickets</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Unlimited contacts</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">AI roles & smart replies</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Priority support</span></div>
+    <div class="period">per month</div>
+    <div class="annual-note" id="note-growth">Billed monthly</div>
+    <div class="plan-sub">Built for growing businesses that need more power.</div>
+    <hr class="div"/>
+    <div class="features">
+      <div class="feat hi"><span class="ck">✓</span>Dedicated WhatsApp number</div>
+      <div class="feat hi"><span class="ck">✓</span>Unlimited AI conversations</div>
+      <div class="feat"><span class="ck">✓</span>Unlimited products</div>
+      <div class="feat"><span class="ck">✓</span>Unlimited broadcasts</div>
+      <div class="feat"><span class="ck">✓</span>Advanced analytics</div>
+      <div class="feat"><span class="ck">✓</span>Customer segmentation</div>
+      <div class="feat"><span class="ck">✓</span>Full automation</div>
+      <div class="feat"><span class="ck">✓</span>Human handoff</div>
+      <div class="feat"><span class="ck">✓</span>Multiple staff members</div>
+      <div class="feat"><span class="ck">✓</span>QR analytics</div>
+      <div class="feat"><span class="ck">✓</span>Marketing campaigns</div>
+      <div class="feat hi"><span class="ck">✓</span>Priority support</div>
     </div>
-    <button class="plan-cta cta-primary" onclick="checkout('growth')">Start Growth →</button>
-    <div class="plan-save" id="save-growth"></div>
+    <button class="cta cta-green" onclick="checkout('growth')">Start Growth →</button>
+    <div class="save-line" id="save-growth"></div>
   </div>
 
   <!-- Enterprise -->
   <div class="plan">
     <div class="plan-name">Enterprise</div>
-    <div class="plan-price-row">
-      <span class="plan-amount" style="font-size:36px;font-weight:800;">Custom</span>
+    <div class="price-row"><span class="amount" style="font-size:32px;">Custom</span></div>
+    <div class="period">volume pricing</div>
+    <div class="annual-note">Contact us for a quote</div>
+    <div class="plan-sub">For agencies, franchises and enterprise customers.</div>
+    <hr class="div"/>
+    <div class="features">
+      <div class="feat hi"><span class="ck">✓</span>Multiple WhatsApp numbers</div>
+      <div class="feat"><span class="ck">✓</span>Everything in Growth</div>
+      <div class="feat hi"><span class="ck">✓</span>Unlimited staff</div>
+      <div class="feat"><span class="ck">✓</span>White-label deployment</div>
+      <div class="feat"><span class="ck">✓</span>API access</div>
+      <div class="feat"><span class="ck">✓</span>Dedicated infrastructure</div>
+      <div class="feat"><span class="ck">✓</span>SLA guarantee</div>
+      <div class="feat"><span class="ck">✓</span>Custom integrations</div>
+      <div class="feat"><span class="ck">✓</span>Dedicated onboarding</div>
+      <div class="feat hi"><span class="ck">✓</span>Account manager</div>
     </div>
-    <div class="plan-period">Volume pricing</div>
-    <div class="plan-annual-note">Contact us for a quote</div>
-    <div class="plan-divider"></div>
-    <div class="plan-features">
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Multiple WhatsApp numbers</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Everything in Growth</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Dedicated support</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Custom integrations</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">SLA guarantee</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">White-label option</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">API access</span></div>
-      <div class="pf"><span class="ck">✓</span><span class="tick-val">Dedicated onboarding</span></div>
-    </div>
-    <a href="mailto:hello@wazibot.com?subject=Enterprise+Inquiry" class="plan-cta cta-outline">Contact us →</a>
-    <div class="plan-save" style="color:var(--text-dim);font-family:var(--mono);font-size:11px;margin-top:10px;text-align:center;">
-      For agencies and high-volume businesses
-    </div>
+    <a href="mailto:hello@wazibothq.com?subject=Enterprise+Inquiry" class="cta cta-outline">Contact Sales →</a>
+    <div class="save-line" style="color:var(--text-dim);">For agencies &amp; high-volume businesses</div>
   </div>
-
 </div>
 
-<!-- Comparison Table -->
-<div class="compare-section">
-  <h2 class="compare-title">Full comparison</h2>
+<!-- Trust bar -->
+<div class="trust">
+  <div class="trust-item"><span class="trust-icon">🔒</span>Secure payments by Stripe</div>
+  <div class="trust-item"><span class="trust-icon">✅</span>No hidden fees</div>
+  <div class="trust-item"><span class="trust-icon">↩</span>Cancel anytime</div>
+  <div class="trust-item"><span class="trust-icon">⚡</span>Instant activation</div>
+  <div class="trust-item"><span class="trust-icon">🌍</span>Regional pricing applied automatically</div>
+</div>
+
+<!-- Comparison table -->
+<div class="section">
+  <h2 class="section-title">Full feature comparison</h2>
   <table>
     <thead>
       <tr>
         <th>Feature</th>
         <th>Trial</th>
-        <th>Starter<br><span style="color:var(--green)">$1.99/mo</span></th>
-        <th class="featured-col">Growth<br>$12/mo</th>
+        <th>Starter</th>
+        <th class="col-featured">Growth</th>
         <th>Enterprise</th>
       </tr>
     </thead>
     <tbody>
-      <tr><td>WhatsApp number</td><td>Shared</td><td>Shared</td><td class="featured-col">Own number</td><td class="tc">Multiple</td></tr>
-      <tr><td>AI auto-replies</td><td class="tc">✓</td><td>200/day</td><td class="featured-col">Unlimited</td><td class="tc">Unlimited</td></tr>
-      <tr><td>Products</td><td class="tc">Unlimited</td><td>20</td><td class="featured-col">Unlimited</td><td class="tc">Unlimited</td></tr>
-      <tr><td>Contacts</td><td class="tc">Unlimited</td><td>200</td><td class="featured-col">Unlimited</td><td class="tc">Unlimited</td></tr>
-      <tr><td>Order tracking</td><td class="tc">✓</td><td class="tc">✓</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>Dashboard</td><td class="tc">Full</td><td>Basic</td><td class="featured-col">Full</td><td class="tc">Full</td></tr>
-      <tr><td>Analytics</td><td class="tc">✓</td><td class="tx">✗</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>Broadcast campaigns</td><td>5/month</td><td>2/month</td><td class="featured-col">Unlimited</td><td class="tc">Unlimited</td></tr>
-      <tr><td>Live inbox & chat</td><td class="tc">✓</td><td class="tx">✗</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>Human handoff</td><td class="tc">✓</td><td class="tx">✗</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>AI roles</td><td class="tc">✓</td><td class="tx">✗</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>Public store page</td><td class="tc">✓</td><td class="tc">✓</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>Stripe payments</td><td class="tc">✓</td><td class="tc">✓</td><td class="tc featured-col">✓</td><td class="tc">✓</td></tr>
-      <tr><td>API access</td><td class="tx">✗</td><td class="tx">✗</td><td class="tx featured-col">✗</td><td class="tc">✓</td></tr>
-      <tr><td>White-label</td><td class="tx">✗</td><td class="tx">✗</td><td class="tx featured-col">✗</td><td class="tc">✓</td></tr>
-      <tr><td>SLA</td><td class="tx">✗</td><td class="tx">✗</td><td class="tx featured-col">✗</td><td class="tc">✓</td></tr>
-      <tr><td>Support</td><td>Community</td><td>Community</td><td class="featured-col">Priority</td><td class="tc">Dedicated</td></tr>
+      <tr><td>WhatsApp number</td><td>Shared</td><td>Shared</td><td class="col-featured tc">Dedicated</td><td class="tc">Multiple</td></tr>
+      <tr><td>AI conversations</td><td class="tc">Unlimited</td><td class="t-lim">500/month</td><td class="col-featured tc">Unlimited</td><td class="tc">Unlimited</td></tr>
+      <tr><td>Products</td><td class="tc">Unlimited</td><td class="t-lim">100</td><td class="col-featured tc">Unlimited</td><td class="tc">Unlimited</td></tr>
+      <tr><td>Broadcast campaigns</td><td class="tc">✓</td><td class="tx">✗</td><td class="col-featured tc">Unlimited</td><td class="tc">Unlimited</td></tr>
+      <tr><td>Live inbox &amp; chat</td><td class="tc">✓</td><td class="tc">✓</td><td class="col-featured tc">✓</td><td class="tc">✓</td></tr>
+      <tr><td>Analytics</td><td class="tc">Full</td><td>Basic</td><td class="col-featured tc">Advanced</td><td class="tc">Advanced</td></tr>
+      <tr><td>Human handoff</td><td class="tc">✓</td><td class="tx">✗</td><td class="col-featured tc">✓</td><td class="tc">✓</td></tr>
+      <tr><td>Staff members</td><td class="tc">✓</td><td>1</td><td class="col-featured tc">Multiple</td><td class="tc">Unlimited</td></tr>
+      <tr><td>QR analytics</td><td class="tc">✓</td><td class="tx">✗</td><td class="col-featured tc">✓</td><td class="tc">✓</td></tr>
+      <tr><td>Storefront website</td><td class="tc">✓</td><td class="tc">✓</td><td class="col-featured tc">✓</td><td class="tc">✓</td></tr>
+      <tr><td>Stripe payments</td><td class="tc">✓</td><td class="tc">✓</td><td class="col-featured tc">✓</td><td class="tc">✓</td></tr>
+      <tr><td>API access</td><td class="tx">✗</td><td class="tx">✗</td><td class="col-featured tx">✗</td><td class="tc">✓</td></tr>
+      <tr><td>White-label</td><td class="tx">✗</td><td class="tx">✗</td><td class="col-featured tx">✗</td><td class="tc">✓</td></tr>
+      <tr><td>SLA guarantee</td><td class="tx">✗</td><td class="tx">✗</td><td class="col-featured tx">✗</td><td class="tc">✓</td></tr>
+      <tr><td>Support</td><td>Community</td><td>Community</td><td class="col-featured tc">Priority</td><td class="tc">Dedicated + Account Manager</td></tr>
     </tbody>
   </table>
 </div>
 
-<!-- FAQ -->
-<div class="faq-section">
-  <h2 class="section-title">FAQ</h2>
-  <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)">
-      <span>Do I need a credit card to start?</span><span class="arrow">›</span>
+<!-- Testimonials -->
+<div style="text-align:center;margin-bottom:32px;font-size:clamp(20px,3vw,28px);font-weight:800;">
+  Trusted by businesses everywhere
+</div>
+<div class="testimonials">
+  <div class="tcard">
+    <div class="tstars">★★★★★</div>
+    <div class="tquote">"WaziBot completely transformed how I run my food business. Orders come in automatically while I focus on cooking. The QR code alone tripled my walk-in customers."</div>
+    <div class="tauthor">
+      <div class="tavatar">T</div>
+      <div><div class="tname">Tapera M.</div><div class="trole">Flavoury Foods · Zimbabwe</div></div>
     </div>
-    <div class="faq-a">No. The 30-day free trial requires no payment details. You only need to enter payment information when you choose to subscribe.</div>
   </div>
-  <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)">
-      <span>What happens when the trial ends?</span><span class="arrow">›</span>
+  <div class="tcard">
+    <div class="tstars">★★★★★</div>
+    <div class="tquote">"I was skeptical at first, but the 30-day trial convinced me instantly. My customers love ordering on WhatsApp. Setup took less than 10 minutes."</div>
+    <div class="tauthor">
+      <div class="tavatar">A</div>
+      <div><div class="tname">Amara K.</div><div class="trole">Fashion Boutique · Kenya</div></div>
     </div>
-    <div class="faq-a">Your account moves to the free tier with limited features. All your data — products, customers, orders, conversations — is kept safe. You can upgrade at any time to restore full access.</div>
   </div>
-  <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)">
-      <span>Can I cancel anytime?</span><span class="arrow">›</span>
+  <div class="tcard">
+    <div class="tstars">★★★★★</div>
+    <div class="tquote">"The Growth plan is worth every cent. Broadcast campaigns alone have grown my repeat business by 40%. The analytics help me understand what my customers actually want."</div>
+    <div class="tauthor">
+      <div class="tavatar">S</div>
+      <div><div class="tname">Sarah P.</div><div class="trole">Bakery &amp; Catering · Nigeria</div></div>
     </div>
-    <div class="faq-a">Yes. Cancel any time from Settings → Payments → Manage Subscription. You keep access until the end of your billing period. No cancellation fees.</div>
-  </div>
-  <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)">
-      <span>Do I need a WhatsApp Business account?</span><span class="arrow">›</span>
-    </div>
-    <div class="faq-a">Not on the Trial or Starter plan — you use WaziBot's shared WhatsApp number and your customers reach you through it. On Growth, you can connect your own dedicated WhatsApp Business number at any time.</div>
-  </div>
-  <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)">
-      <span>What currencies do you support?</span><span class="arrow">›</span>
-    </div>
-    <div class="faq-a">Payments are processed in USD via Stripe. Your customers can pay in any currency that Stripe supports in your region. WaziBot's dashboard supports USD, ZWG, and other currencies for your product prices.</div>
-  </div>
-  <div class="faq-item">
-    <div class="faq-q" onclick="toggleFaq(this)">
-      <span>Is there a setup fee?</span><span class="arrow">›</span>
-    </div>
-    <div class="faq-a">Never. No setup fees, no hidden costs. The price you see is the price you pay.</div>
   </div>
 </div>
 
-<!-- CTA Banner -->
+<!-- FAQ -->
+<div class="faq-wrap">
+  <h2 class="section-title">Frequently asked questions</h2>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Do I need a credit card to start?</span><span class="faq-arrow">›</span></div><div class="faq-a">No. Your 30-day free trial requires zero payment details. You only need to enter payment information when you choose to upgrade to a paid plan.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>What happens when my trial ends?</span><span class="faq-arrow">›</span></div><div class="faq-a">Your account becomes read-only. All your data — products, customers, orders, conversations — is safely preserved. You can upgrade at any time to restore full access.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Why are prices different in my country?</span><span class="faq-arrow">›</span></div><div class="faq-a">WaziBot uses regional pricing to make the platform accessible worldwide. The plans and features are identical — only the price adjusts based on your region. Your price is automatically detected and shown above.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Can I switch between plans?</span><span class="faq-arrow">›</span></div><div class="faq-a">Yes. Upgrade or downgrade anytime from Settings → Payments. Upgrades are instant. Downgrades take effect at the end of your current billing period.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Can I cancel anytime?</span><span class="faq-arrow">›</span></div><div class="faq-a">Yes. Cancel from Settings → Payments → Manage Subscription. You keep access until the end of your billing period. No cancellation fees, ever.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Do I need my own WhatsApp Business account?</span><span class="faq-arrow">›</span></div><div class="faq-a">Not on Trial or Starter — you use WaziBot's shared WhatsApp number. On Growth, you connect your own dedicated WhatsApp Business number for a fully branded experience.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>How does Stripe payment work?</span><span class="faq-arrow">›</span></div><div class="faq-a">All payments are processed securely by Stripe, a PCI DSS Level 1 certified payment processor. WaziBot never stores your card details. You can pay with Visa, Mastercard, Apple Pay, Google Pay, and more depending on your region.</div></div>
+</div>
+
+<!-- Pricing notice -->
+<div class="notice">
+  <div class="notice-box">
+    <div class="notice-title">Pricing Notice</div>
+    <div class="notice-text">
+      Introductory pricing is offered to support our early customers and may be reviewed in the future as WaziBot grows. Prices may be adjusted after the first two months of launch or promotional periods due to increased demand, operating costs, inflation, exchange rate fluctuations, regulatory requirements, or other business factors.<br/><br/>
+      Existing subscribers will be notified in advance of any pricing changes in accordance with applicable laws. WaziBot is committed to keeping pricing fair, transparent, and affordable for businesses of all sizes worldwide.
+    </div>
+  </div>
+</div>
+
+<!-- CTA banner -->
 <div class="cta-banner">
   <h2>Ready to automate your WhatsApp business?</h2>
-  <p>Join hundreds of businesses already using WaziBot. Start your 30-day free trial today.</p>
-  <a href="/static/signup.html" class="cta-main">Start free trial — no card needed →</a>
+  <p>Join thousands of businesses already using WaziBot. Start your 30-day free trial — no card needed.</p>
+  <a href="/static/signup.html" class="cta-big">Start free trial →</a>
 </div>
 
 <footer>
-  &copy; 2025 WaziBot · <a href="/static/privacy.html">Privacy</a> · <a href="/static/terms.html">Terms</a> · <a href="mailto:hello@wazibot.com">hello@wazibot.com</a>
+  &copy; 2025 WaziBot · <a href="/static/privacy.html">Privacy</a> · <a href="/static/terms.html">Terms</a> · <a href="mailto:hello@wazibothq.com">hello@wazibothq.com</a>
 </footer>
 
 <script>
+// ── State ─────────────────────────────────────────────────────────────────────
 let isAnnual = false;
-const MONTHLY = { starter: 1.99, growth: 12 };
-const ANNUAL  = { starter: 1.58, growth: 9.58 }; // $19/yr ÷ 12, $115/yr ÷ 12
+let _pricing = {
+  starter_monthly: 4.99, starter_annual: 48,
+  growth_monthly:  12,   growth_annual:  115,
+  region: 'A', region_label: 'Global', country_code: ''
+};
 
+// ── Load regional pricing on page load ────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  try {
+    const resp = await fetch('/billing/pricing');
+    if (resp.ok) {
+      const data = await resp.json();
+      _pricing = { ..._pricing, ...data };
+      updatePriceDisplay();
+      const regionEl = document.getElementById('region-text');
+      if (regionEl) {
+        const labels = { A: 'Global pricing', B: 'Regional pricing applied', C: 'Emerging market pricing applied' };
+        regionEl.textContent = labels[data.region] || 'Global pricing';
+      }
+    }
+  } catch(e) {
+    // Fallback to hardcoded global prices
+    document.getElementById('region-text').textContent = 'Global pricing';
+  }
+});
+
+// ── Billing toggle ────────────────────────────────────────────────────────────
 function toggleBilling() {
   isAnnual = !isAnnual;
-  const tog = document.getElementById('billing-toggle');
+  const tog = document.getElementById('billing-tog');
   tog.classList.toggle('on', isAnnual);
-  document.getElementById('lbl-monthly').classList.toggle('active', !isAnnual);
-  document.getElementById('lbl-annual').classList.toggle('active', isAnnual);
-
-  const prices = isAnnual ? ANNUAL : MONTHLY;
-  document.getElementById('price-starter').textContent = prices.starter.toFixed(2);
-  document.getElementById('price-growth').textContent  = prices.growth.toFixed(2);
-
-  document.getElementById('note-starter').innerHTML = isAnnual
-    ? '<s>$23.88</s> → $19/year (save $4.88)' : 'Billed monthly';
-  document.getElementById('note-growth').innerHTML = isAnnual
-    ? '<s>$144</s> → $115/year (save $29)' : 'Billed monthly';
-
-  document.getElementById('save-starter').textContent = isAnnual ? 'Save 20% with annual billing' : '';
-  document.getElementById('save-growth').textContent  = isAnnual ? 'Save 20% with annual billing · $115/year' : '';
+  document.getElementById('lbl-mo').classList.toggle('on', !isAnnual);
+  document.getElementById('lbl-yr').classList.toggle('on', isAnnual);
+  updatePriceDisplay();
 }
 
+function updatePriceDisplay() {
+  const sm = _pricing.starter_monthly, sa = _pricing.starter_annual;
+  const gm = _pricing.growth_monthly,  ga = _pricing.growth_annual;
+
+  // Monthly per-month equivalent when annual chosen
+  const sPerMo = isAnnual ? (sa / 12).toFixed(2) : sm.toFixed(2);
+  const gPerMo = isAnnual ? (ga / 12).toFixed(2) : gm.toFixed(2);
+
+  document.getElementById('p-starter').textContent = sPerMo;
+  document.getElementById('p-growth').textContent  = gPerMo;
+
+  document.getElementById('note-starter').innerHTML = isAnnual
+    ? `<s>$${(sm*12).toFixed(0)}</s> → $${sa}/year` : 'Billed monthly';
+  document.getElementById('note-growth').innerHTML  = isAnnual
+    ? `<s>$${(gm*12).toFixed(0)}</s> → $${ga}/year` : 'Billed monthly';
+
+  document.getElementById('save-starter').textContent = isAnnual
+    ? `Save $${((sm*12)-sa).toFixed(2)} with annual billing` : '';
+  document.getElementById('save-growth').textContent  = isAnnual
+    ? `Save $${((gm*12)-ga).toFixed(2)} with annual billing` : '';
+}
+
+// ── Checkout ──────────────────────────────────────────────────────────────────
 async function checkout(plan) {
-  // Check if logged in
   const token = localStorage.getItem('wazi_token');
   if (!token) {
-    window.location.href = '/static/signup.html?plan=' + plan;
+    window.location.href = '/static/signup.html?plan=' + plan + (isAnnual ? '&period=annual' : '');
     return;
   }
-  const btn = event.target;
-  const orig = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = 'Loading…';
+  const btn  = event?.target;
+  const orig = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
   try {
     const period = isAnnual ? 'annual' : 'monthly';
     const resp = await fetch('/billing/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-      body: JSON.stringify({ tier: plan, billing_period: period })
+      method:  'POST',
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token},
+      body:    JSON.stringify({
+        tier:           plan,
+        billing_period: period,
+        country_code:   _pricing.country_code || ''
+      })
     });
     const data = await resp.json();
     if (data.url) {
       window.location.href = data.url;
     } else {
       alert(data.detail || data.error || 'Could not start checkout. Please try again.');
-      btn.disabled = false; btn.textContent = orig;
+      if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
   } catch(e) {
     alert('Network error. Please try again.');
-    btn.disabled = false; btn.textContent = orig;
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
   }
 }
 
-function toggleFaq(el) {
-  el.classList.toggle('open');
-}
+// ── FAQ ───────────────────────────────────────────────────────────────────────
+function toggleFaq(el) { el.classList.toggle('open'); }
 </script>
 </body>
 </html>

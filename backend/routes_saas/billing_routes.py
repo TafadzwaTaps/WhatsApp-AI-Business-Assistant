@@ -30,6 +30,7 @@ router = APIRouter()
 class CheckoutRequest(BaseModel):
     tier:           str              # "starter" | "growth" | "enterprise"
     billing_period: str = "monthly"  # "monthly" | "annual"
+    country_code:   str = ""         # ISO-3166-1 alpha-2 (e.g. "ZW") for regional pricing
     success_url:    Optional[str] = None
     cancel_url:     Optional[str] = None
 
@@ -69,7 +70,7 @@ def billing_checkout(body: CheckoutRequest, user=Depends(require_business)):
     Create a Stripe Checkout Session for upgrading to a paid tier.
     Returns {"url": "https://checkout.stripe.com/..."} for the frontend to redirect to.
     """
-    from billing.stripe_service import create_checkout_session
+    from billing.stripe_service import create_checkout_session, get_price_id_for_checkout
     import crud
     # Get business owner email for pre-filling Stripe checkout
     try:
@@ -78,13 +79,20 @@ def billing_checkout(body: CheckoutRequest, user=Depends(require_business)):
     except Exception:
         email = ""
 
+    # Resolve correct Stripe Price ID for the user's region
+    # Falls back to global price ID if no regional price is configured
+    regional_price_id = get_price_id_for_checkout(
+        body.tier, body.billing_period, getattr(body, "country_code", "")
+    )
+
     result = create_checkout_session(
-        business_id    = user["business_id"],
-        tier           = body.tier,
-        billing_period = body.billing_period,
-        success_url    = body.success_url or "",
-        cancel_url     = body.cancel_url  or "",
-        customer_email = email,
+        business_id       = user["business_id"],
+        tier              = body.tier,
+        billing_period    = body.billing_period,
+        success_url       = body.success_url or "",
+        cancel_url        = body.cancel_url  or "",
+        customer_email    = email,
+        price_id_override = regional_price_id,
     )
     if "error" in result:
         raise HTTPException(400, result["error"])
@@ -103,6 +111,40 @@ def billing_cancel(body: CancelRequest, user=Depends(require_business)):
     return result
 
 
+@router.get("/billing/pricing")
+def billing_pricing(country: str = "", request: Request = None):
+    """
+    Public endpoint — returns pricing for the given country code.
+    Frontend calls this on load to display correct regional pricing.
+    Falls back to global pricing if country not found.
+    """
+    from billing.stripe_service import get_pricing_for_country, TIERS
+    cc = country.strip().upper()
+
+    # Also try to detect from CF-IPCountry or X-Country header if not passed
+    if not cc and request:
+        cc = (request.headers.get("CF-IPCountry", "") or
+              request.headers.get("X-Country", "")).strip().upper()
+
+    pricing = get_pricing_for_country(cc)
+    return {
+        "country_code":    cc or "GLOBAL",
+        "region":          pricing["region"],
+        "region_label":    pricing["region_label"],
+        "starter_monthly": pricing["starter_monthly"],
+        "starter_annual":  pricing["starter_annual"],
+        "growth_monthly":  pricing["growth_monthly"],
+        "growth_annual":   pricing["growth_annual"],
+        # Also return plan features (same for all regions)
+        "plans": {
+            "starter": {k: v for k, v in TIERS.get("starter", {}).items()
+                        if not k.startswith("stripe_price_id")},
+            "growth":  {k: v for k, v in TIERS.get("growth",  {}).items()
+                        if not k.startswith("stripe_price_id")},
+        }
+    }
+
+
 @router.post("/billing/portal")
 def billing_portal(user=Depends(require_business)):
     """Create a Stripe Customer Portal session so users can manage their subscription,
@@ -116,7 +158,7 @@ def billing_portal(user=Depends(require_business)):
     customer_id = status.get("stripe_customer_id")
     if not customer_id:
         raise HTTPException(400, "No Stripe customer found — upgrade first to create one")
-    base = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com")
+    base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
     try:
         session = stripe.billing_portal.Session.create(
             customer=customer_id,
