@@ -247,7 +247,7 @@ footer a{color:var(--green);}
     <div class="plan-name">Starter</div>
     <div class="price-row">
       <span class="curr">$</span>
-      <span class="amount" id="p-starter">4.99</span>
+      <span class="amount" id="p-starter">5.99</span>
     </div>
     <div class="period">per month</div>
     <div class="annual-note" id="note-starter">Billed monthly</div>
@@ -256,14 +256,14 @@ footer a{color:var(--green);}
     <div class="features">
       <div class="feat"><span class="ck">✓</span>Shared WhatsApp number</div>
       <div class="feat"><span class="ck">✓</span>AI auto-replies</div>
-      <div class="feat"><span class="ck">✓</span>Up to 100 products</div>
-      <div class="feat"><span class="ck">✓</span>Public storefront &amp; QR ordering</div>
-      <div class="feat"><span class="ck">✓</span>Live inbox</div>
-      <div class="feat"><span class="ck">✓</span>Order management</div>
-      <div class="feat"><span class="ck">✓</span>Basic analytics</div>
-      <div class="feat"><span class="ck">✓</span>500 AI conversations/month</div>
-      <div class="feat"><span class="ck">✓</span>1 staff member</div>
+      <div class="feat"><span class="ck">✓</span>Up to 20 products</div>
+      <div class="feat"><span class="ck">✓</span>200 AI messages/day</div>
+      <div class="feat"><span class="ck">✓</span>Order tracking</div>
+      <div class="feat"><span class="ck">✓</span>Basic dashboard</div>
+      <div class="feat"><span class="ck">✓</span>Public store page</div>
+      <div class="feat cx"><span class="cx">✗</span>Advanced analytics</div>
       <div class="feat cx"><span class="cx">✗</span>Broadcast campaigns</div>
+      <div class="feat cx"><span class="cx">✗</span>Live inbox &amp; chat</div>
       <div class="feat cx"><span class="cx">✗</span>Dedicated WhatsApp number</div>
     </div>
     <button class="cta cta-outline" onclick="checkout('starter')">Get Started →</button>
@@ -436,7 +436,7 @@ footer a{color:var(--green);}
 // ── State ─────────────────────────────────────────────────────────────────────
 let isAnnual = false;
 let _pricing = {
-  starter_monthly: 4.99, starter_annual: 48,
+  starter_monthly: 5.99, starter_annual: 57,
   growth_monthly:  12,   growth_annual:  115,
   region: 'A', region_label: 'Global', country_code: ''
 };
@@ -472,7 +472,7 @@ function toggleBilling() {
 }
 
 function updatePriceDisplay() {
-  const sm = _pricing.starter_monthly, sa = _pricing.starter_annual;
+  const sm = _pricing.starter_monthly || 5.99, sa = _pricing.starter_annual || 57;
   const gm = _pricing.growth_monthly,  ga = _pricing.growth_annual;
 
   // Monthly per-month equivalent when annual chosen
@@ -483,7 +483,7 @@ function updatePriceDisplay() {
   document.getElementById('p-growth').textContent  = gPerMo;
 
   document.getElementById('note-starter').innerHTML = isAnnual
-    ? `<s>$${(sm*12).toFixed(0)}</s> → $${sa}/year` : 'Billed monthly';
+    ? `<s>$${(sm*12).toFixed(0)}</s> → $${sa}/year (save 20%)` : 'Billed monthly';
   document.getElementById('note-growth').innerHTML  = isAnnual
     ? `<s>$${(gm*12).toFixed(0)}</s> → $${ga}/year` : 'Billed monthly';
 

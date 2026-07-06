@@ -83,8 +83,8 @@ TIERS: dict[str, dict] = {
     # ── Starter — $1.99/month ─────────────────────────────────────────────────
     "starter": {
         "label":               "Starter",
-        "price_monthly":       4.99,
-        "price_annual":        48,      # $4/mo — save 20%
+        "price_monthly":       5.99,
+        "price_annual":        57,      # ~$4.75/mo — save 20%
         "trial_days":          0,
         "messages_per_day":    200,
         "products_limit":      20,
@@ -187,8 +187,8 @@ PRICING_REGIONS: dict[str, dict] = {
             "US","CA","GB","DE","AU","NZ","SE","NO","DK","FI","NL","BE",
             "AT","CH","IE","FR","IT","ES","JP","SG","HK","AE","IL","KR",
         },
-        "starter_monthly": 4.99,
-        "starter_annual":  48,
+        "starter_monthly": 5.99,
+        "starter_annual":  57,
         "growth_monthly":  12,
         "growth_annual":   115,
         "price_ids": {
@@ -206,8 +206,8 @@ PRICING_REGIONS: dict[str, dict] = {
             "MY","TH","ID","PH","BR","MX","AR","CO","CL","TR","ZA","EG",
             "MA","TN","VN",
         },
-        "starter_monthly": 3.99,
-        "starter_annual":  38,
+        "starter_monthly": 4.99,
+        "starter_annual":  48,
         "growth_monthly":  10,
         "growth_annual":   96,
         "price_ids": {
@@ -224,8 +224,8 @@ PRICING_REGIONS: dict[str, dict] = {
             "ZW","ZM","ZA","KE","UG","TZ","NG","GH","ET","RW","SN","CI",
             "IN","PK","BD","LK","NP","MM","KH","LA","AF",
         },
-        "starter_monthly": 2.99,
-        "starter_annual":  29,
+        "starter_monthly": 3.99,
+        "starter_annual":  38,
         "growth_monthly":  8.99,
         "growth_annual":   86,
         "price_ids": {

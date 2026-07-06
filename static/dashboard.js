@@ -1588,8 +1588,8 @@ async function loadStripeSubscriptionStatus() {
         const days = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
         trialEl.style.display = 'block';
         trialEl.textContent = days > 0
-          ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade from $1.99/mo when ready.`
-          : `Trial ended. Upgrade from $1.99/month to restore full access.`;
+          ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade from $5.99/mo when ready.`
+          : `Trial ended. Upgrade from $5.99/month to restore full access.`;
       } else { trialEl.style.display = 'none'; }
     }
     const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'canceled';
@@ -1636,8 +1636,33 @@ async function stripeConnectDashboard() {
   }
 }
 
-async function stripeUpgrade() {
-  window.location.href = '/static/pricing.html';
+async function stripeUpgrade(plan, period) {
+  // If plan specified, go directly to Stripe Checkout. Otherwise show pricing page.
+  if (plan) {
+    await _launchStripeCheckout(plan, period || 'monthly');
+  } else {
+    window.location.href = '/static/pricing.html';
+  }
+}
+
+// Central Stripe checkout launcher — used by all upgrade buttons in the app
+async function _launchStripeCheckout(tier, billingPeriod) {
+  billingPeriod = billingPeriod || 'monthly';
+  const btn = document.querySelector('[data-checkout-loading]');
+  try {
+    const resp = await apiFetch('/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify({ tier, billing_period: billingPeriod, country_code: '' })
+    });
+    if (resp && resp.url) {
+      window.location.href = resp.url;
+    } else {
+      toast((resp && resp.detail) || 'Could not start checkout — please try again.', true);
+    }
+  } catch(e) {
+    // If not logged in, send to pricing/signup
+    window.location.href = '/static/pricing.html';
+  }
 }
 
 async function stripeManage() {
