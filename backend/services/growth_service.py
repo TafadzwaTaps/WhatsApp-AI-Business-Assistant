@@ -372,6 +372,21 @@ def record_referral(new_business_id: int, referral_code: str) -> bool:
                 "available_at": datetime.now(tz.utc).isoformat(),
             }).execute()
             log.info("referral credit issued  referrer=%s  amount=0.20", referrer_id)
+            # Send referral credit email — fire-and-forget, never block
+            try:
+                from services.email_service import send_referral_credited
+                biz_res = supabase.table("businesses").select("name,owner_email").eq("id", referrer_id).limit(1).execute()
+                biz_row = (biz_res.data or [{}])[0]
+                if biz_row.get("owner_email"):
+                    bal_res = supabase.table("referral_credits").select("amount,status").eq("business_id", referrer_id).execute()
+                    available = sum(float(r.get("amount", 0)) for r in (bal_res.data or []) if r.get("status") == "available")
+                    refs_needed = max(0, int((5.0 - available) / 0.20))
+                    send_referral_credited(
+                        to_email=biz_row["owner_email"], business_name=biz_row.get("name",""),
+                        amount="$0.20", new_balance=f"${available:.2f}", referrals_to_withdraw=refs_needed,
+                    )
+            except Exception as _re:
+                log.debug("referral credit email error: %s", _re)
         except Exception as credit_exc:
             # Never fail the referral record if credit insert fails
             log.error("referral credit insert failed  referrer=%s  error=%s",

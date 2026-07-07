@@ -758,6 +758,24 @@ def _on_checkout_completed(obj: dict) -> None:
         "stripe_subscription_id": obj.get("subscription", ""),
     })
     log.info("SUBSCRIPTION ACTIVATED  business=%s  tier=%s", bid, tier)
+    # Send subscription confirmation email — fire-and-forget
+    try:
+        from core.db import supabase
+        from services.email_service import send_subscription_confirmed
+        biz = supabase.table("businesses").select("name,owner_email").eq("id", bid).limit(1).execute()
+        b   = (biz.data or [{}])[0]
+        if b.get("owner_email"):
+            tier_labels = {"starter": "Starter", "growth": "Growth", "enterprise": "Enterprise"}
+            tier_prices = {"starter": "$5.99/month", "growth": "$12/month", "enterprise": "Custom"}
+            send_subscription_confirmed(
+                to_email      = b["owner_email"],
+                business_name = b.get("name", ""),
+                plan_name     = tier_labels.get(tier, tier.title()),
+                amount        = tier_prices.get(tier, ""),
+                next_billing  = "See your Stripe dashboard",
+            )
+    except Exception as _e:
+        log.debug("checkout email error: %s", _e)
 
 
 def _on_subscription_updated(obj: dict) -> None:
@@ -782,6 +800,21 @@ def _on_subscription_deleted(obj: dict) -> None:
     _patch_biz(bid, {"subscription_tier": "free", "billing_status": "cancelled",
                      "stripe_subscription_id": None})
     log.info("SUBSCRIPTION CANCELLED → FREE  business=%s", bid)
+    # Send cancellation confirmation email — fire-and-forget
+    try:
+        from core.db import supabase
+        from services.email_service import send_subscription_cancelled
+        biz = supabase.table("businesses").select("name,owner_email,subscription_tier").eq("id", bid).limit(1).execute()
+        b   = (biz.data or [{}])[0]
+        if b.get("owner_email"):
+            send_subscription_cancelled(
+                to_email      = b["owner_email"],
+                business_name = b.get("name", ""),
+                plan_name     = (b.get("subscription_tier") or "").title() or "Paid",
+                access_ends   = "end of current billing period",
+            )
+    except Exception as _e:
+        log.debug("cancellation email error: %s", _e)
 
 
 def _on_payment_failed(invoice: dict) -> None:
@@ -789,11 +822,27 @@ def _on_payment_failed(invoice: dict) -> None:
     if not cid: return
     try:
         from core.db import supabase
-        res = supabase.table("businesses").select("id").eq("stripe_customer_id", cid).limit(1).execute()
-        bid = (res.data or [{}])[0].get("id")
+        res = supabase.table("businesses").select("id,name,owner_email,subscription_tier").eq("stripe_customer_id", cid).limit(1).execute()
+        b   = (res.data or [{}])[0]
+        bid = b.get("id")
         if bid:
             _patch_biz(bid, {"billing_status": "past_due"})
             log.warning("PAYMENT FAILED  business=%s  customer=%s", bid, cid)
+            # Send payment failed email — fire-and-forget
+            try:
+                from services.email_service import send_payment_failed
+                if b.get("owner_email"):
+                    tier = b.get("subscription_tier") or "starter"
+                    tier_prices = {"starter": "$5.99", "growth": "$12.00", "enterprise": "Custom"}
+                    send_payment_failed(
+                        to_email      = b["owner_email"],
+                        business_name = b.get("name", ""),
+                        plan_name     = tier.title(),
+                        amount        = tier_prices.get(tier, ""),
+                        retry_date    = "3 days",
+                    )
+            except Exception as _e:
+                log.debug("payment failed email error: %s", _e)
     except Exception as exc:
         log.error("_on_payment_failed error: %s", exc)
 

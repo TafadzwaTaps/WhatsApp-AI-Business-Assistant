@@ -128,31 +128,29 @@ def send_welcome_email(
     - Quick-start tips
     """
     display_name = owner_name or business_name
-    wizard_url   = f"{_BASE_URL}/onboarding"
-    dash_url     = f"{_BASE_URL}/dashboard"
-    demo_url     = f"https://wa.me/263778538604?text=Hi%21%20I%27d%20like%20to%20try%20WaziBot."
+    dash_url     = f"{_BASE_URL}/static/dashboard.html"
+    pricing_url  = f"{_BASE_URL}/static/pricing.html"
+    support_url  = f"mailto:hello@wazibothq.com"
 
     body = f"""
 <h1>Welcome to WaziBot, {display_name}! 🎉</h1>
-<p>Your AI employee is ready to start handling WhatsApp orders for <strong>{business_name}</strong>.</p>
-<p>Complete your setup in 3 quick steps to go live:</p>
+<p>Your 30-day free trial has started. Your AI WhatsApp employee is ready for
+<strong>{business_name}</strong> — no setup required.</p>
 <p>
-  <a href="{wizard_url}" class="btn">🚀 Open Setup Wizard</a>
-  <a href="{dash_url}"   class="btn-ghost">Go to Dashboard</a>
+  <a href="{dash_url}" class="btn">🚀 Open My Dashboard</a>
 </p>
 <hr class="divider"/>
-<h1 style="font-size:16px;margin-bottom:8px;">Quick start tips</h1>
+<h1 style="font-size:16px;margin-bottom:8px;">Get started in 3 steps</h1>
 <p>
   <strong style="color:#e8f5e9;">1. Add your products</strong> — names, prices, and optional photos.<br/>
-  <strong style="color:#e8f5e9;">2. Choose your WhatsApp</strong> — use our shared number instantly, or connect your own.<br/>
-  <strong style="color:#e8f5e9;">3. Test it</strong> — message the demo bot to see it in action.
+  <strong style="color:#e8f5e9;">2. Share your store link</strong> — print the QR code and put it anywhere customers can scan it.<br/>
+  <strong style="color:#e8f5e9;">3. Watch orders come in</strong> — WaziBot handles replies, orders, and payments automatically.
 </p>
-<p><a href="{demo_url}" target="_blank" class="btn-ghost">💬 Try the demo bot</a></p>
 <hr class="divider"/>
-<p>Your username is <strong style="color:#e8f5e9;">@{username}</strong>.
-   Bookmark your dashboard: <a href="{dash_url}" style="color:#22c55e">{dash_url}</a></p>
-<p>Questions? Reply to this email or WhatsApp us at
-   <a href="https://wa.me/263778538604" style="color:#22c55e">+263 77 853 8604</a>.</p>
+<p>Your username is <strong style="color:#e8f5e9;">@{username}</strong>.</p>
+<p>Your trial gives you full access for <strong style="color:#22c55e;">30 days</strong>.
+   After that, plans start from <strong style="color:#22c55e;">$5.99/month</strong>.</p>
+<p>Questions? <a href="{support_url}" style="color:#22c55e;">hello@wazibothq.com</a></p>
 """
     return _send(
         to=to_email,
@@ -208,4 +206,231 @@ def send_login_link_email(
         to=to_email,
         subject="WaziBot — sign in to your dashboard",
         html=_base_template(f"Sign in — {business_name}", body),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trial lifecycle emails
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_trial_expiry_warning(
+    to_email:      str,
+    business_name: str,
+    days_left:     int,
+) -> bool:
+    """
+    Warning email sent at 7 days, 3 days, and 1 day before trial ends.
+    Called by the scheduled job in growth_service.py.
+    """
+    if days_left <= 1:
+        urgency    = "⚠️ Last day"
+        subject    = f"⚠️ Your WaziBot trial ends tomorrow — don't lose access"
+        headline   = "Your trial ends tomorrow"
+        cta_text   = "Upgrade Now — Keep Everything →"
+        tone       = "Don't let your AI employee go offline. Upgrade today to keep your orders, customers, and automations running."
+    elif days_left <= 3:
+        urgency    = "⏳ 3 days left"
+        subject    = f"3 days left on your WaziBot trial — keep the momentum going"
+        headline   = f"3 days left on your trial"
+        cta_text   = "Choose a Plan →"
+        tone       = "Your business has been running on autopilot. Keep it that way."
+    else:
+        urgency    = "🗓 7 days left"
+        subject    = f"Your WaziBot trial ends in 7 days — here's what to do next"
+        headline   = "7 days left on your free trial"
+        cta_text   = "See Pricing Plans →"
+        tone       = "You've had a full week with WaziBot. Here's how to keep it going."
+
+    pricing_url = f"{_BASE_URL}/static/pricing.html"
+    dash_url    = f"{_BASE_URL}/static/dashboard.html"
+
+    body = f"""
+<h1>{headline} for {business_name}</h1>
+<p>{tone}</p>
+<p>
+  Plans start from <strong style="color:#22c55e;">$5.99/month</strong> — less than a cup of coffee a week.
+  No setup fees. Cancel anytime.
+</p>
+<p><a href="{pricing_url}" class="btn">{cta_text}</a></p>
+<hr class="divider"/>
+<h1 style="font-size:16px;margin-bottom:8px;">What you keep when you upgrade</h1>
+<p>
+  ✅ All your products and prices<br/>
+  ✅ All your customers and order history<br/>
+  ✅ Your WhatsApp automations<br/>
+  ✅ Your public store and QR code<br/>
+  ✅ Your referral earnings
+</p>
+<hr class="divider"/>
+<p style="font-size:12px;">
+  If you choose not to upgrade, your account will switch to read-only mode.
+  Your data is safe — you can upgrade at any time to restore full access.<br/><br/>
+  <a href="{dash_url}" style="color:#22c55e;">Go to your dashboard</a>
+</p>
+"""
+    return _send(
+        to=to_email,
+        subject=subject,
+        html=_base_template(headline, body),
+    )
+
+
+def send_trial_expired(
+    to_email:      str,
+    business_name: str,
+) -> bool:
+    """Sent on the day the trial expires — account moves to read-only."""
+    pricing_url = f"{_BASE_URL}/static/pricing.html"
+    body = f"""
+<h1>Your WaziBot trial has ended</h1>
+<p>Your 30-day free trial for <strong>{business_name}</strong> has ended.</p>
+<p>Your account is now in read-only mode — you can still view your dashboard, customers, and orders,
+   but new orders and AI replies are paused until you upgrade.</p>
+<p><strong style="color:#e8f5e9;">All your data is safe.</strong>
+   Nothing has been deleted. Upgrading restores full access instantly.</p>
+<p><a href="{pricing_url}" class="btn">Choose a Plan — Restore Access →</a></p>
+<hr class="divider"/>
+<p style="font-size:13px;color:#6b8f71;">
+  Plans start from <strong style="color:#22c55e;">$5.99/month</strong>.
+  Cancel anytime. No setup fees.
+</p>
+"""
+    return _send(
+        to=to_email,
+        subject="Your WaziBot trial has ended — restore access",
+        html=_base_template("Trial ended", body),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Subscription lifecycle emails
+# ─────────────────────────────────────────────────────────────────────────────
+
+def send_subscription_confirmed(
+    to_email:      str,
+    business_name: str,
+    plan_name:     str,           # "Starter" | "Growth" | "Enterprise"
+    amount:        str,           # e.g. "$5.99/month"
+    next_billing:  str,           # e.g. "8 August 2026"
+) -> bool:
+    """Confirmation email sent after a successful subscription payment."""
+    dash_url = f"{_BASE_URL}/static/dashboard.html"
+    body = f"""
+<h1>You're subscribed! 🎉</h1>
+<p>Payment confirmed for <strong>{business_name}</strong>.</p>
+<table style="width:100%;border-collapse:collapse;margin:20px 0;">
+  <tr><td style="padding:10px 0;color:#6b8f71;font-size:13px;border-bottom:1px solid #1f3025;">Plan</td>
+      <td style="padding:10px 0;font-size:13px;color:#e8f5e9;text-align:right;border-bottom:1px solid #1f3025;">
+        <strong>{plan_name}</strong></td></tr>
+  <tr><td style="padding:10px 0;color:#6b8f71;font-size:13px;border-bottom:1px solid #1f3025;">Amount</td>
+      <td style="padding:10px 0;font-size:13px;color:#22c55e;text-align:right;border-bottom:1px solid #1f3025;">
+        <strong>{amount}</strong></td></tr>
+  <tr><td style="padding:10px 0;color:#6b8f71;font-size:13px;">Next billing date</td>
+      <td style="padding:10px 0;font-size:13px;color:#e8f5e9;text-align:right;">
+        {next_billing}</td></tr>
+</table>
+<p>All premium features are now active. Your AI employee is back at full capacity.</p>
+<p><a href="{dash_url}" class="btn">Open Dashboard →</a></p>
+<hr class="divider"/>
+<p style="font-size:12px;">
+  You can manage your subscription, view invoices, or cancel anytime from
+  <strong>Settings → Payments → Manage Subscription</strong>.
+</p>
+"""
+    return _send(
+        to=to_email,
+        subject=f"Payment confirmed — {plan_name} plan activated",
+        html=_base_template("Subscription confirmed", body),
+    )
+
+
+def send_payment_failed(
+    to_email:      str,
+    business_name: str,
+    plan_name:     str,
+    amount:        str,
+    retry_date:    str,           # e.g. "3 August 2026"
+) -> bool:
+    """
+    Sent when a recurring subscription payment fails.
+    Stripe retries automatically — this email asks the user to update their card.
+    """
+    manage_url = f"{_BASE_URL}/static/dashboard.html"
+    body = f"""
+<h1>Payment failed for {business_name}</h1>
+<p>We couldn't process your <strong>{plan_name}</strong> subscription payment of
+   <strong style="color:#ef4444;">{amount}</strong>.</p>
+<p>Stripe will automatically retry on <strong>{retry_date}</strong>.
+   To avoid any interruption to your service, please update your payment method now.</p>
+<p><a href="{manage_url}" class="btn" style="background:#ef4444;">Update Payment Method →</a></p>
+<hr class="divider"/>
+<p>To update your card: go to your dashboard → <strong>Settings → Payments → Manage Subscription</strong>.</p>
+<p style="font-size:12px;color:#6b8f71;">
+  If payment continues to fail after retries, your account will move to read-only mode.
+  Your data will not be deleted.
+</p>
+"""
+    return _send(
+        to=to_email,
+        subject=f"⚠️ Payment failed — action required for {business_name}",
+        html=_base_template("Payment failed", body),
+    )
+
+
+def send_subscription_cancelled(
+    to_email:       str,
+    business_name:  str,
+    plan_name:      str,
+    access_ends:    str,          # e.g. "31 August 2026"
+) -> bool:
+    """Confirmation that a subscription has been cancelled (end-of-period)."""
+    pricing_url = f"{_BASE_URL}/static/pricing.html"
+    body = f"""
+<h1>Subscription cancelled</h1>
+<p>Your <strong>{plan_name}</strong> subscription for <strong>{business_name}</strong>
+   has been cancelled.</p>
+<p>You keep full access until <strong style="color:#22c55e;">{access_ends}</strong>.
+   After that, your account moves to read-only mode.</p>
+<p>Changed your mind? You can reactivate anytime — all your data will be exactly as you left it.</p>
+<p><a href="{pricing_url}" class="btn-ghost">Reactivate →</a></p>
+<hr class="divider"/>
+<p style="font-size:12px;color:#6b8f71;">
+  We'd love to know why you cancelled — reply to this email and tell us.
+  Your feedback directly shapes how WaziBot improves.
+</p>
+"""
+    return _send(
+        to=to_email,
+        subject=f"Subscription cancelled — access continues until {access_ends}",
+        html=_base_template("Subscription cancelled", body),
+    )
+
+
+def send_referral_credited(
+    to_email:      str,
+    business_name: str,
+    amount:        str,           # e.g. "$0.20"
+    new_balance:   str,           # e.g. "$2.40"
+    referrals_to_withdraw: int,   # how many more to reach $5
+) -> bool:
+    """Notification when a referral earns a credit."""
+    dash_url = f"{_BASE_URL}/static/dashboard.html#settings-referrals"
+    body = f"""
+<h1>You earned {amount}! 💸</h1>
+<p>Someone signed up using your WaziBot referral link — thank you!</p>
+<table style="width:100%;border-collapse:collapse;margin:20px 0;">
+  <tr><td style="padding:10px 0;color:#6b8f71;font-size:13px;border-bottom:1px solid #1f3025;">Credit earned</td>
+      <td style="padding:10px 0;font-size:13px;color:#22c55e;text-align:right;border-bottom:1px solid #1f3025;">
+        <strong>+{amount}</strong></td></tr>
+  <tr><td style="padding:10px 0;color:#6b8f71;font-size:13px;">Current balance</td>
+      <td style="padding:10px 0;font-size:13px;color:#e8f5e9;text-align:right;">
+        <strong>{new_balance}</strong></td></tr>
+</table>
+{"<p>You can now <strong style='color:#22c55e;'>withdraw your earnings</strong> via PayPal. Minimum withdrawal is $5.00.</p>" if referrals_to_withdraw <= 0 else f"<p>You need <strong style='color:#22c55e;'>{referrals_to_withdraw} more referral{'s' if referrals_to_withdraw != 1 else ''}</strong> to reach the $5.00 withdrawal minimum.</p>"}
+<p><a href="{dash_url}" class="btn">View Referral Earnings →</a></p>
+"""
+    return _send(
+        to=to_email,
+        subject=f"You earned {amount} — referral credit added to your account",
+        html=_base_template("Referral credit", body),
     )

@@ -247,6 +247,64 @@ def billing_analytics(user=Depends(require_business)):
     return get_payment_analytics(user["business_id"])
 
 
+
+# ── Trial expiry warning job ───────────────────────────────────────────────────
+
+@router.post("/billing/trial-warnings")
+def send_trial_warnings(request: Request):
+    """
+    Scheduled endpoint — send trial expiry warning emails.
+    Call daily from Render cron or external scheduler.
+    Protected by CRON_SECRET env var header to prevent abuse.
+    """
+    secret = os.getenv("CRON_SECRET", "")
+    if secret and request.headers.get("x-cron-secret") != secret:
+        raise HTTPException(403, "Forbidden")
+
+    from core.db import supabase
+    from services.email_service import send_trial_expiry_warning, send_trial_expired
+    from datetime import datetime, timezone
+
+    now  = datetime.now(timezone.utc)
+    sent = 0; errors = 0
+
+    try:
+        res = (
+            supabase.table("businesses")
+            .select("id, name, owner_email, trial_ends_at")
+            .eq("billing_status", "trialing")
+            .not_.is_("trial_ends_at", "null")
+            .not_.is_("owner_email",   "null")
+            .execute()
+        )
+    except Exception as exc:
+        log.error("trial-warnings: DB query failed: %s", exc)
+        raise HTTPException(500, "DB error")
+
+    for biz in (res.data or []):
+        try:
+            email   = biz.get("owner_email", "")
+            name    = biz.get("name", "")
+            ends_at = biz.get("trial_ends_at", "")
+            if not email or not ends_at:
+                continue
+            try:
+                exp = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
+            except Exception:
+                continue
+
+            days_left = (exp - now).days
+            if days_left < 0:
+                send_trial_expired(email, name); sent += 1
+            elif days_left in (1, 3, 7):
+                send_trial_expiry_warning(email, name, days_left); sent += 1
+        except Exception as exc:
+            log.warning("trial-warnings: biz=%s err=%s", biz.get("id"), exc)
+            errors += 1
+
+    log.info("trial-warnings: sent=%d errors=%d", sent, errors)
+    return {"ok": True, "sent": sent, "errors": errors}
+
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request):
     """
