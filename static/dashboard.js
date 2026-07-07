@@ -1250,6 +1250,12 @@ async function loadSettings() {
     _setVal('set-contact-phone', b.contact_phone || '');
     _setVal('set-support-email', b.support_email || '');
     _setVal('set-owner-email',   b.owner_email   || '');  // Sprint 8 Fix 5
+
+    // Account & Security panel
+    const usernameEl = document.getElementById('profile-username');
+    if (usernameEl) usernameEl.textContent = b.owner_username || localStorage.getItem('wazi_user') || '—';
+    const secEmailEl = document.getElementById('sec-owner-email');
+    if (secEmailEl) secEmailEl.value = b.owner_email || '';
     _setVal('set-address',       b.address || '');
     _setVal('set-city',          b.city || '');
     _setVal('set-hours',         b.business_hours || '');
@@ -1926,6 +1932,72 @@ async function saveSettings() { toast('Please use the Settings tabs to save.'); 
 // saveBusinessName is now part of saveProfile() above
 async function saveBusinessName() { await saveProfile(); }
 
+// ── Account & Security ─────────────────────────────────────────────────────────
+
+async function saveLoginEmail() {
+  const email  = (document.getElementById('sec-owner-email')?.value || '').trim();
+  const status = document.getElementById('sec-change-status');
+  if (!email || !email.includes('@')) { toast('Enter a valid email address', true); return; }
+  try {
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ owner_email: email }) });
+    toast('✅ Login email updated');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+}
+
+function checkNewPassword() {
+  const pw   = document.getElementById('sec-pass-new')?.value || '';
+  const segs = [1,2,3,4].map(i => document.getElementById('pw-seg' + i));
+  const checks = [pw.length >= 8, /[A-Z]/.test(pw), /[0-9]/.test(pw), /[^A-Za-z0-9]/.test(pw)];
+  const score  = checks.filter(Boolean).length;
+  const colors = ['#ef4444','#f59e0b','#22c55e','#22c55e'];
+  segs.forEach((s, i) => { if (s) s.style.background = i < score ? colors[score-1] : 'var(--border)'; });
+  // Check confirm match
+  const confirm = document.getElementById('sec-pass-confirm')?.value || '';
+  const matchEl = document.getElementById('sec-pass-match');
+  if (matchEl && confirm) {
+    matchEl.textContent = pw === confirm ? '✓ Passwords match' : '✗ Passwords do not match';
+    matchEl.style.color = pw === confirm ? 'var(--green)' : '#ef4444';
+  }
+}
+
+async function changePassword() {
+  const current = document.getElementById('sec-pass-current')?.value || '';
+  const newPw   = document.getElementById('sec-pass-new')?.value || '';
+  const confirm = document.getElementById('sec-pass-confirm')?.value || '';
+  const statusEl= document.getElementById('sec-change-status');
+
+  if (!current)              { toast('Enter your current password', true); return; }
+  if (newPw.length < 8)      { toast('New password must be at least 8 characters', true); return; }
+  if (!/[A-Z]/.test(newPw))  { toast('New password needs an uppercase letter', true); return; }
+  if (!/[0-9]/.test(newPw))  { toast('New password needs a number', true); return; }
+  if (newPw !== confirm)     { toast('New passwords do not match', true); return; }
+  if (newPw === current)     { toast('New password must be different from current', true); return; }
+
+  const btn = document.querySelector('[onclick="changePassword()"]');
+  try {
+    setLoading(btn, true);
+    if (statusEl) statusEl.textContent = '';
+    await apiFetch('/auth/change-password', {
+      method: 'POST',
+      body:   JSON.stringify({ current_password: current, new_password: newPw })
+    });
+    // Clear fields on success
+    ['sec-pass-current','sec-pass-new','sec-pass-confirm'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    [1,2,3,4].forEach(i => {
+      const s = document.getElementById('pw-seg' + i);
+      if (s) s.style.background = 'var(--border)';
+    });
+    if (statusEl) { statusEl.textContent = '✅ Password updated successfully.'; statusEl.style.color = 'var(--green)'; }
+    toast('✅ Password updated');
+  } catch(e) {
+    if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#ef4444'; }
+    toast('Failed: ' + e.message, true);
+  }
+  finally { setLoading(btn, false); }
+}
+
 function setTheme(theme, silent=false) {
   if (theme === 'light') {
     document.body.classList.add('light');
@@ -2009,6 +2081,370 @@ function checkPendingCheckout() {
       console.warn('H4: pending checkout redirect failed:', e);
     }
   }, 1500);
+}
+
+// ── User Profile Management ───────────────────────────────────────────────────
+
+let _upData = null;       // cached profile data
+let _upUsernameTimer = null;
+
+// ── Load & render ─────────────────────────────────────────────────────────────
+async function loadUserProfile() {
+  if (_upData) { _upRender(_upData); return; }
+  try {
+    const data = await apiFetch('/me');
+    if (!data) return;
+    _upData = data;
+    _upRender(data);
+  } catch(e) {
+    console.warn('[profile] load failed:', e.message);
+  }
+}
+
+function _upRender(data) {
+  const p  = data.user_profile || {};
+  const up = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+  const ut = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt || '—'; };
+
+  // Profile fields
+  up('up-owner-name',    p.owner_name   || '');
+  up('up-display-name',  p.display_name || '');
+  up('up-email',         data.owner_email || '');
+  up('up-phone',         p.phone        || '');
+  up('up-biz-name',      data.name      || '');
+  up('up-bio',           p.bio          || '');
+
+  // Selects
+  _upSetSelect('up-country',     p.country   || '');
+  _upSetSelect('up-timezone',    p.timezone  || 'Africa/Harare');
+  _upSetSelect('up-language',    p.language  || 'en');
+  _upSetSelect('up-date-format', p.date_format || 'DD/MM/YYYY');
+
+  // Currency (read-only display from features_json)
+  const currEl = document.getElementById('up-currency-display');
+  if (currEl) currEl.value = (data.features_json || {}).currency || data.currency_symbol || 'USD';
+
+  // Avatar
+  _upSetAvatar(p.avatar_url, p.owner_name || p.display_name || data.owner_username || 'W');
+
+  // Name above avatar
+  const nameEl = document.getElementById('up-avatar-name');
+  if (nameEl) nameEl.textContent = p.display_name || p.owner_name || data.owner_username || '';
+
+  // Account info (read-only)
+  ut('up-info-bid',      data.id);
+  ut('up-info-username', '@' + (data.owner_username || ''));
+  ut('up-info-created',  data.created_at ? new Date(data.created_at).toLocaleDateString() : '—');
+  ut('up-info-plan',     (data.subscription_tier || 'trial').charAt(0).toUpperCase() + (data.subscription_tier || 'trial').slice(1));
+  ut('up-info-billing',  data.billing_status || '—');
+  ut('up-info-role',     data.is_superadmin ? 'Super Admin' : 'Business Owner');
+
+  // Trial status
+  const trialEnds = data.trial_ends_at;
+  if (trialEnds) {
+    const days = Math.max(0, Math.ceil((new Date(trialEnds) - Date.now()) / 86400000));
+    ut('up-info-trial', days > 0 ? `${days} days remaining` : 'Trial ended');
+  } else {
+    ut('up-info-trial', data.billing_status === 'active' ? 'Subscribed' : '—');
+  }
+
+  // Preferences
+  const prefs = p.prefs || {};
+  const _setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val !== false; };
+  _setChk('pref-dark-mode',            prefs.dark_mode);
+  _setChk('pref-email-notifications',  prefs.email_notifications);
+  _setChk('pref-wa-notifications',     prefs.wa_notifications);
+  _setChk('pref-marketing-emails',     prefs.marketing_emails !== undefined ? prefs.marketing_emails : false);
+  _setChk('pref-weekly-reports',       prefs.weekly_reports);
+  _setChk('pref-system-alerts',        prefs.system_alerts);
+}
+
+function _upSetSelect(id, val) {
+  const el = document.getElementById(id);
+  if (!el || !val) return;
+  const opt = Array.from(el.options).find(o => o.value === val);
+  if (opt) el.value = val;
+}
+
+function _upSetAvatar(url, name) {
+  const img      = document.getElementById('up-avatar-img');
+  const initials = document.getElementById('up-avatar-initials');
+  const removeBtn= document.getElementById('up-avatar-remove-btn');
+  if (url && img) {
+    img.src = url;
+    img.style.display = 'block';
+    if (initials) initials.style.display = 'none';
+    if (removeBtn) removeBtn.style.display = 'inline-flex';
+  } else {
+    if (img) img.style.display = 'none';
+    if (initials) {
+      initials.style.display = '';
+      initials.textContent = (name || 'W')[0].toUpperCase();
+    }
+    if (removeBtn) removeBtn.style.display = 'none';
+  }
+}
+
+// ── Save profile ──────────────────────────────────────────────────────────────
+async function saveUserProfile() {
+  const btn    = document.getElementById('up-save-btn');
+  const status = document.getElementById('up-profile-status');
+  _upSetStatus(status, 'Saving…', 'saving');
+  btn.disabled = true;
+
+  const payload = {
+    owner_name:   document.getElementById('up-owner-name')?.value.trim()   || null,
+    display_name: document.getElementById('up-display-name')?.value.trim() || null,
+    user_phone:   document.getElementById('up-phone')?.value.trim()        || null,
+    bio:          document.getElementById('up-bio')?.value.trim()          || null,
+    country:      document.getElementById('up-country')?.value             || null,
+    timezone:     document.getElementById('up-timezone')?.value            || null,
+    language:     document.getElementById('up-language')?.value            || null,
+    date_format:  document.getElementById('up-date-format')?.value         || null,
+  };
+
+  // Also save email via existing saveLoginEmail pattern
+  const email = document.getElementById('up-email')?.value.trim();
+
+  try {
+    const res = await apiFetch('/me/user-profile', { method: 'PATCH', body: JSON.stringify(payload) });
+    if (!res || res.error) throw new Error(res?.error || 'Save failed');
+
+    // Save email separately via PATCH /me
+    if (email) {
+      await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ owner_email: email }) });
+    }
+
+    _upData = null; // invalidate cache
+    _upSetStatus(status, '✓ Profile updated successfully', 'ok');
+    toast('Profile updated');
+    setTimeout(() => _upSetStatus(status, '', ''), 3000);
+  } catch(e) {
+    _upSetStatus(status, '✗ ' + (e.message || 'Save failed'), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Save preferences ─────────────────────────────────────────────────────────
+async function saveUserPreferences() {
+  const btn    = document.getElementById('up-prefs-btn');
+  const status = document.getElementById('up-prefs-status');
+  _upSetStatus(status, 'Saving…', 'saving');
+  btn.disabled = true;
+
+  const payload = {
+    pref_dark_mode:            document.getElementById('pref-dark-mode')?.checked           ?? true,
+    pref_email_notifications:  document.getElementById('pref-email-notifications')?.checked ?? true,
+    pref_wa_notifications:     document.getElementById('pref-wa-notifications')?.checked    ?? true,
+    pref_marketing_emails:     document.getElementById('pref-marketing-emails')?.checked    ?? false,
+    pref_weekly_reports:       document.getElementById('pref-weekly-reports')?.checked      ?? true,
+    pref_system_alerts:        document.getElementById('pref-system-alerts')?.checked       ?? true,
+  };
+
+  try {
+    const res = await apiFetch('/me/user-profile', { method: 'PATCH', body: JSON.stringify(payload) });
+    if (!res || res.error) throw new Error(res?.error || 'Save failed');
+    _upData = null;
+    _upSetStatus(status, '✓ Preferences saved', 'ok');
+    toast('Preferences saved');
+    setTimeout(() => _upSetStatus(status, '', ''), 3000);
+  } catch(e) {
+    _upSetStatus(status, '✗ ' + (e.message || 'Save failed'), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function upPrefChanged() {
+  // Auto-save prefs on toggle change (debounced)
+  clearTimeout(window._upPrefTimer);
+  window._upPrefTimer = setTimeout(saveUserPreferences, 800);
+}
+
+// ── Username change ───────────────────────────────────────────────────────────
+let _upUsernameAvailable = false;
+
+async function checkUsernameAvailability(val) {
+  clearTimeout(_upUsernameTimer);
+  const check = document.getElementById('up-username-check');
+  const msg   = document.getElementById('up-username-msg');
+  if (!val || val.length < 3) {
+    if (check) check.textContent = '';
+    if (msg)   msg.textContent = '';
+    _upUsernameAvailable = false;
+    return;
+  }
+  if (check) { check.textContent = '…'; check.style.color = 'var(--text-dim)'; }
+  _upUsernameTimer = setTimeout(async () => {
+    try {
+      const res = await apiFetch('/me/check-username', { method: 'POST', body: JSON.stringify({ username: val.trim().toLowerCase() }) });
+      if (res.available) {
+        check.textContent = '✓ Available';
+        check.style.color = 'var(--green)';
+        if (msg) { msg.textContent = ''; }
+        _upUsernameAvailable = true;
+      } else {
+        check.textContent = '✗';
+        check.style.color = 'var(--red,#ef4444)';
+        if (msg) { msg.textContent = res.reason || 'Username already in use'; msg.style.color = 'var(--red,#ef4444)'; }
+        _upUsernameAvailable = false;
+      }
+    } catch(e) { if (check) check.textContent = ''; }
+  }, 500);
+}
+
+async function saveUsername() {
+  const newUser = document.getElementById('up-new-username')?.value.trim().toLowerCase();
+  const curPass = document.getElementById('up-username-current-pass')?.value;
+  const btn     = document.getElementById('up-username-btn');
+  const status  = document.getElementById('up-username-status');
+
+  if (!newUser) { _upSetStatus(status, 'Enter a new username', 'err'); return; }
+  if (!_upUsernameAvailable) { _upSetStatus(status, 'Username not available', 'err'); return; }
+  if (!curPass) { _upSetStatus(status, 'Enter your current password to confirm', 'err'); return; }
+
+  btn.disabled = true;
+  _upSetStatus(status, 'Saving…', 'saving');
+  try {
+    const res = await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ owner_username: newUser, current_password: curPass }) });
+    if (!res || res.error) throw new Error(res?.detail || res?.error || 'Update failed');
+    _upData = null;
+    _upSetStatus(status, '✓ Username updated', 'ok');
+    toast('Username updated to @' + newUser);
+    document.getElementById('up-new-username').value = '';
+    document.getElementById('up-username-current-pass').value = '';
+    setTimeout(() => _upSetStatus(status, '', ''), 3000);
+  } catch(e) {
+    _upSetStatus(status, '✗ ' + (e.message || 'Update failed'), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Password change ───────────────────────────────────────────────────────────
+function upCheckPwStrength(pw) {
+  const checks = {
+    'up-req-len':   pw.length >= 8,
+    'up-req-upper': /[A-Z]/.test(pw),
+    'up-req-lower': /[a-z]/.test(pw),
+    'up-req-num':   /[0-9]/.test(pw),
+  };
+  let score = 0;
+  Object.entries(checks).forEach(([id, met]) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('met', met);
+    if (met) score++;
+  });
+  const colors = ['','#ef4444','#f59e0b','#f59e0b','#22c55e'];
+  const labels = ['','Weak','Fair','Good','Strong'];
+  for (let i = 1; i <= 4; i++) {
+    const seg = document.getElementById('up-pw-s' + i);
+    if (seg) seg.style.background = i <= score ? colors[score] : 'var(--border)';
+  }
+  const lbl = document.getElementById('up-pw-strength-label');
+  if (lbl) { lbl.textContent = pw ? labels[score] : ''; lbl.style.color = colors[score] || 'var(--text-dim)'; }
+  upCheckPwMatch();
+}
+
+function upCheckPwMatch() {
+  const pw  = document.getElementById('up-pass-new')?.value    || '';
+  const cpw = document.getElementById('up-pass-confirm')?.value || '';
+  const msg = document.getElementById('up-pass-match-msg');
+  if (!msg) return;
+  if (!cpw) { msg.textContent = ''; return; }
+  if (pw === cpw) { msg.textContent = '✓ Passwords match'; msg.style.color = 'var(--green)'; }
+  else            { msg.textContent = '✗ Passwords do not match'; msg.style.color = 'var(--red,#ef4444)'; }
+}
+
+async function upChangePassword() {
+  const cur    = document.getElementById('up-pass-current')?.value;
+  const nw     = document.getElementById('up-pass-new')?.value;
+  const conf   = document.getElementById('up-pass-confirm')?.value;
+  const btn    = document.getElementById('up-pw-btn');
+  const status = document.getElementById('up-pw-status');
+
+  if (!cur)             { _upSetStatus(status, 'Enter your current password', 'err'); return; }
+  if (!nw || nw.length < 8) { _upSetStatus(status, 'New password must be at least 8 characters', 'err'); return; }
+  if (nw !== conf)      { _upSetStatus(status, 'Passwords do not match', 'err'); return; }
+
+  btn.disabled = true;
+  _upSetStatus(status, 'Saving…', 'saving');
+  try {
+    const res = await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ current_password: cur, owner_password: nw }) });
+    if (!res || res.error) throw new Error(res?.detail || res?.error || 'Update failed');
+    _upData = null;
+    _upSetStatus(status, '✓ Password updated successfully', 'ok');
+    toast('Password updated');
+    ['up-pass-current','up-pass-new','up-pass-confirm'].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = '';
+    });
+    setTimeout(() => _upSetStatus(status, '', ''), 4000);
+  } catch(e) {
+    _upSetStatus(status, '✗ ' + (e.message || 'Update failed'), 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Avatar ────────────────────────────────────────────────────────────────────
+async function uploadAvatar(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const status = document.getElementById('up-profile-status');
+  _upSetStatus(status, 'Uploading…', 'saving');
+
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const token = localStorage.getItem('wazi_token') || '';
+    const resp = await fetch('/me/upload-avatar', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + token },
+      body: form,
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.avatar_url) throw new Error(data.detail || 'Upload failed');
+    _upSetAvatar(data.avatar_url, '');
+    if (_upData) { (_upData.user_profile = _upData.user_profile || {}).avatar_url = data.avatar_url; }
+    _upSetStatus(status, '✓ Photo updated', 'ok');
+    toast('Profile photo updated');
+    setTimeout(() => _upSetStatus(status, '', ''), 3000);
+  } catch(e) {
+    _upSetStatus(status, '✗ ' + (e.message || 'Upload failed'), 'err');
+  } finally {
+    input.value = '';
+  }
+}
+
+async function removeAvatar() {
+  const status = document.getElementById('up-profile-status');
+  _upSetStatus(status, 'Removing…', 'saving');
+  try {
+    await apiFetch('/me/user-profile', { method: 'PATCH', body: JSON.stringify({ avatar_url: '' }) });
+    _upSetAvatar('', (_upData?.user_profile?.owner_name || 'W'));
+    if (_upData?.user_profile) _upData.user_profile.avatar_url = '';
+    _upSetStatus(status, '✓ Photo removed', 'ok');
+    toast('Profile photo removed');
+    setTimeout(() => _upSetStatus(status, '', ''), 3000);
+  } catch(e) {
+    _upSetStatus(status, '✗ ' + e.message, 'err');
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function togglePwVis(inputId, btn) {
+  const inp = document.getElementById(inputId);
+  if (!inp) return;
+  const isHidden = inp.type === 'password';
+  inp.type = isHidden ? 'text' : 'password';
+  if (btn) btn.textContent = isHidden ? '🙈' : '👁';
+}
+
+function _upSetStatus(el, msg, type) {
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'up-status-' + (type || 'ok');
 }
 
 // ── Customer Acquisition Analytics ───────────────────────────────────────────

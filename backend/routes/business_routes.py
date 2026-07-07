@@ -93,6 +93,27 @@ def get_me(user=Depends(require_business)):
     b.setdefault("owner_email",        None)
     b.setdefault("contact_phone",      None)
     b.setdefault("use_shared_number",  False)
+    # User profile fields — stored in features_json to avoid schema migration
+    fj = b.get("features_json") or {}
+    b["user_profile"] = {
+        "owner_name":     fj.get("owner_name",     ""),
+        "display_name":   fj.get("display_name",   ""),
+        "phone":          fj.get("user_phone",     ""),
+        "bio":            fj.get("bio",            ""),
+        "timezone":       fj.get("timezone",       "Africa/Harare"),
+        "language":       fj.get("language",       "en"),
+        "country":        fj.get("country",        ""),
+        "date_format":    fj.get("date_format",    "DD/MM/YYYY"),
+        "avatar_url":     fj.get("avatar_url",     ""),
+        "prefs": {
+            "dark_mode":           fj.get("pref_dark_mode",          True),
+            "email_notifications": fj.get("pref_email_notifications", True),
+            "wa_notifications":    fj.get("pref_wa_notifications",    True),
+            "marketing_emails":    fj.get("pref_marketing_emails",    False),
+            "weekly_reports":      fj.get("pref_weekly_reports",      True),
+            "system_alerts":       fj.get("pref_system_alerts",       True),
+        },
+    }
     b.setdefault("ecocash_number",     None)
     b.setdefault("paypal_email",       None)
     b.setdefault("cash_enabled",       False)
@@ -280,6 +301,151 @@ def get_stripe_settings(user=Depends(require_business)):
         # Return masked pub key (safe to expose)
         "pub_key": stripe_cfg.get("pub_key", ""),
     }
+
+
+# ── User Profile endpoints ────────────────────────────────────────────────────
+
+class UserProfileUpdate(BaseModel):
+    owner_name:             Optional[str]  = None
+    display_name:           Optional[str]  = None
+    user_phone:             Optional[str]  = None
+    bio:                    Optional[str]  = None
+    timezone:               Optional[str]  = None
+    language:               Optional[str]  = None
+    country:                Optional[str]  = None
+    date_format:            Optional[str]  = None
+    avatar_url:             Optional[str]  = None
+    # Preferences
+    pref_dark_mode:           Optional[bool] = None
+    pref_email_notifications: Optional[bool] = None
+    pref_wa_notifications:    Optional[bool] = None
+    pref_marketing_emails:    Optional[bool] = None
+    pref_weekly_reports:      Optional[bool] = None
+    pref_system_alerts:       Optional[bool] = None
+
+
+@router.patch("/me/user-profile")
+def update_user_profile(data: UserProfileUpdate, user=Depends(require_business)):
+    """
+    Save user profile fields (personal info + preferences) into features_json.
+    No schema migration needed — all stored as features_json keys.
+    """
+    bid = user["business_id"]
+    b   = crud.get_business_by_id(bid)
+    if not b:
+        raise HTTPException(404, "Business not found")
+
+    existing_fj = b.get("features_json") or {}
+    updates = {}
+
+    field_map = {
+        "owner_name": "owner_name", "display_name": "display_name",
+        "user_phone": "user_phone", "bio": "bio", "timezone": "timezone",
+        "language": "language", "country": "country", "date_format": "date_format",
+        "avatar_url": "avatar_url",
+        "pref_dark_mode": "pref_dark_mode",
+        "pref_email_notifications": "pref_email_notifications",
+        "pref_wa_notifications": "pref_wa_notifications",
+        "pref_marketing_emails": "pref_marketing_emails",
+        "pref_weekly_reports": "pref_weekly_reports",
+        "pref_system_alerts": "pref_system_alerts",
+    }
+
+    for field, fj_key in field_map.items():
+        val = getattr(data, field, None)
+        if val is not None:
+            updates[fj_key] = val
+
+    if not updates:
+        return {"ok": True, "message": "Nothing to update"}
+
+    new_fj = {**existing_fj, **updates}
+
+    class _D:
+        def dict(self, **_): return {"features_json": new_fj}
+
+    result = crud.update_business(bid, _D())
+    if not result:
+        raise HTTPException(500, "Failed to save profile")
+    return {"ok": True, "message": "Profile updated"}
+
+
+@router.post("/me/check-username")
+def check_username_availability(body: dict, user=Depends(require_business)):
+    """Check if a username is available before attempting a change."""
+    username = (body.get("username") or "").strip().lower()
+    if not username:
+        raise HTTPException(400, "Username required")
+    if len(username) < 3:
+        return {"available": False, "reason": "At least 3 characters required"}
+    import re
+    if not re.match(r"^[a-z0-9_]+$", username):
+        return {"available": False, "reason": "Only letters, numbers and underscores allowed"}
+
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("id")
+            .eq("owner_username", username)
+            .neq("id", user["business_id"])
+            .limit(1)
+            .execute()
+        )
+        taken = bool(res.data)
+        return {
+            "available": not taken,
+            "reason": "Username already in use" if taken else "",
+        }
+    except Exception as exc:
+        log.error("check-username error: %s", exc)
+        raise HTTPException(500, "Could not check username")
+
+
+@router.post("/me/upload-avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    user=Depends(require_business),
+):
+    """Upload a profile avatar. Reuses the same Supabase Storage pattern as product images."""
+    bid = user["business_id"]
+    allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    ct = file.content_type or "image/jpeg"
+    if ct not in allowed:
+        raise HTTPException(400, f"File type {ct} not supported. Use JPEG, PNG, or WebP.")
+
+    import uuid as _uuid
+    from core.db import supabase
+    import os as _os
+
+    data  = await file.read()
+    if len(data) > 3 * 1024 * 1024:
+        raise HTTPException(400, "File too large. Maximum 3 MB.")
+
+    ext       = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(ct, "jpg")
+    safe_name = f"avatars/{bid}_{_uuid.uuid4().hex[:8]}.{ext}"
+
+    supabase_url = _os.getenv("SUPABASE_URL", "")
+    try:
+        supabase.storage.from_("product-images").upload(
+            safe_name, data, {"content-type": ct, "upsert": "true"}
+        )
+    except Exception as exc:
+        log.error("avatar upload error: %s", exc)
+        raise HTTPException(500, "Avatar upload failed")
+
+    public_url = f"{supabase_url}/storage/v1/object/public/product-images/{safe_name}"
+
+    # Save to features_json
+    b  = crud.get_business_by_id(bid) or {}
+    fj = {**(b.get("features_json") or {}), "avatar_url": public_url}
+
+    class _D:
+        def dict(self, **_): return {"features_json": fj}
+    crud.update_business(bid, _D())
+
+    log.info("avatar uploaded  biz=%s  path=%s", bid, safe_name)
+    return {"ok": True, "avatar_url": public_url}
 
 
 @router.get("/me/payment")

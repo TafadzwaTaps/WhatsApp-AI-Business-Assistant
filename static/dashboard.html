@@ -1142,6 +1142,7 @@
     <!-- Settings tabs -->
     <div class="settings-tabs" id="settings-tabs">
       <button class="stab active" data-tab="profile"   onclick="switchSettingsTab('profile',this)">👤 Profile</button>
+      <button class="stab"         data-tab="my-profile" onclick="switchSettingsTab('my-profile',this);loadUserProfile()">🧑 My Profile</button>
       <button class="stab"         data-tab="payments"  onclick="switchSettingsTab('payments',this)">💳 Payments</button>
       <button class="stab"         data-tab="delivery"  onclick="switchSettingsTab('delivery',this)">🚚 Delivery</button>
       <button class="stab"         data-tab="ai"        onclick="switchSettingsTab('ai',this)">🤖 AI</button>
@@ -1279,6 +1280,61 @@
             </div>
           </div>
         </div>
+        <!-- Account & Security panel -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">🔐 Account &amp; Security</div></div>
+          <div class="panel-body">
+
+            <!-- Username (read-only) -->
+            <div class="form-group" style="margin-bottom:16px;">
+              <label>Username <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(cannot be changed)</span></label>
+              <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                          padding:10px 14px;font-family:var(--mono);font-size:13px;color:var(--text-dim);
+                          display:flex;align-items:center;gap:8px;">
+                <span style="color:var(--text-dim);">@</span>
+                <span id="profile-username" style="color:var(--text);">—</span>
+              </div>
+            </div>
+
+            <!-- Login email -->
+            <div class="form-group" style="margin-bottom:20px;">
+              <label>Login Email</label>
+              <input type="email" id="sec-owner-email" placeholder="yourname@example.com" autocomplete="email"/>
+              <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:4px;line-height:1.5;">
+                Used for login recovery, trial reminders, and account notifications.
+              </div>
+            </div>
+            <button class="btn btn-primary" onclick="saveLoginEmail()" style="margin-bottom:24px;">Save Email</button>
+
+            <hr style="border:none;border-top:1px solid var(--border);margin:0 0 20px;"/>
+
+            <!-- Change password -->
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:14px;">Change Password</div>
+            <div class="form-group">
+              <label>Current Password</label>
+              <input type="password" id="sec-pass-current" placeholder="••••••••" autocomplete="current-password"/>
+            </div>
+            <div class="form-group">
+              <label>New Password <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(min 8 chars, 1 upper, 1 number)</span></label>
+              <input type="password" id="sec-pass-new" placeholder="••••••••" autocomplete="new-password" oninput="checkNewPassword()"/>
+              <!-- Strength bar -->
+              <div style="display:flex;gap:3px;margin-top:6px;height:3px;">
+                <div class="pw-seg" id="pw-seg1" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+                <div class="pw-seg" id="pw-seg2" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+                <div class="pw-seg" id="pw-seg3" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+                <div class="pw-seg" id="pw-seg4" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:20px;">
+              <label>Confirm New Password</label>
+              <input type="password" id="sec-pass-confirm" placeholder="••••••••" autocomplete="new-password"/>
+              <div id="sec-pass-match" style="font-size:10px;font-family:var(--mono);margin-top:4px;min-height:14px;"></div>
+            </div>
+            <button class="btn btn-primary" onclick="changePassword()">Update Password</button>
+            <div id="sec-change-status" style="font-size:11px;font-family:var(--mono);margin-top:10px;min-height:16px;"></div>
+          </div>
+        </div>
+
         <!-- WhatsApp status (read-only — managed by platform) -->
         <div class="panel">
           <div class="panel-header"><div class="panel-title">WhatsApp Status</div></div>
@@ -1299,6 +1355,317 @@
         </div>
       </div>
     </div>
+
+
+    <!-- ── MY PROFILE TAB ──────────────────────────────────── -->
+    <div class="stab-content" id="stab-my-profile">
+      <div class="panels">
+
+        <!-- ── Profile Information ─────────────────────────── -->
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">🧑 Profile Information</div>
+            <div id="up-save-indicator" style="font-size:11px;font-family:var(--mono);color:var(--text-dim);"></div>
+          </div>
+          <div class="panel-body">
+
+            <!-- Avatar -->
+            <div style="display:flex;align-items:center;gap:18px;margin-bottom:22px;flex-wrap:wrap;">
+              <div style="position:relative;flex-shrink:0;">
+                <div id="up-avatar-display" style="width:72px;height:72px;border-radius:16px;
+                     background:var(--green);color:#000;font-size:28px;font-weight:800;
+                     display:flex;align-items:center;justify-content:center;overflow:hidden;
+                     border:2px solid var(--border);cursor:pointer;" onclick="document.getElementById('up-avatar-input').click()">
+                  <span id="up-avatar-initials">W</span>
+                  <img id="up-avatar-img" src="" alt="" style="display:none;width:100%;height:100%;object-fit:cover;"/>
+                </div>
+                <div style="position:absolute;bottom:-4px;right:-4px;background:var(--surface);
+                     border:1px solid var(--border);border-radius:50%;width:22px;height:22px;
+                     display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer;"
+                     onclick="document.getElementById('up-avatar-input').click()">✏️</div>
+              </div>
+              <div>
+                <div style="font-size:13px;font-weight:700;margin-bottom:4px;" id="up-avatar-name">Your Name</div>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;"
+                          onclick="document.getElementById('up-avatar-input').click()">📷 Upload photo</button>
+                  <button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;color:var(--red,#ef4444);"
+                          id="up-avatar-remove-btn" onclick="removeAvatar()" style="display:none;">Remove</button>
+                </div>
+                <div style="font-size:10px;color:var(--text-dim);font-family:var(--mono);margin-top:4px;">
+                  JPG, PNG or WebP · max 3 MB
+                </div>
+              </div>
+              <input type="file" id="up-avatar-input" accept="image/jpeg,image/png,image/webp"
+                     style="display:none;" onchange="uploadAvatar(this)"/>
+            </div>
+
+            <!-- Personal fields -->
+            <div class="form-row">
+              <div class="form-group">
+                <label>Owner / Full Name</label>
+                <input type="text" id="up-owner-name" placeholder="e.g. Tapera Muza" autocomplete="name"/>
+              </div>
+              <div class="form-group">
+                <label>Display Name <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(shown on dashboard)</span></label>
+                <input type="text" id="up-display-name" placeholder="e.g. Taffie"/>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Email Address</label>
+                <input type="email" id="up-email" placeholder="you@example.com" autocomplete="email"/>
+              </div>
+              <div class="form-group">
+                <label>Phone Number</label>
+                <input type="tel" id="up-phone" placeholder="+263 71 234 5678" autocomplete="tel"/>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Business Name</label>
+                <input type="text" id="up-biz-name" placeholder="e.g. Flavoury Foods"/>
+              </div>
+              <div class="form-group">
+                <label>Country</label>
+                <select id="up-country">
+                  <option value="">Select country…</option>
+                  <option value="ZW">Zimbabwe</option>
+                  <option value="ZA">South Africa</option>
+                  <option value="KE">Kenya</option>
+                  <option value="NG">Nigeria</option>
+                  <option value="GH">Ghana</option>
+                  <option value="UG">Uganda</option>
+                  <option value="TZ">Tanzania</option>
+                  <option value="ZM">Zambia</option>
+                  <option value="PL">Poland</option>
+                  <option value="GB">United Kingdom</option>
+                  <option value="US">United States</option>
+                  <option value="IN">India</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Timezone</label>
+                <select id="up-timezone">
+                  <option value="Africa/Harare">Africa/Harare (CAT UTC+2)</option>
+                  <option value="Africa/Johannesburg">Africa/Johannesburg (SAST UTC+2)</option>
+                  <option value="Africa/Nairobi">Africa/Nairobi (EAT UTC+3)</option>
+                  <option value="Africa/Lagos">Africa/Lagos (WAT UTC+1)</option>
+                  <option value="Africa/Accra">Africa/Accra (GMT UTC+0)</option>
+                  <option value="Europe/Warsaw">Europe/Warsaw (CET UTC+1)</option>
+                  <option value="Europe/London">Europe/London (GMT/BST)</option>
+                  <option value="America/New_York">America/New_York (EST UTC-5)</option>
+                  <option value="America/Chicago">America/Chicago (CST UTC-6)</option>
+                  <option value="Asia/Kolkata">Asia/Kolkata (IST UTC+5:30)</option>
+                  <option value="UTC">UTC</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Language <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(multilingual coming soon)</span></label>
+                <select id="up-language">
+                  <option value="en">English</option>
+                  <option value="sn">Shona</option>
+                  <option value="nd">Ndebele</option>
+                  <option value="sw">Swahili</option>
+                  <option value="fr">French</option>
+                  <option value="pt">Portuguese</option>
+                  <option value="pl">Polish</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Bio / Short Description <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(optional — shown on store)</span></label>
+              <textarea id="up-bio" rows="2" placeholder="Tell customers a bit about yourself or your business…" style="resize:vertical;"></textarea>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveUserProfile()" id="up-save-btn">Save Profile</button>
+            <div id="up-profile-status" style="font-size:11px;font-family:var(--mono);margin-top:10px;min-height:16px;"></div>
+          </div>
+        </div>
+
+        <!-- ── Security Section ─────────────────────────────── -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">🔒 Security</div></div>
+          <div class="panel-body">
+
+            <!-- Username change -->
+            <div style="margin-bottom:22px;">
+              <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px;">Change Username</div>
+              <div class="form-group">
+                <label>New Username</label>
+                <div style="position:relative;">
+                  <input type="text" id="up-new-username" placeholder="new_username"
+                         autocomplete="username" autocapitalize="none"
+                         oninput="checkUsernameAvailability(this.value)"
+                         style="padding-right:90px;"/>
+                  <span id="up-username-check" style="position:absolute;right:12px;top:50%;
+                        transform:translateY(-50%);font-size:10px;font-family:var(--mono);"></span>
+                </div>
+                <div id="up-username-msg" style="font-size:10px;font-family:var(--mono);margin-top:4px;min-height:14px;"></div>
+              </div>
+              <div class="form-group">
+                <label>Current Password <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(required to change username)</span></label>
+                <div style="position:relative;">
+                  <input type="password" id="up-username-current-pass" placeholder="••••••••"
+                         style="padding-right:40px;" autocomplete="current-password"/>
+                  <button type="button" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);
+                          background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-dim);"
+                          onclick="togglePwVis('up-username-current-pass',this)">👁</button>
+                </div>
+              </div>
+              <button class="btn btn-primary" onclick="saveUsername()" id="up-username-btn">Update Username</button>
+              <div id="up-username-status" style="font-size:11px;font-family:var(--mono);margin-top:8px;min-height:14px;"></div>
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--border);margin:0 0 20px;"/>
+
+            <!-- Password change -->
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:12px;">Change Password</div>
+            <div class="form-group">
+              <label>Current Password</label>
+              <div style="position:relative;">
+                <input type="password" id="up-pass-current" placeholder="••••••••"
+                       style="padding-right:40px;" autocomplete="current-password"/>
+                <button type="button" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);
+                        background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-dim);"
+                        onclick="togglePwVis('up-pass-current',this)">👁</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>New Password</label>
+              <div style="position:relative;">
+                <input type="password" id="up-pass-new" placeholder="Min 8 chars, 1 upper, 1 number"
+                       style="padding-right:40px;" autocomplete="new-password"
+                       oninput="upCheckPwStrength(this.value)"/>
+                <button type="button" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);
+                        background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-dim);"
+                        onclick="togglePwVis('up-pass-new',this)">👁</button>
+              </div>
+              <!-- Strength bar -->
+              <div style="display:flex;gap:3px;margin-top:6px;height:4px;">
+                <div id="up-pw-s1" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+                <div id="up-pw-s2" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+                <div id="up-pw-s3" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+                <div id="up-pw-s4" style="flex:1;border-radius:2px;background:var(--border);transition:background .2s;"></div>
+              </div>
+              <div id="up-pw-strength-label" style="font-size:10px;font-family:var(--mono);color:var(--text-dim);margin-top:4px;min-height:14px;"></div>
+              <!-- Requirements -->
+              <div style="margin-top:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:4px;">
+                <div class="up-req" id="up-req-len">At least 8 characters</div>
+                <div class="up-req" id="up-req-upper">Uppercase letter (A–Z)</div>
+                <div class="up-req" id="up-req-lower">Lowercase letter (a–z)</div>
+                <div class="up-req" id="up-req-num">Number (0–9)</div>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:20px;">
+              <label>Confirm New Password</label>
+              <div style="position:relative;">
+                <input type="password" id="up-pass-confirm" placeholder="••••••••"
+                       style="padding-right:40px;" autocomplete="new-password"
+                       oninput="upCheckPwMatch()"/>
+                <button type="button" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);
+                        background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-dim);"
+                        onclick="togglePwVis('up-pass-confirm',this)">👁</button>
+              </div>
+              <div id="up-pass-match-msg" style="font-size:10px;font-family:var(--mono);margin-top:4px;min-height:14px;"></div>
+            </div>
+            <button class="btn btn-primary" onclick="upChangePassword()" id="up-pw-btn">Update Password</button>
+            <div id="up-pw-status" style="font-size:11px;font-family:var(--mono);margin-top:10px;min-height:16px;"></div>
+          </div>
+        </div>
+
+        <!-- ── Account Information (read-only) ──────────────── -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">ℹ️ Account Information</div></div>
+          <div class="panel-body">
+            <div style="display:flex;flex-direction:column;gap:0;">
+              <div class="up-info-row"><span class="up-info-label">Business ID</span><span class="up-info-val" id="up-info-bid">—</span></div>
+              <div class="up-info-row"><span class="up-info-label">Username</span><span class="up-info-val" id="up-info-username">—</span></div>
+              <div class="up-info-row"><span class="up-info-label">Account Created</span><span class="up-info-val" id="up-info-created">—</span></div>
+              <div class="up-info-row"><span class="up-info-label">Current Plan</span><span class="up-info-val" id="up-info-plan" style="color:var(--green);">—</span></div>
+              <div class="up-info-row"><span class="up-info-label">Trial Status</span><span class="up-info-val" id="up-info-trial">—</span></div>
+              <div class="up-info-row"><span class="up-info-label">Billing Status</span><span class="up-info-val" id="up-info-billing">—</span></div>
+              <div class="up-info-row"><span class="up-info-label">Role</span><span class="up-info-val" id="up-info-role">—</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── Preferences ──────────────────────────────────── -->
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">⚙️ Preferences</div></div>
+          <div class="panel-body">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Date Format</label>
+                <select id="up-date-format">
+                  <option value="DD/MM/YYYY">DD/MM/YYYY</option>
+                  <option value="MM/DD/YYYY">MM/DD/YYYY</option>
+                  <option value="YYYY-MM-DD">YYYY-MM-DD</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Currency Display</label>
+                <input type="text" id="up-currency-display" placeholder="e.g. USD, ZWL, EUR" readonly
+                       style="opacity:.6;cursor:not-allowed;" title="Set via Payments → Cash & Currency"/>
+              </div>
+            </div>
+
+            <!-- Toggle preferences -->
+            <div style="display:flex;flex-direction:column;gap:0;margin-top:8px;">
+              <div class="up-pref-row">
+                <div>
+                  <div class="up-pref-label">🌙 Dark Mode</div>
+                  <div class="up-pref-sub">Apply dark theme to dashboard</div>
+                </div>
+                <label class="up-toggle"><input type="checkbox" id="pref-dark-mode" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
+              </div>
+              <div class="up-pref-row">
+                <div>
+                  <div class="up-pref-label">📧 Email Notifications</div>
+                  <div class="up-pref-sub">Order alerts, customer messages, system updates</div>
+                </div>
+                <label class="up-toggle"><input type="checkbox" id="pref-email-notifications" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
+              </div>
+              <div class="up-pref-row">
+                <div>
+                  <div class="up-pref-label">💬 WhatsApp Notifications</div>
+                  <div class="up-pref-sub">Receive alerts via WhatsApp</div>
+                </div>
+                <label class="up-toggle"><input type="checkbox" id="pref-wa-notifications" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
+              </div>
+              <div class="up-pref-row">
+                <div>
+                  <div class="up-pref-label">📣 Marketing Emails</div>
+                  <div class="up-pref-sub">Product updates, tips, and offers from WaziBot</div>
+                </div>
+                <label class="up-toggle"><input type="checkbox" id="pref-marketing-emails" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
+              </div>
+              <div class="up-pref-row">
+                <div>
+                  <div class="up-pref-label">📊 Weekly Reports</div>
+                  <div class="up-pref-sub">Weekly summary of orders, revenue, and activity</div>
+                </div>
+                <label class="up-toggle"><input type="checkbox" id="pref-weekly-reports" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
+              </div>
+              <div class="up-pref-row">
+                <div>
+                  <div class="up-pref-label">🔔 System Alerts</div>
+                  <div class="up-pref-sub">Trial expiry, payment failures, service notices</div>
+                </div>
+                <label class="up-toggle"><input type="checkbox" id="pref-system-alerts" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
+              </div>
+            </div>
+
+            <button class="btn btn-primary" onclick="saveUserPreferences()" id="up-prefs-btn" style="margin-top:16px;">Save Preferences</button>
+            <div id="up-prefs-status" style="font-size:11px;font-family:var(--mono);margin-top:10px;min-height:16px;"></div>
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /stab-my-profile -->
 
     <!-- ── PAYMENTS TAB ───────────────────────────────────── -->
     <div class="stab-content" id="stab-payments">
