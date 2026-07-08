@@ -486,6 +486,17 @@ function showSuccess() {
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
   document.getElementById('step7').classList.add('active');
   window.scrollTo(0, 0);
+
+  // Mark onboarding complete in the database — fire-and-forget
+  try {
+    const tok = localStorage.getItem('wazi_token') || '';
+    if (tok) {
+      fetch('/onboarding/complete', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' }
+      }).catch(() => {});  // never block the UI
+    }
+  } catch (_) {}
 }
 
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}

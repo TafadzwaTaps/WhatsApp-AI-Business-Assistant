@@ -55,8 +55,33 @@ oauth2_scheme = _LoggingOAuth2PasswordBearer(tokenUrl="/auth/login")
 
 
 def verify_password(plain: str, stored: str) -> bool:
-    """Constant-time comparison — prevents timing attacks."""
-    return hmac.compare_digest(plain.encode(), stored.encode())
+    """
+    Verify a password against a stored value.
+    Supports both bcrypt hashes ($2b$... / $2a$...) and legacy plaintext
+    (backward-compat for existing accounts).  New signups always use bcrypt.
+    Uses the 'bcrypt' library directly — avoids passlib version conflicts.
+    """
+    if stored and stored.startswith(("$2b$", "$2a$", "$2y$")):
+        try:
+            import bcrypt as _bcrypt
+            return _bcrypt.checkpw(
+                plain.encode("utf-8")[:72],
+                stored.encode("utf-8"),
+            )
+        except Exception:
+            return False
+    # Legacy plaintext — constant-time comparison prevents timing attacks
+    try:
+        return hmac.compare_digest(plain.encode("utf-8"), stored.encode("utf-8"))
+    except Exception:
+        return False
+
+
+def hash_password(plain: str) -> str:
+    """Hash a password with bcrypt. Uses bcrypt directly — no passlib."""
+    import bcrypt as _bcrypt
+    pw_bytes = plain.encode("utf-8")[:72]   # bcrypt max is 72 bytes
+    return _bcrypt.hashpw(pw_bytes, _bcrypt.gensalt(rounds=12)).decode("utf-8")
 
 
 def create_access_token(data: dict) -> str:

@@ -662,6 +662,14 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
     crud.update_order_payment(order_id, user["business_id"], {"payment_status": "paid", "payment_reference": reference})
     try: update_order_status_supabase(order_id, "paid")
     except Exception: pass
+    # Sync customer memory — update order_count + total_spent
+    try:
+        from workflows.order_lifecycle import _sync_user_memory_after_order
+        _phone = order.get("customer_phone", "")
+        if _phone:
+            _sync_user_memory_after_order(user["business_id"], _phone)
+    except Exception as _me:
+        log.debug("memory sync on manual confirm: %s", _me)
     await _notify_customer_payment(order,
         f"✅ *Payment Confirmed!*\n\nYour payment for *{reference}* has been manually verified.\n\n"
         f"💰 Amount: ${amount:.2f}\n📦 Your order is confirmed. Thank you! 🙏"

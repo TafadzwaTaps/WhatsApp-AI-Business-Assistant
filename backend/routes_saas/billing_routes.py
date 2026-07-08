@@ -203,64 +203,6 @@ def billing_connect_dashboard(user=Depends(require_business)):
         raise HTTPException(400, result["error"])
     return result
 
-# ── Stripe Connect redirect landing pages ─────────────────────────────────────
-# Stripe redirects here after the Connect onboarding flow completes or refreshes.
-# Public endpoints — no auth needed (Stripe calls them, not the user's browser directly).
-
-@router.get("/billing/connect/return")
-def billing_connect_return():
-    """
-    Stripe Connect return URL — called after merchant completes onboarding.
-    Shows a branded confirmation page and redirects to the dashboard.
-    """
-    import os
-    from fastapi.responses import HTMLResponse
-    base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/>
-<meta http-equiv="refresh" content="2;url={base}/static/dashboard.html"/>
-<title>WaziBot — Payments Ready</title>
-<style>
-  body{{margin:0;background:#070d09;color:#e8f5e9;font-family:sans-serif;
-       display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;}}
-  .card{{background:#0d1410;border:1px solid #1f3025;border-radius:16px;padding:48px 40px;max-width:420px;}}
-  h2{{color:#22c55e;font-size:24px;margin-bottom:12px;}}
-  p{{color:#7a9e85;font-size:14px;line-height:1.6;margin:0;}}
-</style></head>
-<body><div class="card">
-  <h2>✅ Payments setup complete</h2>
-  <p>Your Stripe account is connected.<br>Redirecting to your dashboard…</p>
-</div></body></html>"""
-    return HTMLResponse(content=html, status_code=200)
-
-
-@router.get("/billing/connect/refresh")
-def billing_connect_refresh():
-    """
-    Stripe Connect refresh URL — called when the onboarding link expires.
-    Redirects back to the dashboard so the user can restart the flow.
-    """
-    import os
-    from fastapi.responses import HTMLResponse
-    base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
-    html = f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"/>
-<meta http-equiv="refresh" content="3;url={base}/static/dashboard.html"/>
-<title>WaziBot — Refreshing…</title>
-<style>
-  body{{margin:0;background:#070d09;color:#e8f5e9;font-family:sans-serif;
-       display:flex;align-items:center;justify-content:center;min-height:100vh;text-align:center;}}
-  .card{{background:#0d1410;border:1px solid #1f3025;border-radius:16px;padding:48px 40px;max-width:420px;}}
-  h2{{color:#f59e0b;font-size:22px;margin-bottom:12px;}}
-  p{{color:#7a9e85;font-size:14px;line-height:1.6;margin:0;}}
-</style></head>
-<body><div class="card">
-  <h2>⏳ Link expired</h2>
-  <p>Your setup link has expired. Redirecting to your dashboard…<br>
-  Please go to <strong>Settings → Payments</strong> to restart the setup.</p>
-</div></body></html>"""
-    return HTMLResponse(content=html, status_code=200)
-
 
 # ── Product Checkout — Customer purchases (Phase 2 & 3) ──────────────────────
 
@@ -362,6 +304,38 @@ def send_trial_warnings(request: Request):
 
     log.info("trial-warnings: sent=%d errors=%d", sent, errors)
     return {"ok": True, "sent": sent, "errors": errors}
+
+
+
+@router.post("/billing/cleanup-carts")
+def cleanup_orphaned_carts(request: Request):
+    """
+    Housekeeping endpoint — delete carts with business_id=0 (orphaned shared-
+    number routing carts) that are older than 24 hours.
+    Protected by CRON_SECRET. Safe to run daily.
+    """
+    secret = os.getenv("CRON_SECRET", "")
+    if secret and request.headers.get("x-cron-secret") != secret:
+        raise HTTPException(403, "Forbidden")
+
+    from core.db import supabase
+    from datetime import datetime, timezone, timedelta
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    try:
+        res = (
+            supabase.table("carts")
+            .delete()
+            .eq("business_id", 0)
+            .lt("updated_at", cutoff)
+            .execute()
+        )
+        deleted = len(res.data or [])
+        log.info("cart-cleanup: deleted %d orphaned carts", deleted)
+        return {"ok": True, "deleted": deleted}
+    except Exception as exc:
+        log.error("cart-cleanup error: %s", exc)
+        raise HTTPException(500, str(exc))
 
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request):

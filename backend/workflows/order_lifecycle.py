@@ -277,7 +277,52 @@ def update_order_status_supabase(order_id: int, status: str) -> dict:
         raise ValueError(f"Order id={order_id} update failed")
 
     log.info("📦 Order %s → %s", order_id, status)
+    # Sync customer memory when order reaches a completion state
+    if status in ("delivered", "confirmed", "paid"):
+        _phone = existing.get("customer_phone", "")
+        _bid   = existing.get("business_id", 0)
+        if _phone and _bid:
+            _sync_user_memory_after_order(int(_bid), str(_phone))
     return res.data[0]
+
+
+
+def _sync_user_memory_after_order(business_id: int, customer_phone: str) -> None:
+    """
+    Recalculate and save order_count + total_spent for a customer from
+    the orders table after a payment is confirmed or an order is delivered.
+    Fire-and-forget — never raises.
+    """
+    try:
+        import crud
+        # Count confirmed/delivered orders and sum their totals
+        res = (
+            supabase.table("orders")
+            .select("total_price, payment_status, status")
+            .eq("business_id", business_id)
+            .eq("customer_phone", customer_phone)
+            .execute()
+        )
+        rows = res.data or []
+        # Count orders that are confirmed/paid/delivered
+        confirmed_statuses = {
+            "paid", "confirmed", "preparing", "ready",
+            "out_for_delivery", "delivered", "pending_cash"
+        }
+        order_count  = sum(1 for r in rows if r.get("status", "") in confirmed_statuses
+                           or r.get("payment_status", "") in confirmed_statuses)
+        total_spent  = sum(float(r.get("total_price") or 0) for r in rows
+                           if r.get("status", "") in confirmed_statuses
+                           or r.get("payment_status", "") in confirmed_statuses)
+
+        mem = crud.get_user_memory(customer_phone, business_id)
+        mem["order_count"] = max(int(mem.get("order_count", 0) or 0), order_count)
+        mem["total_spent"] = max(float(mem.get("total_spent", 0) or 0), round(total_spent, 2))
+        crud.save_user_memory(customer_phone, business_id, mem)
+        log.info("user_memory synced  biz=%s  phone=%s  orders=%s  spent=%.2f",
+                 business_id, customer_phone, order_count, total_spent)
+    except Exception as exc:
+        log.debug("_sync_user_memory_after_order error: %s", exc)
 
 
 def confirm_payment_supabase(order_id: int, reference: str) -> dict:
@@ -302,6 +347,11 @@ def confirm_payment_supabase(order_id: int, reference: str) -> dict:
         raise ValueError(f"Order id={order_id} payment confirmation failed")
 
     log.info("💳 Order %s marked PAID  ref=%s", order_id, reference)
+    # Sync customer memory — update order_count + total_spent
+    _phone = existing.get("customer_phone", "")
+    _bid   = existing.get("business_id", 0)
+    if _phone and _bid:
+        _sync_user_memory_after_order(int(_bid), str(_phone))
     return res.data[0]
 
 

@@ -10,6 +10,7 @@ from pydantic import BaseModel, validator
 import crud
 from core.auth import (
     verify_password,
+    hash_password,
     create_access_token, create_refresh_token,
     decode_token,
     get_current_user, require_superadmin, require_business,
@@ -93,7 +94,7 @@ def signup(data: SignupRequest, request: Request):
     class _Payload:
         name              = data.business_name
         owner_username    = data.username
-        owner_password    = data.password
+        owner_password    = hash_password(data.password)   # bcrypt hash
         owner_email       = data.email.strip().lower() if data.email else ""  # C1
         whatsapp_phone_id = phone_id
         whatsapp_token    = data.whatsapp_token.strip() or None
