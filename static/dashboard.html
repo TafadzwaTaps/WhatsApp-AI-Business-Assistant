@@ -2071,43 +2071,258 @@
               Changes apply instantly — no need to regenerate anything.
             </div>
 
+            <!-- ── Theme picker ──────────────────────────────────────────── -->
             <div class="form-group">
               <label>Theme Style</label>
-              <div class="sg-theme-grid" id="sg-theme-grid">
-                <button type="button" class="sg-theme-card" data-theme="dark_modern" onclick="sgSelectTheme('dark_modern')">
-                  <div class="sg-theme-swatch" style="background:#0a0a0a;color:#f0f0f0;">Aa</div>
-                  <span>Dark Modern</span>
-                </button>
-                <button type="button" class="sg-theme-card" data-theme="light_clean" onclick="sgSelectTheme('light_clean')">
-                  <div class="sg-theme-swatch" style="background:#ffffff;color:#1a1a1a;border:1px solid #ddd;">Aa</div>
-                  <span>Light Clean</span>
-                </button>
-                <button type="button" class="sg-theme-card" data-theme="vibrant" onclick="sgSelectTheme('vibrant')">
-                  <div class="sg-theme-swatch" style="background:linear-gradient(135deg,#7c3aed,#db2777);color:#fff;">Aa</div>
-                  <span>Vibrant</span>
-                </button>
-                <button type="button" class="sg-theme-card" data-theme="warm" onclick="sgSelectTheme('warm')">
-                  <div class="sg-theme-swatch" style="background:linear-gradient(135deg,#c2410c,#92400e);color:#fff;">Aa</div>
-                  <span>Warm</span>
-                </button>
-                <button type="button" class="sg-theme-card" data-theme="minimal" onclick="sgSelectTheme('minimal')">
-                  <div class="sg-theme-swatch" style="background:#fafafa;color:#111;border:1px solid #ddd;">Aa</div>
-                  <span>Minimal</span>
-                </button>
-                <button type="button" class="sg-theme-card" data-theme="luxury" onclick="sgSelectTheme('luxury')">
-                  <div class="sg-theme-swatch" style="background:#0d0d0d;color:#d4af37;border:1px solid #d4af37;">Aa</div>
-                  <span>Luxury</span>
-                </button>
+
+              <!-- Search themes -->
+              <div style="position:relative;margin:8px 0 10px;">
+                <input type="text" id="sg-theme-search" placeholder="Search themes…"
+                       oninput="sgFilterThemes(this.value)"
+                       style="padding-left:30px;font-size:12px;"/>
+                <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);
+                             font-size:13px;color:var(--text-dim);">⌕</span>
               </div>
+
+              <!-- Theme category tabs -->
+              <div id="sg-cat-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+                <button type="button" class="sg-cat-tab active" onclick="sgFilterCategory(this,'all')">All</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'General')">General</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Food &amp; Beverage')">🍽 Food</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Fashion &amp; Retail')">👗 Fashion</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Beauty &amp; Wellness')">💄 Beauty</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Health &amp; Medical')">🏥 Health</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Luxury')">💎 Luxury</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Hospitality')">🏨 Hospitality</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Tech &amp; Professional')">💻 Tech</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Automotive')">🚗 Auto</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Education')">🎓 Education</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Construction &amp; Trades')">🔧 Trades</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Nature &amp; Earth')">🌿 Nature</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'African &amp; Cultural')">🌍 African</button>
+                <button type="button" class="sg-cat-tab" onclick="sgFilterCategory(this,'Lifestyle')">✨ Lifestyle</button>
+              </div>
+
+              <div class="sg-theme-grid" id="sg-theme-grid">
+                <!-- General -->
+                <button type="button" class="sg-theme-card" data-theme="dark_modern" data-cat="General" onclick="sgSelectTheme('dark_modern')">
+                  <div class="sg-theme-swatch" style="background:#0a0a0a;color:#22c55e;">Aa</div>
+                  <span>Dark Modern</span></button>
+                <button type="button" class="sg-theme-card" data-theme="light_clean" data-cat="General" onclick="sgSelectTheme('light_clean')">
+                  <div class="sg-theme-swatch" style="background:#fff;color:#1a1a1a;border:1px solid #ddd;">Aa</div>
+                  <span>Light Clean</span></button>
+                <button type="button" class="sg-theme-card" data-theme="minimal" data-cat="General" onclick="sgSelectTheme('minimal')">
+                  <div class="sg-theme-swatch" style="background:#fafafa;color:#111;border:1px solid #ddd;">Aa</div>
+                  <span>Minimal</span></button>
+                <button type="button" class="sg-theme-card" data-theme="midnight_blue" data-cat="General" onclick="sgSelectTheme('midnight_blue')">
+                  <div class="sg-theme-swatch" style="background:#0a0f1e;color:#3b82f6;">Aa</div>
+                  <span>Midnight Blue</span></button>
+                <button type="button" class="sg-theme-card" data-theme="slate_pro" data-cat="General" onclick="sgSelectTheme('slate_pro')">
+                  <div class="sg-theme-swatch" style="background:#0f0f13;color:#6366f1;">Aa</div>
+                  <span>Slate Pro</span></button>
+
+                <!-- Food & Beverage -->
+                <button type="button" class="sg-theme-card" data-theme="spice_market" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('spice_market')">
+                  <div class="sg-theme-swatch" style="background:#1a0a00;color:#e85d04;">Aa</div>
+                  <span>Spice Market</span></button>
+                <button type="button" class="sg-theme-card" data-theme="fresh_greens" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('fresh_greens')">
+                  <div class="sg-theme-swatch" style="background:#f0fdf4;color:#16a34a;border:1px solid #dcfce7;">Aa</div>
+                  <span>Fresh Greens</span></button>
+                <button type="button" class="sg-theme-card" data-theme="bakery_cream" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('bakery_cream')">
+                  <div class="sg-theme-swatch" style="background:#fdfaf5;color:#d97706;border:1px solid #faefd8;">Aa</div>
+                  <span>Bakery Cream</span></button>
+                <button type="button" class="sg-theme-card" data-theme="cafe_noir" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('cafe_noir')">
+                  <div class="sg-theme-swatch" style="background:#1a1208;color:#c8a96e;">Aa</div>
+                  <span>Cafe Noir</span></button>
+                <button type="button" class="sg-theme-card" data-theme="street_food" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('street_food')">
+                  <div class="sg-theme-swatch" style="background:#1a0505;color:#dc2626;">Aa</div>
+                  <span>Street Food</span></button>
+                <button type="button" class="sg-theme-card" data-theme="pizza_night" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('pizza_night')">
+                  <div class="sg-theme-swatch" style="background:#18100a;color:#f59e0b;">Aa</div>
+                  <span>Pizza Night</span></button>
+                <button type="button" class="sg-theme-card" data-theme="health_bar" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('health_bar')">
+                  <div class="sg-theme-swatch" style="background:#f7fef0;color:#84cc16;border:1px solid #ecfccb;">Aa</div>
+                  <span>Health Bar</span></button>
+                <button type="button" class="sg-theme-card" data-theme="brew_house" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('brew_house')">
+                  <div class="sg-theme-swatch" style="background:#1c1408;color:#b45309;">Aa</div>
+                  <span>Brew House</span></button>
+                <button type="button" class="sg-theme-card" data-theme="smoothie" data-cat="Food &amp; Beverage" onclick="sgSelectTheme('smoothie')">
+                  <div class="sg-theme-swatch" style="background:#fff0f8;color:#ec4899;border:1px solid #fce7f3;">Aa</div>
+                  <span>Smoothie</span></button>
+
+                <!-- Fashion & Retail -->
+                <button type="button" class="sg-theme-card" data-theme="fashion_noir" data-cat="Fashion &amp; Retail" onclick="sgSelectTheme('fashion_noir')">
+                  <div class="sg-theme-swatch" style="background:#080808;color:#e5e5e5;">Aa</div>
+                  <span>Fashion Noir</span></button>
+                <button type="button" class="sg-theme-card" data-theme="boutique_pink" data-cat="Fashion &amp; Retail" onclick="sgSelectTheme('boutique_pink')">
+                  <div class="sg-theme-swatch" style="background:#fff5f9;color:#db2777;border:1px solid #fce7f3;">Aa</div>
+                  <span>Boutique Pink</span></button>
+                <button type="button" class="sg-theme-card" data-theme="street_style" data-cat="Fashion &amp; Retail" onclick="sgSelectTheme('street_style')">
+                  <div class="sg-theme-swatch" style="background:#0a0f0d;color:#10b981;">Aa</div>
+                  <span>Street Style</span></button>
+                <button type="button" class="sg-theme-card" data-theme="denim" data-cat="Fashion &amp; Retail" onclick="sgSelectTheme('denim')">
+                  <div class="sg-theme-swatch" style="background:#0d1a2e;color:#3b82f6;">Aa</div>
+                  <span>Denim Blues</span></button>
+
+                <!-- Beauty & Wellness -->
+                <button type="button" class="sg-theme-card" data-theme="blush_rose" data-cat="Beauty &amp; Wellness" onclick="sgSelectTheme('blush_rose')">
+                  <div class="sg-theme-swatch" style="background:#fff5f8;color:#e11d74;border:1px solid #fde8f0;">Aa</div>
+                  <span>Blush Rose</span></button>
+                <button type="button" class="sg-theme-card" data-theme="lavender_spa" data-cat="Beauty &amp; Wellness" onclick="sgSelectTheme('lavender_spa')">
+                  <div class="sg-theme-swatch" style="background:#f8f5ff;color:#7c3aed;border:1px solid #ede9fe;">Aa</div>
+                  <span>Lavender Spa</span></button>
+                <button type="button" class="sg-theme-card" data-theme="midnight_glam" data-cat="Beauty &amp; Wellness" onclick="sgSelectTheme('midnight_glam')">
+                  <div class="sg-theme-swatch" style="background:#0d0714;color:#f472b6;">Aa</div>
+                  <span>Midnight Glam</span></button>
+
+                <!-- Health & Medical -->
+                <button type="button" class="sg-theme-card" data-theme="medical_clean" data-cat="Health &amp; Medical" onclick="sgSelectTheme('medical_clean')">
+                  <div class="sg-theme-swatch" style="background:#f0fbff;color:#0891b2;border:1px solid #e0f7fe;">Aa</div>
+                  <span>Medical Clean</span></button>
+                <button type="button" class="sg-theme-card" data-theme="pharmacy_blue" data-cat="Health &amp; Medical" onclick="sgSelectTheme('pharmacy_blue')">
+                  <div class="sg-theme-swatch" style="background:#f0f4ff;color:#1e40af;border:1px solid #dbeafe;">Aa</div>
+                  <span>Pharmacy Blue</span></button>
+                <button type="button" class="sg-theme-card" data-theme="wellness_sage" data-cat="Health &amp; Medical" onclick="sgSelectTheme('wellness_sage')">
+                  <div class="sg-theme-swatch" style="background:#f4faf6;color:#4d7c5a;border:1px solid #d1fae5;">Aa</div>
+                  <span>Wellness Sage</span></button>
+
+                <!-- Luxury -->
+                <button type="button" class="sg-theme-card" data-theme="luxury" data-cat="Luxury" onclick="sgSelectTheme('luxury')">
+                  <div class="sg-theme-swatch" style="background:#0d0d0d;color:#c9a84c;border:1px solid #c9a84c;">Aa</div>
+                  <span>Luxury Gold</span></button>
+                <button type="button" class="sg-theme-card" data-theme="pearl_white" data-cat="Luxury" onclick="sgSelectTheme('pearl_white')">
+                  <div class="sg-theme-swatch" style="background:#fdfcf8;color:#b8860b;border:1px solid #f5f0e8;">Aa</div>
+                  <span>Pearl White</span></button>
+                <button type="button" class="sg-theme-card" data-theme="obsidian" data-cat="Luxury" onclick="sgSelectTheme('obsidian')">
+                  <div class="sg-theme-swatch" style="background:#050508;color:#a78bfa;">Aa</div>
+                  <span>Obsidian</span></button>
+
+                <!-- Hospitality -->
+                <button type="button" class="sg-theme-card" data-theme="resort" data-cat="Hospitality" onclick="sgSelectTheme('resort')">
+                  <div class="sg-theme-swatch" style="background:#f0f9ff;color:#0891b2;border:1px solid #bfdbfe;">Aa</div>
+                  <span>Resort</span></button>
+                <button type="button" class="sg-theme-card" data-theme="boutique_hotel" data-cat="Hospitality" onclick="sgSelectTheme('boutique_hotel')">
+                  <div class="sg-theme-swatch" style="background:#fdf8f3;color:#92400e;border:1px solid #fde8d0;">Aa</div>
+                  <span>Boutique Hotel</span></button>
+                <button type="button" class="sg-theme-card" data-theme="safari" data-cat="Hospitality" onclick="sgSelectTheme('safari')">
+                  <div class="sg-theme-swatch" style="background:#1a1208;color:#d97706;">Aa</div>
+                  <span>Safari</span></button>
+
+                <!-- Tech -->
+                <button type="button" class="sg-theme-card" data-theme="tech_dark" data-cat="Tech &amp; Professional" onclick="sgSelectTheme('tech_dark')">
+                  <div class="sg-theme-swatch" style="background:#050a0f;color:#00d4ff;">Aa</div>
+                  <span>Tech Dark</span></button>
+                <button type="button" class="sg-theme-card" data-theme="corporate_blue" data-cat="Tech &amp; Professional" onclick="sgSelectTheme('corporate_blue')">
+                  <div class="sg-theme-swatch" style="background:#f0f4fc;color:#1d4ed8;border:1px solid #e1e9f8;">Aa</div>
+                  <span>Corporate Blue</span></button>
+
+                <!-- Automotive -->
+                <button type="button" class="sg-theme-card" data-theme="garage_steel" data-cat="Automotive" onclick="sgSelectTheme('garage_steel')">
+                  <div class="sg-theme-swatch" style="background:#0a0c10;color:#64748b;">Aa</div>
+                  <span>Garage Steel</span></button>
+                <button type="button" class="sg-theme-card" data-theme="racing_red" data-cat="Automotive" onclick="sgSelectTheme('racing_red')">
+                  <div class="sg-theme-swatch" style="background:#0f0505;color:#ef4444;">Aa</div>
+                  <span>Racing Red</span></button>
+
+                <!-- Education -->
+                <button type="button" class="sg-theme-card" data-theme="academy" data-cat="Education" onclick="sgSelectTheme('academy')">
+                  <div class="sg-theme-swatch" style="background:#f5f3ff;color:#7c3aed;border:1px solid #ede9fe;">Aa</div>
+                  <span>Academy</span></button>
+                <button type="button" class="sg-theme-card" data-theme="chalkboard" data-cat="Education" onclick="sgSelectTheme('chalkboard')">
+                  <div class="sg-theme-swatch" style="background:#1a2010;color:#84cc16;">Aa</div>
+                  <span>Chalkboard</span></button>
+
+                <!-- Construction & Trades -->
+                <button type="button" class="sg-theme-card" data-theme="construction" data-cat="Construction &amp; Trades" onclick="sgSelectTheme('construction')">
+                  <div class="sg-theme-swatch" style="background:#1a1208;color:#f59e0b;">Aa</div>
+                  <span>Construction</span></button>
+                <button type="button" class="sg-theme-card" data-theme="industrial" data-cat="Construction &amp; Trades" onclick="sgSelectTheme('industrial')">
+                  <div class="sg-theme-swatch" style="background:#0f1117;color:#6b7280;">Aa</div>
+                  <span>Industrial</span></button>
+
+                <!-- Nature & Earth -->
+                <button type="button" class="sg-theme-card" data-theme="earth_tone" data-cat="Nature &amp; Earth" onclick="sgSelectTheme('earth_tone')">
+                  <div class="sg-theme-swatch" style="background:#faf7f2;color:#92400e;border:1px solid #f0e8d8;">Aa</div>
+                  <span>Earth Tone</span></button>
+                <button type="button" class="sg-theme-card" data-theme="forest" data-cat="Nature &amp; Earth" onclick="sgSelectTheme('forest')">
+                  <div class="sg-theme-swatch" style="background:#0f1a0f;color:#15803d;">Aa</div>
+                  <span>Forest</span></button>
+
+                <!-- African & Cultural -->
+                <button type="button" class="sg-theme-card" data-theme="ubuntu" data-cat="African &amp; Cultural" onclick="sgSelectTheme('ubuntu')">
+                  <div class="sg-theme-swatch" style="background:#1a0a05;color:#dc2626;">Aa</div>
+                  <span>Ubuntu</span></button>
+                <button type="button" class="sg-theme-card" data-theme="kente" data-cat="African &amp; Cultural" onclick="sgSelectTheme('kente')">
+                  <div class="sg-theme-swatch" style="background:#1a1005;color:#f59e0b;">Aa</div>
+                  <span>Kente</span></button>
+                <button type="button" class="sg-theme-card" data-theme="savanna" data-cat="African &amp; Cultural" onclick="sgSelectTheme('savanna')">
+                  <div class="sg-theme-swatch" style="background:#faf6f0;color:#78350f;border:1px solid #fde8d0;">Aa</div>
+                  <span>Savanna</span></button>
+
+                <!-- Lifestyle -->
+                <button type="button" class="sg-theme-card" data-theme="vibrant" data-cat="Lifestyle" onclick="sgSelectTheme('vibrant')">
+                  <div class="sg-theme-swatch" style="background:linear-gradient(135deg,#1a0f2e,#241541);color:#8b5cf6;">Aa</div>
+                  <span>Vibrant Purple</span></button>
+                <button type="button" class="sg-theme-card" data-theme="warm" data-cat="Lifestyle" onclick="sgSelectTheme('warm')">
+                  <div class="sg-theme-swatch" style="background:linear-gradient(135deg,#1f1410,#2b1d16);color:#f97316;">Aa</div>
+                  <span>Warm Sunset</span></button>
+                <button type="button" class="sg-theme-card" data-theme="tropical" data-cat="Lifestyle" onclick="sgSelectTheme('tropical')">
+                  <div class="sg-theme-swatch" style="background:#f0fdfb;color:#0d9488;border:1px solid #ccfbf1;">Aa</div>
+                  <span>Tropical</span></button>
+                <button type="button" class="sg-theme-card" data-theme="ocean" data-cat="Lifestyle" onclick="sgSelectTheme('ocean')">
+                  <div class="sg-theme-swatch" style="background:#f0f9ff;color:#0ea5e9;border:1px solid #e0f2fe;">Aa</div>
+                  <span>Ocean Breeze</span></button>
+              </div>
+
+              <!-- Active theme display -->
+              <div id="sg-theme-selected-label" style="font-size:11px;font-family:var(--mono);color:var(--green);
+                   margin-top:8px;min-height:16px;"></div>
             </div>
 
+            <!-- ── Font picker ─────────────────────────────────────────────── -->
             <div class="form-group" style="margin-top:18px;">
               <label>Font Style</label>
               <select id="sg-font-select" style="margin-top:4px;">
-                <option value="poppins">Poppins (Modern)</option>
-                <option value="inter">Inter (Default)</option>
-                <option value="montserrat">Montserrat</option>
-                <option value="open_sans">Open Sans</option>
+                <optgroup label="── Modern ──────────────">
+                  <option value="inter">Inter — clean, universal</option>
+                  <option value="poppins">Poppins — geometric, friendly</option>
+                  <option value="nunito">Nunito — rounded, warm</option>
+                  <option value="dm_sans">DM Sans — compact, readable</option>
+                  <option value="rubik">Rubik — bold, modern</option>
+                  <option value="outfit">Outfit — minimal, stylish</option>
+                </optgroup>
+                <optgroup label="── Elegant ─────────────">
+                  <option value="plus_jakarta">Plus Jakarta Sans — premium</option>
+                  <option value="space_grotesk">Space Grotesk — tech-forward</option>
+                  <option value="syne">Syne — editorial, distinctive</option>
+                  <option value="manrope">Manrope — refined, versatile</option>
+                  <option value="figtree">Figtree — clean, balanced</option>
+                  <option value="urbanist">Urbanist — geometric, urban</option>
+                </optgroup>
+                <optgroup label="── Classic ─────────────">
+                  <option value="open_sans">Open Sans — trusted, readable</option>
+                  <option value="montserrat">Montserrat — headlines, strong</option>
+                  <option value="lato">Lato — professional, neutral</option>
+                  <option value="raleway">Raleway — elegant, decorative</option>
+                </optgroup>
+                <optgroup label="── Warm &amp; Friendly ─────">
+                  <option value="quicksand">Quicksand — soft, casual</option>
+                  <option value="josefin_sans">Josefin Sans — delicate, fashion</option>
+                  <option value="nunito_sans">Nunito Sans — approachable</option>
+                  <option value="karla">Karla — humanist, clear</option>
+                  <option value="mulish">Mulish — sans, light</option>
+                  <option value="barlow">Barlow — condensed, strong</option>
+                </optgroup>
+                <optgroup label="── Bold &amp; Strong ────────">
+                  <option value="exo_2">Exo 2 — tech, automotive</option>
+                  <option value="oxanium">Oxanium — futuristic, gaming</option>
+                  <option value="big_shoulders">Big Shoulders — industrial, impact</option>
+                </optgroup>
+                <optgroup label="── Refined &amp; Upscale ────">
+                  <option value="cormorant">Cormorant Garamond — luxury serif</option>
+                  <option value="playfair">Playfair Display — editorial serif</option>
+                  <option value="libre_baskerville">Libre Baskerville — classic serif</option>
+                </optgroup>
               </select>
             </div>
 

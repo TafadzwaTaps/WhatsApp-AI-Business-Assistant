@@ -5185,6 +5185,38 @@ function sgSelectTheme(theme) {
   document.querySelectorAll('.sg-theme-card').forEach(card => {
     card.classList.toggle('active', card.dataset.theme === theme);
   });
+  // Update the selected label
+  const activeCard = document.querySelector(`.sg-theme-card[data-theme="${theme}"]`);
+  const labelEl   = document.getElementById('sg-theme-selected-label');
+  if (labelEl && activeCard) {
+    const name = activeCard.querySelector('span')?.textContent || theme;
+    labelEl.textContent = '✓ ' + name + ' selected';
+  }
+}
+
+// Filter themes by category tab
+function sgFilterCategory(tabEl, category) {
+  document.querySelectorAll('.sg-cat-tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.getElementById('sg-theme-search').value = '';
+  document.querySelectorAll('.sg-theme-card').forEach(card => {
+    const show = category === 'all' || card.dataset.cat === category;
+    card.style.display = show ? '' : 'none';
+  });
+}
+
+// Filter themes by search text
+function sgFilterThemes(q) {
+  const query = q.toLowerCase().trim();
+  // Reset category tabs
+  document.querySelectorAll('.sg-cat-tab').forEach(t => t.classList.remove('active'));
+  const allTab = document.querySelector('.sg-cat-tab');
+  if (allTab) allTab.classList.add('active');
+  document.querySelectorAll('.sg-theme-card').forEach(card => {
+    const name = (card.querySelector('span')?.textContent || '').toLowerCase();
+    const cat  = (card.dataset.cat || '').toLowerCase();
+    card.style.display = (!query || name.includes(query) || cat.includes(query)) ? '' : 'none';
+  });
 }
 
 function sgSelectLayout(layout) {
