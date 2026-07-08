@@ -510,7 +510,7 @@ def create_connect_account(business_id: int, business_name: str, owner_email: st
                     {"stripe_account_id": account_id}
                 ).eq("id", business_id).execute()
             except Exception as exc:
-                log.debug("stripe_account_id: %s", exc)
+                log.debug("stripe_account_id column may not exist yet: %s", exc)
             log.info("Stripe Connect account created  business=%s  account=%s", business_id, account_id)
 
         base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
@@ -553,8 +553,10 @@ def get_connect_account_status(business_id: int) -> dict:
             return {**default, "account_id": account_id, "status": "unconfigured"}
 
         account = stripe.Account.retrieve(account_id)
-        charges_enabled = bool(account.get("charges_enabled"))
-        payouts_enabled = bool(account.get("payouts_enabled"))
+        # Stripe SDK objects support attribute access AND dict-style .get() in v7+
+        # Use getattr with fallback to be safe across SDK versions
+        charges_enabled = bool(getattr(account, "charges_enabled", None) or account.get("charges_enabled", False))
+        payouts_enabled = bool(getattr(account, "payouts_enabled", None) or account.get("payouts_enabled", False))
         return {
             "connected":        True,
             "status":           "active" if (charges_enabled and payouts_enabled) else "pending",
