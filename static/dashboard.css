@@ -2212,3 +2212,17 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
   .sg-theme-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); max-height: 280px; }
   .sg-cat-tabs  { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
 }
+
+/* ── Palette dot quick-picker ──────────────────────────── */
+.sg-palette-dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.12s, border-color 0.12s;
+  flex-shrink: 0;
+  padding: 0;
+}
+.sg-palette-dot:hover   { transform: scale(1.25); }
+.sg-palette-dot.active  { border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,.4); transform: scale(1.15); }

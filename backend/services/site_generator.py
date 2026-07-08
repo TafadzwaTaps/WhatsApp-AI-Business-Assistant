@@ -110,69 +110,243 @@ def _get_products_columns() -> set:
 
 # ── Theme / Font / Layout presets (additive — existing sites unchanged) ───────
 
+# ── Theme presets — 30 curated themes across 13 business categories ─────────
+# Dict structure is backward-compatible with the original 6-theme version.
+# "accent" = button/link colour (used as --brand in CSS).
+# "accent_text" = text colour when placed on accent background.
+# Custom accent colour can override "accent" via features_json.site_generator.accent_color.
+
+def _theme(label, bg, surface, surface2, text, muted, border,
+           header_bg, footer_bg, nav_text, nav_active, card_shadow,
+           accent="#00c853", accent_text="#000"):
+    return dict(label=label, bg=bg, surface=surface, surface2=surface2,
+                text=text, muted=muted, border=border,
+                header_bg=header_bg, footer_bg=footer_bg,
+                nav_text=nav_text, nav_active=nav_active,
+                card_shadow=card_shadow, accent=accent, accent_text=accent_text)
+
 THEME_PRESETS = {
-    "dark_modern": {
-        "label": "Dark Modern",
-        "bg": "#0a0a0a", "surface": "#141414", "surface2": "#1e1e1e",
-        "text": "#f0f0f0", "muted": "#888", "border": "rgba(255,255,255,0.08)",
-        "header_bg": "#141414", "footer_bg": "#0d0d0d",
-        "nav_text": "rgba(255,255,255,0.75)", "nav_active": "#fff",
-        "card_shadow": "rgba(0,0,0,0.5)",
-    },
-    "light_clean": {
-        "label": "Light Clean",
-        "bg": "#ffffff", "surface": "#f7f7f8", "surface2": "#eeeeef",
-        "text": "#1a1a1a", "muted": "#666", "border": "rgba(0,0,0,0.08)",
-        "header_bg": "#ffffff", "footer_bg": "#f0f0f0",
-        "nav_text": "rgba(0,0,0,0.65)", "nav_active": "#1a1a1a",
-        "card_shadow": "rgba(0,0,0,0.08)",
-    },
-    "vibrant": {
-        "label": "Vibrant",
-        "bg": "#1a0f2e", "surface": "#241541", "surface2": "#2e1b52",
-        "text": "#f5f0ff", "muted": "#a895c9", "border": "rgba(255,255,255,0.1)",
-        "header_bg": "#241541", "footer_bg": "#140c23",
-        "nav_text": "rgba(245,240,255,0.7)", "nav_active": "#f5f0ff",
-        "card_shadow": "rgba(0,0,0,0.4)",
-    },
-    "warm": {
-        "label": "Warm",
-        "bg": "#1f1410", "surface": "#2b1d16", "surface2": "#36251c",
-        "text": "#fdf3ea", "muted": "#c4a385", "border": "rgba(255,255,255,0.08)",
-        "header_bg": "#2b1d16", "footer_bg": "#1a110d",
-        "nav_text": "rgba(253,243,234,0.7)", "nav_active": "#fdf3ea",
-        "card_shadow": "rgba(0,0,0,0.4)",
-    },
-    "minimal": {
-        "label": "Minimal",
-        "bg": "#fafafa", "surface": "#ffffff", "surface2": "#f0f0f0",
-        "text": "#111111", "muted": "#777", "border": "rgba(0,0,0,0.06)",
-        "header_bg": "#fafafa", "footer_bg": "#f0f0f0",
-        "nav_text": "rgba(0,0,0,0.55)", "nav_active": "#111",
-        "card_shadow": "rgba(0,0,0,0.06)",
-    },
-    "luxury": {
-        "label": "Luxury",
-        "bg": "#0d0d0d", "surface": "#161616", "surface2": "#1f1f1f",
-        "text": "#f0e6d2", "muted": "#9c8f72", "border": "rgba(212,175,55,0.2)",
-        "header_bg": "#161616", "footer_bg": "#0a0a0a",
-        "nav_text": "rgba(240,230,210,0.65)", "nav_active": "#f0e6d2",
-        "card_shadow": "rgba(0,0,0,0.5)",
-    },
+    # ── General (keep original keys for backward compat) ──────────────
+    "dark_modern": _theme("Dark Modern",
+        "#0a0a0a","#141414","#1e1e1e","#f0f0f0","#888","rgba(255,255,255,0.08)",
+        "#141414","#0d0d0d","rgba(255,255,255,0.75)","#fff","rgba(0,0,0,0.5)",
+        "#22c55e","#000"),
+    "light_clean": _theme("Light Clean",
+        "#fff","#f7f7f8","#eeeeef","#1a1a1a","#666","rgba(0,0,0,0.08)",
+        "#fff","#f0f0f0","rgba(0,0,0,0.65)","#1a1a1a","rgba(0,0,0,0.08)",
+        "#2563eb","#fff"),
+    "minimal": _theme("Minimal",
+        "#fafafa","#fff","#f0f0f0","#111","#777","rgba(0,0,0,0.06)",
+        "#fafafa","#f0f0f0","rgba(0,0,0,0.55)","#111","rgba(0,0,0,0.06)",
+        "#111","#fff"),
+    "midnight_blue": _theme("Midnight Blue",
+        "#0a0f1e","#101828","#1a2540","#e8edf5","#7a90b0","rgba(255,255,255,0.07)",
+        "#101828","#080d18","rgba(232,237,245,0.65)","#e8edf5","rgba(0,0,0,0.5)",
+        "#3b82f6","#fff"),
+    "vibrant": _theme("Vibrant Purple",
+        "#1a0f2e","#241541","#2e1b52","#f5f0ff","#a895c9","rgba(255,255,255,0.1)",
+        "#241541","#140c23","rgba(245,240,255,0.7)","#f5f0ff","rgba(0,0,0,0.4)",
+        "#8b5cf6","#fff"),
+
+    # ── Food & Beverage ───────────────────────────────────────────────
+    "spice_market": _theme("Spice Market",
+        "#1a0a00","#2d1200","#3d1a00","#fdebd0","#c4956a","rgba(255,255,255,0.08)",
+        "#2d1200","#150900","rgba(253,235,208,0.7)","#fdebd0","rgba(0,0,0,0.5)",
+        "#e85d04","#fff"),
+    "fresh_greens": _theme("Fresh Greens",
+        "#f0fdf4","#fff","#dcfce7","#14532d","#4a7c59","rgba(0,0,0,0.07)",
+        "#fff","#f0fdf4","rgba(20,83,45,0.65)","#14532d","rgba(0,0,0,0.08)",
+        "#16a34a","#fff"),
+    "cafe_noir": _theme("Cafe Noir",
+        "#1a1208","#261b0c","#322514","#f2e8d8","#b09070","rgba(255,255,255,0.07)",
+        "#261b0c","#140e06","rgba(242,232,216,0.65)","#f2e8d8","rgba(0,0,0,0.5)",
+        "#c8a96e","#000"),
+
+    # ── Fashion & Retail ─────────────────────────────────────────────
+    "fashion_noir": _theme("Fashion Noir",
+        "#080808","#111","#1a1a1a","#f5f5f5","#808080","rgba(255,255,255,0.06)",
+        "#111","#050505","rgba(245,245,245,0.6)","#f5f5f5","rgba(0,0,0,0.6)",
+        "#e5e5e5","#000"),
+    "boutique_pink": _theme("Boutique Pink",
+        "#fff5f9","#fff","#fce7f3","#831843","#c060a0","rgba(0,0,0,0.07)",
+        "#fff","#fce7f3","rgba(131,24,67,0.65)","#831843","rgba(0,0,0,0.08)",
+        "#db2777","#fff"),
+
+    # ── Beauty & Wellness ────────────────────────────────────────────
+    "blush_rose": _theme("Blush Rose",
+        "#fff5f8","#fff","#fde8f0","#5c1a33","#b06080","rgba(0,0,0,0.07)",
+        "#fff","#fde8f0","rgba(92,26,51,0.65)","#5c1a33","rgba(0,0,0,0.08)",
+        "#e11d74","#fff"),
+    "lavender_spa": _theme("Lavender Spa",
+        "#f8f5ff","#fff","#ede9fe","#2e1065","#7c5bb0","rgba(0,0,0,0.07)",
+        "#fff","#ede9fe","rgba(46,16,101,0.6)","#2e1065","rgba(0,0,0,0.07)",
+        "#7c3aed","#fff"),
+    "midnight_glam": _theme("Midnight Glam",
+        "#0d0714","#17101f","#231630","#fce7f3","#c480a8","rgba(255,255,255,0.08)",
+        "#17101f","#0a0510","rgba(252,231,243,0.65)","#fce7f3","rgba(0,0,0,0.5)",
+        "#f472b6","#000"),
+
+    # ── Luxury ───────────────────────────────────────────────────────
+    "luxury": _theme("Luxury Gold",
+        "#0d0d0d","#161616","#1f1f1f","#f0e6d2","#9c8f72","rgba(212,175,55,0.2)",
+        "#161616","#0a0a0a","rgba(240,230,210,0.65)","#f0e6d2","rgba(0,0,0,0.5)",
+        "#c9a84c","#000"),
+    "obsidian": _theme("Obsidian",
+        "#050508","#0e0e14","#16161e","#e8e4f0","#7870a0","rgba(167,139,250,0.15)",
+        "#0e0e14","#030305","rgba(232,228,240,0.6)","#e8e4f0","rgba(0,0,0,0.6)",
+        "#a78bfa","#000"),
+
+    # ── Health & Medical ─────────────────────────────────────────────
+    "medical_clean": _theme("Medical Clean",
+        "#f0fbff","#fff","#e0f7fe","#0c3d52","#2a8090","rgba(0,0,0,0.06)",
+        "#fff","#e0f7fe","rgba(12,61,82,0.65)","#0c3d52","rgba(0,0,0,0.06)",
+        "#0891b2","#fff"),
+    "wellness_sage": _theme("Wellness Sage",
+        "#f4faf6","#fff","#d1fae5","#1a3a24","#4a7060","rgba(0,0,0,0.07)",
+        "#fff","#d1fae5","rgba(26,58,36,0.65)","#1a3a24","rgba(0,0,0,0.07)",
+        "#4d7c5a","#fff"),
+
+    # ── Hospitality & Travel ─────────────────────────────────────────
+    "resort": _theme("Resort",
+        "#f0f9ff","#fff","#bfdbfe","#073b54","#2080a0","rgba(0,0,0,0.07)",
+        "#fff","#bfdbfe","rgba(7,59,84,0.65)","#073b54","rgba(0,0,0,0.07)",
+        "#0891b2","#fff"),
+    "safari": _theme("Safari",
+        "#1a1208","#26190c","#342210","#fef3c7","#c09040","rgba(255,255,255,0.07)",
+        "#26190c","#150e06","rgba(254,243,199,0.7)","#fef3c7","rgba(0,0,0,0.5)",
+        "#d97706","#000"),
+
+    # ── Tech & Professional ──────────────────────────────────────────
+    "tech_dark": _theme("Tech Dark",
+        "#050a0f","#0d1520","#132030","#d8eaf5","#5090b0","rgba(0,212,255,0.12)",
+        "#0d1520","#030810","rgba(216,234,245,0.65)","#d8eaf5","rgba(0,0,0,0.5)",
+        "#00d4ff","#000"),
+    "corporate_blue": _theme("Corporate Blue",
+        "#f0f4fc","#fff","#e1e9f8","#0f172a","#4060a0","rgba(0,0,0,0.07)",
+        "#fff","#e1e9f8","rgba(15,23,42,0.65)","#0f172a","rgba(0,0,0,0.08)",
+        "#1d4ed8","#fff"),
+
+    # ── Automotive ───────────────────────────────────────────────────
+    "garage_steel": _theme("Garage Steel",
+        "#0a0c10","#101420","#18202e","#e2e8f0","#6080a0","rgba(255,255,255,0.07)",
+        "#101420","#060810","rgba(226,232,240,0.65)","#e2e8f0","rgba(0,0,0,0.5)",
+        "#64748b","#fff"),
+    "racing_red": _theme("Racing Red",
+        "#0f0505","#1a0808","#260c0c","#fef2f2","#c06060","rgba(255,255,255,0.07)",
+        "#1a0808","#0a0404","rgba(254,242,242,0.65)","#fef2f2","rgba(0,0,0,0.5)",
+        "#ef4444","#fff"),
+
+    # ── Nature & Earth ───────────────────────────────────────────────
+    "earth_tone": _theme("Earth Tone",
+        "#faf7f2","#fff","#f0e8d8","#2d1f0f","#8b6030","rgba(0,0,0,0.07)",
+        "#fff","#f0e8d8","rgba(45,31,15,0.65)","#2d1f0f","rgba(0,0,0,0.07)",
+        "#92400e","#fff"),
+    "forest": _theme("Forest",
+        "#0f1a0f","#162416","#1e301e","#e8f5e8","#70a070","rgba(255,255,255,0.07)",
+        "#162416","#0c160c","rgba(232,245,232,0.65)","#e8f5e8","rgba(0,0,0,0.5)",
+        "#15803d","#fff"),
+
+    # ── Education ────────────────────────────────────────────────────
+    "academy": _theme("Academy",
+        "#f5f3ff","#fff","#ede9fe","#1e0a52","#6040b0","rgba(0,0,0,0.07)",
+        "#fff","#ede9fe","rgba(30,10,82,0.65)","#1e0a52","rgba(0,0,0,0.07)",
+        "#7c3aed","#fff"),
+    "chalkboard": _theme("Chalkboard",
+        "#1a2010","#222e14","#2c3c1a","#f0fde4","#708040","rgba(255,255,255,0.07)",
+        "#222e14","#10180a","rgba(240,253,228,0.65)","#f0fde4","rgba(0,0,0,0.5)",
+        "#84cc16","#000"),
+
+    # ── African & Cultural ───────────────────────────────────────────
+    "ubuntu": _theme("Ubuntu",
+        "#1a0a05","#2d1208","#3d180a","#fef2f2","#c07060","rgba(255,255,255,0.07)",
+        "#2d1208","#150806","rgba(254,242,242,0.7)","#fef2f2","rgba(0,0,0,0.5)",
+        "#dc2626","#fff"),
+    "kente": _theme("Kente",
+        "#1a1005","#261808","#32200c","#fffbeb","#c09030","rgba(255,255,255,0.07)",
+        "#261808","#140c04","rgba(255,251,235,0.7)","#fffbeb","rgba(0,0,0,0.5)",
+        "#f59e0b","#000"),
+    "savanna": _theme("Savanna",
+        "#faf6f0","#fff","#fde8d0","#1c0e06","#906030","rgba(0,0,0,0.07)",
+        "#fff","#fde8d0","rgba(28,14,6,0.65)","#1c0e06","rgba(0,0,0,0.07)",
+        "#78350f","#fff"),
+
+    # ── Lifestyle ────────────────────────────────────────────────────
+    "warm": _theme("Warm Sunset",
+        "#1f1410","#2b1d16","#36251c","#fdf3ea","#c4a385","rgba(255,255,255,0.08)",
+        "#2b1d16","#1a110d","rgba(253,243,234,0.7)","#fdf3ea","rgba(0,0,0,0.4)",
+        "#f97316","#fff"),
+    "ocean": _theme("Ocean Breeze",
+        "#f0f9ff","#fff","#e0f2fe","#0c2d48","#2a7090","rgba(0,0,0,0.07)",
+        "#fff","#e0f2fe","rgba(12,45,72,0.65)","#0c2d48","rgba(0,0,0,0.07)",
+        "#0ea5e9","#fff"),
 }
 
 FONT_PRESETS = {
-    "poppins":    "'Poppins', sans-serif",
-    "inter":      "'Inter', sans-serif",
-    "montserrat": "'Montserrat', sans-serif",
-    "open_sans":  "'Open Sans', sans-serif",
+    # Modern
+    "inter":           "'Inter', system-ui, sans-serif",
+    "poppins":         "'Poppins', sans-serif",
+    "nunito":          "'Nunito', sans-serif",
+    "dm_sans":         "'DM Sans', sans-serif",
+    "rubik":           "'Rubik', sans-serif",
+    "outfit":          "'Outfit', sans-serif",
+    # Elegant
+    "plus_jakarta":    "'Plus Jakarta Sans', sans-serif",
+    "space_grotesk":   "'Space Grotesk', sans-serif",
+    "syne":            "'Syne', sans-serif",
+    "manrope":         "'Manrope', sans-serif",
+    "figtree":         "'Figtree', sans-serif",
+    "urbanist":        "'Urbanist', sans-serif",
+    # Classic
+    "open_sans":       "'Open Sans', sans-serif",
+    "montserrat":      "'Montserrat', sans-serif",
+    "lato":            "'Lato', sans-serif",
+    "raleway":         "'Raleway', sans-serif",
+    # Warm
+    "quicksand":       "'Quicksand', sans-serif",
+    "josefin_sans":    "'Josefin Sans', sans-serif",
+    "nunito_sans":     "'Nunito Sans', sans-serif",
+    "karla":           "'Karla', sans-serif",
+    "mulish":          "'Mulish', sans-serif",
+    "barlow":          "'Barlow', sans-serif",
+    # Bold
+    "exo_2":           "'Exo 2', sans-serif",
+    "oxanium":         "'Oxanium', sans-serif",
+    "big_shoulders":   "'Big Shoulders Display', sans-serif",
+    # Refined
+    "cormorant":       "'Cormorant Garamond', serif",
+    "playfair":        "'Playfair Display', serif",
+    "libre_baskerville":"'Libre Baskerville', serif",
 }
 
 FONT_GOOGLE_FAMILIES = {
-    "poppins":    "Poppins:wght@400;500;600;700;800",
-    "inter":      "Inter:wght@400;500;600;700;800",
-    "montserrat": "Montserrat:wght@400;500;600;700;800",
-    "open_sans":  "Open+Sans:wght@400;500;600;700;800",
+    "inter":            "Inter:wght@400;500;600;700;800",
+    "poppins":          "Poppins:wght@400;500;600;700;800",
+    "nunito":           "Nunito:wght@400;500;600;700;800",
+    "dm_sans":          "DM+Sans:wght@400;500;600;700;800",
+    "rubik":            "Rubik:wght@400;500;600;700;800",
+    "outfit":           "Outfit:wght@400;500;600;700;800",
+    "plus_jakarta":     "Plus+Jakarta+Sans:wght@400;500;600;700;800",
+    "space_grotesk":    "Space+Grotesk:wght@400;500;600;700",
+    "syne":             "Syne:wght@400;600;700;800",
+    "manrope":          "Manrope:wght@400;500;600;700;800",
+    "figtree":          "Figtree:wght@400;500;600;700;800",
+    "urbanist":         "Urbanist:wght@400;500;600;700;800",
+    "open_sans":        "Open+Sans:wght@400;500;600;700;800",
+    "montserrat":       "Montserrat:wght@400;500;600;700;800",
+    "lato":             "Lato:wght@400;700;900",
+    "raleway":          "Raleway:wght@400;500;600;700;800",
+    "quicksand":        "Quicksand:wght@400;500;600;700",
+    "josefin_sans":     "Josefin+Sans:wght@400;600;700",
+    "nunito_sans":      "Nunito+Sans:wght@400;500;600;700;800",
+    "karla":            "Karla:wght@400;500;600;700",
+    "mulish":           "Mulish:wght@400;500;600;700;800",
+    "barlow":           "Barlow:wght@400;500;600;700;800",
+    "exo_2":            "Exo+2:wght@400;500;600;700;800",
+    "oxanium":          "Oxanium:wght@400;500;600;700;800",
+    "big_shoulders":    "Big+Shoulders+Display:wght@400;600;700;800",
+    "cormorant":        "Cormorant+Garamond:wght@400;500;600;700",
+    "playfair":         "Playfair+Display:wght@400;600;700;800",
+    "libre_baskerville":"Libre+Baskerville:wght@400;700",
 }
 
 LAYOUT_PRESETS = {
@@ -189,17 +363,20 @@ def _get_site_settings(features_json: dict | None) -> dict:
     """
     cfg = (features_json or {}).get("site_generator") or {}
     return {
-        "theme_style":   cfg.get("theme_style",  "dark_modern"),
-        "font":          cfg.get("font",          "inter"),
-        "layout":        cfg.get("layout",        "standard"),
-        "show_hours":    cfg.get("show_hours",    True),
-        "show_location": cfg.get("show_location", True),
-        "show_reviews":  cfg.get("show_reviews",  False),
-        "show_gallery":  cfg.get("show_gallery",  True),
-        "show_ordering": cfg.get("show_ordering", True),
+        "theme_style":    cfg.get("theme_style",    "dark_modern"),
+        "font":           cfg.get("font",           "inter"),
+        "layout":         cfg.get("layout",         "standard"),
+        "show_hours":     cfg.get("show_hours",     True),
+        "show_location":  cfg.get("show_location",  True),
+        "show_reviews":   cfg.get("show_reviews",   False),
+        "show_gallery":   cfg.get("show_gallery",   True),
+        "show_ordering":  cfg.get("show_ordering",  True),
         "business_hours": cfg.get("business_hours", ""),
-        "location":       cfg.get("location",      ""),
-        "description":    cfg.get("description",   ""),
+        "location":       cfg.get("location",       ""),
+        "description":    cfg.get("description",    ""),
+        # Custom accent colour — overrides the theme's default accent when set.
+        # Stored as a hex string e.g. "#ff6b35". Empty string = use theme default.
+        "accent_color":   cfg.get("accent_color",   ""),
     }
 
 
@@ -898,8 +1075,7 @@ def generate_site_html(slug: str) -> str:
     name         = biz.get("name", "Our Business")
     category     = biz.get("category", "")
     tagline      = biz.get("tagline") or f"Order {category or 'products'} on WhatsApp"
-    theme        = biz.get("theme_colour") or "#00c853"
-    theme_dark   = _hex_darken(theme)
+    # theme and theme_dark derived below via palette.accent / accent_color override
     currency_sym = biz.get("currency_symbol", "$")
     # Resolve the correct WhatsApp number to link to:
     # - use_shared_number=True (or no dedicated number set): route to WaziBot shared inbox
@@ -913,9 +1089,20 @@ def generate_site_html(slug: str) -> str:
 
     settings   = _get_site_settings(biz.get("features_json"))
     palette    = THEME_PRESETS.get(settings["theme_style"], THEME_PRESETS["dark_modern"])
-    font_stack = FONT_PRESETS.get(settings["font"], FONT_PRESETS["inter"])
-    font_google= FONT_GOOGLE_FAMILIES.get(settings["font"], FONT_GOOGLE_FAMILIES["inter"])
+    font_stack = FONT_PRESETS.get(settings["font"], FONT_PRESETS.get("inter", "'Inter',sans-serif"))
+    font_google= FONT_GOOGLE_FAMILIES.get(settings["font"], FONT_GOOGLE_FAMILIES.get("inter","Inter:wght@400;700"))
     layout     = LAYOUT_PRESETS.get(settings["layout"],  LAYOUT_PRESETS["standard"])
+
+    # Custom accent colour: user-picked hex overrides theme default.
+    # Falls back to theme accent → business theme_colour → safe green.
+    custom_accent = settings.get("accent_color", "").strip()
+    if custom_accent and custom_accent.startswith("#") and len(custom_accent) in (4, 7):
+        theme       = custom_accent
+        theme_dark  = _hex_darken(custom_accent, 25)
+    else:
+        # Use theme's built-in accent (new themes have it; old themes fall back to theme_colour)
+        theme       = palette.get("accent") or biz.get("theme_colour") or "#00c853"
+        theme_dark  = _hex_darken(theme, 25)
 
     # Fetch reviews if enabled
     reviews = []

@@ -5185,9 +5185,8 @@ function sgSelectTheme(theme) {
   document.querySelectorAll('.sg-theme-card').forEach(card => {
     card.classList.toggle('active', card.dataset.theme === theme);
   });
-  // Update the selected label
   const activeCard = document.querySelector(`.sg-theme-card[data-theme="${theme}"]`);
-  const labelEl   = document.getElementById('sg-theme-selected-label');
+  const labelEl    = document.getElementById('sg-theme-selected-label');
   if (labelEl && activeCard) {
     const name = activeCard.querySelector('span')?.textContent || theme;
     labelEl.textContent = '✓ ' + name + ' selected';
@@ -5198,25 +5197,36 @@ function sgSelectTheme(theme) {
 function sgFilterCategory(tabEl, category) {
   document.querySelectorAll('.sg-cat-tab').forEach(t => t.classList.remove('active'));
   tabEl.classList.add('active');
-  document.getElementById('sg-theme-search').value = '';
   document.querySelectorAll('.sg-theme-card').forEach(card => {
     const show = category === 'all' || card.dataset.cat === category;
     card.style.display = show ? '' : 'none';
   });
 }
 
-// Filter themes by search text
-function sgFilterThemes(q) {
-  const query = q.toLowerCase().trim();
-  // Reset category tabs
-  document.querySelectorAll('.sg-cat-tab').forEach(t => t.classList.remove('active'));
-  const allTab = document.querySelector('.sg-cat-tab');
-  if (allTab) allTab.classList.add('active');
-  document.querySelectorAll('.sg-theme-card').forEach(card => {
-    const name = (card.querySelector('span')?.textContent || '').toLowerCase();
-    const cat  = (card.dataset.cat || '').toLowerCase();
-    card.style.display = (!query || name.includes(query) || cat.includes(query)) ? '' : 'none';
+// Preview accent colour before saving
+function sgPreviewAccent(hex) {
+  const el = document.getElementById('sg-accent-preview');
+  if (el && hex) el.innerHTML = `Accent: <strong style="color:${hex}">${hex}</strong> — saves with your settings`;
+  // Highlight matching palette dot
+  document.querySelectorAll('.sg-palette-dot').forEach(dot => {
+    dot.classList.toggle('active', dot.style.background.toLowerCase() === hex.toLowerCase() ||
+      dot.style.backgroundColor.toLowerCase() === hex.toLowerCase());
   });
+}
+
+// Set accent from quick-palette dot
+function sgSetAccent(hex) {
+  const inp = document.getElementById('sg-accent-color');
+  if (!hex) {
+    // Reset
+    if (inp) inp.value = '#22c55e';
+    const el = document.getElementById('sg-accent-preview');
+    if (el) el.textContent = 'Using theme default accent colour';
+    document.querySelectorAll('.sg-palette-dot').forEach(d => d.classList.remove('active'));
+    return;
+  }
+  if (inp) inp.value = hex;
+  sgPreviewAccent(hex);
 }
 
 function sgSelectLayout(layout) {
@@ -5245,6 +5255,12 @@ async function loadSiteGeneratorSettings() {
     const fontSel = document.getElementById('sg-font-select');
     if (fontSel) fontSel.value = cfg.font || 'inter';
 
+    // Restore accent colour
+    const savedAccent = cfg.accent_color || '';
+    const accentInp   = document.getElementById('sg-accent-color');
+    if (accentInp) accentInp.value = savedAccent || '#22c55e';
+    if (savedAccent) sgPreviewAccent(savedAccent);
+
     _setVal('sg-hours', cfg.business_hours || '');
     _setVal('sg-location', cfg.location || '');
 
@@ -5268,10 +5284,13 @@ async function saveSiteGeneratorSettings() {
     const biz      = await apiFetch('/me').catch(() => ({}));
     const features = biz?.features_json || {};
 
+    const accentRaw   = (document.getElementById('sg-accent-color')?.value || '').trim();
+    const accentColor = (accentRaw && accentRaw !== '#22c55e') ? accentRaw : '';
     features['site_generator'] = {
       theme_style:     _sgSelectedTheme,
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
+      accent_color:     accentColor,   // custom accent — empty = use theme default
       business_hours:   _getVal('sg-hours') || '',
       location:         _getVal('sg-location') || '',
       show_hours:       document.getElementById('sg-show-hours')?.checked    ?? true,
