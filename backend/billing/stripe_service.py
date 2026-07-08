@@ -489,12 +489,12 @@ def create_connect_account(business_id: int, business_name: str, owner_email: st
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("stripe_connect_account_id")
+            .select("stripe_account_id")
             .eq("id", business_id)
             .limit(1)
             .execute()
         )
-        account_id = (res.data or [{}])[0].get("stripe_connect_account_id")
+        account_id = (res.data or [{}])[0].get("stripe_account_id")
 
         if not account_id:
             account = stripe.Account.create(
@@ -507,10 +507,10 @@ def create_connect_account(business_id: int, business_name: str, owner_email: st
             account_id = account["id"]
             try:
                 supabase.table("businesses").update(
-                    {"stripe_connect_account_id": account_id}
+                    {"stripe_account_id": account_id}
                 ).eq("id", business_id).execute()
             except Exception as exc:
-                log.debug("stripe_connect_account_id column may not exist yet: %s", exc)
+                log.debug("stripe_account_id: %s", exc)
             log.info("Stripe Connect account created  business=%s  account=%s", business_id, account_id)
 
         base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
@@ -539,12 +539,12 @@ def get_connect_account_status(business_id: int) -> dict:
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("stripe_connect_account_id")
+            .select("stripe_account_id")
             .eq("id", business_id)
             .limit(1)
             .execute()
         )
-        account_id = (res.data or [{}])[0].get("stripe_connect_account_id")
+        account_id = (res.data or [{}])[0].get("stripe_account_id")
         if not account_id:
             return default
 
@@ -576,12 +576,12 @@ def create_connect_dashboard_link(business_id: int) -> dict:
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("stripe_connect_account_id")
+            .select("stripe_account_id")
             .eq("id", business_id)
             .limit(1)
             .execute()
         )
-        account_id = (res.data or [{}])[0].get("stripe_connect_account_id")
+        account_id = (res.data or [{}])[0].get("stripe_account_id")
         if not account_id:
             return {"error": "No connected Stripe account found for this business"}
         link = stripe.Account.create_login_link(account_id)
