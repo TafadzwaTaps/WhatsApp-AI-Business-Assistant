@@ -252,6 +252,16 @@ def generate_reply(
                 mem = _get_memory(phone, business_id)
                 mem["last_rating"] = rating
                 crud.save_user_memory(phone, business_id, mem)
+                # Persist rating to ratings table for proper analytics
+                try:
+                    from core.db import supabase as _rdb
+                    _rdb.table("ratings").insert({
+                        "business_id":    business_id,
+                        "customer_phone": phone,
+                        "rating":         rating,
+                    }).execute()
+                except Exception as _re:
+                    log.debug("ratings insert: %s", _re)
             except Exception:
                 pass
             follow_up = (

@@ -1256,81 +1256,115 @@ async def import_products_csv(
 ):
     """
     Bulk product import via CSV.
-    Expected columns: name, price, description (optional), image_url (optional)
-    Skips rows with missing name or non-numeric price.
-    Returns summary: {imported, skipped, errors}
+    Accepted column aliases (case-insensitive):
+      name/product_name/item/title, price/cost/unit_price,
+      description/desc, category/cat, stock/quantity/qty,
+      image_url/image/photo
+    Returns {ok, imported, skipped, errors, columns_found}
     """
-    import csv
-    import io
-
+    import csv, io
     bid       = user["business_id"]
     imported  = 0
     skipped   = 0
     row_errors: list[str] = []
-
+    NAME_COLS  = ["name","product_name","item","product","title","item_name"]
+    PRICE_COLS = ["price","cost","amount","unit_price","rate","selling_price"]
+    DESC_COLS  = ["description","desc","details","notes","about"]
+    CAT_COLS   = ["category","cat","type","group","section"]
+    STOCK_COLS = ["stock","quantity","qty","units","inventory"]
+    IMG_COLS   = ["image_url","image","photo","img","picture_url"]
+    def _pick(row: dict, aliases: list) -> str:
+        for a in aliases:
+            v = row.get(a, "")
+            if v: return v.strip()
+        return ""
     try:
-        content  = await file.read()
-        text     = content.decode("utf-8-sig", errors="replace")  # handle BOM
-        reader   = csv.DictReader(io.StringIO(text))
-
-        # Normalise column names to lowercase stripped
-        rows = []
-        for row in reader:
-            rows.append({k.strip().lower(): (v or "").strip() for k, v in row.items()})
-
-        if not rows:
-            raise HTTPException(400, "CSV file is empty or has no rows.")
-
-        from core.db import supabase as _sb
-        import time as _t
-
-        for i, row in enumerate(rows, start=2):   # start=2 (row 1 = header)
-            name  = row.get("name") or row.get("product_name") or ""
-            price = row.get("price") or ""
-
-            if not name:
-                skipped += 1
-                row_errors.append(f"Row {i}: missing name — skipped")
-                continue
-
+        raw_bytes = await file.read()
+        if not raw_bytes:
+            raise HTTPException(400, "Uploaded file is empty.")
+        text = ""
+        for enc in ("utf-8-sig", "utf-8", "latin-1"):
             try:
-                price_f = float(price)
-                if price_f < 0:
-                    raise ValueError("negative price")
+                text = raw_bytes.decode(enc); break
+            except UnicodeDecodeError:
+                continue
+        if not text:
+            text = raw_bytes.decode("latin-1", errors="replace")
+        # Normalise line endings (Windows \r\n, old Mac \r)
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        reader     = csv.DictReader(io.StringIO(text))
+        fieldnames = [f.strip().lower() for f in (reader.fieldnames or [])]
+        if not fieldnames:
+            raise HTTPException(400, "CSV has no header row.")
+        cols_found = {
+            "name":        next((c for c in NAME_COLS  if c in fieldnames), None),
+            "price":       next((c for c in PRICE_COLS if c in fieldnames), None),
+            "description": next((c for c in DESC_COLS  if c in fieldnames), None),
+            "category":    next((c for c in CAT_COLS   if c in fieldnames), None),
+            "stock":       next((c for c in STOCK_COLS if c in fieldnames), None),
+            "image_url":   next((c for c in IMG_COLS   if c in fieldnames), None),
+        }
+        if not cols_found["name"]:
+            raise HTTPException(400,
+                f"No name column found. Your CSV columns: {fieldnames}. "
+                "Rename product name column to 'name'.")
+        if not cols_found["price"]:
+            raise HTTPException(400,
+                f"No price column found. Your CSV columns: {fieldnames}. "
+                "Rename price column to 'price'.")
+        rows = [{k.strip().lower(): (v or "").strip() for k, v in row.items()}
+                for row in reader]
+        if not rows:
+            raise HTTPException(400, "CSV has headers but no data rows.")
+        from core.db import supabase as _sb
+        payloads: list[dict] = []
+        for i, row in enumerate(rows, start=2):
+            if not any(row.values()): continue  # skip blank rows
+            name = _pick(row, NAME_COLS)
+            if not name:
+                skipped += 1; row_errors.append(f"Row {i}: no name"); continue
+            price_raw   = _pick(row, PRICE_COLS)
+            price_clean = price_raw.replace("$","").replace(",","").replace(" ","").strip()
+            try:
+                price_f = float(price_clean)
+                if price_f < 0: raise ValueError
             except (ValueError, TypeError):
                 skipped += 1
-                row_errors.append(f"Row {i}: invalid price '{price}' — skipped")
+                row_errors.append(f"Row {i}: invalid price '{price_raw}'")
                 continue
-
-            payload = {
-                "business_id": bid,
-                "name":        name[:200],
-                "price":       price_f,
-                "description": (row.get("description") or "")[:1000],
-                "stock":       None,
-            }
-            img = (row.get("image_url") or row.get("image") or "").strip()
-            if img and img.startswith("http"):
-                payload["image_url"] = img[:500]
-
+            payload: dict = {"business_id": bid, "name": name[:200], "price": round(price_f, 2)}
+            desc = _pick(row, DESC_COLS)
+            if desc: payload["description"] = desc[:1000]
+            cat  = _pick(row, CAT_COLS)
+            if cat:  payload["category"]    = cat[:100]
+            stk  = _pick(row, STOCK_COLS)
+            if stk:
+                try: payload["stock"] = int(float(stk))
+                except (ValueError, TypeError): pass
+            img = _pick(row, IMG_COLS)
+            if img and img.startswith("http"): payload["image_url"] = img[:500]
+            payloads.append(payload)
+        if not payloads:
+            return {"ok": False, "imported": 0, "skipped": skipped,
+                    "errors": row_errors[:20], "columns_found": cols_found,
+                    "message": "No valid rows to import."}
+        BATCH = 50
+        for start in range(0, len(payloads), BATCH):
+            batch = payloads[start:start + BATCH]
             try:
-                _sb.table("products").insert(payload).execute()
-                imported += 1
-            except Exception as db_exc:
-                skipped += 1
-                row_errors.append(f"Row {i}: DB error — {str(db_exc)[:80]}")
-
-        log.info(
-            "csv_import: biz=%s imported=%d skipped=%d",
-            bid, imported, skipped,
-        )
-        return {
-            "ok":       True,
-            "imported": imported,
-            "skipped":  skipped,
-            "errors":   row_errors[:20],   # cap error list
-        }
-
+                _sb.table("products").insert(batch).execute()
+                imported += len(batch)
+            except Exception:
+                for p in batch:
+                    try:
+                        _sb.table("products").insert(p).execute()
+                        imported += 1
+                    except Exception as re:
+                        skipped += 1
+                        row_errors.append(f"DB: {str(re)[:80]}")
+        log.info("csv_import: biz=%s imported=%d skipped=%d", bid, imported, skipped)
+        return {"ok": imported > 0, "imported": imported, "skipped": skipped,
+                "errors": row_errors[:20], "columns_found": cols_found}
     except HTTPException:
         raise
     except Exception as exc:

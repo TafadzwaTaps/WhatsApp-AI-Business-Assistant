@@ -419,13 +419,58 @@ def get_segment_summary_cached(business_id: int) -> dict:
     _cache_set(_ck, result)
     return result
 
+# Score map for word ratings → numbers
+_RATING_SCORE = {"excellent": 5, "good": 4, "average": 3, "poor": 1}
+
 def get_satisfaction_score(business_id: int) -> dict:
     """
-    Sprint 5 — Customer Satisfaction Score.
-    Reads last_rating from user_memory. No new tables or surveys.
-    Returns: {avg_rating, rated_count, total_customers}
+    Customer Satisfaction Score.
+    Primary source: ratings table (run migration_ratings_table.sql first).
+    Fallback: user_memory.last_rating (backward-compat).
+    Returns: {avg_score, avg_rating, rated_count, total_customers,
+              breakdown: {excellent,good,average,poor}}
     """
     try:
+        # ── Primary: ratings table ─────────────────────────────────────────
+        try:
+            res = (
+                supabase.table("ratings")
+                .select("rating, rating_score, created_at")
+                .eq("business_id", business_id)
+                .order("created_at", desc=True)
+                .execute()
+            )
+            rows = res.data or []
+            if rows:
+                scores   = [r["rating_score"] for r in rows if r.get("rating_score")]
+                avg      = round(sum(scores) / len(scores), 1) if scores else None
+                breakdown = {"excellent": 0, "good": 0, "average": 0, "poor": 0}
+                for r in rows:
+                    rat = r.get("rating", "").lower()
+                    if rat in breakdown:
+                        breakdown[rat] += 1
+                # Recent trend: last 10 vs previous 10
+                recent = scores[:10];   recent_avg = round(sum(recent)/len(recent), 1) if recent else None
+                older  = scores[10:20]; older_avg  = round(sum(older)/len(older),  1) if older  else None
+                trend = "up" if (recent_avg and older_avg and recent_avg > older_avg) else                         "down" if (recent_avg and older_avg and recent_avg < older_avg) else "stable"
+                # Total customers (from user_memory for context)
+                um = supabase.table("user_memory").select("phone",count="exact").eq("business_id",business_id).execute()
+                total = um.count if hasattr(um, "count") else len(um.data or [])
+                return {
+                    "avg_score":       avg,
+                    "avg_rating":      avg,        # alias for backward compat
+                    "rated_count":     len(rows),
+                    "total_customers": total or len(rows),
+                    "breakdown":       breakdown,
+                    "trend":           trend,
+                    "recent_avg":      recent_avg,
+                    "source":          "ratings_table",
+                }
+        except Exception as tbl_exc:
+            # ratings table may not exist yet — fall through to user_memory
+            log.debug("ratings table read failed (run migration?): %s", tbl_exc)
+
+        # ── Fallback: user_memory.last_rating ─────────────────────────────
         res = (
             supabase.table("user_memory")
             .select("last_rating")
@@ -433,24 +478,24 @@ def get_satisfaction_score(business_id: int) -> dict:
             .execute()
         )
         rows = res.data or []
-        def _to_float(val) -> float | None:
-            """Safely convert a rating value to float. Returns None if blank or non-numeric."""
-            if val is None: return None
-            s = str(val).strip()
-            if not s: return None
-            try: return float(s)
-            except (ValueError, TypeError): return None
-
-        ratings = [
-            v for r in rows
-            if (v := _to_float(r.get("last_rating"))) is not None
-        ]
-        avg = round(sum(ratings) / len(ratings), 1) if ratings else None
+        scores    = [_RATING_SCORE[r["last_rating"]] for r in rows
+                     if r.get("last_rating") in _RATING_SCORE]
+        breakdown = {"excellent": 0, "good": 0, "average": 0, "poor": 0}
+        for r in rows:
+            rat = (r.get("last_rating") or "").lower()
+            if rat in breakdown:
+                breakdown[rat] += 1
+        avg = round(sum(scores) / len(scores), 1) if scores else None
         return {
+            "avg_score":       avg,
             "avg_rating":      avg,
-            "rated_count":     len(ratings),
+            "rated_count":     len(scores),
             "total_customers": len(rows),
+            "breakdown":       breakdown,
+            "trend":           "stable",
+            "source":          "user_memory",
         }
     except Exception as exc:
         log.warning("get_satisfaction_score error: %s", exc)
-        return {"avg_rating": None, "rated_count": 0, "total_customers": 0}
+        return {"avg_score": None, "avg_rating": None, "rated_count": 0,
+                "total_customers": 0, "breakdown": {}, "trend": "stable"}
