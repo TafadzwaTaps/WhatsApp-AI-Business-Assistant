@@ -552,115 +552,23 @@ async function loadOrders() {
 }
 
 function renderOrders(orders, bodyId, showStatus) {
-  const cols = showStatus ? 8 : 7;
+  const cols = showStatus ? 7 : 6;
   const tbody = document.getElementById(bodyId);
   if (!tbody) return;
   const rows = Array.isArray(orders) ? orders : [];
   if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
   tbody.innerHTML=rows.map(o=>{
-    const status   = o.status || 'pending';
-    const pstatus  = o.payment_status || '';
-    const isPaid   = ['paid','confirmed'].includes(pstatus) || pstatus === 'paid';
-    const needsConfirm = !isPaid && ['awaiting_payment','awaiting_confirmation',
-                          'pending','pending_cash','payment_review'].includes(pstatus);
-    const confirmBtn = (showStatus && needsConfirm)
-      ? `<button class="btn btn-ghost" style="font-size:10px;padding:3px 8px;color:var(--green);"
-           onclick="openPaymentConfirmModal(${o.id}, ${(o.total_price||0).toFixed(2)}, '${escHtml(o.customer_phone||'')}')">
-           ✅ Confirm Pay</button>`
-      : (isPaid ? `<span style="font-size:10px;color:var(--green);font-family:var(--mono);">✓ Paid</span>` : '');
+    const status = o.status || 'pending';
     return `<tr>
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
     <td>${escHtml(o.customer_phone||'—')}</td>
     <td>${escHtml(o.product_name||'—')}</td>
     <td>${o.quantity||0}</td>
     <td><span class="badge badge-green">${getCurrencySymbol()}${(o.total_price||0).toFixed(2)}</span></td>
-    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml(status)}</span> <span style="font-size:9px;color:var(--text-dim);font-family:var(--mono);">${escHtml(pstatus)}</span></td>`:''}
-    <td style="white-space:nowrap;">${confirmBtn}</td>
+    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml(status)}</span></td>`:''}
     <td>${fmtTime(o.created_at || o.createdAt || o.timestamp)}</td>
   </tr>`;
   }).join('');
-}
-
-// ── Payment Confirm Modal ─────────────────────────────────────────────────────
-function openPaymentConfirmModal(orderId, amount, phone) {
-  // Create/show the confirm modal
-  let modal = document.getElementById('pay-confirm-modal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'pay-confirm-modal';
-    modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;
-      display:flex;align-items:center;justify-content:center;padding:16px;`;
-    modal.innerHTML = `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;
-                  padding:28px 24px;max-width:380px;width:100%;">
-        <div style="font-size:16px;font-weight:800;margin-bottom:6px;">✅ Confirm Payment</div>
-        <div id="pcm-subtitle" style="font-size:12px;font-family:var(--mono);color:var(--text-dim);margin-bottom:20px;"></div>
-        <div class="form-group" style="margin-bottom:12px;">
-          <label>Payment Reference <span style="opacity:.55;">(optional)</span></label>
-          <input type="text" id="pcm-ref" placeholder="e.g. EcoCash ref, cash, manual"
-                 style="margin-top:4px;"/>
-        </div>
-        <div class="form-group" style="margin-bottom:20px;">
-          <label>Amount Received</label>
-          <input type="number" id="pcm-amount" step="0.01" min="0" style="margin-top:4px;"/>
-        </div>
-        <div style="display:flex;gap:10px;">
-          <button class="btn btn-primary" style="flex:1;" id="pcm-confirm-btn"
-                  onclick="submitPaymentConfirm()">Confirm Payment</button>
-          <button class="btn btn-ghost" style="flex:1;" onclick="closePayConfirmModal()">Cancel</button>
-        </div>
-        <div id="pcm-status" style="font-size:11px;font-family:var(--mono);margin-top:10px;min-height:14px;"></div>
-      </div>`;
-    document.body.appendChild(modal);
-  }
-  // Populate
-  document.getElementById('pcm-subtitle').textContent =
-    `Order #${orderId}  ·  ${phone}  ·  $${parseFloat(amount).toFixed(2)}`;
-  document.getElementById('pcm-amount').value = parseFloat(amount).toFixed(2);
-  document.getElementById('pcm-ref').value = '';
-  document.getElementById('pcm-status').textContent = '';
-  modal.dataset.orderId = orderId;
-  modal.dataset.amount  = amount;
-  modal.style.display   = 'flex';
-  setTimeout(() => document.getElementById('pcm-ref')?.focus(), 50);
-}
-
-function closePayConfirmModal() {
-  const m = document.getElementById('pay-confirm-modal');
-  if (m) m.style.display = 'none';
-}
-
-async function submitPaymentConfirm() {
-  const modal     = document.getElementById('pay-confirm-modal');
-  const orderId   = parseInt(modal?.dataset.orderId);
-  const amount    = parseFloat(document.getElementById('pcm-amount')?.value || 0);
-  const reference = document.getElementById('pcm-ref')?.value.trim() || `ORDER-${orderId}`;
-  const btn       = document.getElementById('pcm-confirm-btn');
-  const status    = document.getElementById('pcm-status');
-
-  if (!orderId) return;
-  btn.disabled = true;
-  btn.textContent = 'Confirming…';
-  status.textContent = '';
-
-  try {
-    const res = await apiFetch('/chat/payment-confirm', {
-      method: 'POST',
-      body: JSON.stringify({ order_id: orderId, reference, amount }),
-    });
-    if (res?.ok) {
-      status.textContent = '✓ Payment confirmed and customer notified!';
-      status.style.color = 'var(--green)';
-      setTimeout(() => { closePayConfirmModal(); loadOrders(); }, 1200);
-    } else {
-      throw new Error(res?.message || res?.detail || 'Confirm failed');
-    }
-  } catch(e) {
-    status.textContent = '✗ ' + e.message;
-    status.style.color = 'var(--red, #ef4444)';
-    btn.disabled = false;
-    btn.textContent = 'Confirm Payment';
-  }
 }
 
 // ── PRODUCTS ──────────────────────────────────────────────
@@ -5277,6 +5185,46 @@ function sgSelectTheme(theme) {
   document.querySelectorAll('.sg-theme-card').forEach(card => {
     card.classList.toggle('active', card.dataset.theme === theme);
   });
+  // Update selected label
+  const activeCard = document.querySelector(`.sg-theme-card[data-theme="${theme}"]`);
+  const labelEl    = document.getElementById('sg-theme-selected-label');
+  if (labelEl && activeCard) {
+    labelEl.textContent = '✓ ' + (activeCard.querySelector('span')?.textContent || theme) + ' selected';
+  }
+}
+
+// Filter theme grid by category tab
+function sgFilterCategory(tabEl, category) {
+  document.querySelectorAll('.sg-cat-tab').forEach(t => t.classList.remove('active'));
+  tabEl.classList.add('active');
+  document.querySelectorAll('.sg-theme-card').forEach(card => {
+    card.style.display = (category === 'all' || card.dataset.cat === category) ? '' : 'none';
+  });
+}
+
+// Accent colour — preview while dragging colour wheel
+function sgPreviewAccent(hex) {
+  const el = document.getElementById('sg-accent-preview');
+  if (el && hex) el.innerHTML = `Accent: <strong style="color:${hex}">${hex}</strong> — saved with settings`;
+  // Highlight matching quick-palette dot
+  document.querySelectorAll('.sg-palette-dot').forEach(dot => {
+    const bg = dot.style.background || dot.style.backgroundColor;
+    dot.classList.toggle('sg-dot-active', bg.toLowerCase() === hex.toLowerCase());
+  });
+}
+
+// Set accent from quick-palette dot click
+function sgSetAccent(hex) {
+  const inp = document.getElementById('sg-accent-color');
+  const el  = document.getElementById('sg-accent-preview');
+  if (!hex) {
+    if (inp) inp.value = '#22c55e';
+    if (el)  el.textContent = 'Using theme default accent colour';
+    document.querySelectorAll('.sg-palette-dot').forEach(d => d.classList.remove('sg-dot-active'));
+    return;
+  }
+  if (inp) inp.value = hex;
+  sgPreviewAccent(hex);
 }
 
 function sgSelectLayout(layout) {
@@ -5305,6 +5253,12 @@ async function loadSiteGeneratorSettings() {
     const fontSel = document.getElementById('sg-font-select');
     if (fontSel) fontSel.value = cfg.font || 'inter';
 
+    // Restore accent colour
+    const _savedAccent = cfg.accent_color || '';
+    const _accentInp   = document.getElementById('sg-accent-color');
+    if (_accentInp) _accentInp.value = _savedAccent || '#22c55e';
+    if (_savedAccent) sgPreviewAccent(_savedAccent);
+
     _setVal('sg-hours', cfg.business_hours || '');
     _setVal('sg-location', cfg.location || '');
 
@@ -5328,10 +5282,13 @@ async function saveSiteGeneratorSettings() {
     const biz      = await apiFetch('/me').catch(() => ({}));
     const features = biz?.features_json || {};
 
+    const _accentRaw   = (document.getElementById('sg-accent-color')?.value || '').trim();
+    const _accentColor = (_accentRaw && _accentRaw !== '#22c55e') ? _accentRaw : '';
     features['site_generator'] = {
       theme_style:     _sgSelectedTheme,
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
+      accent_color:     _accentColor,
       business_hours:   _getVal('sg-hours') || '',
       location:         _getVal('sg-location') || '',
       show_hours:       document.getElementById('sg-show-hours')?.checked    ?? true,
@@ -5445,9 +5402,7 @@ async function importProductsCSV(input) {
     const formData = new FormData();
     formData.append('file', file);
     const res = await apiFetch('/products/import-csv', {
-      method: 'POST', body: formData,
-      // No headers{} override — apiFetch auto-handles FormData (no Content-Type,
-      // keeps Authorization). Passing headers:{} was wiping the auth token.
+      method: 'POST', body: formData, headers: {},
     });
     if (res?.ok) {
       showToast('✅ Imported ' + res.imported + ' product' + (res.imported !== 1 ? 's' : '') +
@@ -5665,16 +5620,4 @@ async function backfillCrm() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ Sync from Chats'; }
   }
-}
-
-
-async function loadSatisfactionScore() {
-  try {
-    const data = await apiFetch('/analytics/satisfaction');
-    if (!data) return;
-    const el = document.getElementById('satisfaction-score');
-    if (el) el.innerHTML = data.avg_score ? `<span style="color:var(--amber)">${'★'.repeat(Math.round(data.avg_score))}${'☆'.repeat(5-Math.round(data.avg_score))}</span> ${data.avg_score}/5` : 'No ratings yet';
-    const sub = document.getElementById('satisfaction-sub');
-    if (sub) sub.textContent = `${data.rated_count} ratings from ${data.total_customers} customers`;
-  } catch(e) {}
 }
