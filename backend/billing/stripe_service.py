@@ -615,19 +615,32 @@ def create_product_checkout_session(
         return {"error": "No items provided"}
 
     try:
+        # Stripe requires amounts in the smallest currency unit.
+        # Most currencies: multiply by 100 (e.g. $5.99 → 599 cents).
+        # Zero-decimal currencies: use the value as-is (e.g. ¥599 → 599).
+        _ZERO_DECIMAL = {
+            "bif","clp","djf","gnf","jpy","kmf","krw","mga",
+            "pyg","rwf","ugx","vnd","vuv","xaf","xof","xpf",
+        }
+        cur_norm   = (currency or "usd").strip().lower()
+        zero_dec   = cur_norm in _ZERO_DECIMAL
+
         line_items = []
         for item in items:
-            unit_amount = int(round(float(item.get("price", 0)) * 100))
+            price = float(item.get("price", 0) or 0)
+            unit_amount = int(round(price)) if zero_dec else int(round(price * 100))
+            if unit_amount <= 0:
+                continue  # skip free or invalid items
             line_items.append({
                 "price_data": {
-                    "currency": currency,
+                    "currency": cur_norm,
                     "unit_amount": unit_amount,
                     "product_data": {
-                        "name": item.get("name", "Item"),
+                        "name": (item.get("name") or "Item")[:250],
                         "description": item.get("description") or None,
                     },
                 },
-                "quantity": int(item.get("quantity", 1)),
+                "quantity": max(1, int(item.get("quantity", 1))),
             })
 
         base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")

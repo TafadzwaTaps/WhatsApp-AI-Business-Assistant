@@ -214,6 +214,71 @@ class ProductCheckoutRequest(BaseModel):
     success_url:    str = ""
     cancel_url:     str = ""
 
+# Map of currency symbols → ISO codes used to resolve currency when the
+# client-sent value may be stale (old cached site HTML).
+_SYMBOL_TO_ISO: dict = {
+    "$": "usd", "US$": "usd", "USD": "usd",
+    "£": "gbp", "GBP": "gbp",
+    "€": "eur", "EUR": "eur",
+    "R": "zar", "ZAR": "zar",
+    "ZWL$": "zwl", "ZWL": "zwl",
+    "zł": "pln", "PLN": "pln", "zl": "pln",
+    "₦": "ngn", "NGN": "ngn",
+    "KSh": "kes", "KES": "kes",
+    "GH₵": "ghs", "GHS": "ghs",
+    "UGX": "ugx", "TZS": "tzs", "ZMW": "zmw",
+    "₹": "inr", "INR": "inr",
+    "PKR": "pkr", "BDT": "bdt",
+    "A$": "aud", "AUD": "aud",
+    "C$": "cad", "CAD": "cad",
+    "AED": "aed", "SGD": "sgd",
+    "RM": "myr", "MYR": "myr",
+}
+
+
+def _resolve_currency(business_id: int, client_currency: str) -> str:
+    """
+    Return the correct lowercase ISO-4217 currency code for a business.
+    Always reads from the DB — never trusts the client-sent value alone,
+    because the storefront HTML may be cached and still embed old currency.
+
+    Priority:
+      1. Business `currency` column in DB  (most authoritative)
+      2. Derived from `currency_symbol` column via _SYMBOL_TO_ISO
+      3. Client-sent value (fallback for unknown symbols)
+      4. "usd" (final default)
+    """
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("currency, currency_symbol")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        biz = (res.data or [{}])[0]
+        db_cur = (biz.get("currency") or "").strip().upper()
+        db_sym = (biz.get("currency_symbol") or "").strip()
+
+        # Use DB currency column if it looks like a valid 3-letter ISO code
+        if db_cur and len(db_cur) == 3 and db_cur.isalpha():
+            return db_cur.lower()
+
+        # Derive from the symbol (e.g. "zł" → "pln")
+        if db_sym:
+            iso = _SYMBOL_TO_ISO.get(db_sym) or _SYMBOL_TO_ISO.get(db_sym.upper())
+            if iso:
+                return iso
+
+    except Exception as exc:
+        log.debug("_resolve_currency: DB lookup failed: %s", exc)
+
+    # Fall back to what the client sent, then usd
+    c = (client_currency or "").strip().lower()
+    return c if (c and len(c) == 3 and c.isalpha()) else "usd"
+
+
 @router.post("/billing/product-checkout")
 def billing_product_checkout(body: ProductCheckoutRequest):
     """
@@ -221,14 +286,23 @@ def billing_product_checkout(body: ProductCheckoutRequest):
     Called by storefront customers who are not logged in to WaziBot.
     business_id comes from the storefront page (embedded at generation time).
     Rate limiting is handled upstream by the Render/Cloudflare layer.
+
+    Currency is always resolved from the business DB record so that cached
+    or stale storefront HTML cannot cause the wrong currency to be charged.
     """
     if not body.business_id or body.business_id < 1:
         raise HTTPException(400, "Invalid business_id")
+
+    # Look up the real currency from the DB — never trust client alone
+    currency = _resolve_currency(body.business_id, body.currency)
+    log.info("product-checkout: biz=%s client_currency=%s resolved=%s",
+             body.business_id, body.currency, currency)
+
     from billing.stripe_service import create_product_checkout_session
     result = create_product_checkout_session(
         business_id    = body.business_id,
         items          = body.items,
-        currency       = body.currency,
+        currency       = currency,
         customer_email = body.customer_email,
         success_url    = body.success_url,
         cancel_url     = body.cancel_url,

@@ -1063,6 +1063,52 @@ document.querySelectorAll('.nav-link').forEach(a=>a.addEventListener('click',()=
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
+# ── Currency helper ────────────────────────────────────────────────────────────
+# Maps currency symbols to ISO-4217 codes for the site generator.
+# Mirrors _SYMBOL_TO_ISO in billing_routes.py — kept in sync manually.
+_SG_SYM_TO_ISO: dict = {
+    "$": "usd", "US$": "usd", "USD": "usd",
+    "£": "gbp", "GBP": "gbp",
+    "€": "eur", "EUR": "eur",
+    "R": "zar", "ZAR": "zar",
+    "ZWL$": "zwl", "ZWL": "zwl",
+    "zł": "pln", "PLN": "pln", "zl": "pln",
+    "₦": "ngn", "NGN": "ngn",
+    "KSh": "kes", "KES": "kes",
+    "GH₵": "ghs", "GHS": "ghs",
+    "UGX": "ugx", "TZS": "tzs", "ZMW": "zmw",
+    "₹": "inr", "INR": "inr",
+    "PKR": "pkr", "BDT": "bdt",
+    "A$": "aud", "AUD": "aud",
+    "C$": "cad", "CAD": "cad",
+    "AED": "aed", "SGD": "sgd",
+    "RM": "myr", "MYR": "myr",
+}
+
+
+def _biz_currency_code(biz: dict) -> str:
+    """
+    Return the correct lowercase ISO-4217 currency code for a business.
+
+    Priority:
+      1. `currency` column — if it looks like a 3-letter ISO code
+      2. `currency_symbol` — derived via _SG_SYM_TO_ISO
+      3. "usd" fallback
+
+    This prevents the site from embedding the wrong _wzCurrCode in the
+    Buy Now JS, which caused Stripe to charge USD instead of PLN.
+    """
+    db_cur = (biz.get("currency") or "").strip().upper()
+    if db_cur and len(db_cur) == 3 and db_cur.isalpha():
+        return db_cur.lower()
+    sym = (biz.get("currency_symbol") or "").strip()
+    if sym:
+        iso = _SG_SYM_TO_ISO.get(sym) or _SG_SYM_TO_ISO.get(sym.upper())
+        if iso:
+            return iso
+    return "usd"
+
+
 def generate_site_html(slug: str) -> str:
     """
     Generate a complete branded HTML website for a business.
@@ -1133,7 +1179,7 @@ def generate_site_html(slug: str) -> str:
         _buy_now_html(
             biz_id        = biz["id"],
             currency_sym  = currency_sym,
-            currency_code = biz.get("currency", "usd") or "usd",
+            currency_code = _biz_currency_code(biz),
             palette       = palette,
             theme         = theme,
         )
