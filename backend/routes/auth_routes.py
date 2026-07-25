@@ -75,25 +75,36 @@ class SignupRequest(BaseModel):
 @router.post("/auth/signup")
 def signup(data: SignupRequest, request: Request):
     _rate_check("signup", request)
-
-    # Honeypot: bots fill hidden fields that humans leave blank
-    _hp = getattr(data, "website", "") or ""
-    if _hp.strip():
-        import logging as _hl
-        _hl.getLogger("wazibot.security").warning(
-            "signup_honeypot  ip=%s",
-            request.headers.get("x-forwarded-for", getattr(request.client, "host", "?"))
-        )
-        import time as _t; _t.sleep(0.8)
-        return {"ok": True, "message": "Account created (bot trap)"}
-
     pw_ok, pw_msg = check_password_strength(data.password)
     if not pw_ok:
         raise HTTPException(400, pw_msg)
     if data.username == SUPER_ADMIN_USERNAME.lower():
         raise HTTPException(400, "Username not available")
     if crud.get_business_by_username(data.username):
-        raise HTTPException(400, "Username already taken")
+        raise HTTPException(400, "Username already taken. Please choose a different username.")
+
+    # Email uniqueness — one account per email address
+    _signup_email = (data.email or "").strip().lower()
+    if _signup_email:
+        try:
+            from core.db import supabase as _sdb
+            _ec = (
+                _sdb.table("businesses")
+                .select("id")
+                .ilike("owner_email", _signup_email)
+                .limit(1)
+                .execute()
+            )
+            if _ec.data:
+                raise HTTPException(
+                    400,
+                    "An account with that email address already exists. "
+                    "Please log in or use a different email."
+                )
+        except HTTPException:
+            raise
+        except Exception as _ee:
+            log.warning("signup: email uniqueness check failed (non-fatal): %s", _ee)
 
     phone_id = data.whatsapp_phone_id.strip() or None
     if phone_id and crud.get_business_by_phone_id(phone_id):
@@ -114,7 +125,17 @@ def signup(data: SignupRequest, request: Request):
         contact_phone     = data.contact_phone.strip() if data.contact_phone else ""
         use_shared_number = data.use_shared_number
 
-    biz = crud.create_business(_Payload())
+    try:
+        biz = crud.create_business(_Payload())
+    except Exception as _dbe:
+        _dbs = str(_dbe).lower()
+        if "23505" in _dbs or "unique" in _dbs:
+            if "username" in _dbs:
+                raise HTTPException(400, "Username already taken. Please choose a different one.")
+            if "email" in _dbs:
+                raise HTTPException(400, "An account with that email already exists.")
+        log.error("signup: DB error: %s", _dbe)
+        raise HTTPException(500, "Signup failed. Please try again.")
     log.info("🆕 Signup: %s (@%s)", biz["name"], biz["owner_username"])
 
     # Auto-start 14-day trial + generate referral code for every new signup

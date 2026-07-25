@@ -20,7 +20,13 @@ router = APIRouter()
 
 
 class ForgotPasswordRequest(BaseModel):
-    email: str
+    # Accepts email address OR username
+    email:      str = ""   # kept for backward compat with existing clients
+    identifier: str = ""   # preferred field — email or username
+
+    def get_identifier(self) -> str:
+        """Return whichever identifier was provided."""
+        return (self.identifier or self.email or "").strip()
 
 
 class ValidateTokenRequest(BaseModel):
@@ -37,6 +43,8 @@ class ResetPasswordRequest(BaseModel):
 def forgot_password(data: ForgotPasswordRequest, request: Request):
     """
     Initiate password reset.
+    Accepts email address OR username in the `identifier` field
+    (or legacy `email` field for backward compatibility).
     Rate limited: 5 requests per IP per hour.
     Always returns 200 with a generic message (email enumeration protection).
     """
@@ -55,7 +63,7 @@ def forgot_password(data: ForgotPasswordRequest, request: Request):
     ua = request.headers.get("user-agent", "")[:250]
 
     from services.password_reset_service import request_password_reset
-    request_password_reset(data.email, ip_address=ip, user_agent=ua)
+    request_password_reset(data.get_identifier(), ip_address=ip, user_agent=ua)
 
     # Always return the same message — never reveal if email exists
     return {
