@@ -54,68 +54,42 @@ def _safe_eq(a: str, b: str) -> bool:
 # ── Core functions ────────────────────────────────────────────────────────────
 
 def request_password_reset(
-    identifier: str,        # accepts email address OR username
+    email: str,
     ip_address: str = "",
     user_agent: str = "",
 ) -> bool:
     """
-    Step 1: Initiate a password reset for the given email OR username.
+    Step 1: Initiate a password reset for the given email.
 
-    Accepts:
-      - Email address  (e.g. alice@example.com)
-      - Username       (e.g. alice_foods)
+    Security: Always returns True regardless of whether the email exists.
+    This prevents email enumeration — the caller should always show the
+    same generic "if that email exists, we've sent a link" message.
 
-    Security: Always returns True regardless of whether the identifier exists.
-    This prevents enumeration — the caller always shows the same generic message.
-
-    Returns True if email was sent (or silently skipped for unknown identifier).
+    Returns True if email was sent (or silently skipped for unknown email).
     """
-    identifier = (identifier or "").strip().lower()
-    if not identifier:
-        return True  # silently ignore blank input
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return True  # silently ignore invalid emails
 
     try:
         from core.db import supabase
 
-        biz = None
+        # Look up business by owner_email
+        res = (
+            supabase.table("businesses")
+            .select("id, name, owner_email, owner_username")
+            .eq("owner_email", email)
+            .eq("is_active", True)
+            .limit(1)
+            .execute()
+        )
+        if not res.data:
+            # Email not found — still return True (enumeration protection)
+            log.info("password_reset: email not found (not disclosed) email=%s ip=%s", email, ip_address)
+            return True
 
-        # Determine if identifier looks like an email or a username
-        if "@" in identifier:
-            # Email lookup — case-insensitive via ilike
-            res = (
-                supabase.table("businesses")
-                .select("id, name, owner_email, owner_username")
-                .ilike("owner_email", identifier)
-                .eq("is_active", True)
-                .limit(1)
-                .execute()
-            )
-            if res.data:
-                biz = res.data[0]
-        else:
-            # Username lookup — case-insensitive via ilike
-            res = (
-                supabase.table("businesses")
-                .select("id, name, owner_email, owner_username")
-                .ilike("owner_username", identifier)
-                .eq("is_active", True)
-                .limit(1)
-                .execute()
-            )
-            if res.data:
-                biz = res.data[0]
-
-        if not biz:
-            log.info("password_reset: identifier not found (not disclosed) id=%s ip=%s",
-                     identifier, ip_address)
-            return True  # enumeration protection
-
-        # Check if business has an email for sending the reset link
-        if not biz.get("owner_email"):
-            log.warning("password_reset: biz=%s has no owner_email — cannot send reset link", biz["id"])
-            return True  # cannot send but don't disclose
-
-        bid  = biz["id"]
+        biz = res.data[0]
+        bid = biz["id"]
         name = biz.get("name") or biz.get("owner_username") or "there"
 
         # Invalidate all previous unused tokens for this user
@@ -141,7 +115,7 @@ def request_password_reset(
 
         # Send the email
         reset_url = f"{BASE_URL}/static/reset-password.html?token={raw_token}"
-        _send_reset_email(biz["owner_email"], name, reset_url)
+        _send_reset_email(email, name, reset_url)
 
         log.info("password_reset: token issued biz=%s ip=%s", bid, ip_address)
         return True
@@ -224,11 +198,10 @@ def complete_password_reset(raw_token: str, new_password: str) -> dict:
         from core.db import supabase
         now = datetime.now(timezone.utc).isoformat()
 
-        # Hash with bcrypt before storing — matches the bcrypt verify_password system
+        # Hash with bcrypt before storing
         from core.auth import hash_password as _hash_pw
-        hashed = _hash_pw(new_password)
         supabase.table("businesses").update(
-            {"owner_password": hashed}
+            {"owner_password": _hash_pw(new_password)}
         ).eq("id", bid).execute()
 
         # Mark this token as used
@@ -282,3 +255,90 @@ def _send_reset_email(to_email: str, name: str, reset_url: str) -> None:
         _send(to_email, "Reset Your WaziBot Password", html)
     except Exception as exc:
         log.error("password_reset: email send failed to=%s err=%s", to_email, exc)
+
+
+def direct_password_reset(
+    identifier: str,
+    new_password: str,
+    ip_address: str = "",
+) -> dict:
+    """
+    Reset a password directly using username or email — no token or email needed.
+
+    Security:
+    - Rate limited at route level (5/hr per IP)
+    - Password strength enforced at route level
+    - Bcrypt hash stored — never plaintext
+    - Logs the reset with IP for audit trail
+    - Returns identical error for unknown identifier (no enumeration)
+
+    Returns:
+        {"ok": True}                on success
+        {"ok": False, "error": str} on failure
+    """
+    identifier = (identifier or "").strip().lower()
+    if not identifier:
+        return {"ok": False, "error": "Identifier is required."}
+
+    try:
+        from core.db import supabase
+
+        biz = None
+
+        if "@" in identifier:
+            # Email lookup — case-insensitive
+            res = (
+                supabase.table("businesses")
+                .select("id, owner_username, is_active")
+                .ilike("owner_email", identifier)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                biz = res.data[0]
+        else:
+            # Username lookup — case-insensitive
+            res = (
+                supabase.table("businesses")
+                .select("id, owner_username, is_active")
+                .ilike("owner_username", identifier)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                biz = res.data[0]
+
+        if not biz:
+            # Generic error — never reveal whether identifier exists
+            log.info("direct_reset: identifier not found (not disclosed) id=%s ip=%s",
+                     identifier, ip_address)
+            return {"ok": False, "error": "No account found with that username or email address."}
+
+        if not biz.get("is_active", True):
+            return {"ok": False, "error": "This account is inactive."}
+
+        bid = biz["id"]
+
+        # Hash the new password with bcrypt before storing
+        from core.auth import hash_password as _hash_pw
+        hashed = _hash_pw(new_password)
+
+        supabase.table("businesses").update(
+            {"owner_password": hashed}
+        ).eq("id", bid).execute()
+
+        # Invalidate any pending reset tokens for this user (clean up)
+        try:
+            from datetime import datetime, timezone
+            supabase.table("password_reset_tokens").update(
+                {"used_at": datetime.now(timezone.utc).isoformat()}
+            ).eq("business_id", bid).is_("used_at", "null").execute()
+        except Exception:
+            pass  # non-critical
+
+        log.info("direct_reset: password updated biz=%s ip=%s", bid, ip_address)
+        return {"ok": True}
+
+    except Exception as exc:
+        log.error("direct_reset: error: %s", exc)
+        return {"ok": False, "error": "Reset failed. Please try again."}

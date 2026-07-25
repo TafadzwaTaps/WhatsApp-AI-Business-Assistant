@@ -20,13 +20,7 @@ router = APIRouter()
 
 
 class ForgotPasswordRequest(BaseModel):
-    # Accepts email address OR username
-    email:      str = ""   # kept for backward compat with existing clients
-    identifier: str = ""   # preferred field — email or username
-
-    def get_identifier(self) -> str:
-        """Return whichever identifier was provided."""
-        return (self.identifier or self.email or "").strip()
+    email: str
 
 
 class ValidateTokenRequest(BaseModel):
@@ -43,8 +37,6 @@ class ResetPasswordRequest(BaseModel):
 def forgot_password(data: ForgotPasswordRequest, request: Request):
     """
     Initiate password reset.
-    Accepts email address OR username in the `identifier` field
-    (or legacy `email` field for backward compatibility).
     Rate limited: 5 requests per IP per hour.
     Always returns 200 with a generic message (email enumeration protection).
     """
@@ -63,7 +55,7 @@ def forgot_password(data: ForgotPasswordRequest, request: Request):
     ua = request.headers.get("user-agent", "")[:250]
 
     from services.password_reset_service import request_password_reset
-    request_password_reset(data.get_identifier(), ip_address=ip, user_agent=ua)
+    request_password_reset(data.email, ip_address=ip, user_agent=ua)
 
     # Always return the same message — never reveal if email exists
     return {
@@ -128,6 +120,62 @@ def reset_password(data: ResetPasswordRequest, request: Request):
 
     log.info("password_reset: success ip=%s", _get_ip(request))
     return {"ok": True, "message": "Password updated successfully. You can now log in with your new password."}
+
+
+class DirectResetRequest(BaseModel):
+    """
+    Direct password reset — no email required.
+    User provides their identifier (username or email) and new password.
+    Rate limited to prevent brute force.
+    """
+    identifier:       str   # username OR email address
+    new_password:     str
+    confirm_password: str
+
+
+@router.post("/auth/reset-password-direct")
+def reset_password_direct(data: DirectResetRequest, request: Request):
+    """
+    Reset password directly using username or email address.
+    No email link required — user proves they know their identifier.
+    Rate limited: 5 attempts per IP per hour.
+    """
+    try:
+        from services.security import rate_limit
+        rate_limit("direct_reset", request, max_calls=5, window_seconds=3600)
+    except Exception as e:
+        if "RateLimitExceeded" in type(e).__name__ or "429" in str(e):
+            raise HTTPException(429, "Too many attempts. Please wait before trying again.")
+
+    identifier = (data.identifier or "").strip()
+    if not identifier:
+        raise HTTPException(400, "Please enter your email address or username.")
+
+    # Password validation
+    if data.new_password != data.confirm_password:
+        raise HTTPException(400, "Passwords do not match.")
+
+    pw = data.new_password or ""
+    errors = []
+    if len(pw) < 8:           errors.append("at least 8 characters")
+    if not any(c.isupper() for c in pw): errors.append("an uppercase letter")
+    if not any(c.islower() for c in pw): errors.append("a lowercase letter")
+    if not any(c.isdigit() for c in pw): errors.append("a number")
+    if errors:
+        raise HTTPException(400, f"Password must contain {', '.join(errors)}.")
+
+    from services.password_reset_service import direct_password_reset
+    result = direct_password_reset(
+        identifier = identifier,
+        new_password = data.new_password,
+        ip_address = _get_ip(request),
+    )
+
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Reset failed. Check your username or email."))
+
+    log.info("direct_reset: success ip=%s", _get_ip(request))
+    return {"ok": True, "message": "Password updated successfully. You can now log in."}
 
 
 def _get_ip(request: Request) -> str:
