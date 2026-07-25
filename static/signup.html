@@ -336,6 +336,11 @@
 
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn-back" onclick="goTo(2)">← Back</button>
+        <!-- Honeypot: real users never see or fill this -->
+        <div style="position:absolute;left:-9999px;top:-9999px;" aria-hidden="true">
+          <label for="_website_url">Leave this blank</label>
+          <input type="text" id="_website_url" name="website" tabindex="-1" autocomplete="off"/>
+        </div>
         <button class="btn-next" style="flex:1" id="submit-btn" onclick="submitForm()">🚀 Create Account</button>
       </div>
     </div>
@@ -461,6 +466,7 @@ async function submitForm() {
     tier:              _selectedPlan !== 'trial' ? _selectedPlan : '',
     billing_period:    _urlPeriod || 'monthly',
     ref_code:          _urlRef,
+    website:           (document.getElementById('_website_url') || {value:''}).value,
   };
 
   try {

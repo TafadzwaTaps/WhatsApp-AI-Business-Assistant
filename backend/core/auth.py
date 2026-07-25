@@ -19,6 +19,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 SECRET_KEY  = os.getenv("SECRET_KEY", "change_this_in_production_use_env_file")
+_WEAK_KEYS = {"change_this_in_production_use_env_file", "secret", "dev", "", "mysecret"}
+if SECRET_KEY in _WEAK_KEYS:
+    import logging as _kal; _kal.getLogger("wazibot.security").critical(
+        "SECRET_KEY is unset or uses an insecure default value. "
+        "Set SECRET_KEY in Render env vars. "
+        "Generate: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
 ALGORITHM   = "HS256"
 
 ACCESS_TOKEN_EXPIRE_MINUTES  = 60 * 8       # 8 hours
@@ -26,6 +33,11 @@ REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 
 SUPER_ADMIN_USERNAME = os.getenv("SUPER_ADMIN_USERNAME", "superadmin")
 SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "superadmin123")
+_WEAK_ADMIN_PWS = {"superadmin123", "admin", "password", "admin123", "wazibot", ""}
+if SUPER_ADMIN_PASSWORD in _WEAK_ADMIN_PWS:
+    import logging as _kal2; _kal2.getLogger("wazibot.security").critical(
+        "SUPER_ADMIN_PASSWORD is weak or default. Set a strong password in Render env vars."
+    )
 
 class _LoggingOAuth2PasswordBearer(OAuth2PasswordBearer):
     """

@@ -98,11 +98,30 @@ os.makedirs(INVOICES_DIR, exist_ok=True)
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None)
 
+# CORS: only allow the production domain and localhost for development.
+# Never use allow_origins=["*"] in production — it allows any site to make
+# credentialed requests to our API.
+_ALLOWED_ORIGINS = [
+    "https://wazibothq.com",
+    "https://www.wazibothq.com",
+    # Development
+    "http://localhost:3000",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://127.0.0.1:3000",
+]
+# Allow override via env var for staging/testing environments
+_EXTRA_ORIGINS = [o.strip() for o in os.getenv("EXTRA_CORS_ORIGINS", "").split(",") if o.strip()]
+_ALLOWED_ORIGINS.extend(_EXTRA_ORIGINS)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type", "X-Requested-With",
+                   "X-CSRF-Token", "Accept", "Origin"],
+    allow_credentials=True,
+    max_age=600,
 )
 
 
@@ -471,5 +490,20 @@ try:
     attach_weekly_report_scheduler(app)
 except Exception as _wrs_err:
     log.warning("weekly_report_scheduler: failed to start (non-fatal): %s", _wrs_err)
+
+# ── Production secret key sanity check ───────────────────────────────────────
+_sk = os.getenv("SECRET_KEY", "")
+if not _sk or _sk in ("change_this_in_production_use_env_file", "secret", "dev"):
+    log.critical(
+        "🔴 SECURITY: SECRET_KEY is not set or uses a default value! "
+        "Set a strong random SECRET_KEY in Render environment variables. "
+        "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+_sadm_pw = os.getenv("SUPER_ADMIN_PASSWORD", "")
+if not _sadm_pw or _sadm_pw in ("superadmin123", "admin", "password", "admin123"):
+    log.critical(
+        "🔴 SECURITY: SUPER_ADMIN_PASSWORD is weak or default! "
+        "Set a strong password in Render environment variables."
+    )
 
 log.info("🚀 WaziBot API started — %d route modules registered", 8)

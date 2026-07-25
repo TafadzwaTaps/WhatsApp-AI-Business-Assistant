@@ -35,7 +35,7 @@ SHARED_PHONE_NUMBER_ID = ""
 # ── Debug endpoints ───────────────────────────────────────────────────────────
 
 @router.get("/debug/env")
-def debug_env():
+def debug_env(user=Depends(require_superadmin)):
     fernet_key = os.getenv("FERNET_KEY", "")
     secret_key = os.getenv("SECRET_KEY", "")
     supa_url   = os.getenv("SUPABASE_URL", "")
@@ -50,7 +50,7 @@ def debug_env():
 
 
 @router.get("/debug/security")
-def debug_security():
+def debug_security(user=Depends(require_superadmin)):
     return {
         "webhook_signature_verification": "enabled" if WHATSAPP_APP_SECRET else "disabled (WHATSAPP_APP_SECRET not set)",
         "rate_limiting":   "enabled",
@@ -61,7 +61,7 @@ def debug_security():
 
 
 @router.get("/debug/supabase")
-def debug_supabase():
+def debug_supabase(user=Depends(require_superadmin)):
     import re
     url = os.getenv("SUPABASE_URL", "").strip()
     key = os.getenv("SUPABASE_KEY", "").strip()
@@ -86,7 +86,7 @@ def debug_supabase():
 
 
 @router.get("/debug/token")
-def debug_token():
+def debug_token(user=Depends(require_superadmin)):
     from core.crypto import encrypt_token, decrypt_token
     from fastapi.responses import JSONResponse
     test = "wazibot-test-12345"

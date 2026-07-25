@@ -75,6 +75,18 @@ class SignupRequest(BaseModel):
 @router.post("/auth/signup")
 def signup(data: SignupRequest, request: Request):
     _rate_check("signup", request)
+
+    # Honeypot: bots fill hidden fields that humans leave blank
+    _hp = getattr(data, "website", "") or ""
+    if _hp.strip():
+        import logging as _hl
+        _hl.getLogger("wazibot.security").warning(
+            "signup_honeypot  ip=%s",
+            request.headers.get("x-forwarded-for", getattr(request.client, "host", "?"))
+        )
+        import time as _t; _t.sleep(0.8)
+        return {"ok": True, "message": "Account created (bot trap)"}
+
     pw_ok, pw_msg = check_password_strength(data.password)
     if not pw_ok:
         raise HTTPException(400, pw_msg)
