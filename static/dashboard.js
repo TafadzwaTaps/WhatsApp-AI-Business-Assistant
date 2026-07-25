@@ -295,7 +295,56 @@ const _meCache = { data: null, ts: 0, ttl: 60000 };
 // every time /me is fetched (see getCachedMe below). Defaults to '$' so
 // nothing breaks before the first /me call resolves.
 window.CURRENT_CURRENCY_SYMBOL = '$';
+// Apply currency labels on load; will be overwritten once /me is fetched
+// _updateCurrencyLabels called again in loadMe() with real symbol
 function getCurrencySymbol() { return window.CURRENT_CURRENCY_SYMBOL || '$'; }
+
+/** Update every hardcoded currency label in the UI to match the current symbol */
+function _updateCurrencyLabels(sym) {
+  sym = sym || getCurrencySymbol();
+
+  // "Price (USD)" → "Price (SYM)"
+  const priceLabel = document.getElementById('product-price-label');
+  if (priceLabel) priceLabel.textContent = 'Price (' + sym + ')';
+
+  // "Total USD" stat card sub-label
+  const revLabel = document.getElementById('stat-revenue-currency-label');
+  if (revLabel) revLabel.textContent = 'Total ' + sym;
+
+  // "Delivery Fee (USD)" in settings
+  const deliveryLabel = document.getElementById('delivery-fee-label');
+  if (deliveryLabel) deliveryLabel.textContent = 'Delivery Fee (' + sym + ')';
+
+  // Currency convert modal "from" label (already dynamic but ensure sync)
+  const fromLabel = document.getElementById('ccm-from-label');
+  if (fromLabel && window.CURRENT_CURRENCY) fromLabel.textContent = window.CURRENT_CURRENCY;
+}
+
+/** Show/hide stock fields and remove "Out of Stock" option for service businesses */
+function _applyServiceMode(isService) {
+  // Add product form
+  const stockNote = document.getElementById('service-stock-note');
+  const optLabel  = document.getElementById('stock-optional-label');
+  if (stockNote) stockNote.style.display = isService ? 'block' : 'none';
+  if (optLabel)  optLabel.textContent     = isService ? '(not needed for services)' : '(optional)';
+
+  // Edit modal — remove/re-add "Out of Stock" option and update stock label note
+  const editStockNote = document.getElementById('edit-stock-label-note');
+  if (editStockNote) editStockNote.textContent = isService ? '(not required for services)' : '';
+
+  const outOfStockOpts = document.querySelectorAll('.edit-stock-option');
+  outOfStockOpts.forEach(opt => {
+    opt.style.display = isService ? 'none' : '';
+  });
+
+  // If currently set to out_of_stock on a service business, reset to active
+  if (isService) {
+    const statusSel = document.getElementById('edit-prod-status');
+    if (statusSel && statusSel.value === 'out_of_stock') {
+      statusSel.value = 'active';
+    }
+  }
+}
 
 async function getCachedMe() {
   const now = Date.now();
@@ -307,7 +356,16 @@ async function getCachedMe() {
     if (result) {
       _meCache.data = result;
       _meCache.ts   = now;
-      if (result.currency_symbol) window.CURRENT_CURRENCY_SYMBOL = result.currency_symbol;
+      if (result.currency_symbol) {
+        window.CURRENT_CURRENCY_SYMBOL = result.currency_symbol;
+        // Update every hardcoded currency label in the UI
+        _updateCurrencyLabels(result.currency_symbol);
+      }
+      // Track service mode for stock-field behaviour
+      if (result.is_service_business !== undefined) {
+        window.IS_SERVICE_BUSINESS = !!result.is_service_business;
+        _applyServiceMode(window.IS_SERVICE_BUSINESS);
+      }
     }
     return result;
   } catch (e) {
@@ -1240,6 +1298,7 @@ async function loadSettings() {
     // Currency
     if (b.currency) _setVal('set-currency', b.currency);
     if (b.currency_symbol) _setVal('set-currency-symbol', b.currency_symbol);
+    if (b.currency) window.CURRENT_CURRENCY = b.currency;
     // Cash & Currency toggles — restore saved state (was previously never
     // read back, so toggles always showed their hardcoded HTML default)
     const cashToggle   = document.getElementById('set-cash-enabled');
@@ -1722,6 +1781,7 @@ async function savePaymentOptions() {
     toast('✅ Payment options saved');
     invalidateMeCache();   // force next /me read to reflect the new values everywhere
     window.CURRENT_CURRENCY_SYMBOL = newSymbol;   // apply immediately, no reload needed
+    _updateCurrencyLabels(newSymbol);   // update Price/Delivery Fee/Revenue labels
     refreshAllMoneyDisplays();
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
@@ -4530,6 +4590,8 @@ function openProdEdit(id) {
   document.getElementById('edit-prod-desc').value  = p.description || '';
   const statusEl = document.getElementById('edit-prod-status');
   if (statusEl) statusEl.value = p.status || 'active';
+  // Apply service mode — hides "Out of Stock" for service businesses
+  _applyServiceMode(!!window.IS_SERVICE_BUSINESS);
   const modal = document.getElementById('prod-edit-modal');
   if (modal) modal.style.display = 'flex';
 }

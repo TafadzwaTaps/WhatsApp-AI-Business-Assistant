@@ -321,7 +321,7 @@
 
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
-      <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
+      <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub" id="stat-revenue-currency-label">Total</div></div>
       <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
       <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
       <!-- Feature 2: Repeat customer metric -->
@@ -613,7 +613,7 @@
               <input type="text" id="product-name" placeholder="e.g. Sadza"/>
             </div>
             <div class="form-group-inline">
-              <label>Price (USD)</label>
+              <label id="product-price-label">Price</label>
               <input type="number" id="product-price" placeholder="2.50" step="0.01"/>
             </div>
           </div>
@@ -634,10 +634,14 @@
                 <option>Other</option>
               </select>
             </div>
-            <div class="form-group-inline">
-              <label>Stock Qty <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
+            <div class="form-group-inline" id="product-stock-group">
+              <label>Stock Qty <span style="color:var(--text-dim);font-weight:400" id="stock-optional-label">(optional)</span></label>
               <input type="number" id="product-stock" placeholder="e.g. 50" min="0" step="1"
                      style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
+              <div id="service-stock-note" style="display:none;font-size:10px;font-family:var(--mono);
+                   color:var(--text-dim);margin-top:4px;">
+                ℹ️ Services don't need stock tracking — leave blank or set 0 to always show as available.
+              </div>
             </div>
           </div>
           <!-- Row 3: Description (Phase 2) -->
@@ -819,9 +823,9 @@
               <input type="number" id="edit-prod-price" step="0.01" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
             </div>
           </div>
-          <div class="form-row" style="margin-top:10px;">
-            <div class="form-group-inline">
-              <label>Stock</label>
+          <div class="form-row" style="margin-top:10px;" id="edit-stock-row">
+            <div class="form-group-inline" id="edit-stock-group">
+              <label>Stock <span id="edit-stock-label-note" style="font-weight:400;color:var(--text-dim);font-size:9px;"></span></label>
               <input type="number" id="edit-prod-stock" min="0" step="1" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
             </div>
             <div class="form-group-inline">
@@ -829,7 +833,7 @@
               <select id="edit-prod-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
                 <option value="active">Active</option>
                 <option value="draft">Draft</option>
-                <option value="out_of_stock">Out of Stock</option>
+                <option value="out_of_stock" class="edit-stock-option">Out of Stock</option>
               </select>
             </div>
           </div>
@@ -1883,7 +1887,7 @@
               <label class="toggle-switch"><input type="checkbox" id="set-delivery-enabled" checked/><span class="toggle-slider"></span></label>
             </div>
             <div class="form-row" style="margin-top:14px;">
-              <div class="form-group"><label>Delivery Fee (USD)</label><input type="number" id="set-delivery-fee" placeholder="2.00" step="0.50" min="0"/></div>
+              <div class="form-group"><label id="delivery-fee-label">Delivery Fee</label><input type="number" id="set-delivery-fee" placeholder="2.00" step="0.50" min="0"/></div>
               <div class="form-group"><label>Est. Delivery Time</label><input type="text" id="set-delivery-time" placeholder="30–45 minutes"/></div>
             </div>
             <div class="form-group"><label>Order Preparation Time</label><input type="text" id="set-prep-time" placeholder="15–20 minutes"/></div>
