@@ -321,7 +321,7 @@
 
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
-      <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub" id="stat-revenue-currency-label">Total</div></div>
+      <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
       <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
       <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
       <!-- Feature 2: Repeat customer metric -->
@@ -613,7 +613,7 @@
               <input type="text" id="product-name" placeholder="e.g. Sadza"/>
             </div>
             <div class="form-group-inline">
-              <label id="product-price-label">Price</label>
+              <label>Price (USD)</label>
               <input type="number" id="product-price" placeholder="2.50" step="0.01"/>
             </div>
           </div>
@@ -635,12 +635,12 @@
               </select>
             </div>
             <div class="form-group-inline" id="product-stock-group">
-              <label>Stock Qty <span style="color:var(--text-dim);font-weight:400" id="stock-optional-label">(optional)</span></label>
+              <label>Stock Qty <span style="color:var(--text-dim);font-weight:400;" id="stock-optional-label">(optional)</span></label>
               <input type="number" id="product-stock" placeholder="e.g. 50" min="0" step="1"
                      style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
               <div id="service-stock-note" style="display:none;font-size:10px;font-family:var(--mono);
-                   color:var(--text-dim);margin-top:4px;">
-                ℹ️ Services don't need stock tracking — leave blank or set 0 to always show as available.
+                   color:var(--text-dim);margin-top:4px;line-height:1.5;">
+                ℹ️ Services don't need stock — leave blank to always show as available.
               </div>
             </div>
           </div>
@@ -708,7 +708,7 @@
             <option value="">All Statuses</option>
             <option value="active">Active</option>
             <option value="low_stock">Low Stock</option>
-            <option value="out_of_stock">Out of Stock</option>
+            <option value="out_of_stock" class="edit-stock-option">Out of Stock</option>
             <option value="missing_image">Missing Image <span id="prod-missing-img-badge"></span></option>
             <option value="has_image">Has Image</option>
           </select>
@@ -823,9 +823,9 @@
               <input type="number" id="edit-prod-price" step="0.01" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
             </div>
           </div>
-          <div class="form-row" style="margin-top:10px;" id="edit-stock-row">
-            <div class="form-group-inline" id="edit-stock-group">
-              <label>Stock <span id="edit-stock-label-note" style="font-weight:400;color:var(--text-dim);font-size:9px;"></span></label>
+          <div class="form-row" style="margin-top:10px;">
+            <div class="form-group-inline">
+              <label>Stock</label>
               <input type="number" id="edit-prod-stock" min="0" step="1" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
             </div>
             <div class="form-group-inline">
@@ -1242,6 +1242,40 @@
                        style="display:none;margin-top:8px;width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;box-sizing:border-box;"/>
               </div>
             </div>
+
+            <!-- ── Business Type toggle ─────────────────────────────── -->
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;
+                        padding:14px 16px;margin-bottom:4px;display:flex;align-items:center;
+                        justify-content:space-between;gap:16px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:0;">
+                <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px;">
+                  Business Type
+                </div>
+                <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);line-height:1.5;"
+                     id="biz-type-desc">
+                  Products mode — stock tracking and "Out of Stock" are enabled.
+                </div>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+                <span style="font-size:11px;font-family:var(--mono);color:var(--text-dim);"
+                      id="biz-type-lbl-product">🛍️ Products</span>
+                <label style="position:relative;display:inline-block;width:46px;height:26px;cursor:pointer;"
+                       title="Toggle between product and service business">
+                  <input type="checkbox" id="set-is-service-business"
+                         onchange="onBizTypeToggle(this.checked)"
+                         style="opacity:0;width:0;height:0;position:absolute;"/>
+                  <span id="biz-type-track" style="position:absolute;inset:0;background:var(--border);
+                        border-radius:13px;transition:background .2s;">
+                    <span id="biz-type-thumb" style="position:absolute;width:20px;height:20px;
+                                 background:#fff;border-radius:50%;top:3px;left:3px;
+                                 transition:transform .2s;display:block;"></span>
+                  </span>
+                </label>
+                <span style="font-size:11px;font-family:var(--mono);color:var(--text-dim);"
+                      id="biz-type-lbl-service">🔧 Services</span>
+              </div>
+            </div>
+
             <div class="form-group"><label>Business Description</label>
               <textarea id="set-description" placeholder="Tell customers about your business…" rows="3"></textarea>
             </div>
@@ -1887,7 +1921,7 @@
               <label class="toggle-switch"><input type="checkbox" id="set-delivery-enabled" checked/><span class="toggle-slider"></span></label>
             </div>
             <div class="form-row" style="margin-top:14px;">
-              <div class="form-group"><label id="delivery-fee-label">Delivery Fee</label><input type="number" id="set-delivery-fee" placeholder="2.00" step="0.50" min="0"/></div>
+              <div class="form-group"><label>Delivery Fee (USD)</label><input type="number" id="set-delivery-fee" placeholder="2.00" step="0.50" min="0"/></div>
               <div class="form-group"><label>Est. Delivery Time</label><input type="text" id="set-delivery-time" placeholder="30–45 minutes"/></div>
             </div>
             <div class="form-group"><label>Order Preparation Time</label><input type="text" id="set-prep-time" placeholder="15–20 minutes"/></div>

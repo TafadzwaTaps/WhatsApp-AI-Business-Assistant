@@ -295,56 +295,77 @@ const _meCache = { data: null, ts: 0, ttl: 60000 };
 // every time /me is fetched (see getCachedMe below). Defaults to '$' so
 // nothing breaks before the first /me call resolves.
 window.CURRENT_CURRENCY_SYMBOL = '$';
-// Apply currency labels on load; will be overwritten once /me is fetched
-// _updateCurrencyLabels called again in loadMe() with real symbol
 function getCurrencySymbol() { return window.CURRENT_CURRENCY_SYMBOL || '$'; }
 
-/** Update every hardcoded currency label in the UI to match the current symbol */
-function _updateCurrencyLabels(sym) {
-  sym = sym || getCurrencySymbol();
+// ── Business type (service vs product) ─────────────────────────────────────
+// Categories that are naturally service-based — used for auto-detection
+const _SERVICE_CATEGORIES = new Set([
+  'Salon','Barbershop','Beauty Spa','Fitness','Gym',
+  'Automotive','Transport','Logistics','Courier','Education',
+  'Tutoring','Consulting','Marketing Agency','Freelancer',
+  'Professional Services','Photography','Event Planning',
+  'Hotel','Guest House','Airbnb','Travel Agency',
+  'Clinic','Hospital','Doctor','Dentist','Pharmacy',
+  'Repair Services',
+]);
 
-  // "Price (USD)" → "Price (SYM)"
-  const priceLabel = document.getElementById('product-price-label');
-  if (priceLabel) priceLabel.textContent = 'Price (' + sym + ')';
-
-  // "Total USD" stat card sub-label
-  const revLabel = document.getElementById('stat-revenue-currency-label');
-  if (revLabel) revLabel.textContent = 'Total ' + sym;
-
-  // "Delivery Fee (USD)" in settings
-  const deliveryLabel = document.getElementById('delivery-fee-label');
-  if (deliveryLabel) deliveryLabel.textContent = 'Delivery Fee (' + sym + ')';
-
-  // Currency convert modal "from" label (already dynamic but ensure sync)
-  const fromLabel = document.getElementById('ccm-from-label');
-  if (fromLabel && window.CURRENT_CURRENCY) fromLabel.textContent = window.CURRENT_CURRENCY;
+/** Called by the toggle switch in Business Profile settings */
+function onBizTypeToggle(isService) {
+  _setServiceMode(isService);
+  // Visual feedback on the toggle
+  const track = document.getElementById('biz-type-track');
+  const thumb = document.getElementById('biz-type-thumb');
+  if (track) track.style.background = isService ? 'var(--green)' : 'var(--border)';
+  if (thumb) thumb.style.transform  = isService ? 'translateX(20px)' : 'translateX(0)';
 }
 
-/** Show/hide stock fields and remove "Out of Stock" option for service businesses */
+/** Set service mode state and update all product-page UI accordingly */
+function _setServiceMode(isService) {
+  window.IS_SERVICE_BUSINESS = !!isService;
+
+  // Update description under the toggle
+  const desc = document.getElementById('biz-type-desc');
+  if (desc) desc.textContent = isService
+    ? 'Services mode — stock tracking is hidden. Items are always shown as available.'
+    : 'Products mode — stock tracking and "Out of Stock" are enabled.';
+
+  // Highlight active label
+  const lprod = document.getElementById('biz-type-lbl-product');
+  const lsvc  = document.getElementById('biz-type-lbl-service');
+  if (lprod) lprod.style.color = isService ? 'var(--text-dim)' : 'var(--text)';
+  if (lsvc)  lsvc.style.color  = isService ? 'var(--text)'    : 'var(--text-dim)';
+
+  _applyServiceMode(isService);
+}
+
+/** Show/hide stock fields and "Out of Stock" depending on service mode */
 function _applyServiceMode(isService) {
-  // Add product form
+  // Add-product form: stock note
   const stockNote = document.getElementById('service-stock-note');
   const optLabel  = document.getElementById('stock-optional-label');
   if (stockNote) stockNote.style.display = isService ? 'block' : 'none';
-  if (optLabel)  optLabel.textContent     = isService ? '(not needed for services)' : '(optional)';
+  if (optLabel)  optLabel.textContent = isService ? '(not needed for services)' : '(optional)';
 
-  // Edit modal — remove/re-add "Out of Stock" option and update stock label note
-  const editStockNote = document.getElementById('edit-stock-label-note');
-  if (editStockNote) editStockNote.textContent = isService ? '(not required for services)' : '';
-
-  const outOfStockOpts = document.querySelectorAll('.edit-stock-option');
-  outOfStockOpts.forEach(opt => {
-    opt.style.display = isService ? 'none' : '';
+  // Edit modal: stock label note + hide Out of Stock option
+  const editNote = document.getElementById('edit-stock-label-note');
+  if (editNote) editNote.textContent = isService ? '(not required)' : '';
+  document.querySelectorAll('.edit-stock-option').forEach(o => {
+    o.style.display = isService ? 'none' : '';
   });
-
-  // If currently set to out_of_stock on a service business, reset to active
   if (isService) {
-    const statusSel = document.getElementById('edit-prod-status');
-    if (statusSel && statusSel.value === 'out_of_stock') {
-      statusSel.value = 'active';
-    }
+    const sel = document.getElementById('edit-prod-status');
+    if (sel && sel.value === 'out_of_stock') sel.value = 'active';
   }
 }
+
+/** Auto-detect service mode from category — sets sensible default on first load */
+function _autoDetectServiceMode(category, currentValue) {
+  // Only auto-detect if the DB field is still at default (false)
+  // Never override an explicit user choice
+  if (currentValue === true || currentValue === false) return currentValue;
+  return _SERVICE_CATEGORIES.has(category);
+}
+
 
 async function getCachedMe() {
   const now = Date.now();
@@ -358,14 +379,16 @@ async function getCachedMe() {
       _meCache.ts   = now;
       if (result.currency_symbol) {
         window.CURRENT_CURRENCY_SYMBOL = result.currency_symbol;
-        // Update every hardcoded currency label in the UI
         _updateCurrencyLabels(result.currency_symbol);
       }
-      // Track service mode for stock-field behaviour
-      if (result.is_service_business !== undefined) {
-        window.IS_SERVICE_BUSINESS = !!result.is_service_business;
-        _applyServiceMode(window.IS_SERVICE_BUSINESS);
-      }
+      // Resolve service mode: use DB value, fallback to category auto-detect
+      const _isSvc = result.is_service_business != null
+        ? !!result.is_service_business
+        : _autoDetectServiceMode(result.category, null);
+      window.IS_SERVICE_BUSINESS = _isSvc;
+      _setServiceMode(_isSvc);
+      const _svcChk = document.getElementById('set-is-service-business');
+      if (_svcChk) { _svcChk.checked = _isSvc; onBizTypeToggle(_isSvc); }
     }
     return result;
   } catch (e) {
@@ -1298,7 +1321,15 @@ async function loadSettings() {
     // Currency
     if (b.currency) _setVal('set-currency', b.currency);
     if (b.currency_symbol) _setVal('set-currency-symbol', b.currency_symbol);
-    if (b.currency) window.CURRENT_CURRENCY = b.currency;
+    // Business type toggle
+    const _svcChkS = document.getElementById('set-is-service-business');
+    if (_svcChkS) {
+      const _sv = b.is_service_business != null
+        ? !!b.is_service_business
+        : _autoDetectServiceMode(b.category, null);
+      _svcChkS.checked = _sv;
+      onBizTypeToggle(_sv);
+    }
     // Cash & Currency toggles — restore saved state (was previously never
     // read back, so toggles always showed their hardcoded HTML default)
     const cashToggle   = document.getElementById('set-cash-enabled');
@@ -1407,9 +1438,10 @@ async function saveProfile() {
       business_hours:  _getVal('set-hours'),
       instagram:       _getVal('set-instagram'),
       facebook:        _getVal('set-facebook'),
-      currency:        _getVal('set-currency'),
-      currency_symbol: currSym,
-      owner_email:     _ownerEmail,
+      currency:             _getVal('set-currency'),
+      currency_symbol:      currSym,
+      owner_email:          _ownerEmail,
+      is_service_business:  !!(document.getElementById('set-is-service-business')?.checked),
     })});
     bizName = name;
     localStorage.setItem('wazi_biz', bizName);
@@ -1781,7 +1813,6 @@ async function savePaymentOptions() {
     toast('✅ Payment options saved');
     invalidateMeCache();   // force next /me read to reflect the new values everywhere
     window.CURRENT_CURRENCY_SYMBOL = newSymbol;   // apply immediately, no reload needed
-    _updateCurrencyLabels(newSymbol);   // update Price/Delivery Fee/Revenue labels
     refreshAllMoneyDisplays();
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
@@ -4590,8 +4621,6 @@ function openProdEdit(id) {
   document.getElementById('edit-prod-desc').value  = p.description || '';
   const statusEl = document.getElementById('edit-prod-status');
   if (statusEl) statusEl.value = p.status || 'active';
-  // Apply service mode — hides "Out of Stock" for service businesses
-  _applyServiceMode(!!window.IS_SERVICE_BUSINESS);
   const modal = document.getElementById('prod-edit-modal');
   if (modal) modal.style.display = 'flex';
 }
