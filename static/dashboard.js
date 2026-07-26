@@ -297,58 +297,51 @@ const _meCache = { data: null, ts: 0, ttl: 60000 };
 window.CURRENT_CURRENCY_SYMBOL = '$';
 function getCurrencySymbol() { return window.CURRENT_CURRENCY_SYMBOL || '$'; }
 
-// ── Business type (service vs product) ─────────────────────────────────────
-// Categories that are naturally service-based — used for auto-detection
+// ── Business type helpers (service vs product) ────────────────────────────────
 const _SERVICE_CATEGORIES = new Set([
   'Salon','Barbershop','Beauty Spa','Fitness','Gym',
   'Automotive','Transport','Logistics','Courier','Education',
   'Tutoring','Consulting','Marketing Agency','Freelancer',
   'Professional Services','Photography','Event Planning',
   'Hotel','Guest House','Airbnb','Travel Agency',
-  'Clinic','Hospital','Doctor','Dentist','Pharmacy',
-  'Repair Services',
+  'Clinic','Hospital','Doctor','Dentist','Pharmacy','Repair Services',
 ]);
 
-/** Called by the toggle switch in Business Profile settings */
 function onBizTypeToggle(isService) {
-  _setServiceMode(isService);
-  // Visual feedback on the toggle
+  // Animate the custom toggle track and thumb
   const track = document.getElementById('biz-type-track');
   const thumb = document.getElementById('biz-type-thumb');
   if (track) track.style.background = isService ? 'var(--green)' : 'var(--border)';
   if (thumb) thumb.style.transform  = isService ? 'translateX(20px)' : 'translateX(0)';
+  _setServiceMode(isService);
 }
 
-/** Set service mode state and update all product-page UI accordingly */
 function _setServiceMode(isService) {
   window.IS_SERVICE_BUSINESS = !!isService;
 
-  // Update description under the toggle
+  // Update description text under the toggle
   const desc = document.getElementById('biz-type-desc');
   if (desc) desc.textContent = isService
-    ? 'Services mode — stock tracking is hidden. Items are always shown as available.'
+    ? 'Services mode — stock tracking hidden. Items always shown as available.'
     : 'Products mode — stock tracking and "Out of Stock" are enabled.';
 
-  // Highlight active label
-  const lprod = document.getElementById('biz-type-lbl-product');
-  const lsvc  = document.getElementById('biz-type-lbl-service');
-  if (lprod) lprod.style.color = isService ? 'var(--text-dim)' : 'var(--text)';
-  if (lsvc)  lsvc.style.color  = isService ? 'var(--text)'    : 'var(--text-dim)';
+  // Highlight active side label
+  const lp = document.getElementById('biz-type-lbl-product');
+  const ls = document.getElementById('biz-type-lbl-service');
+  if (lp) lp.style.color = isService ? 'var(--text-dim)' : 'var(--text)';
+  if (ls) ls.style.color = isService ? 'var(--text)'    : 'var(--text-dim)';
 
   _applyServiceMode(isService);
 }
 
-/** Show/hide stock fields and "Out of Stock" depending on service mode */
 function _applyServiceMode(isService) {
-  // Add-product form: stock note
-  const stockNote = document.getElementById('service-stock-note');
-  const optLabel  = document.getElementById('stock-optional-label');
-  if (stockNote) stockNote.style.display = isService ? 'block' : 'none';
-  if (optLabel)  optLabel.textContent = isService ? '(not needed for services)' : '(optional)';
+  // Add-product form: show/hide stock note
+  const note   = document.getElementById('service-stock-note');
+  const optLbl = document.getElementById('stock-optional-label');
+  if (note)   note.style.display = isService ? 'block' : 'none';
+  if (optLbl) optLbl.textContent = isService ? '(not needed for services)' : '(optional)';
 
-  // Edit modal: stock label note + hide Out of Stock option
-  const editNote = document.getElementById('edit-stock-label-note');
-  if (editNote) editNote.textContent = isService ? '(not required)' : '';
+  // Edit modal: hide Out of Stock option for service businesses
   document.querySelectorAll('.edit-stock-option').forEach(o => {
     o.style.display = isService ? 'none' : '';
   });
@@ -358,13 +351,20 @@ function _applyServiceMode(isService) {
   }
 }
 
-/** Auto-detect service mode from category — sets sensible default on first load */
-function _autoDetectServiceMode(category, currentValue) {
-  // Only auto-detect if the DB field is still at default (false)
-  // Never override an explicit user choice
-  if (currentValue === true || currentValue === false) return currentValue;
-  return _SERVICE_CATEGORIES.has(category);
+function _autoDetectServiceMode(category) {
+  return !!category && _SERVICE_CATEGORIES.has(category);
 }
+
+function _updateCurrencyLabels(sym) {
+  sym = sym || getCurrencySymbol();
+  const pl = document.getElementById('product-price-label');
+  if (pl) pl.textContent = 'Price (' + sym + ')';
+  const rl = document.getElementById('stat-revenue-currency-label');
+  if (rl) rl.textContent = 'Total ' + sym;
+  const dl = document.getElementById('delivery-fee-label');
+  if (dl) dl.textContent = 'Delivery Fee (' + sym + ')';
+}
+
 
 
 async function getCachedMe() {
@@ -381,14 +381,14 @@ async function getCachedMe() {
         window.CURRENT_CURRENCY_SYMBOL = result.currency_symbol;
         _updateCurrencyLabels(result.currency_symbol);
       }
-      // Resolve service mode: use DB value, fallback to category auto-detect
+      // Restore service mode from DB; fall back to category auto-detect
       const _isSvc = result.is_service_business != null
         ? !!result.is_service_business
-        : _autoDetectServiceMode(result.category, null);
+        : _autoDetectServiceMode(result.category);
       window.IS_SERVICE_BUSINESS = _isSvc;
       _setServiceMode(_isSvc);
-      const _svcChk = document.getElementById('set-is-service-business');
-      if (_svcChk) { _svcChk.checked = _isSvc; onBizTypeToggle(_isSvc); }
+      const _chk0 = document.getElementById('set-is-service-business');
+      if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc); }
     }
     return result;
   } catch (e) {
@@ -1321,13 +1321,11 @@ async function loadSettings() {
     // Currency
     if (b.currency) _setVal('set-currency', b.currency);
     if (b.currency_symbol) _setVal('set-currency-symbol', b.currency_symbol);
-    // Business type toggle
-    const _svcChkS = document.getElementById('set-is-service-business');
-    if (_svcChkS) {
+    const _svcChk = document.getElementById('set-is-service-business');
+    if (_svcChk) {
       const _sv = b.is_service_business != null
-        ? !!b.is_service_business
-        : _autoDetectServiceMode(b.category, null);
-      _svcChkS.checked = _sv;
+        ? !!b.is_service_business : _autoDetectServiceMode(b.category);
+      _svcChk.checked = _sv;
       onBizTypeToggle(_sv);
     }
     // Cash & Currency toggles — restore saved state (was previously never
@@ -4621,6 +4619,7 @@ function openProdEdit(id) {
   document.getElementById('edit-prod-desc').value  = p.description || '';
   const statusEl = document.getElementById('edit-prod-status');
   if (statusEl) statusEl.value = p.status || 'active';
+  _applyServiceMode(!!window.IS_SERVICE_BUSINESS);
   const modal = document.getElementById('prod-edit-modal');
   if (modal) modal.style.display = 'flex';
 }

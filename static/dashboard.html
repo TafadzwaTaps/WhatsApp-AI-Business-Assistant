@@ -634,12 +634,12 @@
                 <option>Other</option>
               </select>
             </div>
-            <div class="form-group-inline" id="product-stock-group">
+            <div class="form-group-inline">
               <label>Stock Qty <span style="color:var(--text-dim);font-weight:400;" id="stock-optional-label">(optional)</span></label>
               <input type="number" id="product-stock" placeholder="e.g. 50" min="0" step="1"
                      style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
-              <div id="service-stock-note" style="display:none;font-size:10px;font-family:var(--mono);
-                   color:var(--text-dim);margin-top:4px;line-height:1.5;">
+              <div id="service-stock-note"
+                   style="display:none;font-size:10px;font-family:var(--mono);color:var(--text-dim);margin-top:4px;line-height:1.5;">
                 ℹ️ Services don't need stock — leave blank to always show as available.
               </div>
             </div>
@@ -1245,29 +1245,32 @@
 
             <!-- ── Business Type toggle ─────────────────────────────── -->
             <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;
-                        padding:14px 16px;margin-bottom:4px;display:flex;align-items:center;
+                        padding:14px 16px;margin-bottom:14px;display:flex;align-items:center;
                         justify-content:space-between;gap:16px;flex-wrap:wrap;">
               <div style="flex:1;min-width:0;">
-                <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:3px;">
+                <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);
+                            text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">
                   Business Type
                 </div>
-                <div style="font-size:11px;font-family:var(--mono);color:var(--text-dim);line-height:1.5;"
-                     id="biz-type-desc">
-                  Products mode — stock tracking and "Out of Stock" are enabled.
+                <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);
+                            line-height:1.5;" id="biz-type-desc">
+                  Products mode — stock tracking enabled.
                 </div>
               </div>
               <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
-                <span style="font-size:11px;font-family:var(--mono);color:var(--text-dim);"
+                <span style="font-size:11px;font-family:var(--mono);"
                       id="biz-type-lbl-product">🛍️ Products</span>
-                <label style="position:relative;display:inline-block;width:46px;height:26px;cursor:pointer;"
-                       title="Toggle between product and service business">
+                <label style="position:relative;display:inline-block;width:46px;height:26px;
+                              cursor:pointer;" title="Switch between product and service business">
                   <input type="checkbox" id="set-is-service-business"
                          onchange="onBizTypeToggle(this.checked)"
                          style="opacity:0;width:0;height:0;position:absolute;"/>
-                  <span id="biz-type-track" style="position:absolute;inset:0;background:var(--border);
-                        border-radius:13px;transition:background .2s;">
-                    <span id="biz-type-thumb" style="position:absolute;width:20px;height:20px;
-                                 background:#fff;border-radius:50%;top:3px;left:3px;
+                  <span id="biz-type-track"
+                        style="position:absolute;inset:0;background:var(--border);
+                               border-radius:13px;transition:background .2s;">
+                    <span id="biz-type-thumb"
+                          style="position:absolute;width:20px;height:20px;background:#fff;
+                                 border-radius:50%;top:3px;left:3px;
                                  transition:transform .2s;display:block;"></span>
                   </span>
                 </label>
