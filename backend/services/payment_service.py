@@ -78,6 +78,11 @@ def _total(order: dict) -> float:
     return float(order.get("total_price") or order.get("total") or 0)
 
 
+def _sym(order: dict) -> str:
+    """Get the correct currency symbol from the order context."""
+    return (order.get("currency_symbol") or order.get("currency_sym") or "$").strip() or "$"
+
+
 def _base(method: str, order: dict) -> dict:
     return {
         "method":          method,
@@ -264,7 +269,7 @@ def create_paypal_order(order: dict) -> dict:
                 f"🌍 *Pay with PayPal*\n"
                 f"{'─' * 28}\n"
                 f"  Order  : *{ref}*\n"
-                f"  Amount : *${total:.2f} USD*\n"
+                f"  Amount : *{_sym(order)}{total:.2f}*\n"
                 f"{'─' * 28}\n"
                 f"👆 *Tap to pay securely:*\n"
                 f"{approval_url}\n\n"
@@ -495,14 +500,14 @@ def generate_paypal_email_instructions(order: dict) -> dict:
         f"{'─' * 28}\n"
         f"  Send to  : *{email}*\n"
         f"  Name     : *{name}*\n"
-        f"  Amount   : *${total:.2f} USD*\n"
+        f"  Amount   : *{_sym(order)}{total:.2f}*\n"
         f"  Note/Ref : *{ref}*\n"
         f"{'─' * 28}\n"
         f"💡 *Steps:*\n"
         f"  1️⃣  Open PayPal app or paypal.com\n"
         f"  2️⃣  Tap _Send Money_\n"
         f"  3️⃣  Enter email: *{email}*\n"
-        f"  4️⃣  Amount *${total:.2f}* — Add note: *{ref}*\n"
+        f"  4️⃣  Amount *{_sym(order)}{total:.2f}* — Add note: *{ref}*\n"
         f"{'─' * 28}\n"
         f"🔒 Verified merchant: *{name}*\n\n"
         f"Once sent, reply *paid* and send your transaction ID or screenshot. ✅"
@@ -543,13 +548,13 @@ def generate_ecocash_instructions(order: dict) -> dict:
         f"{'─' * 28}\n"
         f"  Send to  : *{number}*\n"
         f"  Name     : *{name}*\n"
-        f"  Amount   : *${total:.2f}*\n"
+        f"  Amount   : *{_sym(order)}{total:.2f}*\n"
         f"  Ref      : *{ref}*\n"
         f"{'─' * 28}\n"
         f"📱 *How to send (dial *151#)*\n"
         f"  1️⃣  Select _Send Money_\n"
         f"  2️⃣  Enter number: *{number}*\n"
-        f"  3️⃣  Enter amount: *${total:.2f}*\n"
+        f"  3️⃣  Enter amount: *{_sym(order)}{total:.2f}*\n"
         f"  4️⃣  Use reference: *{ref}*\n"
         f"{'─' * 28}\n"
         f"🔒 Verified merchant: *{name}*\n\n"
@@ -578,10 +583,10 @@ def generate_cash_instructions(order: dict) -> dict:
         f"💵 *Cash on Delivery / Pickup*\n"
         f"{'─' * 28}\n"
         f"  Order  : *{ref}*\n"
-        f"  Amount : *${total:.2f}*\n"
+        f"  Amount : *{_sym(order)}{total:.2f}*\n"
         f"{'─' * 28}\n"
         f"Your order is confirmed! 🎉\n\n"
-        f"Please have *${total:.2f}* ready when your order\n"
+        f"Please have *{_sym(order)}{total:.2f}* ready when your order\n"
         f"is delivered or when you come to collect.\n"
         f"{'─' * 28}\n"
         f"🔒 Merchant: *{name}*\n\n"

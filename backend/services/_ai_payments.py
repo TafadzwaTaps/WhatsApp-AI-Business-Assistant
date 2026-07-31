@@ -32,7 +32,7 @@ def _friendly_payment_status(status: str) -> str:
 
 # ── Payment instructions ──────────────────────────────────────────────────────
 
-def _build_payment_instructions(pending: dict, business_id: int, business_name: str) -> str:
+def _build_payment_instructions(pending: dict, business_id: int, business_name: str, currency_sym: str = "$") -> str:
     """Re-generate payment instructions from stored pending_payment session."""
     from services.payment_service import (
         generate_ecocash_instructions,
@@ -59,9 +59,10 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
         pass
 
     order = {
-        "id":            order_id,
-        "total_price":   total,
-        "business_name": business_name,
+        "id":              order_id,
+        "total_price":     total,
+        "business_name":   business_name,
+        "currency_symbol": currency_sym,   # pass correct symbol to payment functions
         **pay_settings,
     }
 
@@ -246,6 +247,7 @@ def _process_payment(
     phone: str,
     business_id: int,
     business_name: str,
+    currency_sym: str = "$",
 ) -> str:
     from workflows.order_lifecycle import create_order_supabase
     from services.payment_service import (
@@ -268,7 +270,8 @@ def _process_payment(
             cart=cart,
             payment_method=method,
         )
-        order["business_name"] = business_name
+        order["business_name"]   = business_name
+        order["currency_symbol"] = currency_sym  # ensures payment instructions use correct currency
         try:
             pay_settings = crud.get_business_payment_settings(business_id)
             order.update(pay_settings)

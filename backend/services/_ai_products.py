@@ -142,7 +142,7 @@ def _recommend(phone: str, business_id: int, products: list, exclude: str = "") 
 
 # ── Cart formatters ───────────────────────────────────────────────────────────
 
-def _format_cart(cart: list) -> str:
+def _format_cart(cart: list, currency_sym: str = "$") -> str:
     if not cart:
         return "🛒 Your cart is empty. Type *menu* to see what we have!"
     total = 0.0
@@ -150,8 +150,8 @@ def _format_cart(cart: list) -> str:
     for i in cart:
         sub = i["qty"] * float(i["price"])
         total += sub
-        lines.append(f"  • {i['name']} ×{i['qty']}  —  ${sub:.2f}")
-    return "🛒 *Your Cart:*\n" + "\n".join(lines) + f"\n\n💰 *Total: ${total:.2f}*"
+        lines.append(f"  • {i['name']} ×{i['qty']}  —  {currency_sym}{sub:.2f}")
+    return "🛒 *Your Cart:*\n" + "\n".join(lines) + f"\n\n💰 *Total: {currency_sym}{total:.2f}*"
 
 
 def _build_confirm_prompt(cart: list) -> str:

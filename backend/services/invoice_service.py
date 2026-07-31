@@ -92,7 +92,7 @@ def generate_invoice(order, business_id=None) -> str:
                 qty      = item.get("qty", item.get("quantity", 1))
                 price    = float(item.get("price", 0))
                 subtotal = float(item.get("subtotal", price * qty))
-                lines.append(f"  • {name} ×{qty}  —  ${subtotal:.2f}")
+                lines.append(f"  • {name} ×{qty}  —  {order.get('currency_symbol', '$')}{subtotal:.2f}")
             items_text = "\n".join(lines)
         except Exception:
             items_text = str(items_raw)
@@ -128,7 +128,7 @@ def generate_invoice(order, business_id=None) -> str:
             f"  Pay to     : *{pay_number}*\n"
             f"  Name       : *{pay_name or biz_name}*\n"
             f"  Reference  : *ORDER-{order_id}*\n"
-            f"  Amount     : *${float(total):.2f}*\n"
+            f"  Amount     : *{order.get('currency_symbol', '$')}{float(total):.2f}*\n"
             f"{'─' * 28}\n"
             f"🔒 *Verified Business:*\n"
             f"  {biz_name}\n"
@@ -144,7 +144,7 @@ def generate_invoice(order, business_id=None) -> str:
             f"{'─' * 28}\n"
             f"  Method     : EcoCash / Mobile Money\n"
             f"  Reference  : *ORDER-{order_id}*\n"
-            f"  Amount     : *${float(total):.2f}*\n"
+            f"  Amount     : *{order.get('currency_symbol', '$')}{float(total):.2f}*\n"
             f"{'─' * 28}\n"
             f"  ℹ Contact *{biz_name}* directly\n"
             f"  for payment number details.\n"
@@ -159,7 +159,7 @@ def generate_invoice(order, business_id=None) -> str:
         f"{'─' * 28}\n"
         f"Items:\n{items_text}\n"
         f"{'─' * 28}\n"
-        f"💰 *Total: ${float(total):.2f}*\n"
+        f"💰 *Total: {order.get('currency_symbol', '$')}{float(total):.2f}*\n"
         f"Status   : {status.upper()}\n"
         f"{pay_icon} Payment : {pay_label}\n"
         f"{'─' * 28}\n"
