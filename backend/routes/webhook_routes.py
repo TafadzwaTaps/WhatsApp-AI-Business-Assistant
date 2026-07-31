@@ -159,9 +159,19 @@ async def receive_message(request: Request):
         if phone_number_id:
             _dedicated_biz = crud.get_business_by_phone_id(phone_number_id)
 
+        _resolved_via_dedicated = False
         if _dedicated_biz and _dedicated_biz.get("is_active", True):
             business = _dedicated_biz
-            token    = ""
+            _resolved_via_dedicated = True
+            # Fetch the real token now — do NOT rely on STEP 3's is_shared_number()
+            # check, since a dedicated number can coincidentally equal
+            # SHARED_PHONE_NUMBER_ID (env var collision), which would make
+            # STEP 3 skip token decryption and leave messages unsendable.
+            try:
+                token = crud.get_decrypted_token(business)
+            except TokenDecryptionError as exc:
+                log.error("🔑 STEP 2 token decrypt FAIL: %s", exc)
+                token = ""
             log.info(
                 "📋 STEP 2 — dedicated number  phone=%s  biz=%s (%s)  "
                 "[bypasses shared-number picker even if SHARED_PHONE_NUMBER_ID matches]",
@@ -258,7 +268,10 @@ async def receive_message(request: Request):
         return {"status": "ok"}
 
     # STEP 3: Decrypt token
-    if not is_shared_number(phone_number_id):
+    # Skip if already fetched in STEP 2's dedicated-number branch — avoids
+    # a double-fetch and avoids being skipped incorrectly when a dedicated
+    # number's phone_number_id happens to equal SHARED_PHONE_NUMBER_ID.
+    if not _resolved_via_dedicated and not is_shared_number(phone_number_id):
         try:
             token = crud.get_decrypted_token(business)
         except TokenDecryptionError as exc:
