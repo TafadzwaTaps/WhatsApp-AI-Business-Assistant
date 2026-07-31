@@ -475,3 +475,5 @@ except Exception as _wrs_err:
     log.warning("weekly_report_scheduler: failed to start (non-fatal): %s", _wrs_err)
 
 log.info("🚀 WaziBot API started — %d route modules registered", 8)
+log.info("🏷️  BUILD MARKER — currency_fix_v3 + tenant_router_null_safe_v1 — "
+         "if you do NOT see this exact line after a fresh deploy, the deploy did not pick up these files")
