@@ -148,7 +148,26 @@ async def receive_message(request: Request):
             def is_businesses_help_request(t): return False
             def build_business_picker(b, p="WaziBot", current_name=""): return ""
             def _category_icon(c): return "🏪"
-        if is_shared_number(phone_number_id):
+        # ── Dedicated-number priority check ─────────────────────────────────────
+        # A business with its OWN registered whatsapp_phone_id must ALWAYS be routed
+        # directly to itself — never through the shared-number picker/session logic.
+        # This prevents a dedicated business's messages from ever being hijacked by
+        # a stale "selected_business_id" left over from shared-number testing, and
+        # protects against SHARED_PHONE_NUMBER_ID accidentally colliding with a
+        # business's own dedicated number.
+        _dedicated_biz = None
+        if phone_number_id:
+            _dedicated_biz = crud.get_business_by_phone_id(phone_number_id)
+
+        if _dedicated_biz and _dedicated_biz.get("is_active", True):
+            business = _dedicated_biz
+            token    = ""
+            log.info(
+                "📋 STEP 2 — dedicated number  phone=%s  biz=%s (%s)  "
+                "[bypasses shared-number picker even if SHARED_PHONE_NUMBER_ID matches]",
+                customer_phone, business.get("id"), business.get("name"),
+            )
+        elif is_shared_number(phone_number_id):
             log.info("📋 STEP 2 — shared number  phone=%s", customer_phone)
             active_businesses = crud.get_active_businesses()
 
@@ -224,6 +243,16 @@ async def receive_message(request: Request):
             if not business.get("is_active", True):
                 return {"status": "ok"}
             token = ""
+
+        # ── DIAGNOSTIC LOG — confirms exactly which business + currency was resolved ──
+        # Check Render logs for this line to see the REAL data being used per message.
+        log.info(
+            "🔎 BUSINESS RESOLVED  id=%s  name=%r  phone_number_id=%s  "
+            "is_shared_path=%s  currency=%r  currency_symbol=%r",
+            business.get("id"), business.get("name"), phone_number_id,
+            is_shared_number(phone_number_id),
+            business.get("currency"), business.get("currency_symbol"),
+        )
     except Exception as exc:
         log.exception("📋 STEP 2 FAIL: %s", exc)
         return {"status": "ok"}
