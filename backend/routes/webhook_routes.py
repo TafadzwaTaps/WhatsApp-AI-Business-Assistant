@@ -224,16 +224,6 @@ async def receive_message(request: Request):
             if not business.get("is_active", True):
                 return {"status": "ok"}
             token = ""
-
-        # ── DIAGNOSTIC LOG — confirms exactly which business + currency was resolved ──
-        # Check Render logs for this line to see the REAL data being used per message.
-        log.info(
-            "🔎 BUSINESS RESOLVED  id=%s  name=%r  phone_number_id=%s  "
-            "is_shared_path=%s  currency=%r  currency_symbol=%r",
-            business.get("id"), business.get("name"), phone_number_id,
-            is_shared_number(phone_number_id),
-            business.get("currency"), business.get("currency_symbol"),
-        )
     except Exception as exc:
         log.exception("📋 STEP 2 FAIL: %s", exc)
         return {"status": "ok"}
@@ -347,6 +337,32 @@ async def receive_message(request: Request):
         is_from_agent     = bool(business_phone_id and msg_from and msg_from == business_phone_id)
 
         # Build per-business config so AI can tailor its copy
+        # ── Self-healing currency lookup ────────────────────────────────────────
+        # If the `business` dict came from a SELECT that doesn't include currency
+        # columns (e.g. get_active_businesses on the shared-number path), a plain
+        # business.get("currency_symbol", "$") silently and incorrectly falls back
+        # to "$" — not because the business uses USD, but because the column was
+        # never fetched. This guard re-fetches currency fields directly by ID
+        # whenever they're missing, so the correct currency always applies
+        # regardless of which SELECT statement originally found the business.
+        if "currency_symbol" not in business or "currency" not in business:
+            try:
+                from core.db import supabase as _sb
+                _cur_row = (
+                    _sb.table("businesses")
+                    .select("currency, currency_symbol")
+                    .eq("id", business["id"])
+                    .limit(1)
+                    .execute()
+                )
+                if _cur_row.data:
+                    business["currency"]        = _cur_row.data[0].get("currency")        or business.get("currency")
+                    business["currency_symbol"] = _cur_row.data[0].get("currency_symbol")  or business.get("currency_symbol")
+                    log.info("💱 currency self-healed  biz=%s  currency=%r  symbol=%r",
+                             business["id"], business.get("currency"), business.get("currency_symbol"))
+            except Exception as _cur_exc:
+                log.warning("currency self-heal lookup failed: %s", _cur_exc)
+
         biz_config = {
             "welcome_message":       business.get("welcome_message", "")     or "",
             "currency":              business.get("currency", "USD")          or "USD",
