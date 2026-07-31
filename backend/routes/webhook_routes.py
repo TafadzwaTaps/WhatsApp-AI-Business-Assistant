@@ -148,36 +148,7 @@ async def receive_message(request: Request):
             def is_businesses_help_request(t): return False
             def build_business_picker(b, p="WaziBot", current_name=""): return ""
             def _category_icon(c): return "🏪"
-        # ── Dedicated-number priority check ─────────────────────────────────────
-        # A business with its OWN registered whatsapp_phone_id must ALWAYS be routed
-        # directly to itself — never through the shared-number picker/session logic.
-        # This prevents a dedicated business's messages from ever being hijacked by
-        # a stale "selected_business_id" left over from shared-number testing, and
-        # protects against SHARED_PHONE_NUMBER_ID accidentally colliding with a
-        # business's own dedicated number.
-        _dedicated_biz = None
-        if phone_number_id:
-            _dedicated_biz = crud.get_business_by_phone_id(phone_number_id)
-
-        _resolved_via_dedicated = False
-        if _dedicated_biz and _dedicated_biz.get("is_active", True):
-            business = _dedicated_biz
-            _resolved_via_dedicated = True
-            # Fetch the real token now — do NOT rely on STEP 3's is_shared_number()
-            # check, since a dedicated number can coincidentally equal
-            # SHARED_PHONE_NUMBER_ID (env var collision), which would make
-            # STEP 3 skip token decryption and leave messages unsendable.
-            try:
-                token = crud.get_decrypted_token(business)
-            except TokenDecryptionError as exc:
-                log.error("🔑 STEP 2 token decrypt FAIL: %s", exc)
-                token = ""
-            log.info(
-                "📋 STEP 2 — dedicated number  phone=%s  biz=%s (%s)  "
-                "[bypasses shared-number picker even if SHARED_PHONE_NUMBER_ID matches]",
-                customer_phone, business.get("id"), business.get("name"),
-            )
-        elif is_shared_number(phone_number_id):
+        if is_shared_number(phone_number_id):
             log.info("📋 STEP 2 — shared number  phone=%s", customer_phone)
             active_businesses = crud.get_active_businesses()
 
@@ -268,10 +239,7 @@ async def receive_message(request: Request):
         return {"status": "ok"}
 
     # STEP 3: Decrypt token
-    # Skip if already fetched in STEP 2's dedicated-number branch — avoids
-    # a double-fetch and avoids being skipped incorrectly when a dedicated
-    # number's phone_number_id happens to equal SHARED_PHONE_NUMBER_ID.
-    if not _resolved_via_dedicated and not is_shared_number(phone_number_id):
+    if not is_shared_number(phone_number_id):
         try:
             token = crud.get_decrypted_token(business)
         except TokenDecryptionError as exc:
