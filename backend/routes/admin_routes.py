@@ -85,6 +85,61 @@ def debug_supabase(user=Depends(require_superadmin)):
                 "action": "Check Supabase project is active at https://supabase.com/dashboard"}
 
 
+@router.get("/debug/verify-deploy")
+def debug_verify_deploy(user=Depends(require_superadmin)):
+    """
+    Returns the ACTUAL running source code of functions that have repeatedly
+    failed to deploy correctly. Use this immediately after any Render deploy
+    to confirm the new code is live — no need to wait for a WhatsApp test.
+
+    Look for:
+      - build_business_picker: should contain (biz.get("category") or "")
+      - get_active_businesses: should contain "currency_symbol" in the select
+    """
+    import inspect
+    result = {}
+
+    try:
+        from services.tenant_router import build_business_picker
+        src = inspect.getsource(build_business_picker)
+        result["build_business_picker"] = {
+            "source": src,
+            "has_null_safe_category_fix": '(biz.get("category") or "")' in src,
+        }
+    except Exception as exc:
+        result["build_business_picker"] = {"error": str(exc)}
+
+    try:
+        import crud
+        src = inspect.getsource(crud.get_active_businesses)
+        result["get_active_businesses"] = {
+            "source": src,
+            "has_currency_symbol_fix": "currency_symbol" in src,
+        }
+    except Exception as exc:
+        result["get_active_businesses"] = {"error": str(exc)}
+
+    # File modification timestamps — helps spot stale builds
+    try:
+        import os
+        tr_path = inspect.getsourcefile(build_business_picker) if "build_business_picker" in dir() else None
+        result["file_info"] = {}
+        for name, mod in [("tenant_router", "services.tenant_router"), ("crud", "crud")]:
+            try:
+                m = __import__(mod, fromlist=[""])
+                fpath = inspect.getsourcefile(m)
+                result["file_info"][name] = {
+                    "path": fpath,
+                    "modified": os.path.getmtime(fpath) if fpath else None,
+                }
+            except Exception as e:
+                result["file_info"][name] = {"error": str(e)}
+    except Exception:
+        pass
+
+    return result
+
+
 @router.get("/debug/token")
 def debug_token(user=Depends(require_superadmin)):
     from core.crypto import encrypt_token, decrypt_token
