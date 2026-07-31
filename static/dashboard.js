@@ -307,13 +307,37 @@ const _SERVICE_CATEGORIES = new Set([
   'Clinic','Hospital','Doctor','Dentist','Pharmacy','Repair Services',
 ]);
 
-function onBizTypeToggle(isService) {
+async function onBizTypeToggle(isService, _skipSave) {
   // Animate the custom toggle track and thumb
   const track = document.getElementById('biz-type-track');
   const thumb = document.getElementById('biz-type-thumb');
   if (track) track.style.background = isService ? 'var(--green)' : 'var(--border)';
   if (thumb) thumb.style.transform  = isService ? 'translateX(20px)' : 'translateX(0)';
   _setServiceMode(isService);
+
+  // Auto-save immediately — this toggle changes core product-page behaviour
+  // (stock tracking, Out of Stock) and users expect a switch to take effect
+  // the moment they flip it, not after finding a separate Save button.
+  // _skipSave=true is used when this function is called just to sync the UI
+  // from a fresh /me read (no need to re-save what we just loaded).
+  if (_skipSave) return;
+
+  const chk = document.getElementById('set-is-service-business');
+  try {
+    await apiFetch('/me', {
+      method: 'PATCH',
+      body: JSON.stringify({ is_service_business: isService }),
+    });
+    invalidateMeCache();
+    toast(isService ? '✅ Switched to Services mode' : '✅ Switched to Products mode');
+  } catch (e) {
+    // Save failed — revert the toggle and UI to reflect reality, and tell the user why
+    if (chk) chk.checked = !isService;
+    if (track) track.style.background = !isService ? 'var(--green)' : 'var(--border)';
+    if (thumb) thumb.style.transform  = !isService ? 'translateX(20px)' : 'translateX(0)';
+    _setServiceMode(!isService);
+    toast('Failed to save business type: ' + e.message, true);
+  }
 }
 
 function _setServiceMode(isService) {
@@ -388,7 +412,7 @@ async function getCachedMe() {
       window.IS_SERVICE_BUSINESS = _isSvc;
       _setServiceMode(_isSvc);
       const _chk0 = document.getElementById('set-is-service-business');
-      if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc); }
+      if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc, /*_skipSave=*/true); }
     }
     return result;
   } catch (e) {
@@ -1326,7 +1350,7 @@ async function loadSettings() {
       const _sv = b.is_service_business != null
         ? !!b.is_service_business : _autoDetectServiceMode(b.category);
       _svcChk.checked = _sv;
-      onBizTypeToggle(_sv);
+      onBizTypeToggle(_sv, /*_skipSave=*/true);
     }
     // Cash & Currency toggles — restore saved state (was previously never
     // read back, so toggles always showed their hardcoded HTML default)
