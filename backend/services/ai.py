@@ -164,6 +164,8 @@ def generate_reply(
     # ── Resolve per-business config ─────────────────────────────────────────
     _cfg                = business_config or {}
     _currency_sym       = (_cfg.get("currency_symbol") or "$").strip() or "$"
+    log.info("💱 currency resolved  biz=%s  symbol=%r  raw_cfg_currency_symbol=%r",
+             business_id, _currency_sym, _cfg.get("currency_symbol"))
     _welcome_msg        = (_cfg.get("welcome_message") or "").strip()
     _menu_header        = (_cfg.get("menu_header") or "").strip()
     _biz_category       = (_cfg.get("category") or "").lower().strip()
