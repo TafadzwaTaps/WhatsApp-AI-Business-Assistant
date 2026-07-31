@@ -120,6 +120,19 @@ def get_me(user=Depends(require_business)):
     return b
 
 
+# Currency symbol → ISO code map — keeps symbol and currency column in sync
+_SYM_TO_ISO: dict = {
+    "$": "USD", "US$": "USD",
+    "£": "GBP", "€": "EUR",
+    "R": "ZAR", "ZWL$": "ZWL", "ZWL": "ZWL",
+    "zł": "PLN", "zl": "PLN",
+    "₦": "NGN", "KSh": "KES", "GH₵": "GHS",
+    "UGX": "UGX", "TZS": "TZS", "ZMW": "ZMW",
+    "₹": "INR", "PKR": "PKR", "BDT": "BDT",
+    "A$": "AUD", "C$": "CAD", "AED": "AED",
+    "SGD": "SGD", "RM": "MYR",
+}
+
 @router.patch("/me")
 def update_me(data: BusinessUpdate, user=Depends(require_business)):
     safe = data.dict(exclude_none=True)
@@ -129,6 +142,17 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
         existing = crud.get_business_by_phone_id(new_phone_id)
         if existing and existing["id"] != user["business_id"]:
             raise HTTPException(400, "That WhatsApp Phone Number ID is already registered.")
+
+    # Auto-sync: if currency_symbol is set but currency is not, derive the ISO code.
+    # This prevents mismatches where the symbol is zł but currency column stays USD.
+    sym = (safe.get("currency_symbol") or "").strip()
+    if sym and "currency" not in safe:
+        iso = _SYM_TO_ISO.get(sym) or _SYM_TO_ISO.get(sym.upper())
+        if iso:
+            safe["currency"] = iso
+            log.info("currency auto-synced  biz=%s  symbol=%s  iso=%s",
+                     user["business_id"], sym, iso)
+
     class _D:
         def dict(self, **_): return safe
     b = crud.update_business(user["business_id"], _D())
