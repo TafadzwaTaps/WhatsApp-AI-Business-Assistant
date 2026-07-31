@@ -93,7 +93,7 @@ def get_active_businesses() -> list[dict]:
     try:
         res = (
             supabase.table("businesses")
-            .select("id, name, category, is_active, ecocash_number, paypal_email")
+            .select("id, name, category, is_active, ecocash_number, paypal_email, currency, currency_symbol, welcome_message, menu_header, is_service_business, default_slot_mins, pickup_enabled, cash_enabled")
             .eq("is_active", True)
             .order("display_order", desc=False, nullsfirst=True)
             .order("id")
@@ -105,7 +105,7 @@ def get_active_businesses() -> list[dict]:
         try:
             res = (
                 supabase.table("businesses")
-                .select("id, name, category, is_active, ecocash_number, paypal_email")
+                .select("id, name, category, is_active, ecocash_number, paypal_email, currency, currency_symbol, welcome_message, menu_header, is_service_business, default_slot_mins, pickup_enabled, cash_enabled")
                 .eq("is_active", True)
                 .order("id")
                 .execute()

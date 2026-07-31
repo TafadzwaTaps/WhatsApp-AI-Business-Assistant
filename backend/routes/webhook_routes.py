@@ -346,6 +346,9 @@ async def receive_message(request: Request):
             # Service business mode
             "is_service_business":   bool(business.get("is_service_business", False)),
             "default_slot_mins":     int(business.get("default_slot_mins", 60) or 60),
+            # Fulfillment options — used to decide whether to ask delivery vs pickup
+            "pickup_enabled":        bool(business.get("pickup_enabled", True)),
+            "cash_enabled":          bool(business.get("cash_enabled", True)),
             # Visual catalog: pass sending credentials so ai.py can send images directly
             "phone_number_id":       phone_number_id or "",
             "wa_token":              token or "",

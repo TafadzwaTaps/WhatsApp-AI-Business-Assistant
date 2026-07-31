@@ -168,6 +168,7 @@ def generate_reply(
     _menu_header        = (_cfg.get("menu_header") or "").strip()
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
+    _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
     import os as _os_cfg
@@ -635,6 +636,16 @@ def generate_reply(
         order_id  = session.get("order_id")
         reference = session.get("reference", f"ORDER-{order_id}" if order_id else "your order")
         log.info("awaiting_fulfillment  order=%s  ref=%s  text=%r", order_id, reference, text)
+
+        # Auto-resolve if business only has one fulfillment option
+        if not _pickup_enabled:
+            # Pickup is disabled — go straight to address for delivery
+            _set_awaiting_address(phone, business_id, order_id=order_id, reference=reference)
+            return (
+                f"📍 *Please send your delivery address* so we can arrange *{reference}*.\n\n"
+                f"_Just type your full address (street, suburb, city)._"
+            )
+
         choice = _detect_fulfillment(text)
 
         if _is_cancel(text):
@@ -774,19 +785,52 @@ def generate_reply(
                 else f"📋 *Reference noted:* `{proof_value}`"
             )
 
-            return (
-                f"✅ *Payment proof received. Thank you!*\n\n"
-                f"{proof_display}\n\n"
-                f"📦 Order   : *{reference}*\n"
-                f"💳 Method  : *{method_label}*\n\n"
-                f"🔍 *A human agent is now reviewing your proof.*\n"
-                f"Typical verification time: *5–15 minutes* ⏱\n\n"
-                f"{'─' * 28}\n"
-                f"🚚 *While we verify — how would you like to receive your order?*\n\n"
-                f"  1️⃣  *Delivery* — we bring it to you\n"
-                f"  2️⃣  *Pickup* — collect from us\n\n"
-                f"_Reply *1* or *delivery* / *2* or *pickup*_"
-            )
+            # Clean proof-received confirmation — no mixed concerns.
+            # Only ask delivery vs pickup if both options are available.
+            _has_pickup   = _pickup_enabled
+            _has_delivery = True  # delivery is always an option unless explicitly disabled
+
+            if _has_pickup and _has_delivery:
+                # Business offers both — ask the customer to choose
+                return (
+                    f"✅ *Payment proof received. Thank you!*\n\n"
+                    f"{proof_display}\n"
+                    f"📦 *{reference}* | 💳 {method_label}\n\n"
+                    f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
+                    f"{'─' * 28}\n"
+                    f"🚚 *How would you like to receive your order?*\n\n"
+                    f"  1️⃣  *Delivery* — we bring it to you\n"
+                    f"  2️⃣  *Pickup* — collect from us\n\n"
+                    f"_Reply *1* or *delivery* / *2* or *pickup*_"
+                )
+            elif _has_pickup and not _has_delivery:
+                # Pickup only — auto-confirm, no question needed
+                try:
+                    crud.update_order_payment(order_id, business_id,
+                                              {"fulfillment_method": "pickup"})
+                except Exception:
+                    pass
+                _reset_state(phone, business_id)
+                return (
+                    f"✅ *Payment proof received. Thank you!*\n\n"
+                    f"{proof_display}\n"
+                    f"📦 *{reference}* | 💳 {method_label}\n\n"
+                    f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
+                    f"🏪 *Your order will be ready for pickup.* We'll let you know when it's ready!"
+                )
+            else:
+                # Delivery only (no pickup) — move straight to address
+                _set_awaiting_address(phone, business_id,
+                                      order_id=order_id, reference=reference)
+                return (
+                    f"✅ *Payment proof received. Thank you!*\n\n"
+                    f"{proof_display}\n"
+                    f"📦 *{reference}* | 💳 {method_label}\n\n"
+                    f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
+                    f"{'─' * 28}\n"
+                    f"📍 *Please send your delivery address* so we can arrange your order.\n\n"
+                    f"_Just type your full address (street, suburb, city)._"
+                )
 
         method_label = {"ecocash": "EcoCash", "paypal": "PayPal"}.get(method, "payment")
         return (
