@@ -613,7 +613,7 @@
               <input type="text" id="product-name" placeholder="e.g. Sadza"/>
             </div>
             <div class="form-group-inline">
-              <label>Price (USD)</label>
+              <label id="product-price-label">Price (USD)</label>
               <input type="number" id="product-price" placeholder="2.50" step="0.01"/>
             </div>
           </div>
@@ -623,15 +623,62 @@
               <label>Category <span style="color:var(--text-dim);font-weight:400">(optional)</span></label>
               <select id="product-category" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
                 <option value="">Select category…</option>
-                <option>Food &amp; Beverage</option>
-                <option>Bakery &amp; Pastry</option>
-                <option>Grocery &amp; Staples</option>
-                <option>Health &amp; Beauty</option>
-                <option>Electronics</option>
-                <option>Fashion &amp; Clothing</option>
-                <option>Home &amp; Garden</option>
-                <option>Services</option>
-                <option>Other</option>
+                <optgroup label="Food &amp; Beverage">
+                  <option>Mains</option>
+                  <option>Starters &amp; Sides</option>
+                  <option>Desserts</option>
+                  <option>Bakery &amp; Pastry</option>
+                  <option>Beverages</option>
+                  <option>Snacks</option>
+                  <option>Combos &amp; Meal Deals</option>
+                </optgroup>
+                <optgroup label="Grocery &amp; Staples">
+                  <option>Fresh Produce</option>
+                  <option>Meat &amp; Poultry</option>
+                  <option>Dairy &amp; Eggs</option>
+                  <option>Pantry &amp; Staples</option>
+                  <option>Frozen Foods</option>
+                  <option>Household Supplies</option>
+                </optgroup>
+                <optgroup label="Health &amp; Beauty">
+                  <option>Skincare</option>
+                  <option>Haircare</option>
+                  <option>Makeup &amp; Cosmetics</option>
+                  <option>Fragrances</option>
+                  <option>Wellness &amp; Supplements</option>
+                  <option>Personal Care</option>
+                </optgroup>
+                <optgroup label="Fashion &amp; Retail">
+                  <option>Clothing</option>
+                  <option>Shoes</option>
+                  <option>Bags &amp; Accessories</option>
+                  <option>Jewelry</option>
+                  <option>Kids &amp; Baby</option>
+                </optgroup>
+                <optgroup label="Electronics">
+                  <option>Phones &amp; Accessories</option>
+                  <option>Computers &amp; Laptops</option>
+                  <option>Home Appliances</option>
+                  <option>Gadgets</option>
+                </optgroup>
+                <optgroup label="Home &amp; Garden">
+                  <option>Furniture</option>
+                  <option>Decor</option>
+                  <option>Kitchenware</option>
+                  <option>Garden &amp; Outdoor</option>
+                </optgroup>
+                <optgroup label="Services">
+                  <option>Consultation</option>
+                  <option>Booking / Appointment</option>
+                  <option>Subscription</option>
+                  <option>Repair &amp; Maintenance</option>
+                  <option>Delivery Service</option>
+                </optgroup>
+                <optgroup label="Other">
+                  <option>Bundles &amp; Packages</option>
+                  <option>Gift Items</option>
+                  <option>Other</option>
+                </optgroup>
               </select>
             </div>
             <div class="form-group-inline">

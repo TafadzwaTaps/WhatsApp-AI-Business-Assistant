@@ -48,6 +48,13 @@ class BusinessUpdate(BaseModel):
     welcome_message:   Optional[str]  = None  # Custom greeting on "hi" / first contact
     currency:          Optional[str]  = None  # e.g. "USD", "ZWL", "ZAR"
     currency_symbol:   Optional[str]  = None  # e.g. "$", "R", "ZWL$"
+    # Business category and type — were missing from this model, meaning
+    # saveProfile() sent them but Pydantic silently dropped both (unknown
+    # fields are ignored by default), so Category and the Products/Services
+    # toggle always appeared to save successfully but were never actually
+    # persisted, reverting to the old DB value on next load.
+    category:            Optional[str]  = None
+    is_service_business: Optional[bool] = None
     menu_header:       Optional[str]  = None  # Custom header shown above menu items
     # H3 fix: allow growth automation and other feature flags to be persisted
     features_json:     Optional[dict] = None  # arbitrary feature flags, stored as JSONB

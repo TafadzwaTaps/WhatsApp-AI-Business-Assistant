@@ -329,6 +329,24 @@ async function onBizTypeToggle(isService, _skipSave) {
       body: JSON.stringify({ is_service_business: isService }),
     });
     invalidateMeCache();
+
+    // Verify the save actually took effect — a 200 OK response does not
+    // guarantee persistence (e.g. a backend model silently dropping an
+    // unrecognised field looks identical to success). Re-read fresh and
+    // confirm the DB agrees before telling the user it worked.
+    const fresh = await apiFetch('/me');
+    if (fresh && !!fresh.is_service_business !== isService) {
+      if (chk) chk.checked = !!fresh.is_service_business;
+      const trackR = document.getElementById('biz-type-track');
+      const thumbR = document.getElementById('biz-type-thumb');
+      const actual = !!fresh.is_service_business;
+      if (trackR) trackR.style.background = actual ? 'var(--green)' : 'var(--border)';
+      if (thumbR) thumbR.style.transform  = actual ? 'translateX(20px)' : 'translateX(0)';
+      _setServiceMode(actual);
+      toast('⚠️ Business type did not save — please try again or contact support', true);
+      return;
+    }
+
     toast(isService ? '✅ Switched to Services mode' : '✅ Switched to Products mode');
   } catch (e) {
     // Save failed — revert the toggle and UI to reflect reality, and tell the user why
