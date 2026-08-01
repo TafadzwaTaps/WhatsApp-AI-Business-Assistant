@@ -307,55 +307,13 @@ const _SERVICE_CATEGORIES = new Set([
   'Clinic','Hospital','Doctor','Dentist','Pharmacy','Repair Services',
 ]);
 
-async function onBizTypeToggle(isService, _skipSave) {
+function onBizTypeToggle(isService) {
   // Animate the custom toggle track and thumb
   const track = document.getElementById('biz-type-track');
   const thumb = document.getElementById('biz-type-thumb');
   if (track) track.style.background = isService ? 'var(--green)' : 'var(--border)';
   if (thumb) thumb.style.transform  = isService ? 'translateX(20px)' : 'translateX(0)';
   _setServiceMode(isService);
-
-  // Auto-save immediately — this toggle changes core product-page behaviour
-  // (stock tracking, Out of Stock) and users expect a switch to take effect
-  // the moment they flip it, not after finding a separate Save button.
-  // _skipSave=true is used when this function is called just to sync the UI
-  // from a fresh /me read (no need to re-save what we just loaded).
-  if (_skipSave) return;
-
-  const chk = document.getElementById('set-is-service-business');
-  try {
-    await apiFetch('/me', {
-      method: 'PATCH',
-      body: JSON.stringify({ is_service_business: isService }),
-    });
-    invalidateMeCache();
-
-    // Verify the save actually took effect — a 200 OK response does not
-    // guarantee persistence (e.g. a backend model silently dropping an
-    // unrecognised field looks identical to success). Re-read fresh and
-    // confirm the DB agrees before telling the user it worked.
-    const fresh = await apiFetch('/me');
-    if (fresh && !!fresh.is_service_business !== isService) {
-      if (chk) chk.checked = !!fresh.is_service_business;
-      const trackR = document.getElementById('biz-type-track');
-      const thumbR = document.getElementById('biz-type-thumb');
-      const actual = !!fresh.is_service_business;
-      if (trackR) trackR.style.background = actual ? 'var(--green)' : 'var(--border)';
-      if (thumbR) thumbR.style.transform  = actual ? 'translateX(20px)' : 'translateX(0)';
-      _setServiceMode(actual);
-      toast('⚠️ Business type did not save — please try again or contact support', true);
-      return;
-    }
-
-    toast(isService ? '✅ Switched to Services mode' : '✅ Switched to Products mode');
-  } catch (e) {
-    // Save failed — revert the toggle and UI to reflect reality, and tell the user why
-    if (chk) chk.checked = !isService;
-    if (track) track.style.background = !isService ? 'var(--green)' : 'var(--border)';
-    if (thumb) thumb.style.transform  = !isService ? 'translateX(20px)' : 'translateX(0)';
-    _setServiceMode(!isService);
-    toast('Failed to save business type: ' + e.message, true);
-  }
 }
 
 function _setServiceMode(isService) {
@@ -430,7 +388,7 @@ async function getCachedMe() {
       window.IS_SERVICE_BUSINESS = _isSvc;
       _setServiceMode(_isSvc);
       const _chk0 = document.getElementById('set-is-service-business');
-      if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc, /*_skipSave=*/true); }
+      if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc); }
     }
     return result;
   } catch (e) {
@@ -780,11 +738,16 @@ function _setKpi(id, val) {
   if (el) el.textContent = val;
 }
 function _isProdOos(p) {
+  // Service businesses don't track stock — never show "Out of Stock",
+  // regardless of what a product's stored status/stock says (it may be
+  // stale from before the business switched from Products to Services mode).
+  if (window.IS_SERVICE_BUSINESS) return false;
   if (p.status === 'out_of_stock') return true;
   if (typeof p.stock === 'number' && p.stock === 0) return true;
   return false;
 }
 function _isProdLowStock(p) {
+  if (window.IS_SERVICE_BUSINESS) return false;
   return typeof p.stock === 'number' && p.stock > 0 && p.stock <= 5;
 }
 function _prodStatusBadge(p) {
@@ -836,9 +799,11 @@ function _renderProductTable(products) {
     const thumb   = p.image_url
       ? `<img class="product-thumb" src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><div class="product-thumb-placeholder" style="display:none">📦</div>`
       : `<div class="product-thumb-placeholder">📦</div>`;
-    const stockDisplay = typeof p.stock === 'number'
-      ? `<span style="font-size:12px;font-family:var(--mono);${p.stock <= 5 ? 'color:var(--amber)' : ''}">${p.stock}</span>`
-      : `<span style="color:var(--text-dim);font-size:11px;">—</span>`;
+    const stockDisplay = window.IS_SERVICE_BUSINESS
+      ? `<span style="color:var(--text-dim);font-size:11px;" title="Stock tracking is off for service businesses">N/A</span>`
+      : (typeof p.stock === 'number'
+          ? `<span style="font-size:12px;font-family:var(--mono);${p.stock <= 5 ? 'color:var(--amber)' : ''}">${p.stock}</span>`
+          : `<span style="color:var(--text-dim);font-size:11px;">—</span>`);
     const catDisplay = p.category
       ? `<span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">${escHtml(p.category)}</span>`
       : `<span style="color:var(--text-dim);font-size:11px;">—</span>`;
@@ -878,7 +843,7 @@ function _renderProductGrid(products) {
       <div class="product-card-body">
         <div class="product-card-name">${escHtml(p.name||'—')}</div>
         <div class="product-card-price">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</div>
-        ${typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : ''}
+        ${window.IS_SERVICE_BUSINESS ? '' : (typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : '')}
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();deleteProduct(${p.id})">✕</button>
@@ -1368,7 +1333,7 @@ async function loadSettings() {
       const _sv = b.is_service_business != null
         ? !!b.is_service_business : _autoDetectServiceMode(b.category);
       _svcChk.checked = _sv;
-      onBizTypeToggle(_sv, /*_skipSave=*/true);
+      onBizTypeToggle(_sv);
     }
     // Cash & Currency toggles — restore saved state (was previously never
     // read back, so toggles always showed their hardcoded HTML default)

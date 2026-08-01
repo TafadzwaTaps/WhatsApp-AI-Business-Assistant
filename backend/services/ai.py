@@ -164,13 +164,23 @@ def generate_reply(
     # ── Resolve per-business config ─────────────────────────────────────────
     _cfg                = business_config or {}
     _currency_sym       = (_cfg.get("currency_symbol") or "$").strip() or "$"
-    log.info("💱 currency resolved  biz=%s  symbol=%r  raw_cfg_currency_symbol=%r",
-             business_id, _currency_sym, _cfg.get("currency_symbol"))
     _welcome_msg        = (_cfg.get("welcome_message") or "").strip()
     _menu_header        = (_cfg.get("menu_header") or "").strip()
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
+
+    # Service businesses are never "out of stock" — stock tracking doesn't
+    # apply to services. Existing products may still have stale stock=0 or
+    # status='out_of_stock' from before the business switched modes; rather
+    # than depend on every display function individually knowing about
+    # is_service_business, normalise it once here. stock=None already means
+    # "✅ Available" everywhere it's checked in whatsapp_catalog.py.
+    if _is_service_biz and products:
+        products = [
+            {**p, "stock": None, "status": "active" if p.get("status") == "out_of_stock" else p.get("status")}
+            for p in products
+        ]
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
     import os as _os_cfg
@@ -327,7 +337,7 @@ def generate_reply(
                 if recent:
                     return (
                         f"🚫 *Cancel ORDER-{recent['id']}?*\n\n"
-                        f"💰 Amount: {_currency_sym}{float(recent['total_price']):.2f}\n"
+                        f"💰 Amount: ${float(recent['total_price']):.2f}\n"
                         f"📍 Status: {recent['status'].upper()}\n\n"
                         f"Reply *yes, cancel* to confirm cancellation, "
                         f"or type anything else to keep your order.\n\n"
@@ -343,7 +353,7 @@ def generate_reply(
             _reset_state(phone, business_id)
             return (
                 "🚫 *Checkout cancelled.*\n\n"
-                f"{_format_cart(cart, _currency_sym)}\n\n"
+                f"{_format_cart(cart)}\n\n"
                 "Your cart is saved. Type *checkout* whenever you're ready."
             )
 
@@ -412,7 +422,7 @@ def generate_reply(
             return (
                 f"💳 *Refund / Dispute Request*\n\n"
                 f"We've noted your request regarding *{ref}*.\n\n"
-                f"  💰 Amount : {_currency_sym}{total:.2f}\n"
+                f"  💰 Amount : ${total:.2f}\n"
                 f"  📍 Payment: {pay_status.upper()}\n\n"
                 f"Our team will review your request and get back to you shortly.\n\n"
                 f"_For urgent issues, please contact us directly. "
@@ -620,14 +630,14 @@ def generate_reply(
             rec_block = ("\n\n" + sugg_text) if sugg_text else ""
             return (
                 f"✅ *Added to your cart!*\n\n"
-                f"{_format_cart(cart, _currency_sym)}"
+                f"{_format_cart(cart)}"
                 f"{rec_block}\n\n"
                 f"_Type *checkout* when you're ready to order._"
             )
 
         return (
             f"Please reply *yes* to confirm, or *cancel* to start over.\n\n"
-            + (f"{_format_cart(preview, _currency_sym)}" if preview else "")
+            + (f"{_format_cart(preview)}" if preview else "")
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -897,7 +907,7 @@ def generate_reply(
             "send again", "help me", "show me", "details",
         }
         if any(w in text.lower() for w in confused_words):
-            instructions = _build_payment_instructions(pending, business_id, business_name, _currency_sym)
+            instructions = _build_payment_instructions(pending, business_id, business_name)
             return (
                 f"{instructions}\n\n"
                 f"{'─' * 28}\n"
@@ -929,13 +939,13 @@ def generate_reply(
             _reset_state(phone, business_id)
             return (
                 f"👌 No problem! Take your time.\n\n"
-                f"{_format_cart(cart, _currency_sym)}\n\n"
+                f"{_format_cart(cart)}\n\n"
                 "Type *checkout* when you're ready, or *remove [item]* to edit."
             )
 
         return (
             "Please reply *yes* to confirm your order or *no* to go back.\n\n"
-            + _format_cart(snapshot, _currency_sym)
+            + _format_cart(snapshot)
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -950,7 +960,6 @@ def generate_reply(
             return _process_payment(
                 method=method, cart=cart_to_use,
                 phone=phone, business_id=business_id, business_name=business_name,
-                currency_sym=_currency_sym,
             )
 
         from services.payment_service import available_methods
@@ -1169,7 +1178,7 @@ def generate_reply(
         _save_cart(phone, business_id, rebuilt)
         log.info("reorder  items=%d  phone=%s", len(rebuilt), phone)
 
-        cart_text = _format_cart(rebuilt, _currency_sym)
+        cart_text = _format_cart(rebuilt)
         note      = ""
         if missing:
             note = f"\n\n⚠️ Some items were unavailable: *{', '.join(missing)}*"
@@ -1243,11 +1252,11 @@ def generate_reply(
             cart.remove(matched_item)
             _save_cart(phone, business_id, cart)
             log.info("remove: removed  item=%r  phone=%s", matched_item["name"], phone)
-            return f"🗑️ Removed *{matched_item['name']}* from your cart.\n\n{_format_cart(cart, _currency_sym)}"
+            return f"🗑️ Removed *{matched_item['name']}* from your cart.\n\n{_format_cart(cart)}"
 
         log.info("remove: no match  search_term=%r  cart_items=%s",
                  search_term, [i["name"] for i in cart])
-        return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart, _currency_sym)}"
+        return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart)}"
 
     # ══════════════════════════════════════════════════════════════════════════
     # P7 — ADD TO CART (order parser → multi-item → single item)
@@ -1322,7 +1331,7 @@ def generate_reply(
                 blocked_note = f"\n\n⚠️ Could not add: {', '.join(blocked)}" if blocked else ""
                 return (
                     f"👍 Added {', '.join(added_names)} to your cart.\n\n"
-                    f"{_format_cart(cart, _currency_sym)}"
+                    f"{_format_cart(cart)}"
                     f"{blocked_note}"
                     f"\n\n_Type *checkout* when you're ready to order._"
                 )
@@ -1373,7 +1382,7 @@ def generate_reply(
             qty_label = f" ×{qty}" if qty > 1 else ""
             msg = (
                 f"👍 Nice choice! Added *{product_name}*{qty_label} to your cart.\n\n"
-                f"{_format_cart(cart, _currency_sym)}"
+                f"{_format_cart(cart)}"
             )
 
             try:
@@ -1404,7 +1413,7 @@ def generate_reply(
     # P8 — CART VIEW
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "cart":
-        reply = _format_cart(cart, _currency_sym)
+        reply = _format_cart(cart)
         if cart:
             reply += "\n\n_Ready? Type *checkout* to place your order._"
         return reply
@@ -1697,7 +1706,7 @@ def generate_reply(
         return (
             f"🤔 I didn't catch that.\n\n"
             f"📦 You have an active order: *{ref}*\n"
-            f"{_format_cart(cart, _currency_sym) if cart else ''}\n\n"
+            f"{_format_cart(cart) if cart else ''}\n\n"
             f"  📋 *menu* — browse products {'| 🛍️ ' + hint if hint else ''}\n"
             f"  🛒 *cart* — view your cart\n"
             f"  ✅ *checkout* — place your order\n"
@@ -1716,7 +1725,7 @@ def generate_reply(
         hint = f"e.g. _{products[0]['name']}_" if products else ""
         return (
             f"🤔 I'm not sure what you mean — but here's where you're at:\n\n"
-            f"{_format_cart(cart, _currency_sym)}\n\n"
+            f"{_format_cart(cart)}\n\n"
             f"  ✅ *checkout* — place your order\n"
             f"  📋 *menu* — browse more items {'| 🛍️ ' + hint if hint else ''}\n"
             f"  🗑️ *remove [item]* — remove something\n"
