@@ -687,6 +687,11 @@ async function loadProducts() {
     // KPI update (Phase 1)
     _updateProductKPIs(_allProducts);
 
+    // Populate the category filter from categories actually in use,
+    // rather than a static list — keeps it relevant to this business's
+    // real products and picks up custom/typed-in categories automatically.
+    _populateCategoryFilter(_allProducts);
+
     // Apply any active filters then render
     applyProductFilters();
 
@@ -738,16 +743,11 @@ function _setKpi(id, val) {
   if (el) el.textContent = val;
 }
 function _isProdOos(p) {
-  // Service businesses don't track stock — never show "Out of Stock",
-  // regardless of what a product's stored status/stock says (it may be
-  // stale from before the business switched from Products to Services mode).
-  if (window.IS_SERVICE_BUSINESS) return false;
   if (p.status === 'out_of_stock') return true;
   if (typeof p.stock === 'number' && p.stock === 0) return true;
   return false;
 }
 function _isProdLowStock(p) {
-  if (window.IS_SERVICE_BUSINESS) return false;
   return typeof p.stock === 'number' && p.stock > 0 && p.stock <= 5;
 }
 function _prodStatusBadge(p) {
@@ -755,6 +755,37 @@ function _prodStatusBadge(p) {
   if (_isProdLowStock(p))    return `<span class="prod-status-low">⚠ Low Stock</span>`;
   if (p.status === 'draft')  return `<span class="prod-status-draft">○ Draft</span>`;
   return `<span class="prod-status-active">● Active</span>`;
+}
+
+/**
+ * Rebuild the "All Categories" filter dropdown from the categories actually
+ * present on this business's products, instead of a static hardcoded list.
+ * - Options are sorted alphabetically for easy scanning.
+ * - The currently-selected filter value is preserved across reloads/re-adds
+ *   (e.g. after adding a new product) so an active filter doesn't silently
+ *   reset itself.
+ * - If the previously-selected category no longer exists in the product
+ *   list (e.g. the last product in that category was deleted), falls back
+ *   to "All Categories" rather than leaving a stale/invalid selection.
+ */
+function _populateCategoryFilter(products) {
+  const sel = document.getElementById('prod-filter-cat');
+  if (!sel) return;
+
+  const prevValue = sel.value;
+
+  const categories = [...new Set(
+    (products || [])
+      .map(p => (p.category || '').trim())
+      .filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+
+  sel.innerHTML = '<option value="">All Categories</option>' +
+    categories.map(c => `<option value="${escHtml(c)}">${escHtml(c)}</option>`).join('');
+
+  // Restore prior selection if it's still a valid option; otherwise reset to "All"
+  const stillValid = !prevValue || categories.some(c => c.toLowerCase() === prevValue.toLowerCase());
+  sel.value = stillValid ? prevValue : '';
 }
 
 function applyProductFilters() {
@@ -799,11 +830,9 @@ function _renderProductTable(products) {
     const thumb   = p.image_url
       ? `<img class="product-thumb" src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.style.display='none';this.nextSibling.style.display='flex'"><div class="product-thumb-placeholder" style="display:none">📦</div>`
       : `<div class="product-thumb-placeholder">📦</div>`;
-    const stockDisplay = window.IS_SERVICE_BUSINESS
-      ? `<span style="color:var(--text-dim);font-size:11px;" title="Stock tracking is off for service businesses">N/A</span>`
-      : (typeof p.stock === 'number'
-          ? `<span style="font-size:12px;font-family:var(--mono);${p.stock <= 5 ? 'color:var(--amber)' : ''}">${p.stock}</span>`
-          : `<span style="color:var(--text-dim);font-size:11px;">—</span>`);
+    const stockDisplay = typeof p.stock === 'number'
+      ? `<span style="font-size:12px;font-family:var(--mono);${p.stock <= 5 ? 'color:var(--amber)' : ''}">${p.stock}</span>`
+      : `<span style="color:var(--text-dim);font-size:11px;">—</span>`;
     const catDisplay = p.category
       ? `<span style="font-size:11px;color:var(--text-dim);font-family:var(--mono);">${escHtml(p.category)}</span>`
       : `<span style="color:var(--text-dim);font-size:11px;">—</span>`;
@@ -843,7 +872,7 @@ function _renderProductGrid(products) {
       <div class="product-card-body">
         <div class="product-card-name">${escHtml(p.name||'—')}</div>
         <div class="product-card-price">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</div>
-        ${window.IS_SERVICE_BUSINESS ? '' : (typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : '')}
+        ${typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : ''}
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();deleteProduct(${p.id})">✕</button>

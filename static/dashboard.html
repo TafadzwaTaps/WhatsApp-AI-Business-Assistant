@@ -923,16 +923,9 @@
           <input type="text" id="prod-search" class="prod-filter-input" placeholder="🔍 Search products…"
                  oninput="applyProductFilters()"/>
           <select id="prod-filter-cat" class="prod-filter-select" onchange="applyProductFilters()">
+            <!-- Populated dynamically by _populateCategoryFilter() from this
+                 business's actual product categories — see dashboard.js -->
             <option value="">All Categories</option>
-            <option>Food &amp; Beverage</option>
-            <option>Bakery &amp; Pastry</option>
-            <option>Grocery &amp; Staples</option>
-            <option>Health &amp; Beauty</option>
-            <option>Electronics</option>
-            <option>Fashion &amp; Clothing</option>
-            <option>Home &amp; Garden</option>
-            <option>Services</option>
-            <option>Other</option>
           </select>
           <select id="prod-filter-status" class="prod-filter-select" onchange="applyProductFilters()">
             <option value="">All Statuses</option>
