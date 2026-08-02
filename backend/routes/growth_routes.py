@@ -26,7 +26,7 @@ from pydantic import BaseModel, validator
 
 import crud
 from core.auth import require_business
-from core.plan_guard import require_plan
+from core.plan_guard import require_plan, require_not_restricted
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -95,7 +95,7 @@ class WinBackFireRequest(BaseModel):
 
 
 @router.post("/retention/send-win-back")
-async def retention_send_win_back(body: WinBackFireRequest, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
+async def retention_send_win_back(body: WinBackFireRequest, user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted())):
     """
     Fire a win-back campaign suggested by GET /retention/win-back.
     Delegates to the existing CampaignService — no new send logic.
@@ -127,7 +127,7 @@ async def retention_send_win_back(body: WinBackFireRequest, user=Depends(require
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/insights/growth")
-def insights_growth(user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
+def insights_growth(user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted())):
     """
     Actionable growth card — what a business should focus on RIGHT NOW.
     Pulls from retention, payments, stock, and CRM in a single response.
@@ -237,7 +237,7 @@ def insights_growth(user=Depends(require_business), _plan=Depends(require_plan("
 
 
 @router.get("/insights/opportunities")
-def insights_opportunities(user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
+def insights_opportunities(user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted())):
     """
     Detailed revenue opportunities list.
     Combines reorder predictions, payment reminders, and campaign targets.
@@ -350,7 +350,7 @@ def list_scheduled_campaigns(user=Depends(require_business)):
 
 
 @router.post("/campaigns/scheduled", status_code=201)
-def create_scheduled_campaign(body: ScheduledCampaignCreate, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
+def create_scheduled_campaign(body: ScheduledCampaignCreate, user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted())):
     """
     Schedule a campaign to send at a future datetime.
 

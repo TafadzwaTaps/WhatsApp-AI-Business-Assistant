@@ -169,18 +169,6 @@ def generate_reply(
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
-
-    # Service businesses are never "out of stock" — stock tracking doesn't
-    # apply to services. Existing products may still have stale stock=0 or
-    # status='out_of_stock' from before the business switched modes; rather
-    # than depend on every display function individually knowing about
-    # is_service_business, normalise it once here. stock=None already means
-    # "✅ Available" everywhere it's checked in whatsapp_catalog.py.
-    if _is_service_biz and products:
-        products = [
-            {**p, "stock": None, "status": "active" if p.get("status") == "out_of_stock" else p.get("status")}
-            for p in products
-        ]
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
     import os as _os_cfg
@@ -955,6 +943,21 @@ def generate_reply(
         method = _detect_payment_method(text)
 
         if method in ("ecocash", "paypal", "cash"):
+            # Defense-in-depth: re-check restriction here too, since this is
+            # the actual order-creation point. Covers any path that reaches
+            # the checkout state without passing through the "checkout"
+            # intent block above (e.g. a resumed/stale session).
+            try:
+                from core.plan_guard import get_access_status
+                if get_access_status(business_id).get("restricted"):
+                    _reset_state(phone, business_id)
+                    return (
+                        "🙏 *Sorry, this business isn't accepting new orders right now.*\n\n"
+                        "Please check back soon, or contact them directly for help."
+                    )
+            except Exception as _pg_exc:
+                log.debug("plan_guard check skipped (fail-open): %s", _pg_exc)
+
             session     = _get_session(phone, business_id)
             cart_to_use = session.get("cart_snapshot") or cart
             return _process_payment(
@@ -1194,6 +1197,19 @@ def generate_reply(
     # P5 — CHECKOUT TRIGGER
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "checkout":
+        # Trial-expired + grace-period-passed businesses can no longer take
+        # new orders. Browsing/menu/cart still work — only checkout is blocked
+        # — so the storefront doesn't look broken, just temporarily paused.
+        try:
+            from core.plan_guard import get_access_status
+            if get_access_status(business_id).get("restricted"):
+                return (
+                    "🙏 *Sorry, this business isn't accepting new orders right now.*\n\n"
+                    "Please check back soon, or contact them directly for help."
+                )
+        except Exception as _pg_exc:
+            log.debug("plan_guard check skipped (fail-open): %s", _pg_exc)
+
         if not cart:
             return (
                 "🛒 Your cart is empty!\n\n"

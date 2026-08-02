@@ -14,7 +14,7 @@ from pydantic import BaseModel, validator
 
 import crud
 from core.auth import require_business, get_current_user
-from core.plan_guard import require_plan
+from core.plan_guard import require_plan, require_not_restricted
 from core.crypto import TokenDecryptionError
 from services.ai import generate_reply
 from services.invoice_service import generate_invoice_text
@@ -48,13 +48,6 @@ class BusinessUpdate(BaseModel):
     welcome_message:   Optional[str]  = None  # Custom greeting on "hi" / first contact
     currency:          Optional[str]  = None  # e.g. "USD", "ZWL", "ZAR"
     currency_symbol:   Optional[str]  = None  # e.g. "$", "R", "ZWL$"
-    # Business category and type — were missing from this model, meaning
-    # saveProfile() sent them but Pydantic silently dropped both (unknown
-    # fields are ignored by default), so Category and the Products/Services
-    # toggle always appeared to save successfully but were never actually
-    # persisted, reverting to the old DB value on next load.
-    category:            Optional[str]  = None
-    is_service_business: Optional[bool] = None
     menu_header:       Optional[str]  = None  # Custom header shown above menu items
     # H3 fix: allow growth automation and other feature flags to be persisted
     features_json:     Optional[dict] = None  # arbitrary feature flags, stored as JSONB
@@ -829,7 +822,7 @@ class BroadcastRequest(BaseModel):
 
 
 @router.post("/broadcast")
-def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER"))):
+def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted())):
     _rate_check("broadcast", request)
     bid      = user["business_id"]
     business = crud.get_business_by_id(bid)
@@ -933,7 +926,7 @@ class CampaignRequest(BaseModel):
 
 
 @router.post("/campaigns/send")
-async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER"))):
+async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted())):
     _rate_check("campaign", request)
     from services.campaign_service import CampaignService, AUDIENCE_INFO
     bid = user["business_id"]

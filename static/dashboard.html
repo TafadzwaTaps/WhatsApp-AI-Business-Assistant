@@ -376,12 +376,30 @@
       <span style="font-size:18px;flex-shrink:0;">⏰</span>
       <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);">
         <strong style="color:var(--amber);">Your trial has ended.</strong>
-        Choose a plan from $5.99/month to keep your business running — all your data is safe.
+        <span id="trial-grace-message">Choose a plan from $5.99/month to keep your business running — all your data is safe.</span>
       </div>
       <a href="/static/pricing.html"
          style="background:var(--amber);color:#000;font-weight:800;font-size:12px;
                 padding:8px 18px;border-radius:8px;text-decoration:none;white-space:nowrap;">
         View Plans →
+      </a>
+    </div>
+
+    <!-- New: hard-restriction banner — shown once the 24h grace period has passed -->
+    <div id="trial-restricted-banner" style="display:none;background:rgba(239,68,68,0.08);
+         border:1px solid rgba(239,68,68,0.3);border-radius:10px;padding:12px 18px;
+         margin-bottom:14px;align-items:center;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:18px;flex-shrink:0;">🔒</span>
+      <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);">
+        <strong style="color:var(--red);">Account restricted.</strong>
+        Growth, Handoff, Reminders, Conversations, Live Inbox, and Campaigns are locked, and
+        your WhatsApp bot is no longer accepting new orders. Upgrade now to restore full access —
+        your products, orders, and data are all safe.
+      </div>
+      <a href="/static/pricing.html"
+         style="background:var(--red);color:#fff;font-weight:800;font-size:12px;
+                padding:8px 18px;border-radius:8px;text-decoration:none;white-space:nowrap;">
+        Upgrade Now →
       </a>
     </div>
 

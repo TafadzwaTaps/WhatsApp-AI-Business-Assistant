@@ -484,6 +484,9 @@ def get_trial_status_response(business_id: int) -> dict:
         except Exception:
             ends_str = str(ends_at)[:10]
 
+    # New (additive): grace-period + hard-restriction status for sidebar gating.
+    access = get_access_status(business_id)
+
     return {
         "trial_active":   active,
         "trial_ends_at":  ends_str,
@@ -491,4 +494,125 @@ def get_trial_status_response(business_id: int) -> dict:
         "effective_tier": _normalise_tier(
             plan_info["tier"], plan_info["billing_status"], plan_info["trial_ends_at"]
         ),
+        # New fields — existing dashboard.js code that doesn't know about
+        # these simply ignores them; nothing above is changed or removed.
+        "restricted":       access["restricted"],
+        "grace_active":     access["grace_active"],
+        "grace_hours_left": access["grace_hours_left"],
     }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trial grace period + hard restriction
+# ─────────────────────────────────────────────────────────────────────────────
+# Requested behaviour: when a trial expires, the business gets a 24-hour grace
+# period to upgrade before high-end features (Growth, Handoff, Reminders,
+# Live Inbox, Conversations, Campaigns) are restricted AND the WhatsApp bot
+# stops accepting new customer orders. Overview, Orders (view), Products,
+# Customers, and Settings always remain accessible so the owner can see their
+# data and upgrade.
+GRACE_PERIOD_HOURS = 24
+
+
+def get_access_status(business_id: int) -> dict:
+    """
+    Compute the business's current access level, including the post-trial
+    grace period. This is ADDITIVE — it does not change is_trial_active(),
+    check_trial_status(), or require_plan(), all of which continue to work
+    exactly as before for anything already using them.
+
+    Returns:
+        {
+            "restricted":       bool,   # True = hard restriction now in effect
+            "grace_active":      bool,   # True = trial expired but still in the 24h window
+            "grace_hours_left":  float,  # hours remaining in grace period (0 if none)
+            "paid":              bool,   # True = active/paid subscription, never restricted
+            "trial_expired":     bool,
+        }
+    """
+    plan_info = _get_business_plan(business_id)
+    status    = (plan_info.get("billing_status") or "").lower()
+
+    # Paid/active accounts are never restricted, regardless of trial dates.
+    if status in ("active", "paid"):
+        return {
+            "restricted": False, "grace_active": False,
+            "grace_hours_left": 0.0, "paid": True, "trial_expired": False,
+        }
+
+    # Not on a trial at all (e.g. brand new record with no trial fields) — don't restrict.
+    if status not in ("trialing", "trial"):
+        return {
+            "restricted": False, "grace_active": False,
+            "grace_hours_left": 0.0, "paid": False, "trial_expired": False,
+        }
+
+    if is_trial_active(plan_info):
+        return {
+            "restricted": False, "grace_active": False,
+            "grace_hours_left": 0.0, "paid": False, "trial_expired": False,
+        }
+
+    # Trial has expired — check grace window from trial_ends_at.
+    def _parse(dt_val):
+        if not dt_val:
+            return None
+        try:
+            d = datetime.fromisoformat(str(dt_val).replace("Z", "+00:00")) if isinstance(dt_val, str) else dt_val
+            if d.tzinfo is None:
+                d = d.replace(tzinfo=timezone.utc)
+            return d
+        except Exception:
+            return None
+
+    from datetime import timedelta
+    trial_ends_at = _parse(plan_info.get("trial_ends_at"))
+    now = datetime.now(timezone.utc)
+
+    if trial_ends_at is None:
+        # No trial_ends_at on record but status says trialing+expired somehow —
+        # fail safe by granting grace rather than instantly restricting.
+        return {
+            "restricted": False, "grace_active": True,
+            "grace_hours_left": float(GRACE_PERIOD_HOURS), "paid": False, "trial_expired": True,
+        }
+
+    grace_deadline   = trial_ends_at + timedelta(hours=GRACE_PERIOD_HOURS)
+    hours_left       = max(0.0, (grace_deadline - now).total_seconds() / 3600.0)
+    grace_active     = now < grace_deadline
+    restricted       = not grace_active
+
+    return {
+        "restricted":       restricted,
+        "grace_active":      grace_active,
+        "grace_hours_left":  round(hours_left, 1),
+        "paid":              False,
+        "trial_expired":     True,
+    }
+
+
+def require_not_restricted():
+    """
+    FastAPI dependency — 403s if the business is past its grace period and
+    unpaid. Used to gate Growth/Handoff/Reminders/Live-Inbox/Campaigns
+    endpoints server-side (mirrors the dashboard's sidebar restriction so a
+    determined user can't bypass the UI by calling the API directly).
+    """
+    def _check(user: dict = Depends(_require_business_lazy())):
+        business_id = user.get("business_id")
+        if not business_id:
+            raise HTTPException(403, "Business ID not found in token.")
+        access = get_access_status(business_id)
+        if access["restricted"]:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error":   "trial_restricted",
+                    "message": (
+                        "Your free trial has ended and the grace period has passed. "
+                        "Upgrade to restore access to this feature."
+                    ),
+                    "upgrade_url": "/pricing",
+                },
+            )
+        return user
+    return _check

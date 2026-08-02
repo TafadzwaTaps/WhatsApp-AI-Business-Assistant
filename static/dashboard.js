@@ -536,17 +536,34 @@ function buildSidebar() {
       <button class="nav-item" onclick="showSection('orders',this);closeSidebar()"><span class="icon">🛒</span> Orders</button>
       <button class="nav-item" onclick="showSection('products',this);closeSidebar()"><span class="icon">📦</span> Products</button>
       <button class="nav-item" onclick="showSection('crm',this);closeSidebar()"><span class="icon">👥</span> Customers <span id="nav-crm-badge" class="nav-badge" style="display:none"></span></button>
-      <button class="nav-item" onclick="showSection('reminders',this);closeSidebar()"><span class="icon">⏳</span> Reminders <span id="nav-rem-badge" class="nav-badge nav-badge-amber" style="display:none"></span></button>
-      <button class="nav-item" onclick="showSection('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
-      <button class="nav-item" onclick="window.open('/inbox','_blank');closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
-      <button class="nav-item" onclick="showSection('handoff',this);closeSidebar()"><span class="icon">👤</span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
-      <button class="nav-item" onclick="showSection('growth-automation',this);closeSidebar()"><span class="icon">🚀</span> Growth</button>
-      <button class="nav-item" onclick="showSection('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('reminders',this);closeSidebar()"><span class="icon">⏳</span> Reminders <span id="nav-rem-badge" class="nav-badge nav-badge-amber" style="display:none"></span></button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('__inbox__',this);closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('handoff',this);closeSidebar()"><span class="icon">👤</span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('growth-automation',this);closeSidebar()"><span class="icon">🚀</span> Growth</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
       <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
       <button class="nav-item" onclick="showSection('marketing-kit',this);loadMarketingKit();closeSidebar()"><span class="icon">📣</span> Marketing Kit</button>
       <div class="nav-section">Growth</div>
       <button class="nav-item" onclick="showSection('settings',this);switchSettingsTab('referrals',null);loadReferralTab();closeSidebar()"><span class="icon">🔗</span> Referrals <span id="nav-ref-badge" class="nav-badge nav-badge-green" style="display:none"></span></button>`;
   }
+}
+
+// Guards restricted nav items (Reminders, Conversations, Live Inbox, Handoff,
+// Growth, Campaigns) once the trial's grace period has passed. Uses the
+// already-cached /trial/status result (loadTrialBanner keeps this fresh)
+// so this adds no extra network round-trip on every click.
+function _navGuard(name, btn) {
+  if (_trialCache && _trialCache.restricted) {
+    toast('🔒 This feature is restricted — your trial grace period has ended. Upgrade to unlock it.', true);
+    window.location.href = '/static/pricing.html';
+    return;
+  }
+  if (name === '__inbox__') {
+    window.open('/inbox', '_blank');
+    return;
+  }
+  showSection(name, btn);
 }
 
 function showSection(name, btn) {
@@ -2938,6 +2955,12 @@ async function init(){
 // and appended DOMContentLoaded blocks from previous sprint sessions.
 function _postLoginInit() {
   if (!token) return;  // not logged in — nothing to do
+
+  // Immediate: trial/restriction status — this was previously defined but
+  // never actually called anywhere, so the trial-expired banner and any
+  // feature restriction never appeared regardless of billing status. Runs
+  // right away (not delayed) since sidebar clicks can happen immediately.
+  try { checkUpgradePrompts(); } catch(_) {}
 
   // 1.5 s: repeat customer stat (lightweight analytics query)
   setTimeout(() => {
@@ -5774,14 +5797,16 @@ async function loadTrialBanner() {
     const ts = _trialCache;
     if (!ts) return;
 
-    const trialBanner  = document.getElementById('trial-active-banner');
-    const expiredBanner= document.getElementById('trial-expired-banner');
-    const cpBanner     = document.getElementById('upgrade-prompt-campaigns');
-    const gpBanner     = document.getElementById('upgrade-prompt-growth');
+    const trialBanner     = document.getElementById('trial-active-banner');
+    const expiredBanner   = document.getElementById('trial-expired-banner');
+    const restrictedBanner= document.getElementById('trial-restricted-banner');
+    const cpBanner        = document.getElementById('upgrade-prompt-campaigns');
+    const gpBanner        = document.getElementById('upgrade-prompt-growth');
 
-    // Always hide both first — prevents both showing simultaneously
-    if (trialBanner)   trialBanner.style.display   = 'none';
-    if (expiredBanner) expiredBanner.style.display  = 'none';
+    // Always hide all three first — prevents more than one showing at once
+    if (trialBanner)      trialBanner.style.display      = 'none';
+    if (expiredBanner)    expiredBanner.style.display     = 'none';
+    if (restrictedBanner) restrictedBanner.style.display  = 'none';
 
     if (ts.trial_active) {
       // Active trial — show trial banner, HIDE upgrade prompts
@@ -5792,24 +5817,56 @@ async function loadTrialBanner() {
           : '30 days from signup';
       }
       if (trialBanner)   trialBanner.style.display   = 'flex';
-      if (expiredBanner) expiredBanner.style.display  = 'none';
       if (cpBanner)      cpBanner.style.display       = 'none';
       if (gpBanner)      gpBanner.style.display       = 'none';
     } else if (ts.billing_status === 'trialing' || ts.billing_status === 'trial') {
-      // Expired trial — hide trial banner, show upgrade prompts
-      if (trialBanner)   trialBanner.style.display   = 'none';
-      if (expiredBanner) expiredBanner.style.display  = 'flex';
-      if (cpBanner)      cpBanner.style.display       = 'block';
-      if (gpBanner)      gpBanner.style.display       = 'block';
+      // Trial expired — either still in the 24h grace window, or fully restricted
+      if (ts.restricted) {
+        if (restrictedBanner) restrictedBanner.style.display = 'flex';
+      } else if (ts.grace_active) {
+        if (expiredBanner) {
+          expiredBanner.style.display = 'flex';
+          const graceMsg = document.getElementById('trial-grace-message');
+          if (graceMsg && typeof ts.grace_hours_left === 'number') {
+            const h = Math.max(0, Math.round(ts.grace_hours_left));
+            graceMsg.textContent = `You have about ${h} hour${h===1?'':'s'} left before some features are restricted. `
+              + `Choose a plan from $5.99/month to keep everything running — all your data is safe.`;
+          }
+        }
+      } else if (expiredBanner) {
+        expiredBanner.style.display = 'flex';
+      }
+      if (cpBanner) cpBanner.style.display = 'block';
+      if (gpBanner) gpBanner.style.display = 'block';
     } else {
-      // Paid or free — hide both trial banners, show upgrade prompts only if free
-      if (trialBanner)   trialBanner.style.display   = 'none';
-      if (expiredBanner) expiredBanner.style.display  = 'none';
+      // Paid or free — hide all trial banners, show upgrade prompts only if free
       const isFree = (ts.effective_tier || '').toLowerCase() === 'free';
       if (cpBanner) cpBanner.style.display = isFree ? 'block' : 'none';
       if (gpBanner) gpBanner.style.display = isFree ? 'block' : 'none';
     }
+
+    // Apply/remove the visual "locked" state on gated sidebar nav items
+    _applyNavRestriction(!!ts.restricted);
   } catch (e) { /* non-critical */ }
+}
+
+// Grey out gated nav items (Reminders, Conversations, Live Inbox, Handoff,
+// Growth, Campaigns) and add a lock icon once restricted=true. Clicking is
+// still handled by _navGuard() — this only controls the visual state.
+function _applyNavRestriction(restricted) {
+  document.querySelectorAll('.nav-item[data-gated="true"]').forEach(el => {
+    el.style.opacity = restricted ? '0.45' : '';
+    el.style.cursor  = restricted ? 'not-allowed' : '';
+    const icon = el.querySelector('.icon');
+    if (icon && restricted && !icon.dataset.lockApplied) {
+      icon.textContent = '🔒';
+      icon.dataset.lockApplied = '1';
+    } else if (icon && !restricted && icon.dataset.lockApplied) {
+      delete icon.dataset.lockApplied;
+      // Original icons are re-set by buildSidebar() on next call; a full
+      // page reload after upgrading will restore them naturally.
+    }
+  });
 }
 
 // H5: save owner_email via PATCH /me — called from the banner button
