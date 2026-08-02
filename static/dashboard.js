@@ -579,7 +579,32 @@ function toast(msg, isError=false) {
 // Alias used by sprint-added functions
 const showToast = toast;
 
+// ── LIGHT / DARK MODE ────────────────────────────────────────────────────────
+function toggleLightMode() {
+  const html    = document.documentElement;
+  const isLight = html.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    html.removeAttribute('data-theme');
+    try { localStorage.setItem('wazi_theme', 'dark'); } catch (e) {}
+  } else {
+    html.setAttribute('data-theme', 'light');
+    try { localStorage.setItem('wazi_theme', 'light'); } catch (e) {}
+  }
+  _syncThemeToggleUI();
+}
+
+function _syncThemeToggleUI() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const icon  = document.getElementById('theme-toggle-icon');
+  const label = document.getElementById('theme-toggle-label');
+  if (icon)  icon.textContent  = isLight ? '☀️' : '🌙';
+  if (label) label.textContent = isLight ? 'Light Mode' : 'Dark Mode';
+}
+document.addEventListener('DOMContentLoaded', _syncThemeToggleUI);
+
 // ── SUPERADMIN ────────────────────────────────────────────
+let _adminBizList = [];   // cached for client-side search/filter on Manage Businesses
+
 async function loadAdminData() {
   try {
     const [stats, businesses] = await Promise.all([
@@ -592,28 +617,150 @@ async function loadAdminData() {
     _s('sa-active', stats.active_businesses ?? '—');
     _s('sa-orders', stats.total_orders ?? '—');
     _s('sa-revenue', getCurrencySymbol() + (stats.total_revenue||0).toFixed(2));
-    const bizList = Array.isArray(businesses) ? businesses : [];
-    renderBizTable(bizList, 'sa-biz-overview', false);
-    renderBizTable(bizList, 'sa-biz-table', true);
+
+    _s('sa-trialing', stats.trialing_count ?? '—');
+    _s('sa-paid', stats.paid_count ?? '—');
+    _s('sa-expired', stats.expired_trial_count ?? '—');
+    const waSplit = document.getElementById('sa-wa-split');
+    if (waSplit) waSplit.textContent = `${stats.dedicated_number_count ?? 0} / ${stats.shared_number_count ?? 0}`;
+
+    const expEl = document.getElementById('sa-expiring-list');
+    if (expEl) {
+      const list = stats.expiring_soon || [];
+      expEl.innerHTML = list.length
+        ? list.map(b => `
+            <div style="display:flex;justify-content:space-between;align-items:center;
+                        padding:8px 10px;background:var(--surface2);border-radius:8px;
+                        border-left:3px solid ${b.days_left<=2?'var(--red)':'var(--amber)'};">
+              <span style="font-family:var(--mono);font-size:12px;font-weight:700;">${escHtml(b.name||'—')}</span>
+              <span style="font-family:var(--mono);font-size:11px;color:${b.days_left<=2?'var(--red)':'var(--amber)'};">
+                ${b.days_left===0?'Today':b.days_left+'d left'}
+              </span>
+            </div>`).join('')
+        : `<div class="empty" style="padding:12px 0;">✅ No trials ending soon</div>`;
+    }
+
+    const catEl = document.getElementById('sa-category-breakdown');
+    if (catEl) {
+      const cats  = stats.by_category || {};
+      const total = Object.values(cats).reduce((s,v) => s+v, 0) || 1;
+      catEl.innerHTML = Object.entries(cats).map(([name, count]) => `
+        <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;">
+          <span style="width:120px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(name)}</span>
+          <div style="flex:1;background:var(--surface2);border-radius:3px;height:8px;overflow:hidden;">
+            <div style="width:${Math.round(count/total*100)}%;background:var(--purple);height:100%;"></div>
+          </div>
+          <span style="width:24px;text-align:right;color:var(--text-dim);">${count}</span>
+        </div>`).join('') || `<div class="empty" style="padding:8px 0;">No data yet</div>`;
+    }
+
+    const curEl = document.getElementById('sa-currency-breakdown');
+    if (curEl) {
+      const curs  = stats.by_currency || {};
+      const total = Object.values(curs).reduce((s,v) => s+v, 0) || 1;
+      curEl.innerHTML = Object.entries(curs).map(([name, count]) => `
+        <div style="display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;">
+          <span style="width:60px;color:var(--text-dim);">${escHtml(name)}</span>
+          <div style="flex:1;background:var(--surface2);border-radius:3px;height:8px;overflow:hidden;">
+            <div style="width:${Math.round(count/total*100)}%;background:var(--blue);height:100%;"></div>
+          </div>
+          <span style="width:24px;text-align:right;color:var(--text-dim);">${count}</span>
+        </div>`).join('') || `<div class="empty" style="padding:8px 0;">No data yet</div>`;
+    }
+
+    _adminBizList = Array.isArray(businesses) ? businesses : [];
+    renderBizTable(_adminBizList, 'sa-biz-overview', false);
+    applyAdminBizFilters();
   } catch(e) { toast('Failed to load admin data: ' + e.message, true); }
+}
+
+function applyAdminBizFilters() {
+  const q       = (document.getElementById('sa-search')?.value || '').toLowerCase().trim();
+  const status  = document.getElementById('sa-filter-status')?.value || '';
+  const billing = document.getElementById('sa-filter-billing')?.value || '';
+
+  let filtered = _adminBizList.filter(b => {
+    if (q && !((b.name||'').toLowerCase().includes(q) || (b.owner_username||'').toLowerCase().includes(q))) return false;
+    if (status === 'active' && !b.is_active) return false;
+    if (status === 'suspended' && b.is_active) return false;
+    if (billing) {
+      const tier = (b.subscription_tier || 'free').toLowerCase();
+      const bs   = (b.billing_status || '').toLowerCase();
+      const isPaid = tier && tier !== 'free';
+      if (billing === 'paid' && !isPaid) return false;
+      if (billing === 'trialing' && (isPaid || bs !== 'trialing')) return false;
+      if (billing === 'expired') {
+        if (isPaid) return false;
+        const end = b.trial_ends_at ? new Date(b.trial_ends_at) : null;
+        if (!end || end > new Date()) return false;
+      }
+    }
+    return true;
+  });
+
+  renderBizTable(filtered, 'sa-biz-table', true);
 }
 
 function renderBizTable(businesses, bodyId, showActions) {
   const tbody = document.getElementById(bodyId);
   if (!tbody) return;
   const biz = Array.isArray(businesses) ? businesses : [];
-  if (!biz.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses yet.</div></td></tr>`; return; }
-  tbody.innerHTML = biz.map(b => `<tr>
+  if (!biz.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses match your filters.</div></td></tr>`; return; }
+  tbody.innerHTML = biz.map(b => `<tr style="cursor:pointer;" onclick="openAdminBizDetail(${b.id})" title="Click for details">
     <td><span class="badge badge-purple">#${b.id}</span></td>
     <td><strong>${escHtml(b.name||'—')}</strong></td>
     <td><span class="badge badge-amber">${escHtml(b.owner_username||'—')}</span></td>
     <td style="color:var(--text-dim);font-size:11px">${escHtml(b.whatsapp_phone_id||'—')}</td>
     <td><span class="badge ${b.is_active?'badge-green':'badge-red'}">${b.is_active?'Active':'Suspended'}</span></td>
-    <td>${showActions?`<div style="display:flex;gap:6px;flex-wrap:wrap;">
+    <td onclick="event.stopPropagation()">${showActions?`<div style="display:flex;gap:6px;flex-wrap:wrap;">
       <button class="btn btn-ghost" style="color:var(--amber);border-color:rgba(245,158,11,0.3);" onclick="toggleBiz(${b.id},${b.is_active})">${b.is_active?'Suspend':'Activate'}</button>
       <button class="btn btn-ghost" onclick="deleteBiz(${b.id})">✕ Delete</button>
     </div>`:fmtTime(b.created_at || b.createdAt || b.timestamp)}</td>
   </tr>`).join('');
+}
+
+function openAdminBizDetail(id) {
+  const b = _adminBizList.find(x => x.id === id);
+  if (!b) { toast('Business details unavailable — refresh and try again', true); return; }
+
+  const title = document.getElementById('sa-detail-title');
+  const body  = document.getElementById('sa-detail-body');
+  if (title) title.textContent = `${b.name || 'Business'} (#${b.id})`;
+
+  const trialEnd = b.trial_ends_at ? new Date(b.trial_ends_at) : null;
+  const daysLeft = trialEnd ? Math.ceil((trialEnd - new Date()) / 86400000) : null;
+  const tier     = (b.subscription_tier || 'free');
+  const isPaid   = tier && tier.toLowerCase() !== 'free';
+
+  const row = (label, value) => `
+    <div style="display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border);padding:4px 0;">
+      <span style="color:var(--text-dim);">${label}</span>
+      <span style="text-align:right;">${value}</span>
+    </div>`;
+
+  if (body) {
+    body.innerHTML =
+      row('Username', '@' + escHtml(b.owner_username || '—')) +
+      row('Email', escHtml(b.owner_email || '—')) +
+      row('Category', escHtml(b.category || '—')) +
+      row('Currency', escHtml(b.currency || 'USD') + ' (' + escHtml(b.currency_symbol || '$') + ')') +
+      row('WhatsApp', b.whatsapp_phone_id ? 'Dedicated — ' + escHtml(b.whatsapp_phone_id) : 'Shared number') +
+      row('Business Type', b.is_service_business ? '🔧 Services' : '🛍️ Products') +
+      row('Plan', isPaid ? `💳 ${escHtml(tier)}` : '🎁 Free Trial') +
+      row('Billing Status', escHtml(b.billing_status || '—')) +
+      (trialEnd ? row('Trial Ends', trialEnd.toLocaleDateString() + (daysLeft!=null ? ` (${daysLeft>=0?daysLeft+'d left':'expired '+(-daysLeft)+'d ago'})` : '')) : '') +
+      row('Onboarding', b.onboarding_completed ? '✅ Completed' : '⏳ In progress') +
+      row('Referral Code', escHtml(b.referral_code || '—')) +
+      row('Created', fmtTime(b.created_at || b.createdAt));
+  }
+
+  const modal = document.getElementById('sa-biz-detail-modal');
+  if (modal) modal.classList.add('open');
+}
+
+function closeAdminBizDetail() {
+  const modal = document.getElementById('sa-biz-detail-modal');
+  if (modal) modal.classList.remove('open');
 }
 
 function openModal() { document.getElementById('add-business-modal').classList.add('open'); }

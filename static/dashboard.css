@@ -2211,3 +2211,33 @@ body.light .login-box input { background: #f9fafb; color: #1a2e1f; }
 @media(max-width: 640px) {
   .sg-theme-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); max-height: 260px; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LIGHT MODE — toggled via [data-theme="light"] on <html>, see toggleLightMode()
+   in dashboard.js. Overrides the same CSS variables used throughout the app,
+   so every component (badges, panels, tables, modals) adapts automatically
+   without needing separate light-mode class rules.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html[data-theme="light"] {
+  --bg: #f7faf8;
+  --surface: #ffffff;
+  --surface2: #eef3ef;
+  --border: #dbe5df;
+  --green: #16a34a;
+  --green-dim: #15803d;
+  --green-glow: rgba(22, 163, 74, 0.12);
+  --amber: #b45309;
+  --red: #dc2626;
+  --blue: #0284c7;
+  --purple: #7c3aed;
+  --text: #10241a;
+  --text-dim: #5b6f63;
+}
+
+html[data-theme="light"] .modal-overlay {
+  background: rgba(20, 30, 24, 0.35);
+}
+
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: var(--border);
+}

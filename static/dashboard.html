@@ -1,6 +1,17 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  // Apply saved theme before first paint — prevents a flash of dark mode
+  // on load when the user has light mode selected. Kept intentionally tiny
+  // and inline (no external file) so it runs before anything else.
+  (function() {
+    try {
+      var t = localStorage.getItem('wazi_theme');
+      if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    } catch (e) {}
+  })();
+</script>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>WaziBot SaaS</title>
@@ -217,6 +228,10 @@
         </div>
       </div>
     </div>
+    <button class="sb-signout" onclick="toggleLightMode()" aria-label="Toggle light/dark mode"
+            style="background:var(--surface2);border-color:var(--border);color:var(--text-dim);margin-bottom:8px;">
+      <span id="theme-toggle-icon">🌙</span><span class="sb-btn-label" id="theme-toggle-label">Dark Mode</span>
+    </button>
     <button class="sb-signout" onclick="logout()" aria-label="Sign out">
       <span>⏻</span><span class="sb-btn-label">Sign Out</span>
     </button>
@@ -235,11 +250,45 @@
       <div class="stat-card purple"><div class="stat-label">Total Orders</div><div class="stat-value" id="sa-orders">—</div><div class="stat-sub">All clients</div></div>
       <div class="stat-card purple"><div class="stat-label">Revenue</div><div class="stat-value" id="sa-revenue">—</div><div class="stat-sub">Processed</div></div>
     </div>
-    <div class="panel full">
-      <div class="panel-header"><div class="panel-title">All Businesses</div><button class="panel-action" style="color:var(--purple);background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.3);" onclick="showSection('admin-businesses',null)">Manage →</button></div>
-      <div class="panel-body">
-        <table><thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Created</th></tr></thead>
-        <tbody id="sa-biz-overview"></tbody></table>
+
+    <div class="stats-grid" style="margin-top:4px;">
+      <div class="stat-card"><div class="stat-label">🎁 On Trial</div><div class="stat-value" id="sa-trialing" style="color:var(--blue);">—</div><div class="stat-sub">Free trial</div></div>
+      <div class="stat-card"><div class="stat-label">💳 Paid</div><div class="stat-value" id="sa-paid" style="color:var(--green);">—</div><div class="stat-sub">Subscribed</div></div>
+      <div class="stat-card"><div class="stat-label">⚠️ Expired Trials</div><div class="stat-value" id="sa-expired" style="color:var(--red);">—</div><div class="stat-sub">Never converted</div></div>
+      <div class="stat-card"><div class="stat-label">📱 WhatsApp Split</div><div class="stat-value" id="sa-wa-split" style="font-size:15px;color:var(--amber);">—</div><div class="stat-sub">Dedicated / Shared</div></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;margin-top:16px;">
+      <div class="panel full">
+        <div class="panel-header"><div class="panel-title">All Businesses</div><button class="panel-action" style="color:var(--purple);background:rgba(167,139,250,0.1);border-color:rgba(167,139,250,0.3);" onclick="showSection('admin-businesses',null)">Manage →</button></div>
+        <div class="panel-body">
+          <table><thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Created</th></tr></thead>
+          <tbody id="sa-biz-overview"></tbody></table>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header"><div class="panel-title">⏰ Trials Ending Soon</div></div>
+        <div class="panel-body" style="padding:14px 16px;">
+          <div id="sa-expiring-list" style="display:flex;flex-direction:column;gap:8px;">
+            <div class="empty" style="padding:12px 0;">Loading…</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;">
+      <div class="panel full">
+        <div class="panel-header"><div class="panel-title">📊 Top Categories</div></div>
+        <div class="panel-body" style="padding:14px 16px;">
+          <div id="sa-category-breakdown" style="display:flex;flex-direction:column;gap:7px;"></div>
+        </div>
+      </div>
+      <div class="panel full">
+        <div class="panel-header"><div class="panel-title">💱 Currency Breakdown</div></div>
+        <div class="panel-body" style="padding:14px 16px;">
+          <div id="sa-currency-breakdown" style="display:flex;flex-direction:column;gap:7px;"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -247,11 +296,50 @@
   <!-- SUPERADMIN BUSINESSES -->
   <div id="section-admin-businesses" class="section">
     <div class="topbar"><div class="page-title">Manage <span class="purple">Businesses</span></div><button class="btn btn-purple" onclick="openModal()">➕ Add Business</button></div>
+
+    <div class="panel full" style="margin-bottom:14px;">
+      <div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap;padding:14px 16px;">
+        <input type="text" id="sa-search" placeholder="🔍 Search by name or username…"
+               oninput="applyAdminBizFilters()"
+               style="flex:2;min-width:220px;background:var(--surface2);border:1px solid var(--border);
+                      border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);
+                      font-size:12px;outline:none;"/>
+        <select id="sa-filter-status" onchange="applyAdminBizFilters()"
+                style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);
+                       border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);
+                       font-size:12px;outline:none;">
+          <option value="">All Statuses</option>
+          <option value="active">Active</option>
+          <option value="suspended">Suspended</option>
+        </select>
+        <select id="sa-filter-billing" onchange="applyAdminBizFilters()"
+                style="flex:1;min-width:140px;background:var(--surface2);border:1px solid var(--border);
+                       border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--mono);
+                       font-size:12px;outline:none;">
+          <option value="">All Plans</option>
+          <option value="trialing">Trialing</option>
+          <option value="paid">Paid</option>
+          <option value="expired">Expired Trial</option>
+        </select>
+      </div>
+    </div>
+
     <div class="panel full">
       <div class="panel-header"><div class="panel-title">All Clients</div><button class="panel-action" onclick="loadAdminData()">↻ Refresh</button></div>
       <div class="panel-body">
         <table><thead><tr><th>ID</th><th>Business</th><th>Username</th><th>Phone ID</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="sa-biz-table"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- New: Business detail modal — click any row for full info -->
+  <div class="modal-overlay" id="sa-biz-detail-modal">
+    <div class="modal" style="max-width:520px;">
+      <div class="modal-title" id="sa-detail-title">Business Details</div>
+      <div id="sa-detail-body" style="font-family:var(--mono);font-size:12px;line-height:2;"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeAdminBizDetail()">Close</button>
       </div>
     </div>
   </div>
