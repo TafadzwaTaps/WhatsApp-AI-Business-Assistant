@@ -863,73 +863,14 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
 # ── Admin stats ───────────────────────────────────────────────────────────────
 
 def get_admin_stats() -> dict:
-    from datetime import datetime, timezone, timedelta
-
     businesses = get_all_businesses()
     orders_res = supabase.table("orders").select("total_price").execute()
     orders = orders_res.data or []
-
-    now = datetime.now(timezone.utc)
-    trialing = paid = expired_trials = 0
-    expiring_soon: list[dict] = []   # trials ending within 7 days
-    by_billing_status: dict[str, int] = {}
-    by_currency: dict[str, int] = {}
-    by_category: dict[str, int] = {}
-    dedicated_number = shared_number = 0
-
-    for b in businesses:
-        status = (b.get("billing_status") or "unknown").strip() or "unknown"
-        by_billing_status[status] = by_billing_status.get(status, 0) + 1
-
-        cur = (b.get("currency") or "USD").strip() or "USD"
-        by_currency[cur] = by_currency.get(cur, 0) + 1
-
-        cat = (b.get("category") or "Uncategorized").strip() or "Uncategorized"
-        by_category[cat] = by_category.get(cat, 0) + 1
-
-        if b.get("whatsapp_phone_id"):
-            dedicated_number += 1
-        else:
-            shared_number += 1
-
-        tier = (b.get("subscription_tier") or "free").strip().lower()
-        if tier and tier != "free":
-            paid += 1
-        elif status == "trialing":
-            trialing += 1
-
-        trial_end_raw = b.get("trial_ends_at")
-        if trial_end_raw and status == "trialing" and tier == "free":
-            try:
-                trial_end = datetime.fromisoformat(str(trial_end_raw).replace("Z", "+00:00"))
-                days_left = (trial_end - now).days
-                if days_left < 0:
-                    expired_trials += 1
-                elif days_left <= 7:
-                    expiring_soon.append({
-                        "id": b.get("id"), "name": b.get("name"),
-                        "days_left": days_left, "trial_ends_at": trial_end_raw,
-                    })
-            except Exception:
-                pass
-
-    expiring_soon.sort(key=lambda x: x["days_left"])
-
     return {
-        "businesses":         len(businesses),
-        "active_businesses":  sum(1 for b in businesses if b.get("is_active")),
-        "total_orders":       len(orders),
-        "total_revenue":      round(sum(float(o.get("total_price") or 0) for o in orders), 2),
-        # New: billing/trial breakdown
-        "trialing_count":     trialing,
-        "paid_count":         paid,
-        "expired_trial_count": expired_trials,
-        "expiring_soon":      expiring_soon[:10],   # cap list size
-        "by_billing_status":  by_billing_status,
-        "by_currency":        by_currency,
-        "by_category":        dict(sorted(by_category.items(), key=lambda kv: -kv[1])[:8]),
-        "dedicated_number_count": dedicated_number,
-        "shared_number_count":    shared_number,
+        "businesses":        len(businesses),
+        "active_businesses": sum(1 for b in businesses if b.get("is_active")),
+        "total_orders":      len(orders),
+        "total_revenue":     round(sum(float(o.get("total_price") or 0) for o in orders), 2),
     }
 
 
@@ -1182,6 +1123,9 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
         "payment_url", "paypal_order_id",
         # Fulfillment columns (added in migration section 16)
         "fulfillment_method", "delivery_address", "fulfillment_notes",
+        # Needed to apply the business's delivery fee once delivery is
+        # confirmed — previously not updatable through this function at all.
+        "total_price",
     )
     safe: dict = {}
     for col in allowed:

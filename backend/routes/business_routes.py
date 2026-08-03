@@ -70,6 +70,19 @@ class BusinessUpdate(BaseModel):
     business_hours:    Optional[str]  = None
     instagram:         Optional[str]  = None
     facebook:          Optional[str]  = None
+    # Business category and type — were missing from this model, meaning
+    # saveProfile() sent them but Pydantic silently dropped both (unknown
+    # fields are ignored by default), so Category and the Products/Services
+    # toggle always appeared to save successfully but were never actually
+    # persisted, reverting to the old DB value on next load.
+    category:            Optional[str]  = None
+    is_service_business: Optional[bool] = None
+    # Delivery fee — the Settings form has always had this input, but it was
+    # never in this model (silently dropped on save) and the column didn't
+    # exist in the database at all, so every delivery order silently charged
+    # the same total as pickup regardless of what was configured. Run the
+    # accompanying SQL migration to add the column before this takes effect.
+    delivery_fee:        Optional[float] = None
     # Stripe billing fields
     stripe_customer_id:     Optional[str]  = None
     stripe_subscription_id: Optional[str]  = None

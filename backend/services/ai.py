@@ -523,12 +523,24 @@ def generate_reply(
         active_order = None
         try:
             from core.db import supabase as _sb
+            # Bug fix: this list previously only covered the first few order
+            # statuses, so once an order moved to "preparing", "ready", or
+            # "out_for_delivery" it no longer matched — every "any update" /
+            # "ETA" / "how long" message after that point fell through to the
+            # generic "please share your order reference" prompt, even though
+            # the customer had an order in progress (and had often already
+            # given the reference earlier in the same conversation).
+            _ACTIVE_ORDER_STATUSES = [
+                "pending", "pending_cash", "awaiting_payment", "awaiting_confirmation",
+                "payment_review", "confirmed", "paid", "preparing", "ready",
+                "out_for_delivery",
+            ]
             res = (
                 _sb.table("orders")
                 .select("id,status,payment_status,total_price")
                 .eq("customer_phone", phone)
                 .eq("business_id", business_id)
-                .in_("status", ["pending", "confirmed", "paid"])
+                .in_("status", _ACTIVE_ORDER_STATUSES)
                 .order("id", desc=True)
                 .limit(1)
                 .execute()
@@ -722,21 +734,51 @@ def generate_reply(
                 f"_Type *cancel* to skip._"
             )
 
+        # Apply the business's configured delivery fee (if any) to the order
+        # total now that delivery is confirmed. Previously this setting
+        # existed in the dashboard but was never actually applied anywhere —
+        # every delivery order silently charged the same as pickup.
+        fee_line = ""
         try:
-            crud.update_order_payment(order_id, business_id, {
-                "fulfillment_method": "delivery",
-                "delivery_address":   address,
-            })
-            log.info("delivery address saved  order=%s  address=%r", order_id, address[:60])
+            biz_row      = crud.get_business_by_id(business_id)
+            delivery_fee = float((biz_row or {}).get("delivery_fee") or 0)
+        except Exception:
+            delivery_fee = 0.0
+
+        update_fields = {
+            "fulfillment_method": "delivery",
+            "delivery_address":   address,
+        }
+        new_total = None
+        if delivery_fee > 0:
+            try:
+                from workflows.order_lifecycle import get_order
+                ord_row = get_order(order_id)
+                if ord_row:
+                    current_total = float(ord_row.get("total_price") or 0)
+                    new_total = round(current_total + delivery_fee, 2)
+                    update_fields["total_price"] = new_total
+            except Exception as exc:
+                log.warning("delivery fee total update skipped: %s", exc)
+
+        try:
+            crud.update_order_payment(order_id, business_id, update_fields)
+            log.info("delivery address saved  order=%s  address=%r  fee=%.2f",
+                     order_id, address[:60], delivery_fee)
         except Exception as exc:
             log.warning("delivery address save failed: %s", exc)
+
+        if new_total is not None:
+            fee_line = f"\n  Delivery fee : *+{_currency_sym}{delivery_fee:.2f}*\n  New total    : *{_currency_sym}{new_total:.2f}*\n"
 
         _reset_state(phone, business_id)
         return (
             f"📍 *Delivery address saved!*\n\n"
             f"  Address : _{address}_\n"
-            f"  Order   : *{reference}*\n\n"
-            f"Our team will arrange delivery and notify you with an ETA. 🛵\n\n"
+            f"  Order   : *{reference}*\n"
+            f"{fee_line}\n"
+            f"Our team is arranging your delivery. 🛵\n"
+            f"_Type *{reference.lower()}* anytime to check your live status and estimated time._\n\n"
             f"_Thank you for ordering from *{business_name}*! 🙏_"
         )
 
@@ -888,7 +930,7 @@ def generate_reply(
 
         ref_id = _extract_order_id(text)
         if ref_id:
-            return _order_status_message(ref_id, phone, business_id)
+            return _order_status_message(ref_id, phone, business_id, _currency_sym)
 
         confused_words = {
             "how", "what", "where", "instructions", "again", "resend",
@@ -1594,7 +1636,7 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     ref_id = _extract_order_id(text)
     if ref_id:
-        return _order_status_message(ref_id, phone, business_id)
+        return _order_status_message(ref_id, phone, business_id, _currency_sym)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P11 — HELP / GREETING
@@ -1685,7 +1727,7 @@ def generate_reply(
     if _is_status_query(text):
         active = _get_active_order(phone, business_id)
         if active:
-            return _order_status_message(active["id"], phone, business_id)
+            return _order_status_message(active["id"], phone, business_id, _currency_sym)
 
     t_lower = text.lower().strip()
     if any(w in t_lower for w in ["delivery", "pickup", "collect", "address",
@@ -1701,7 +1743,7 @@ def generate_reply(
                     f"📦 *{ref}* — Delivery{addr_line}\n\n"
                     f"_Type *{ref.lower()}* for full status._"
                 )
-            return _order_status_message(active["id"], phone, business_id)
+            return _order_status_message(active["id"], phone, business_id, _currency_sym)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P12 — FALLBACK

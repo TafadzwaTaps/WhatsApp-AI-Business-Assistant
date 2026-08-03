@@ -17,7 +17,11 @@ log = logging.getLogger(__name__)
 def _friendly_payment_status(status: str) -> str:
     labels = {
         "pending":            "Pending",
-        "pending_cash":       "Confirmed (Cash)",
+        # Bug fix: "pending_cash" means the customer chose cash but hasn't
+        # paid yet — it was mislabeled "Confirmed (Cash)", showing next to a
+        # ⏳ (pending) icon, which contradicted itself. Only actually-received
+        # payments (payment_status="paid") should ever say "Confirmed".
+        "pending_cash":       "Pending (Cash on delivery/pickup)",
         "awaiting_payment":   "Awaiting Payment",
         "awaiting_proof":     "Awaiting Proof",
         "payment_review":     "Under Review",
@@ -32,7 +36,7 @@ def _friendly_payment_status(status: str) -> str:
 
 # ── Payment instructions ──────────────────────────────────────────────────────
 
-def _build_payment_instructions(pending: dict, business_id: int, business_name: str, currency_sym: str = "$") -> str:
+def _build_payment_instructions(pending: dict, business_id: int, business_name: str) -> str:
     """Re-generate payment instructions from stored pending_payment session."""
     from services.payment_service import (
         generate_ecocash_instructions,
@@ -59,10 +63,9 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
         pass
 
     order = {
-        "id":              order_id,
-        "total_price":     total,
-        "business_name":   business_name,
-        "currency_symbol": currency_sym,
+        "id":            order_id,
+        "total_price":   total,
+        "business_name": business_name,
         **pay_settings,
     }
 
@@ -100,7 +103,46 @@ _LIFECYCLE_ICONS = {
 }
 
 
-def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
+# Bug fix: the compact 5-dot progress bar previously computed its fill level
+# from an incomplete set of if/elif branches that never matched "ready" or
+# "out_for_delivery" — both silently fell through to the same "Order received"
+# (1/5) branch as a brand-new order, making the bar visually go BACKWARDS as
+# an order actually progressed. This ordered stage list replaces that logic
+# with a single lookup, so every status maps to a correct, forward-moving
+# position — and doubles as the source for a short ETA hint per stage,
+# fulfilling the "we'll notify you with an ETA" promise made when an address
+# is saved (see the awaiting_address handler in ai.py).
+_DOT_STAGE_ORDER = [
+    "pending", "pending_cash", "awaiting_payment",   # 0: Order received
+    "awaiting_confirmation", "payment_review",         # 1: Verifying payment
+    "confirmed", "paid",                               # 2: Payment confirmed
+    "preparing",                                        # 3: Preparing
+    "ready", "out_for_delivery",                        # 4: Ready / on the way
+    "delivered", "completed",                           # 5: Complete
+]
+_DOT_STAGE_INDEX = {
+    "pending": 0, "pending_cash": 0, "awaiting_payment": 0,
+    "awaiting_confirmation": 1, "payment_review": 1,
+    "confirmed": 2, "paid": 2,
+    "preparing": 3,
+    "ready": 4, "out_for_delivery": 4,
+    "delivered": 5, "completed": 5,
+}
+_DOT_STAGE_LABELS = [
+    "Order received", "Verifying payment", "Payment confirmed",
+    "Preparing", "Ready / On the way", "Complete!",
+]
+_DOT_ETA_HINTS = {
+    0: "Awaiting payment",
+    1: "5–15 minutes",
+    2: "Preparing shortly",
+    3: "10–15 minutes",
+    4: "Ready now / on the way",
+    5: "Delivered",
+}
+
+
+def _order_status_message(order_id: int, phone: str, business_id: int, currency_sym: str = "$") -> str:
     """Look up an order and return a rich formatted status message."""
     try:
         from workflows.order_lifecycle import get_order
@@ -120,6 +162,10 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
         payment_status = order.get("payment_status", "pending")
         total          = float(order.get("total_price") or 0)
         created        = (order.get("created_at") or "")[:16].replace("T", " ")
+        # Currency: prefer whatever is stored on the order itself (set when
+        # the order was created), then fall back to the symbol passed in by
+        # the caller (the business's current setting).
+        sym = order.get("currency_symbol") or currency_sym or "$"
 
         effective_key = payment_status if payment_status in _LIFECYCLE_ICONS else status
         icon, label   = _LIFECYCLE_ICONS.get(
@@ -133,17 +179,23 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
         p_lower = payment_status.lower()
 
         if s_lower == "cancelled":
-            progress = "❌ Cancelled"
-        elif s_lower in ("delivered", "completed"):
-            progress = "✅ ✅ ✅ ✅ ✅  Complete!"
-        elif s_lower == "preparing":
-            progress = "✅ ✅ ✅ ⬜ ⬜  Preparing"
-        elif s_lower in ("paid", "confirmed") or p_lower == "paid":
-            progress = "✅ ✅ ⬜ ⬜ ⬜  Preparing soon"
-        elif p_lower in ("awaiting_confirmation", "awaiting_payment"):
-            progress = "✅ ⏳ ⬜ ⬜ ⬜  Verifying payment"
+            progress  = "❌ Cancelled"
+            eta_line  = ""
         else:
-            progress = "✅ ⬜ ⬜ ⬜ ⬜  Order received"
+            # Status usually drives the stage; payment_status can pull it
+            # forward (e.g. "paid" while status is still "pending") but never
+            # backward — a delivered order stays at stage 5 even if payment
+            # bookkeeping shows something odd.
+            stage_from_status  = _DOT_STAGE_INDEX.get(s_lower, 0)
+            stage_from_payment = _DOT_STAGE_INDEX.get(p_lower, 0)
+            stage = max(stage_from_status, stage_from_payment)
+            stage = min(stage, 5)
+
+            dots = "".join("✅ " if i < stage else ("⏳ " if i == stage else "⬜ ") for i in range(5))
+            progress = f"{dots.strip()}  {_DOT_STAGE_LABELS[stage]}"
+
+            eta = _DOT_ETA_HINTS.get(stage, "")
+            eta_line = f"\n⏱ Estimated: *{eta}*" if eta else ""
 
         agent_note = ""
         if p_lower == "awaiting_confirmation":
@@ -151,17 +203,27 @@ def _order_status_message(order_id: int, phone: str, business_id: int) -> str:
         elif p_lower in ("awaiting_payment", "pending") and s_lower == "pending":
             agent_note = "\n⏳ _Waiting for your payment._"
 
+        # Short legend so first-time customers know what the dots mean —
+        # omitted for cancelled orders since the dot bar itself is replaced
+        # by a single "❌ Cancelled" line in that case.
+        legend_line = (
+            "\n_Received → Verifying → Confirmed → Preparing → Complete_"
+            if s_lower != "cancelled" else ""
+        )
+
         return (
             f"📋 *Order Status*\n"
             f"{'─' * 26}\n"
             f"  Order   : *ORDER-{order_id}*\n"
             f"  Date    : {created}\n"
-            f"  Total   : *${total:.2f}*\n"
+            f"  Total   : *{sym}{total:.2f}*\n"
             f"{'─' * 26}\n"
             f"{icon} {label}\n"
             f"{pay_icon} Payment : *{_friendly_payment_status(payment_status)}*\n"
             f"{'─' * 26}\n"
             f"📊 {progress}"
+            f"{eta_line}"
+            f"{legend_line}"
             f"{agent_note}\n"
             f"{'─' * 26}\n"
             f"_Type *menu* to place a new order._"
@@ -247,7 +309,6 @@ def _process_payment(
     phone: str,
     business_id: int,
     business_name: str,
-    currency_sym: str = "$",
 ) -> str:
     from workflows.order_lifecycle import create_order_supabase
     from services.payment_service import (
@@ -270,8 +331,7 @@ def _process_payment(
             cart=cart,
             payment_method=method,
         )
-        order["business_name"]   = business_name
-        order["currency_symbol"] = currency_sym  # correct currency in payment messages
+        order["business_name"] = business_name
         try:
             pay_settings = crud.get_business_payment_settings(business_id)
             order.update(pay_settings)

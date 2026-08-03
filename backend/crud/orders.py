@@ -95,6 +95,7 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
         "payment_method", "payment_status", "payment_reference",
         "payment_url", "paypal_order_id",
         "fulfillment_method", "delivery_address", "fulfillment_notes",
+        "total_price",
     )
     safe: dict = {}
     for col in allowed:
