@@ -89,6 +89,9 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
 
 # ── Order status message ──────────────────────────────────────────────────────
 
+# Food-flavor is the default/original wording — used whenever a flavor
+# isn't passed in, so any caller that hasn't been updated keeps working
+# exactly as before.
 _LIFECYCLE_ICONS = {
     "pending":               ("🕐", "Order received — awaiting payment"),
     "awaiting_payment":      ("⏳", "Awaiting payment"),
@@ -102,6 +105,24 @@ _LIFECYCLE_ICONS = {
     "delivered":             ("📦", "Delivered — enjoy your meal!"),
     "completed":             ("🎉", "Order completed"),
     "cancelled":             ("❌", "Order cancelled"),
+}
+
+# Overrides for the entries that were explicitly food-specific ("being
+# prepared" / chef emoji, "enjoy your meal!"). Every other status (payment
+# states, ready, out_for_delivery, cancelled) already reads fine for any
+# business type, so only these are overridden per flavor.
+_LIFECYCLE_OVERRIDES = {
+    "retail": {
+        "preparing": ("📦", "Your order is being packed"),
+        "delivered": ("📦", "Delivered — thanks for your order!"),
+        "completed": ("🎉", "Order completed"),
+    },
+    "service": {
+        "preparing": ("🛠️", "Getting everything ready for you"),
+        "ready":     ("🎉", "Ready for you!"),
+        "delivered": ("✅", "Completed — thank you!"),
+        "completed": ("🎉", "Booking completed"),
+    },
 }
 
 
@@ -144,7 +165,7 @@ _DOT_ETA_HINTS = {
 }
 
 
-def _order_status_message(order_id: int, phone: str, business_id: int, currency_sym: str = "$") -> str:
+def _order_status_message(order_id: int, phone: str, business_id: int, currency_sym: str = "$", flavor: str = "food") -> str:
     """Look up an order and return a rich formatted status message."""
     try:
         from workflows.order_lifecycle import get_order
@@ -174,6 +195,14 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
             effective_key,
             _LIFECYCLE_ICONS.get(status, ("📋", status.upper()))
         )
+        # Apply flavor-specific wording override (e.g. "being packed" instead
+        # of "being prepared" for retail, "getting ready for you" for a
+        # salon/service business).
+        _flavor_overrides = _LIFECYCLE_OVERRIDES.get(flavor, {})
+        if effective_key in _flavor_overrides:
+            icon, label = _flavor_overrides[effective_key]
+        elif status in _flavor_overrides:
+            icon, label = _flavor_overrides[status]
 
         pay_icon = "✅" if payment_status in ("paid", "confirmed") else "⏳"
 

@@ -138,6 +138,111 @@ log = logging.getLogger(__name__)
 # MAIN ENGINE — generate_reply() is the only public function
 # ═════════════════════════════════════════════════════════════════════════════
 
+# ── Business "flavor" — adapts conversational wording to the kind of business ──
+# WaziBot's copy (greetings, "preparing"/"delivered" status text, menu labels)
+# was originally written for food/restaurant businesses and never varied for
+# salons, barbers, retailers, or other service businesses — every customer
+# saw "What can I get you today?" and "enjoy your meal!" regardless of
+# whether they were booking a haircut or buying hardware.
+#
+# Categories are matched by keyword against the business's `category` field
+# (from the 23-group category list used in Settings/Signup) — this covers
+# the real category taxonomy, not just a handful of literal strings.
+_FOOD_CAT_KEYWORDS = {
+    "restaurant", "fast food", "cafe", "café", "coffee", "bakery", "cake",
+    "pizza", "ice cream", "juice", "smoothie", "food truck", "bbq",
+    "catering", "meal prep", "grocery delivery", "butchery", "liquor",
+    "grocery store", "supermarket", "convenience store", "takeaway", "takeout",
+}
+_RETAIL_CAT_KEYWORDS = {
+    "hardware store", "electronics shop", "furniture store", "clothing boutique",
+    "shoe store", "cosmetic shop", "perfume store", "toy store", "bookstore",
+    "gift shop", "mobile phone shop", "computer store", "vape shop", "pet store",
+    "flower shop", "jewelry store", "sports equipment store", "fashion boutique",
+    "fashion designer", "boutique", "clothing", "apparel", "hardware", "tools",
+    "electronics", "jewelry", "furniture", "bookstore", "toy",
+}
+_SERVICE_CAT_KEYWORDS = {
+    # Beauty & Wellness
+    "hair salon", "barbershop", "nail salon", "spa", "massage", "makeup",
+    "beauty clinic", "tattoo studio", "skincare clinic", "cosmetic treatment",
+    "salon", "barber", "beauty",
+    # Healthcare
+    "private clinic", "medical practice", "dental clinic", "pharmacy",
+    "optical store", "physiotherapist", "chiropractor", "veterinary clinic",
+    "mental health", "diagnostic laboratory", "clinic", "dentist", "doctor",
+    "hospital", "veterinary", "wellness",
+    # Automotive
+    "car dealership", "car rental", "mechanic", "auto parts", "tire shop",
+    "car wash", "auto detailing", "towing", "driving school",
+    # Home services
+    "plumber", "electrician", "painter", "garden services", "cleaning company",
+    "pest control", "locksmith", "hvac", "roofing", "builder",
+    "interior designer", "renovation",
+    # Education
+    "school", "college", "university", "tutoring", "language school",
+    "training center", "music school", "dance school",
+    # Fitness & sports
+    "gym", "personal trainer", "yoga studio", "martial arts", "swimming school",
+    "football academy", "tennis club", "cycling club", "sports coach",
+    # Fashion (tailoring, not retail)
+    "tailor", "dressmaker", "wedding dress", "suit rental", "shoe repair",
+    # Professional services
+    "law firm", "accounting firm", "tax consultant", "insurance broker",
+    "real estate agency", "property manager", "architect", "engineer",
+    "marketing agency", "recruitment agency", "hr consultant", "business consultant",
+    # Events
+    "wedding planner", "event planner", "dj", "photographer", "videographer",
+    "party rental", "decor company",
+    # Travel & hospitality
+    "travel agency", "tour operator", "safari company", "visa consultant",
+    "immigration consultant", "airport shuttle", "hotel", "guest house",
+    "lodge", "resort", "hostel", "airbnb", "holiday rentals", "camping site",
+    # Financial & property
+    "microfinance", "sacco", "credit union", "loan provider", "financial advisor",
+    "investment consultant", "estate agent", "property developer",
+    "apartment manager",
+    # Digital
+    "software company", "saas", "digital agency", "hosting company",
+    "freelancer", "graphic designer", "video editor", "web developer",
+    "app developer", "consulting", "consultant",
+}
+
+
+def _resolve_biz_flavor(category: str, is_service_business: bool) -> str:
+    """
+    Return "food", "retail", or "service" — used to pick the right wording
+    throughout the conversation. Falls back sensibly when category is blank:
+    the Business Type toggle (is_service_business) if set, otherwise "food"
+    (preserves exact prior behaviour for existing food businesses that
+    never filled in a category).
+    """
+    cat = (category or "").lower().strip()
+    if cat:
+        if any(k in cat for k in _FOOD_CAT_KEYWORDS):
+            return "food"
+        if any(k in cat for k in _SERVICE_CAT_KEYWORDS):
+            return "service"
+        if any(k in cat for k in _RETAIL_CAT_KEYWORDS):
+            return "retail"
+    # No category match — fall back to the Business Type toggle if set
+    if is_service_business:
+        return "service"
+    return "food"
+
+
+# Per-flavor copy — keep this small and centralised so new flavors or wording
+# tweaks only need to change one place.
+_FLAVOR_COPY = {
+    "food":    {"action_verb": "order", "closing": "What can I get you today? 😊",
+                "item_noun": "item"},
+    "retail":  {"action_verb": "shop",  "closing": "What are you looking for today? 😊",
+                "item_noun": "item"},
+    "service": {"action_verb": "book",  "closing": "What can we help you with today? 😊",
+                "item_noun": "service"},
+}
+
+
 def generate_reply(
     message: str,
     phone: str,
@@ -168,6 +273,7 @@ def generate_reply(
     _menu_header        = (_cfg.get("menu_header") or "").strip()
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
+    _biz_flavor = _resolve_biz_flavor(_biz_category, _is_service_biz)
     _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
@@ -930,7 +1036,7 @@ def generate_reply(
 
         ref_id = _extract_order_id(text)
         if ref_id:
-            return _order_status_message(ref_id, phone, business_id, _currency_sym)
+            return _order_status_message(ref_id, phone, business_id, _currency_sym, _biz_flavor)
 
         confused_words = {
             "how", "what", "where", "instructions", "again", "resend",
@@ -1638,7 +1744,7 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     ref_id = _extract_order_id(text)
     if ref_id:
-        return _order_status_message(ref_id, phone, business_id, _currency_sym)
+        return _order_status_message(ref_id, phone, business_id, _currency_sym, _biz_flavor)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P11 — HELP / GREETING
@@ -1649,25 +1755,13 @@ def generate_reply(
         order_count = int(mem.get("order_count", 0) or 0)
         cust_name   = (mem.get("customer_name") or "").strip()
 
-        # Category: prefer business_config, fall back to DB lookup
-        biz_category = _biz_category
-        if not biz_category:
-            try:
-                biz_row      = crud.get_business_by_id(business_id)
-                biz_category = (biz_row.get("category") or "").lower().strip() if biz_row else ""
-            except Exception:
-                pass
-
-        _FOOD_CATS   = {"food", "restaurant", "food & beverage", "café", "cafe",
-                        "fast food", "takeaway", "takeout", "grocery"}
-        _RETAIL_CATS = {"fashion", "boutique", "clothing", "apparel", "hardware",
-                        "tools", "electronics"}
-        _HEALTH_CATS = {"pharmacy", "health", "wellness", "beauty"}
-
-        if any(c in biz_category for c in _FOOD_CATS):     action_verb = "order"
-        elif any(c in biz_category for c in _RETAIL_CATS): action_verb = "shop"
-        elif any(c in biz_category for c in _HEALTH_CATS): action_verb = "get"
-        else:                                               action_verb = "order"
+        # Business flavor (food / retail / service) was already resolved once
+        # at the top of generate_reply() from the full category taxonomy —
+        # reused here instead of the old narrow keyword list that only
+        # recognised a handful of categories and defaulted everything else
+        # (including every salon, barber, and most retail types) to "order".
+        flavor_copy = _FLAVOR_COPY.get(_biz_flavor, _FLAVOR_COPY["food"])
+        action_verb = flavor_copy["action_verb"]
 
         if order_count >= 5 and cust_name:
             greeting = (
@@ -1707,7 +1801,7 @@ def generate_reply(
             f"  🔍 *ORDER-9* — check an order status\n"
             f"  🚫 *cancel* — cancel checkout at any time\n"
             f"  🔄 *repeat last order* — reorder quickly\n\n"
-            f"What can I get you today? 😊"
+            f"{flavor_copy['closing']}"
         )
 
     # ── Name capture fallback (mid-conversation mentions, e.g. "call me Rudo") ──
@@ -1729,7 +1823,7 @@ def generate_reply(
     if _is_status_query(text):
         active = _get_active_order(phone, business_id)
         if active:
-            return _order_status_message(active["id"], phone, business_id, _currency_sym)
+            return _order_status_message(active["id"], phone, business_id, _currency_sym, _biz_flavor)
 
     t_lower = text.lower().strip()
     if any(w in t_lower for w in ["delivery", "pickup", "collect", "address",
@@ -1745,7 +1839,7 @@ def generate_reply(
                     f"📦 *{ref}* — Delivery{addr_line}\n\n"
                     f"_Type *{ref.lower()}* for full status._"
                 )
-            return _order_status_message(active["id"], phone, business_id, _currency_sym)
+            return _order_status_message(active["id"], phone, business_id, _currency_sym, _biz_flavor)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P12 — FALLBACK
