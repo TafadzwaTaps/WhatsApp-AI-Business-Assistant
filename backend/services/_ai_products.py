@@ -154,9 +154,9 @@ def _format_cart(cart: list, currency_sym: str = "$") -> str:
     return "🛒 *Your Cart:*\n" + "\n".join(lines) + f"\n\n💰 *Total: {currency_sym}{total:.2f}*"
 
 
-def _build_confirm_prompt(cart: list) -> str:
+def _build_confirm_prompt(cart: list, currency_sym: str = "$") -> str:
     """Double-confirmation message shown before placing the order."""
-    cart_summary = _format_cart(cart)
+    cart_summary = _format_cart(cart, currency_sym)
     return (
         f"📋 *Please confirm your order:*\n\n"
         f"{cart_summary}\n\n"
@@ -165,7 +165,7 @@ def _build_confirm_prompt(cart: list) -> str:
     )
 
 
-def _build_payment_menu(cart: list, business_id: int) -> str:
+def _build_payment_menu(cart: list, business_id: int, currency_sym: str = "$") -> str:
     """Payment method selection message. business_id required for per-business settings."""
     import crud
     from services.payment_service import available_methods
@@ -175,7 +175,7 @@ def _build_payment_menu(cart: list, business_id: int) -> str:
     except Exception:
         pay_settings = {}
 
-    cart_summary = _format_cart(cart)
+    cart_summary = _format_cart(cart, currency_sym)
     methods      = available_methods({**pay_settings, "business_id": business_id})
 
     options: list[str] = []

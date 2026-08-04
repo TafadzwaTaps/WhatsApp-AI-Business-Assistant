@@ -8,6 +8,7 @@ Imported by ai.py. Do not import ai.py from here (circular import).
 import logging
 
 import crud
+from services.whatsapp_catalog import send_text_message
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ def _friendly_payment_status(status: str) -> str:
 
 # ── Payment instructions ──────────────────────────────────────────────────────
 
-def _build_payment_instructions(pending: dict, business_id: int, business_name: str) -> str:
+def _build_payment_instructions(pending: dict, business_id: int, business_name: str, currency_sym: str = "$") -> str:
     """Re-generate payment instructions from stored pending_payment session."""
     from services.payment_service import (
         generate_ecocash_instructions,
@@ -63,9 +64,10 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
         pass
 
     order = {
-        "id":            order_id,
-        "total_price":   total,
-        "business_name": business_name,
+        "id":              order_id,
+        "total_price":     total,
+        "business_name":   business_name,
+        "currency_symbol": currency_sym,   # ensures payment instructions use correct currency
         **pay_settings,
     }
 
@@ -303,12 +305,65 @@ def _handle_paypal_paid_message(
 
 # ── Process payment (checkout pipeline) ──────────────────────────────────────
 
+def _notify_business_new_order(
+    business_id: int,
+    order: dict,
+    customer_phone: str,
+    cart: list,
+    currency_sym: str,
+    phone_number_id: str,
+    wa_token: str,
+) -> None:
+    """
+    Send an instant WhatsApp notification to the business owner the moment a
+    new order is placed — previously orders were created completely silently
+    and the only way to find out was to manually check the Orders page.
+
+    Fire-and-forget: never raises, never blocks or delays the customer's
+    checkout flow, and simply does nothing if the business has no contact
+    number or WhatsApp credentials configured.
+    """
+    try:
+        biz = crud.get_business_by_id(business_id)
+        if not biz:
+            return
+        owner_phone = (biz.get("contact_phone") or "").strip()
+        if not owner_phone:
+            log.debug("order notification skipped — no contact_phone set  biz=%s", business_id)
+            return
+
+        order_id  = order.get("id")
+        ref       = f"ORDER-{order_id}" if order_id else "New order"
+        total     = float(order.get("total_price") or 0)
+        items_txt = order.get("product_name") or ", ".join(
+            f"{i.get('name','item')} ×{i.get('qty',1)}" for i in (cart or [])
+        )
+
+        message = (
+            f"🔔 *New Order Received!*\n\n"
+            f"📦 {ref}\n"
+            f"🛍️ {items_txt}\n"
+            f"💰 Total: *{currency_sym}{total:.2f}*\n"
+            f"📱 Customer: {customer_phone}\n\n"
+            f"_Check your WaziBot dashboard for full details._"
+        )
+
+        send_text_message(phone_number_id, wa_token, owner_phone, message)
+        log.info("order notification sent  biz=%s  order=%s  to=%s", business_id, order_id, owner_phone)
+    except Exception as exc:
+        # Never let a notification failure affect the customer's order.
+        log.warning("order notification failed (non-critical): %s", exc)
+
+
 def _process_payment(
     method: str,
     cart: list,
     phone: str,
     business_id: int,
     business_name: str,
+    currency_sym: str = "$",
+    phone_number_id: str = "",
+    wa_token: str = "",
 ) -> str:
     from workflows.order_lifecycle import create_order_supabase
     from services.payment_service import (
@@ -331,7 +386,14 @@ def _process_payment(
             cart=cart,
             payment_method=method,
         )
-        order["business_name"] = business_name
+        order["business_name"]   = business_name
+        order["currency_symbol"] = currency_sym  # ensures EcoCash/PayPal instructions use correct currency
+
+        # Instant order notification to the business owner — fire-and-forget,
+        # never affects the customer's checkout flow if it fails.
+        _notify_business_new_order(
+            business_id, order, phone, cart, currency_sym, phone_number_id, wa_token,
+        )
         try:
             pay_settings = crud.get_business_payment_settings(business_id)
             order.update(pay_settings)
@@ -519,7 +581,7 @@ def _process_payment(
         return (
             f"✅ *Order confirmed!*\n\n"
             f"📦 Order   : *{ref}*\n"
-            f"💰 Total   : *${total:.2f}*\n"
+            f"💰 Total   : *{currency_sym}{total:.2f}*\n"
             f"💵 Payment : *Cash on delivery/pickup*\n\n"
             f"{'─' * 28}\n"
             f"🚚 *How would you like to receive your order?*\n\n"
