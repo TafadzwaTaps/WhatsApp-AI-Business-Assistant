@@ -122,6 +122,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "font-src 'self' https://fonts.gstatic.com data:; "
             "img-src 'self' data: blob: https:; "
             "connect-src 'self' https://wazibothq.com wss:; "
+            # Allows the optional embedded Google Map on business storefronts
+            # (Settings → Store → Show Map). Without an explicit frame-src,
+            # iframes fall back to default-src 'self' and get silently
+            # blocked by the browser (ERR_BLOCKED_BY_CSP) — nothing else on
+            # the site uses iframes, so this only opens the door for Maps.
+            "frame-src https://www.google.com; "
             "frame-ancestors 'self'; "
         )
         return response
