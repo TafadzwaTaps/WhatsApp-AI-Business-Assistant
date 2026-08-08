@@ -5611,10 +5611,12 @@ async function loadSiteGeneratorSettings() {
     const showLocation = document.getElementById('sg-show-location');
     const showReviews  = document.getElementById('sg-show-reviews');
     const showOrdering = document.getElementById('sg-show-ordering');
+    const showMap       = document.getElementById('sg-show-map');
     if (showHours)    showHours.checked    = cfg.show_hours    !== false;
     if (showLocation) showLocation.checked = cfg.show_location !== false;
     if (showReviews)  showReviews.checked  = !!cfg.show_reviews;
     if (showOrdering) showOrdering.checked = cfg.show_ordering !== false;
+    if (showMap)      showMap.checked      = !!cfg.show_map;
   } catch (e) {
     console.warn('loadSiteGeneratorSettings:', e.message);
   }
@@ -5640,6 +5642,7 @@ async function saveSiteGeneratorSettings() {
       show_location:    document.getElementById('sg-show-location')?.checked ?? true,
       show_reviews:     document.getElementById('sg-show-reviews')?.checked  ?? false,
       show_ordering:    document.getElementById('sg-show-ordering')?.checked ?? true,
+      show_map:         document.getElementById('sg-show-map')?.checked      ?? false,
     };
 
     await apiFetch('/me', {

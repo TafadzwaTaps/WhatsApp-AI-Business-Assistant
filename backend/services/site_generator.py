@@ -33,6 +33,7 @@ from __future__ import annotations
 import logging
 import html as _html_escape
 import re
+from urllib.parse import quote
 
 log = logging.getLogger("wazibot")
 
@@ -76,7 +77,8 @@ def _wa_url(phone: str, text: str = "") -> str:
 
 _ALWAYS_SAFE_FIELDS = "id,name,category,currency_symbol,features_json"
 _OPTIONAL_FIELDS     = ("tagline", "logo_url", "theme_colour", "contact_phone",
-                        "ecocash_number", "paypal_email", "use_shared_number")
+                        "ecocash_number", "paypal_email", "use_shared_number",
+                        "is_service_business")
 _columns_cache: set | None = None
 
 _ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
@@ -371,6 +373,10 @@ def _get_site_settings(features_json: dict | None) -> dict:
         "show_reviews":   cfg.get("show_reviews",   False),
         "show_gallery":   cfg.get("show_gallery",   True),
         "show_ordering":  cfg.get("show_ordering",  True),
+        # New: optional embedded map of the business's location — off by
+        # default (opt-in) since not every business wants their address
+        # geocoded/displayed, and requires "location" to actually be filled in.
+        "show_map":       cfg.get("show_map",       False),
         "business_hours": cfg.get("business_hours", ""),
         "location":       cfg.get("location",       ""),
         "description":    cfg.get("description",    ""),
@@ -514,15 +520,24 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
   </section>"""
 
 
-def _products_section_html(products: list, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0) -> str:
+def _products_section_html(products: list, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0, is_service: bool = False) -> str:
     cat_filter = _category_filter_html(products)
-    cards      = "\n".join(_product_card_html(p, currency_sym, wa_phone, biz_name, business_id) for p in products) if products else (
+    cards      = "\n".join(_product_card_html(p, currency_sym, wa_phone, biz_name, business_id, is_service) for p in products) if products else (
+        '<p class="empty-msg">Services coming soon. Contact us on WhatsApp!</p>' if is_service else
         '<p class="empty-msg">Products coming soon. Contact us on WhatsApp!</p>'
     )
-    label = "🍽 Our Menu" if any(
+    # Service businesses always show "Our Services" — checked first, since a
+    # service business (salon, barbershop, consultant) offering items with
+    # a food-adjacent category name would otherwise be mislabeled "Our Menu".
+    if is_service:
+        label = "💇 Our Services"
+    elif any(
         (p.get("category") or "").lower() in ("meals","food","drinks","desserts","breakfast","lunch","dinner")
         for p in products
-    ) else "🛍 Our Products"
+    ):
+        label = "🍽 Our Menu"
+    else:
+        label = "🛍 Our Products"
 
     return f"""
   <section class="products-section" id="products">
@@ -534,14 +549,20 @@ def _products_section_html(products: list, currency_sym: str, wa_phone: str = ""
   </section>"""
 
 
-def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0) -> str:
+def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0, is_service: bool = False) -> str:
     name      = _e(p.get("name", "Product"))
     price     = float(p.get("price") or 0)
     desc      = _e(p.get("description") or "")
     image_url = p.get("image_url", "")
     category  = p.get("category", "") or "other"
     stock     = p.get("stock")
-    available = stock is None or stock > 0
+    # Service businesses don't track stock — a service is always bookable,
+    # regardless of what's stored (may be stale from before the business
+    # switched from Products to Services mode). This also matters beyond
+    # cosmetics: `available` also controls whether the Buy Now button is
+    # disabled below, so this bug was blocking customers from actually
+    # buying/booking services shown as "Out of stock".
+    available = True if is_service else (stock is None or stock > 0)
 
     badge = (
         '<span class="stock-badge in">✅ Available</span>'
@@ -719,11 +740,28 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
 
     wa_href = _wa_url(wa_phone, f"Hi {name}! I'd like to get in touch.")
 
+    # Optional embedded map — opt-in (show_map toggle), only rendered when a
+    # location string is actually set. Uses Google's no-API-key basic embed
+    # endpoint (maps?q=...&output=embed) — no billing/API key setup needed.
+    map_html = ""
+    if settings.get("show_map") and settings["location"]:
+        map_query = quote(settings["location"])
+        map_html = (
+            f'<div class="contact-map">'
+            f'<iframe src="https://www.google.com/maps?q={map_query}&output=embed" '
+            f'width="100%" height="280" style="border:0;border-radius:var(--r);" '
+            f'allowfullscreen="" loading="lazy" '
+            f'referrerpolicy="no-referrer-when-downgrade" '
+            f'title="{_e(name)} location map"></iframe>'
+            f'</div>'
+        )
+
     return f"""
   <section class="contact-section" id="contact">
     <div class="section-inner contact-inner">
       <h2 class="section-title">📬 Get In Touch</h2>
       <div class="contact-details">{items_html}</div>
+      {map_html}
       <a class="wa-cta-big" href="{wa_href}" target="_blank" rel="noopener">
         💬 Message Us on WhatsApp
       </a>
@@ -846,7 +884,7 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
 .prod-card:hover{{transform:translateY(-4px);
                   box-shadow:0 12px 40px var(--shadow)}}
 .prod-card.hidden{{display:none!important}}
-.prod-img{{width:100%;height:200px;object-fit:cover}}
+.prod-img{{width:100%;height:200px;object-fit:cover;object-position:center top}}
 .prod-img-ph{{width:100%;height:200px;background:var(--surface2);
               display:flex;align-items:center;justify-content:center;font-size:48px}}
 .prod-body{{padding:16px}}
@@ -893,7 +931,7 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
   grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}}
 .gallery-item{{border-radius:var(--r);overflow:hidden;aspect-ratio:1;
                background:var(--surface2)}}
-.gallery-item img{{width:100%;height:100%;object-fit:cover;
+.gallery-item img{{width:100%;height:100%;object-fit:cover;object-position:center top;
                    transition:transform .3s}}
 .gallery-item:hover img{{transform:scale(1.05)}}
 
@@ -903,6 +941,9 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
                   margin:0 auto 32px;text-align:left}}
 .contact-item{{display:flex;align-items:center;gap:12px;font-size:15px}}
 .ci-icon{{font-size:20px;width:32px;flex-shrink:0}}
+.contact-map{{max-width:560px;margin:0 auto 28px;border-radius:var(--r);overflow:hidden;
+              box-shadow:0 8px 24px rgba(0,0,0,.25)}}
+.contact-map iframe{{display:block}}
 .wa-cta-big{{display:inline-flex;align-items:center;gap:10px;
              background:#25D366;color:#fff;padding:16px 32px;
              border-radius:50px;font-size:17px;font-weight:700;
@@ -1167,7 +1208,8 @@ def generate_site_html(slug: str) -> str:
     seo           = _seo_tags(name, category, tagline, slug)
     nav           = _nav_html(sections, name)
     hero          = _hero_html(biz, settings, wa_phone)
-    products_sec  = _products_section_html(products, currency_sym, wa_phone, name, biz['id'])
+    is_service    = bool(biz.get("is_service_business", False))
+    products_sec  = _products_section_html(products, currency_sym, wa_phone, name, biz['id'], is_service)
     about_sec     = _about_html(biz, settings)
     reviews_sec   = _reviews_html(reviews)
     gallery_sec   = _gallery_html(products) if sections["gallery"] else ""
