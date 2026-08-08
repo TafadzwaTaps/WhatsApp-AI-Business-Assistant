@@ -1,6 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>
+  // Apply saved theme before first paint — prevents a flash of dark mode
+  // on load when the visitor has previously chosen light mode.
+  (function() {
+    try {
+      var t = localStorage.getItem('wazi_theme');
+      if (t === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    } catch (e) {}
+  })();
+</script>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>WaziBot — AI Employee for WhatsApp Businesses</title>
@@ -27,6 +37,27 @@
   --text-dim: #6b8f71;
   --mono: 'DM Mono', monospace;
   --sans: 'Syne', sans-serif;
+  --nav-bg: rgba(10,15,13,0.85);
+}
+
+/* ── LIGHT MODE ───────────────────────────────────────────
+   Toggled via [data-theme="light"] on <html>, see toggleLightMode()
+   near the closing </script>. Mirrors the dashboard's light-mode
+   palette for visual consistency across the whole product. */
+html[data-theme="light"] {
+  --bg: #f7faf8;
+  --surface: #ffffff;
+  --surface2: #eef3ef;
+  --border: #dbe5df;
+  --green: #16a34a;
+  --green-dim: #15803d;
+  --green-glow: rgba(22,163,74,0.12);
+  --amber: #b45309;
+  --red: #dc2626;
+  --purple: #7c3aed;
+  --text: #10241a;
+  --text-dim: #5b6f63;
+  --nav-bg: rgba(255,255,255,0.85);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -44,7 +75,7 @@ nav {
   position: fixed;
   top: 0; left: 0; right: 0;
   z-index: 50;
-  background: rgba(10,15,13,0.85);
+  background: var(--nav-bg);
   backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border);
   height: 60px;
@@ -685,6 +716,12 @@ footer {
     <a href="#features" class="nav-link">Features</a>
     <a href="#how-it-works" class="nav-link">How it works</a>
     <a href="/static/pricing.html" class="nav-link">Pricing</a>
+    <button onclick="toggleLightMode()" aria-label="Toggle light/dark mode"
+            style="background:none;border:1px solid var(--border);border-radius:8px;
+                   padding:6px 10px;cursor:pointer;font-size:14px;line-height:1;
+                   color:var(--text-dim);display:flex;align-items:center;">
+      <span id="theme-toggle-icon">🌙</span>
+    </button>
     <a href="/dashboard" class="nav-login">Sign in</a>
     <a href="/static/signup.html" class="nav-cta">Get Started Free →</a>
   </div>
@@ -966,7 +1003,7 @@ footer {
 <footer>
   <div>
     <div class="footer-logo">WaziBot</div>
-    <div class="footer-tagline">Built in Zimbabwe 🇿🇼 — serving businesses worldwide</div>
+    <div class="footer-tagline">Built in Zimbabwe 🇿🇼 — now serving businesses across Africa &amp; Europe</div>
   </div>
   <div class="footer-links">
     <a href="#features">Features</a>
@@ -985,6 +1022,30 @@ footer {
   </div>
 </footer>
 <script>
+// ── Light / dark mode toggle ─────────────────────────────────────────────
+// Theme itself is applied instantly by the inline <script> in <head>
+// (before first paint); this just handles the click and keeps the icon
+// in sync, matching the same pattern used on the dashboard.
+function toggleLightMode() {
+  const html    = document.documentElement;
+  const isLight = html.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    html.removeAttribute('data-theme');
+    try { localStorage.setItem('wazi_theme', 'dark'); } catch (e) {}
+  } else {
+    html.setAttribute('data-theme', 'light');
+    try { localStorage.setItem('wazi_theme', 'light'); } catch (e) {}
+  }
+  _syncThemeIcon();
+}
+
+function _syncThemeIcon() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const icon = document.getElementById('theme-toggle-icon');
+  if (icon) icon.textContent = isLight ? '☀️' : '🌙';
+}
+document.addEventListener('DOMContentLoaded', _syncThemeIcon);
+
 // Smooth scroll for anchor links
 document.querySelectorAll('a[href^="#"]').forEach(a => {
   a.addEventListener('click', e => {
