@@ -652,7 +652,16 @@ def create_product_checkout_session(
             "line_items":  line_items,
             "success_url": success_url,
             "cancel_url":  cancel_url,
-            "metadata":    {"wazibot_business_id": str(business_id)},
+            # Marks this session as a storefront product/service purchase —
+            # the webhook handler uses this to route correctly instead of
+            # treating every completed checkout as a WaziBot subscription
+            # upgrade (see _on_checkout_completed).
+            "metadata":    {"wazibot_business_id": str(business_id), "wazibot_purpose": "product_purchase"},
+            # Optional phone collection — if the customer provides one, we
+            # can send them a WhatsApp receipt in addition to the email
+            # receipt, and log a proper order against their number. Not
+            # required, so it never blocks checkout for customers who skip it.
+            "phone_number_collection": {"enabled": True},
         }
         if customer_email:
             params["customer_email"] = customer_email
@@ -763,7 +772,155 @@ def _patch_biz(bid: int, patch: dict) -> None:
         log.error("_patch_biz error  business=%s  error=%s", bid, exc)
 
 
+def _on_product_purchase_completed(obj: dict) -> None:
+    """
+    Handles a completed storefront product/service purchase (the "Pay"
+    button on a business's public site) — previously this fell through to
+    _on_checkout_completed and was misinterpreted as a subscription payment.
+
+    Always sends an email receipt (Stripe guarantees customer_details.email
+    on every completed session). If the customer also provided a phone
+    number, additionally creates a proper order record and sends a WhatsApp
+    PDF receipt. The business is always notified via WhatsApp regardless,
+    since that only needs the business's own contact number.
+
+    Fire-and-forget in spirit — every step is wrapped so a failure in one
+    (e.g. no email service configured) never blocks the others.
+    """
+    bid = _bid_from_meta(obj)
+    if not bid:
+        log.warning("product purchase webhook: no business_id in metadata")
+        return
+
+    session_id = obj.get("id", "")
+    currency   = (obj.get("currency") or "usd").upper()
+    total      = float(obj.get("amount_total") or 0) / (1 if currency in
+                 {"BIF","CLP","DJF","GNF","JPY","KMF","KRW","MGA","PYG",
+                  "RWF","UGX","VND","VUV","XAF","XOF","XPF"} else 100)
+    customer   = obj.get("customer_details") or {}
+    cust_email = (customer.get("email") or "").strip()
+    cust_phone = (customer.get("phone") or "").strip()
+    cust_name  = (customer.get("name") or "Customer").strip()
+
+    try:
+        from core.db import supabase
+        biz_res = (
+            supabase.table("businesses")
+            .select("name, is_service_business, currency_symbol, contact_phone")
+            .eq("id", bid).limit(1).execute()
+        )
+        biz = (biz_res.data or [{}])[0]
+    except Exception as exc:
+        log.warning("product purchase webhook: business lookup failed: %s", exc)
+        biz = {}
+
+    biz_name     = biz.get("name") or "the business"
+    is_service   = bool(biz.get("is_service_business"))
+    currency_sym = biz.get("currency_symbol") or "$"
+    noun         = "booking" if is_service else "order"
+
+    # Fetch the actual line items purchased — checkout.session.completed
+    # doesn't include them by default.
+    items = []
+    try:
+        stripe = _stripe()
+        if stripe:
+            li = stripe.checkout.Session.list_line_items(session_id, limit=100)
+            for row in li.get("data", []):
+                items.append({
+                    "name":  row.get("description") or "Item",
+                    "qty":   int(row.get("quantity") or 1),
+                    "price": float(row.get("amount_total") or 0) / (1 if currency in
+                             {"BIF","CLP","DJF","GNF","JPY","KMF","KRW","MGA","PYG",
+                              "RWF","UGX","VND","VUV","XAF","XOF","XPF"} else 100)
+                             / max(1, int(row.get("quantity") or 1)),
+                })
+    except Exception as exc:
+        log.warning("product purchase webhook: line item fetch failed: %s", exc)
+
+    log.info("PRODUCT PURCHASE COMPLETED  business=%s  total=%s %s  email=%s",
+             bid, total, currency, cust_email or "—")
+
+    # 1. Email receipt — always attempted, the one channel Stripe guarantees.
+    if cust_email:
+        try:
+            from services.email_service import send_purchase_receipt
+            send_purchase_receipt(
+                to_email=cust_email, customer_name=cust_name, business_name=biz_name,
+                items=items, total=total, currency_symbol=currency_sym,
+                is_service=is_service,
+            )
+        except Exception as exc:
+            log.warning("product purchase webhook: email receipt failed: %s", exc)
+
+    # 2. If a phone was collected, also create a real order + WhatsApp receipt.
+    order = None
+    if cust_phone:
+        try:
+            from workflows.order_lifecycle import create_order_supabase
+            cart = [{"name": i["name"], "qty": i["qty"], "price": i["price"]} for i in items] or [
+                {"name": f"Stripe purchase {session_id[-8:]}", "qty": 1, "price": total}
+            ]
+            order = create_order_supabase(
+                business_id=bid, customer_phone=cust_phone, cart=cart, payment_method="stripe",
+            )
+            order["business_name"]   = biz_name
+            order["currency_symbol"] = currency_sym
+            try:
+                from core.db import supabase as _sb2
+                _sb2.table("orders").update({"payment_status": "paid", "status": "confirmed"}) \
+                    .eq("id", order.get("id")).execute()
+            except Exception:
+                pass
+            from services._ai_payments import _send_pdf_invoice
+            _send_pdf_invoice(order, cust_phone, bid)
+        except Exception as exc:
+            log.warning("product purchase webhook: order/WhatsApp receipt failed: %s", exc)
+
+    # 3. Notify the business — only needs their own contact number, works
+    #    regardless of whether the customer gave a phone or just an email.
+    #    Resolves the business's own outbound WhatsApp credentials the same
+    #    way the conversational bot does: their dedicated number/token if
+    #    set, otherwise the platform's shared number/token.
+    try:
+        import crud as _crud
+        biz_full = _crud.get_business_by_id(bid)
+        dedicated_phone_id = (biz_full or {}).get("whatsapp_phone_id") or ""
+        if dedicated_phone_id:
+            try:
+                notify_token = _crud.get_decrypted_token(biz_full)
+            except Exception:
+                notify_token = ""
+            notify_phone_id = dedicated_phone_id
+        else:
+            notify_phone_id = os.getenv("SHARED_PHONE_NUMBER_ID", "")
+            notify_token    = os.getenv("SHARED_WA_TOKEN", "")
+
+        from services._ai_payments import _notify_business_new_order
+        cart_for_notify = [{"name": i["name"], "qty": i["qty"]} for i in items]
+        fake_order = {"id": (order or {}).get("id"), "total_price": total}
+        _notify_business_new_order(
+            bid, fake_order, cust_phone or cust_email or "Stripe customer",
+            cart_for_notify, currency_sym, notify_phone_id, notify_token,
+        )
+    except Exception as exc:
+        log.debug("product purchase webhook: business notification skipped: %s", exc)
+
+
 def _on_checkout_completed(obj: dict) -> None:
+    # Bug fix: this function used to run unconditionally for EVERY completed
+    # Stripe checkout — including storefront product/service purchases from
+    # the "Pay" button on a business's public site. That meant a customer
+    # paying for a haircut would silently (and incorrectly) upgrade the
+    # BARBERSHOP's own WaziBot subscription tier, with no order ever created
+    # and no receipt ever sent to the customer who actually paid. Only a real
+    # subscription checkout (mode="subscription") should reach the logic
+    # below; product/service purchases (mode="payment") are routed to
+    # _on_product_purchase_completed() instead.
+    if obj.get("mode") == "payment":
+        _on_product_purchase_completed(obj)
+        return
+
     bid  = _bid_from_meta(obj)
     if not bid: return
     tier = (obj.get("metadata") or {}).get("tier", "pro")

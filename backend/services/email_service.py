@@ -344,6 +344,56 @@ def send_subscription_confirmed(
     )
 
 
+def send_purchase_receipt(
+    to_email:        str,
+    customer_name:   str,
+    business_name:   str,
+    items:           list,   # [{"name": str, "qty": int, "price": float}, ...]
+    total:           float,
+    currency_symbol: str = "$",
+    is_service:      bool = False,
+) -> bool:
+    """
+    Receipt email sent to a customer after a storefront purchase (the "Pay"
+    button on a business's public site). This is the one receipt channel
+    guaranteed to work every time — Stripe always collects an email on
+    checkout, unlike a WhatsApp phone number which is optional there.
+    """
+    noun = "Booking" if is_service else "Order"
+    rows = "".join(
+        f'<tr><td style="padding:8px 0;font-size:13px;color:#e8f5e9;'
+        f'border-bottom:1px solid #1f3025;">{i.get("name","Item")} × {i.get("qty",1)}</td>'
+        f'<td style="padding:8px 0;font-size:13px;color:#e8f5e9;text-align:right;'
+        f'border-bottom:1px solid #1f3025;">{currency_symbol}{float(i.get("price",0)) * int(i.get("qty",1)):.2f}</td></tr>'
+        for i in (items or [])
+    ) or (
+        f'<tr><td colspan="2" style="padding:8px 0;font-size:13px;color:#6b8f71;">'
+        f'{currency_symbol}{total:.2f} paid</td></tr>'
+    )
+    body = f"""
+<h1>{noun} confirmed! 🎉</h1>
+<p>Thanks {customer_name or "there"} — your payment to <strong>{business_name}</strong> was successful.</p>
+<table style="width:100%;border-collapse:collapse;margin:20px 0;">
+  {rows}
+  <tr><td style="padding:12px 0 0;font-size:14px;font-weight:700;color:#e8f5e9;">Total</td>
+      <td style="padding:12px 0 0;font-size:14px;font-weight:700;color:#22c55e;text-align:right;">
+        {currency_symbol}{total:.2f}</td></tr>
+</table>
+<p>{business_name} has been notified and will be in touch shortly to confirm your
+   {"appointment" if is_service else "delivery/pickup"} details.</p>
+<hr class="divider"/>
+<p style="font-size:12px;">
+  This receipt was generated automatically by WaziBot on behalf of {business_name}.
+  Please contact them directly with any questions about your {noun.lower()}.
+</p>
+"""
+    return _send(
+        to=to_email,
+        subject=f"Receipt — {noun} from {business_name}",
+        html=_base_template(f"{noun} confirmed", body),
+    )
+
+
 def send_payment_failed(
     to_email:      str,
     business_name: str,

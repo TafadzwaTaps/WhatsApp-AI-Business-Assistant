@@ -575,14 +575,16 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         '<div class="prod-img-ph">📦</div>'
     )
     desc_html = f'<p class="prod-desc">{desc}</p>' if desc else ""
-    order_text = f"Hi! I'd like to order {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to order {p.get('name','')}"
+    _verb = "book" if is_service else "order"
+    order_text = f"Hi! I'd like to {_verb} {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to {_verb} {p.get('name','')}"
 
     buy_now_js = (
         f"wzBuyNow({business_id},{repr(str(p.get('id','')))},{repr(str(name))},{price},'{_e(currency_sym)}')"
         if business_id else ""
     )
+    buy_label = "💳 Pay" if is_service else "💳 Buy Now"
     buy_btn = (
-        f'<button class="btn-buy" onclick="{buy_now_js}" {"" if available else "disabled"}>💳 Buy Now</button>'
+        f'<button class="btn-buy" onclick="{buy_now_js}" {"" if available else "disabled"}>{buy_label}</button>'
         if business_id else ""
     )
     return (
@@ -596,7 +598,7 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         f'<div class="prod-foot">'
         f'<span class="prod-price">{_e(currency_sym)}{price:.2f}</span>'
         f'{badge}'
-        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">💬 Order</a>'
+        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">💬 {"Book" if is_service else "Order"}</a>'
         f'{buy_btn}'
         f'</div></div></div>'
     )
@@ -884,7 +886,7 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
 .prod-card:hover{{transform:translateY(-4px);
                   box-shadow:0 12px 40px var(--shadow)}}
 .prod-card.hidden{{display:none!important}}
-.prod-img{{width:100%;height:200px;object-fit:cover;object-position:center top}}
+.prod-img{{width:100%;height:200px;object-fit:contain;background:var(--surface2)}}
 .prod-img-ph{{width:100%;height:200px;background:var(--surface2);
               display:flex;align-items:center;justify-content:center;font-size:48px}}
 .prod-body{{padding:16px}}
@@ -931,7 +933,7 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
   grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}}
 .gallery-item{{border-radius:var(--r);overflow:hidden;aspect-ratio:1;
                background:var(--surface2)}}
-.gallery-item img{{width:100%;height:100%;object-fit:cover;object-position:center top;
+.gallery-item img{{width:100%;height:100%;object-fit:contain;background:var(--surface2);
                    transition:transform .3s}}
 .gallery-item:hover img{{transform:scale(1.05)}}
 
