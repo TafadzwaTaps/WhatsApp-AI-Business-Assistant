@@ -275,6 +275,18 @@ def generate_reply(
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _biz_flavor = _resolve_biz_flavor(_biz_category, _is_service_biz)
     _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
+
+    # Service businesses are never "out of stock" — this normalizes the
+    # menu-listing `products` list (used for display and the "only X left"
+    # note). Note: this alone does NOT cover add-to-cart, since that path
+    # re-fetches a fresh copy of the product from the DB and would undo
+    # this — those blocking checks are fixed separately at the point of
+    # enforcement (search for "_is_service_biz else product.get" below).
+    if _is_service_biz and products:
+        products = [
+            {**p, "stock": None, "status": "active" if p.get("status") == "out_of_stock" else p.get("status")}
+            for p in products
+        ]
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
     import os as _os_cfg
@@ -1471,7 +1483,12 @@ def generate_reply(
                     pass
 
                 product_name = product["name"]
-                available    = product.get("stock")
+                # Service businesses don't track stock — a fresh DB re-fetch
+                # above can return a stale stock=0 from before the business
+                # switched to Services mode, which would otherwise block
+                # every booking. Treat stock as unlimited for services,
+                # regardless of what's actually stored.
+                available    = None if _is_service_biz else product.get("stock")
                 in_cart      = next((i["qty"] for i in cart if i["name"] == product_name), 0)
 
                 if available is not None and in_cart + qty > available:
@@ -1519,7 +1536,10 @@ def generate_reply(
                 log.warning("stock refresh failed: %s", exc)
 
             product_name = product["name"]
-            available    = product.get("stock")
+            # Same fix as the multi-item path above — a fresh DB re-fetch
+            # can return stale stock data for a service business, which
+            # would otherwise block bookings entirely.
+            available    = None if _is_service_biz else product.get("stock")
             if available is not None:
                 in_cart = next((i["qty"] for i in cart if i["name"] == product_name), 0)
                 if in_cart + qty > available:
