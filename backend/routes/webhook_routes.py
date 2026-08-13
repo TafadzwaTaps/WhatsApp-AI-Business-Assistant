@@ -337,31 +337,50 @@ async def receive_message(request: Request):
         is_from_agent     = bool(business_phone_id and msg_from and msg_from == business_phone_id)
 
         # Build per-business config so AI can tailor its copy
-        # ── Self-healing currency lookup ────────────────────────────────────────
-        # If the `business` dict came from a SELECT that doesn't include currency
-        # columns (e.g. get_active_businesses on the shared-number path), a plain
-        # business.get("currency_symbol", "$") silently and incorrectly falls back
-        # to "$" — not because the business uses USD, but because the column was
-        # never fetched. This guard re-fetches currency fields directly by ID
-        # whenever they're missing, so the correct currency always applies
-        # regardless of which SELECT statement originally found the business.
-        if "currency_symbol" not in business or "currency" not in business:
+        # ── Self-healing business-config lookup ─────────────────────────────────
+        # If the `business` dict came from a SELECT that's missing columns
+        # biz_config actually needs (e.g. get_active_businesses on the
+        # shared-number path using a stale/incomplete column list — this has
+        # happened more than once with different fields: currency,
+        # is_service_business, pickup_enabled...), a plain business.get(key,
+        # default) silently and incorrectly falls back to the default — not
+        # because that's the real value, but because the column was never
+        # fetched in the first place.
+        #
+        # Rather than keep chasing individual fields one at a time whenever
+        # this recurs, this checks for ANY of the fields biz_config below
+        # actually reads, and if even one is missing, re-fetches the full
+        # set directly by ID in a single query. This makes biz_config
+        # correct regardless of which SELECT statement — current or a
+        # future one that regresses again — originally found the business.
+        _CONFIG_FIELDS = (
+            "currency", "currency_symbol", "welcome_message", "menu_header",
+            "is_service_business", "default_slot_mins", "pickup_enabled",
+            "cash_enabled", "delivery_fee", "category",
+        )
+        if any(f not in business for f in _CONFIG_FIELDS):
             try:
                 from core.db import supabase as _sb
-                _cur_row = (
+                _cfg_row = (
                     _sb.table("businesses")
-                    .select("currency, currency_symbol")
+                    .select(",".join(_CONFIG_FIELDS))
                     .eq("id", business["id"])
                     .limit(1)
                     .execute()
                 )
-                if _cur_row.data:
-                    business["currency"]        = _cur_row.data[0].get("currency")        or business.get("currency")
-                    business["currency_symbol"] = _cur_row.data[0].get("currency_symbol")  or business.get("currency_symbol")
-                    log.info("💱 currency self-healed  biz=%s  currency=%r  symbol=%r",
-                             business["id"], business.get("currency"), business.get("currency_symbol"))
-            except Exception as _cur_exc:
-                log.warning("currency self-heal lookup failed: %s", _cur_exc)
+                if _cfg_row.data:
+                    fetched = _cfg_row.data[0]
+                    for _f in _CONFIG_FIELDS:
+                        if _f not in business and _f in fetched:
+                            business[_f] = fetched[_f]
+                    log.info(
+                        "🩹 business-config self-healed  biz=%s  currency=%r  symbol=%r  "
+                        "is_service_business=%r  pickup_enabled=%r",
+                        business["id"], business.get("currency"), business.get("currency_symbol"),
+                        business.get("is_service_business"), business.get("pickup_enabled"),
+                    )
+            except Exception as _cfg_exc:
+                log.warning("business-config self-heal lookup failed: %s", _cfg_exc)
 
         biz_config = {
             "welcome_message":       business.get("welcome_message", "")     or "",
