@@ -117,6 +117,24 @@ def create_order_supabase(
     if not cart:
         raise ValueError("Cart is empty — nothing to order.")
 
+    # Resolved once per order (not per cart item) — services don't have
+    # stock in the same sense a physical product does, so bookings should
+    # never be blocked by a stale/zero stock value on a service "product".
+    _is_service_biz = False
+    try:
+        from core.db import supabase as _sb_svc
+        _biz_row = (
+            _sb_svc.table("businesses")
+            .select("is_service_business")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        if _biz_row.data:
+            _is_service_biz = bool(_biz_row.data[0].get("is_service_business"))
+    except Exception as _svc_exc:
+        log.warning("create_order_supabase: is_service_business lookup failed (defaulting to product mode): %s", _svc_exc)
+
     total = 0.0
     items_detail = []
 
@@ -125,7 +143,7 @@ def create_order_supabase(
         qty   = int(item["qty"])
         price = float(item["price"])
 
-        reduce_stock_by_name(business_id, name, qty)
+        reduce_stock_by_name(business_id, name, qty, _is_service_biz)
 
         subtotal = price * qty
         total += subtotal
