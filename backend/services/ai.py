@@ -209,6 +209,30 @@ _SERVICE_CAT_KEYWORDS = {
 }
 
 
+def _resolve_stock(product: dict, is_service_business: bool):
+    """
+    Single source of truth for "what stock value should this check use?".
+    Every stock-availability check in this file MUST call this instead of
+    reading product.get("stock") directly — this bug has recurred multiple
+    times because stock was checked in several scattered places (menu
+    display, single-item add-to-cart, multi-item add-to-cart), and a fix to
+    one spot didn't cover the others, especially once a fresh DB re-fetch
+    (crud.get_product_by_name) re-introduced the raw, possibly-stale stock
+    value. Routing every check through this one function means there is
+    now exactly one place to ever fix again: a service business is
+    unconditionally treated as "♾️ unlimited availability" regardless of
+    what any product row's `stock` column actually contains, no matter how
+    that data got stale or where it was re-fetched from.
+
+    Returns None (= unlimited, matches the existing "stock is None" idiom
+    used throughout this file) for any service business, otherwise returns
+    the product's actual stock value unchanged.
+    """
+    if is_service_business:
+        return None
+    return product.get("stock")
+
+
 def _resolve_biz_flavor(category: str, is_service_business: bool) -> str:
     """
     Return "food", "retail", or "service" — used to pick the right wording
@@ -274,6 +298,19 @@ def generate_reply(
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _biz_flavor = _resolve_biz_flavor(_biz_category, _is_service_biz)
+
+    # Service businesses are never "out of stock" — this normalizes the
+    # menu-listing `products` list (used for display and the "only X left"
+    # note). This alone does NOT cover add-to-cart, since that path
+    # re-fetches a fresh copy of the product from the DB and would undo
+    # this — those blocking checks are fixed separately via _resolve_stock()
+    # at their point of enforcement, below.
+    if _is_service_biz and products:
+        products = [
+            {**p, "stock": _resolve_stock(p, _is_service_biz),
+             "status": "active" if p.get("status") == "out_of_stock" else p.get("status")}
+            for p in products
+        ]
     _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
@@ -1485,7 +1522,12 @@ def generate_reply(
                     pass
 
                 product_name = product["name"]
-                available    = product.get("stock")
+                # Service businesses don't track stock — a fresh DB re-fetch
+                # above can return a stale stock=0 from before the business
+                # switched to Services mode, which would otherwise block
+                # every booking. Treat stock as unlimited for services,
+                # regardless of what's actually stored.
+                available    = _resolve_stock(product, _is_service_biz)
                 in_cart      = next((i["qty"] for i in cart if i["name"] == product_name), 0)
 
                 if available is not None and in_cart + qty > available:
@@ -1533,7 +1575,10 @@ def generate_reply(
                 log.warning("stock refresh failed: %s", exc)
 
             product_name = product["name"]
-            available    = product.get("stock")
+            # Same fix as the multi-item path above — a fresh DB re-fetch
+            # can return stale stock data for a service business, which
+            # would otherwise block bookings entirely.
+            available    = _resolve_stock(product, _is_service_biz)
             if available is not None:
                 in_cart = next((i["qty"] for i in cart if i["name"] == product_name), 0)
                 if in_cart + qty > available:
@@ -1730,8 +1775,8 @@ def generate_reply(
         # ── Text menu (no images, or image send failed) ──────────────────────
         lines = []
         for i, p in enumerate(products):
-            note = ""
-            s = p.get("stock")
+            note = "  ♾️ _always available_" if _is_service_biz else ""
+            s = _resolve_stock(p, _is_service_biz)
             if s is not None and s <= 5:
                 note = f"  ⚠️ _only {s} left_"
             lines.append(f"  {i+1}. *{p['name']}* — {_currency_sym}{float(p['price']):.2f}{note}")
