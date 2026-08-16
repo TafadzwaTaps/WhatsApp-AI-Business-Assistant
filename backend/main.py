@@ -481,5 +481,31 @@ except Exception as _wrs_err:
     log.warning("weekly_report_scheduler: failed to start (non-fatal): %s", _wrs_err)
 
 log.info("🚀 WaziBot API started — %d route modules registered", 8)
+
+# ── Deployment consistency check ────────────────────────────────────────────
+# This exact mismatch has broken checkout multiple times: order_lifecycle.py
+# calls reduce_stock_by_name() with 4 arguments (including is_service_business),
+# but if services/inventory.py doesn't ALSO have the matching 4-parameter
+# signature deployed, every order creation crashes with a TypeError the
+# moment a customer tries to check out — invisible until then. This check
+# runs once at startup and logs loudly if the two files are out of sync,
+# so a partial deploy is caught immediately in the boot logs instead of
+# waiting for a customer to hit it.
+try:
+    import inspect
+    from services.inventory import reduce_stock_by_name as _rsbn_check
+    _rsbn_params = list(inspect.signature(_rsbn_check).parameters.keys())
+    if "is_service_business" in _rsbn_params:
+        log.info("✅ DEPLOY CHECK — inventory.reduce_stock_by_name has is_service_business param — OK")
+    else:
+        log.error(
+            "🚨 DEPLOY MISMATCH — services/inventory.py is STALE (missing "
+            "is_service_business parameter on reduce_stock_by_name). "
+            "order_lifecycle.py calls this function with 4 arguments and "
+            "WILL CRASH on every checkout until inventory.py is redeployed. "
+            "params found: %s", _rsbn_params,
+        )
+except Exception as _deploy_check_exc:
+    log.warning("Deploy consistency check failed to run: %s", _deploy_check_exc)
 log.info("🏷️  BUILD MARKER — currency_fix_v3 + tenant_router_null_safe_v1 — "
          "if you do NOT see this exact line after a fresh deploy, the deploy did not pick up these files")
