@@ -14,6 +14,7 @@ from pydantic import BaseModel, validator
 
 import crud
 from core.auth import require_business, require_superadmin
+from core.plan_guard import require_plan
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -97,6 +98,7 @@ def list_bookings(
     upcoming_only: bool = True,
     date:          Optional[str] = None,   # filter by date YYYY-MM-DD
     user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
 ):
     """List all bookings for this business."""
     from services.booking_service import get_bookings
@@ -107,14 +109,19 @@ def list_bookings(
 
 
 @router.post("/bookings", status_code=201)
-def create_booking_api(data: BookingCreate, user=Depends(require_business)):
+def create_booking_api(data: BookingCreate, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """Manually create a booking from the dashboard."""
     from services.booking_service import create_booking, check_availability
     bid = user["business_id"]
 
+    # Quick pre-check for a fast, friendly rejection in the common case —
+    # NOT the actual safety mechanism. The real double-booking protection
+    # is the atomic check-and-insert inside create_booking() itself
+    # (create_booking_atomic Postgres function), which is immune to the
+    # race condition this pre-check alone would have.
     avail = check_availability(bid, data.booking_date, data.start_time, data.duration_hrs)
     if not avail["available"]:
-        raise HTTPException(409, f"Slot not available: {avail['reason']}")
+        raise HTTPException(409, "Sorry, that time was just booked. Please choose another available time.")
 
     booking = create_booking(
         business_id=bid, customer_phone=data.customer_phone,
@@ -122,9 +129,13 @@ def create_booking_api(data: BookingCreate, user=Depends(require_business)):
         duration_hrs=data.duration_hrs, service_name=data.service_name,
         notes=data.notes,
     )
-    if not booking: raise HTTPException(500, "Failed to create booking")
+    if not booking:
+        # create_booking() returns None both on a genuine DB error AND when
+        # the atomic conflict check lost a race after the pre-check above
+        # passed — either way, from the customer's perspective the honest
+        # message is that the slot is no longer available.
+        raise HTTPException(409, "Sorry, that time was just booked. Please choose another available time.")
 
-    # Optional: send WhatsApp confirmation
     return {"ok": True, "booking": booking}
 
 
@@ -133,6 +144,7 @@ def update_booking_status(
     booking_id: int,
     status:     str,
     user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
 ):
     """Update booking status: confirmed | completed | cancelled | rescheduled"""
     valid = {"confirmed", "completed", "cancelled", "rescheduled", "pending"}
@@ -152,7 +164,7 @@ def update_booking_status(
 
 
 @router.delete("/bookings/{booking_id}")
-def cancel_booking_api(booking_id: int, user=Depends(require_business)):
+def cancel_booking_api(booking_id: int, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """Cancel a booking."""
     from services.booking_service import cancel_booking
     result = cancel_booking(booking_id, user["business_id"])
@@ -161,7 +173,7 @@ def cancel_booking_api(booking_id: int, user=Depends(require_business)):
 
 
 @router.post("/bookings/reminders/run")
-async def run_booking_reminders(user=Depends(require_business)):
+async def run_booking_reminders(user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """
     Send WhatsApp reminders for upcoming bookings.
     Call from Render cron or dashboard.
@@ -218,6 +230,7 @@ def check_slot_availability(
     start_time:   str  = Query(..., description="HH:MM"),
     duration_hrs: float = 1.0,
     user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
 ):
     """Check if a slot is available."""
     from services.booking_service import check_availability

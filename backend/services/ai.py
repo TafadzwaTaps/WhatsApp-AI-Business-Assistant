@@ -209,30 +209,6 @@ _SERVICE_CAT_KEYWORDS = {
 }
 
 
-def _resolve_stock(product: dict, is_service_business: bool):
-    """
-    Single source of truth for "what stock value should this check use?".
-    Every stock-availability check in this file MUST call this instead of
-    reading product.get("stock") directly — this bug has recurred multiple
-    times because stock was checked in several scattered places (menu
-    display, single-item add-to-cart, multi-item add-to-cart), and a fix to
-    one spot didn't cover the others, especially once a fresh DB re-fetch
-    (crud.get_product_by_name) re-introduced the raw, possibly-stale stock
-    value. Routing every check through this one function means there is
-    now exactly one place to ever fix again: a service business is
-    unconditionally treated as "♾️ unlimited availability" regardless of
-    what any product row's `stock` column actually contains, no matter how
-    that data got stale or where it was re-fetched from.
-
-    Returns None (= unlimited, matches the existing "stock is None" idiom
-    used throughout this file) for any service business, otherwise returns
-    the product's actual stock value unchanged.
-    """
-    if is_service_business:
-        return None
-    return product.get("stock")
-
-
 def _resolve_biz_flavor(category: str, is_service_business: bool) -> str:
     """
     Return "food", "retail", or "service" — used to pick the right wording
@@ -298,22 +274,7 @@ def generate_reply(
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _biz_flavor = _resolve_biz_flavor(_biz_category, _is_service_biz)
-    log.info("🔧 service-mode resolved  biz=%s  is_service_biz=%s  raw_cfg_value=%r",
-             business_id, _is_service_biz, _cfg.get("is_service_business"))
     _pickup_enabled     = bool(_cfg.get("pickup_enabled", True))   # default: pickup available
-
-    # Service businesses are never "out of stock" — this normalizes the
-    # menu-listing `products` list (used for display and the "only X left"
-    # note). Note: this alone does NOT cover add-to-cart, since that path
-    # re-fetches a fresh copy of the product from the DB and would undo
-    # this — those blocking checks are fixed separately at the point of
-    # enforcement (search for "_is_service_biz else product.get" below).
-    if _is_service_biz and products:
-        products = [
-            {**p, "stock": _resolve_stock(p, _is_service_biz),
-             "status": "active" if p.get("status") == "out_of_stock" else p.get("status")}
-            for p in products
-        ]
     _default_slot_mins  = int(_cfg.get("default_slot_mins", 60) or 60)
     # Catalog credentials — always defined, falls back to env vars
     import os as _os_cfg
@@ -1205,10 +1166,24 @@ def generate_reply(
     log.info("intent=%s", intent)
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P4.4 — BOOKING HANDLER (service businesses only)
+    # P4.4 — BOOKING HANDLER (service businesses only, Growth plan required)
     # Gated on _is_service_biz — retail businesses never reach this block.
-    # ══════════════════════════════════════════════════════════════════════════
+    # Additionally gated on the Growth plan here — this is a second,
+    # independent enforcement point from the /bookings API routes in
+    # expansion_routes.py, since WhatsApp conversations reach this code
+    # directly and never pass through those HTTP endpoints. Without this
+    # check, a Starter business could get full booking functionality for
+    # free simply by toggling is_service_business on, entirely bypassing
+    # the plan_guard checks on the dashboard/API side.
+    _bookings_plan_ok = True
     if _is_service_biz:
+        try:
+            from core.plan_guard import feature_access
+            _bookings_plan_ok = feature_access("bookings", business_id).get("allowed", True)
+        except Exception as _pg_exc:
+            log.debug("bookings plan check skipped (fail-open): %s", _pg_exc)
+
+    if _is_service_biz and _bookings_plan_ok:
         from services.booking_service import (
             parse_booking_request, format_booking_preview, create_booking,
             get_bookings_for_customer, cancel_booking as _cancel_booking,
@@ -1310,7 +1285,7 @@ def generate_reply(
                         sync_booking(booking, business_name)
                     except Exception: pass
                     return format_booking_confirmation(booking, business_name)
-                return "⚠️ Could not save your booking. Please try again or contact us. 🙏"
+                return "😔 Sorry, that time was just booked. Please choose another available time — type *book* to try again."
             return "Please reply *yes* to confirm your booking or *no* to cancel."
 
         if _is_booking_intent(text):
@@ -1510,12 +1485,7 @@ def generate_reply(
                     pass
 
                 product_name = product["name"]
-                # Service businesses don't track stock — a fresh DB re-fetch
-                # above can return a stale stock=0 from before the business
-                # switched to Services mode, which would otherwise block
-                # every booking. Treat stock as unlimited for services,
-                # regardless of what's actually stored.
-                available    = _resolve_stock(product, _is_service_biz)
+                available    = product.get("stock")
                 in_cart      = next((i["qty"] for i in cart if i["name"] == product_name), 0)
 
                 if available is not None and in_cart + qty > available:
@@ -1563,10 +1533,7 @@ def generate_reply(
                 log.warning("stock refresh failed: %s", exc)
 
             product_name = product["name"]
-            # Same fix as the multi-item path above — a fresh DB re-fetch
-            # can return stale stock data for a service business, which
-            # would otherwise block bookings entirely.
-            available    = _resolve_stock(product, _is_service_biz)
+            available    = product.get("stock")
             if available is not None:
                 in_cart = next((i["qty"] for i in cart if i["name"] == product_name), 0)
                 if in_cart + qty > available:
@@ -1763,8 +1730,8 @@ def generate_reply(
         # ── Text menu (no images, or image send failed) ──────────────────────
         lines = []
         for i, p in enumerate(products):
-            note = "  ♾️ _always available_" if _is_service_biz else ""
-            s = _resolve_stock(p, _is_service_biz)
+            note = ""
+            s = p.get("stock")
             if s is not None and s <= 5:
                 note = f"  ⚠️ _only {s} left_"
             lines.append(f"  {i+1}. *{p['name']}* — {_currency_sym}{float(p['price']):.2f}{note}")

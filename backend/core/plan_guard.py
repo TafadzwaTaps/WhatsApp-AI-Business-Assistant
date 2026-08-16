@@ -346,6 +346,7 @@ GATED_FEATURES = {
     "advanced_analytics": "GROWTH",
     "multi_language":     "GROWTH",
     "ai_website":         "GROWTH",
+    "bookings":           "GROWTH",   # native appointment/booking system
     # Never gated — core product experience
     # "human_handoff"  → free (support is a basic need)
     # "live_inbox"     → free (core dashboard)

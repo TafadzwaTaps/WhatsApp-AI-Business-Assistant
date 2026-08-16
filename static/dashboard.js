@@ -542,6 +542,7 @@ function buildSidebar() {
       <button class="nav-item" data-gated="true" onclick="_navGuard('handoff',this);closeSidebar()"><span class="icon">👤</span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
       <button class="nav-item" data-gated="true" onclick="_navGuard('growth-automation',this);closeSidebar()"><span class="icon">🚀</span> Growth</button>
       <button class="nav-item" data-gated="true" onclick="_navGuard('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
+      <button class="nav-item" onclick="showSection('bookings',this);closeSidebar()"><span class="icon">🗓️</span> Bookings</button>
       <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
       <button class="nav-item" onclick="showSection('marketing-kit',this);loadMarketingKit();closeSidebar()"><span class="icon">📣</span> Marketing Kit</button>
       <div class="nav-section">Growth</div>
@@ -581,6 +582,7 @@ function showSection(name, btn) {
   if (name==='settings') { loadSettings(); loadTemplates(); }
   if (name==='crm') loadCrm();
   if (name==='reminders') loadReminders();
+  if (name==='bookings') loadBookings();
 }
 
 // ── TOAST ─────────────────────────────────────────────────
@@ -3404,6 +3406,197 @@ async function quickCampaignDrawer() {
 // ════════════════════════════════════════════════════════════════════════════
 // PHASE 4 (cont.) — PAYMENT REMINDERS SECTION
 // ════════════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BOOKINGS — native appointment/scheduling module (Growth plan feature)
+// Backend endpoints (already existed, now Growth-gated server-side):
+//   GET    /bookings                  — list
+//   POST   /bookings                  — create
+//   PATCH  /bookings/{id}/status      — confirm/complete/cancel/no-show
+//   DELETE /bookings/{id}             — cancel
+//   GET    /bookings/availability     — check a slot before creating
+//   GET/PATCH /me/service-mode        — working hours, slot length, lead time
+// A 403 plan_required response is already handled globally by apiFetch(),
+// which shows the existing upgrade modal — this section just needs a
+// lightweight in-page fallback for Starter users landing here directly.
+// ═══════════════════════════════════════════════════════════════════════════
+let _allBookings = [];
+
+async function loadBookings() {
+  const wrap = document.getElementById('bookings-content');
+  if (!wrap) return;
+  try {
+    const data = await apiFetch('/bookings?upcoming_only=false');
+    if (!data) {
+      // apiFetch already showed the upgrade modal for a plan_required 403.
+      // Show a lightweight in-page explanation too, since the modal can be
+      // dismissed and the section would otherwise look blank/broken.
+      wrap.innerHTML = `
+        <div class="panel full" style="text-align:center;padding:48px 24px;">
+          <div style="font-size:40px;margin-bottom:14px;">🗓️</div>
+          <h2 style="font-size:20px;font-weight:800;margin-bottom:10px;">Let customers book you online</h2>
+          <p style="font-family:var(--mono);font-size:13px;color:var(--text-dim);
+                    max-width:420px;margin:0 auto 22px;line-height:1.7;">
+            WaziBot Bookings is available on Growth. Give your customers an easy way to
+            schedule appointments through WhatsApp and your booking link.
+          </p>
+          <a href="/pricing" class="btn btn-purple" style="display:inline-block;text-decoration:none;">
+            Upgrade to Growth →
+          </a>
+        </div>`;
+      return;
+    }
+    _allBookings = data.bookings || [];
+    _renderBookingsSummary(_allBookings);
+    _renderBookingsTable(_allBookings);
+    wrap.style.display = '';
+    loadBookingSettings();
+  } catch (e) {
+    wrap.innerHTML = `<div class="panel full"><div class="empty">⚠ ${e.message}</div></div>`;
+  }
+}
+
+function _renderBookingsSummary(bookings) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const today      = bookings.filter(b => b.booking_date === todayStr && b.status !== 'cancelled').length;
+  const upcoming   = bookings.filter(b => b.booking_date > todayStr && ['confirmed','pending','rescheduled'].includes(b.status)).length;
+  const completed  = bookings.filter(b => b.status === 'completed').length;
+  const cancelled  = bookings.filter(b => b.status === 'cancelled').length;
+
+  const _s = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  _s('bk-stat-today', today);
+  _s('bk-stat-upcoming', upcoming);
+  _s('bk-stat-completed', completed);
+  _s('bk-stat-cancelled', cancelled);
+
+  const next = bookings
+    .filter(b => b.booking_date >= todayStr && ['confirmed','pending','rescheduled'].includes(b.status))
+    .sort((a, b) => (a.booking_date + a.start_time).localeCompare(b.booking_date + b.start_time))[0];
+  const nextEl = document.getElementById('bk-next-appt');
+  if (nextEl) {
+    nextEl.textContent = next
+      ? `${next.customer_phone || 'Customer'} — ${next.service_name || 'Appointment'} — ${next.booking_date} ${next.start_time}`
+      : 'No upcoming appointments';
+  }
+}
+
+const _BK_STATUS_BADGE = {
+  pending:     'badge-amber',
+  confirmed:   'badge-green',
+  completed:   'badge-purple',
+  cancelled:   'badge-red',
+  no_show:     'badge-red',
+  rescheduled: 'badge-amber',
+};
+
+function _renderBookingsTable(bookings) {
+  const tbody = document.getElementById('bookings-table-body');
+  if (!tbody) return;
+  const sorted = [...bookings].sort((a, b) => (b.booking_date + b.start_time).localeCompare(a.booking_date + a.start_time));
+  if (!sorted.length) {
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">No bookings yet. Click "New Booking" to create one, or share your booking link.</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = sorted.map(b => `
+    <tr>
+      <td>${escHtml(b.booking_date || '')}<br/><span style="color:var(--text-dim);font-size:11px;">${escHtml(b.start_time || '')}</span></td>
+      <td>${escHtml(b.customer_phone || '—')}</td>
+      <td>${escHtml(b.service_name || '—')}</td>
+      <td><span class="badge ${_BK_STATUS_BADGE[b.status] || 'badge-amber'}">${escHtml((b.status||'pending').replace('_',' '))}</span></td>
+      <td style="color:var(--text-dim);font-size:11px;">${escHtml(b.notes || '')}</td>
+      <td>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${b.status !== 'completed' && b.status !== 'cancelled' ? `
+            <button class="btn btn-ghost" style="color:var(--green);" onclick="_bkSetStatus(${b.id},'completed')">✓ Done</button>
+            <button class="btn btn-ghost" style="color:var(--amber);" onclick="_bkSetStatus(${b.id},'no_show')">No-show</button>
+            <button class="btn btn-ghost" onclick="_bkCancel(${b.id})">✕ Cancel</button>
+          ` : ''}
+        </div>
+      </td>
+    </tr>`).join('');
+}
+
+async function _bkSetStatus(id, status) {
+  try {
+    await apiFetch(`/bookings/${id}/status?status=${status}`, { method: 'PATCH' });
+    toast('Booking updated ✅');
+    loadBookings();
+  } catch (e) { toast('Failed to update booking: ' + e.message, true); }
+}
+
+async function _bkCancel(id) {
+  if (!confirm('Cancel this booking?')) return;
+  try {
+    await apiFetch(`/bookings/${id}`, { method: 'DELETE' });
+    toast('Booking cancelled');
+    loadBookings();
+  } catch (e) { toast('Failed to cancel booking: ' + e.message, true); }
+}
+
+function openCreateBookingModal() {
+  const modal = document.getElementById('create-booking-modal');
+  if (modal) modal.classList.add('open');
+}
+function closeCreateBookingModal() {
+  const modal = document.getElementById('create-booking-modal');
+  if (modal) modal.classList.remove('open');
+}
+
+async function submitCreateBooking() {
+  const phone = document.getElementById('bk-new-phone')?.value.trim();
+  const date  = document.getElementById('bk-new-date')?.value;
+  const time  = document.getElementById('bk-new-time')?.value;
+  const dur   = parseFloat(document.getElementById('bk-new-duration')?.value || '1');
+  const svc   = document.getElementById('bk-new-service')?.value.trim() || '';
+  const notes = document.getElementById('bk-new-notes')?.value.trim() || '';
+
+  if (!phone || !date || !time) { toast('Phone, date, and time are required', true); return; }
+
+  try {
+    await apiFetch('/bookings', {
+      method: 'POST',
+      body: JSON.stringify({
+        customer_phone: phone, booking_date: date, start_time: time,
+        duration_hrs: dur, service_name: svc, notes: notes,
+      }),
+    });
+    toast('✅ Booking created');
+    closeCreateBookingModal();
+    loadBookings();
+  } catch (e) {
+    // The backend returns 409 with a friendly message when the slot was
+    // just taken by someone else — surfaced as-is rather than a generic error.
+    toast(e.message || 'Failed to create booking', true);
+  }
+}
+
+async function loadBookingSettings() {
+  try {
+    const cfg = await apiFetch('/me/service-mode');
+    if (!cfg) return;
+    const _v = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+    _v('bk-set-slot-mins', cfg.default_slot_mins ?? 60);
+    _v('bk-set-lead-hrs', cfg.booking_lead_hrs ?? 1);
+    _v('bk-set-hours-start', cfg.working_hours_start ?? '08:00');
+    _v('bk-set-hours-end', cfg.working_hours_end ?? '17:00');
+  } catch (e) { /* non-critical */ }
+}
+
+async function saveBookingSettings() {
+  try {
+    await apiFetch('/me/service-mode', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        is_service_business: true,
+        default_slot_mins:   parseInt(document.getElementById('bk-set-slot-mins')?.value || '60'),
+        booking_lead_hrs:    parseInt(document.getElementById('bk-set-lead-hrs')?.value || '1'),
+        working_hours_start: document.getElementById('bk-set-hours-start')?.value || '08:00',
+        working_hours_end:   document.getElementById('bk-set-hours-end')?.value || '17:00',
+      }),
+    });
+    toast('✅ Booking settings saved');
+  } catch (e) { toast('Failed to save: ' + e.message, true); }
+}
 
 async function loadReminders() {
   const tbody = document.getElementById('reminders-table-body');

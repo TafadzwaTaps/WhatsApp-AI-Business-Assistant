@@ -3132,6 +3132,69 @@
   </div>
 
   <!-- PAYMENT REMINDERS SECTION (Phase 4) -->
+  <div id="section-bookings" class="section">
+    <div class="topbar">
+      <div class="page-title">🗓️ <span>Bookings</span></div>
+      <button class="btn btn-primary" onclick="openCreateBookingModal()">➕ New Booking</button>
+    </div>
+
+    <div id="bookings-content">
+      <div class="stats-grid" style="margin-bottom:16px;">
+        <div class="stat-card"><div class="stat-label">Today's Bookings</div><div class="stat-value" id="bk-stat-today">—</div></div>
+        <div class="stat-card"><div class="stat-label">Upcoming</div><div class="stat-value" id="bk-stat-upcoming">—</div></div>
+        <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value" id="bk-stat-completed" style="color:var(--green);">—</div></div>
+        <div class="stat-card"><div class="stat-label">Cancelled</div><div class="stat-value" id="bk-stat-cancelled" style="color:var(--red);">—</div></div>
+      </div>
+
+      <div class="panel full" style="margin-bottom:16px;">
+        <div class="panel-header"><div class="panel-title">Next Appointment</div></div>
+        <div class="panel-body" style="padding:14px 16px;font-family:var(--mono);font-size:13px;color:var(--text-dim);" id="bk-next-appt">—</div>
+      </div>
+
+      <div class="panel full" style="margin-bottom:16px;">
+        <div class="panel-header"><div class="panel-title">All Bookings</div><button class="panel-action" onclick="loadBookings()">↻ Refresh</button></div>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Date / Time</th><th>Customer</th><th>Service</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
+            <tbody id="bookings-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel full">
+        <div class="panel-header"><div class="panel-title">⚙️ Booking Settings</div></div>
+        <div class="panel-body" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;padding:16px;">
+          <div class="form-group"><label>Slot Length (min)</label><input type="number" id="bk-set-slot-mins" min="5" step="5" value="60"/></div>
+          <div class="form-group"><label>Min. Notice (hours)</label><input type="number" id="bk-set-lead-hrs" min="0" step="1" value="1"/></div>
+          <div class="form-group"><label>Working Hours Start</label><input type="time" id="bk-set-hours-start" value="08:00"/></div>
+          <div class="form-group"><label>Working Hours End</label><input type="time" id="bk-set-hours-end" value="17:00"/></div>
+        </div>
+        <div class="panel-body" style="padding-top:0;">
+          <button class="btn btn-primary" onclick="saveBookingSettings()">💾 Save Booking Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create Booking modal -->
+  <div class="modal-overlay" id="create-booking-modal">
+    <div class="modal">
+      <div class="modal-title">New Booking</div>
+      <div class="form-group"><label>Customer Phone</label><input type="text" id="bk-new-phone" placeholder="+263771234567"/></div>
+      <div class="form-group"><label>Service (optional)</label><input type="text" id="bk-new-service" placeholder="e.g. Haircut"/></div>
+      <div style="display:flex;gap:10px;">
+        <div class="form-group" style="flex:1;"><label>Date</label><input type="date" id="bk-new-date"/></div>
+        <div class="form-group" style="flex:1;"><label>Time</label><input type="time" id="bk-new-time"/></div>
+      </div>
+      <div class="form-group"><label>Duration (hours)</label><input type="number" id="bk-new-duration" min="0.25" step="0.25" value="1"/></div>
+      <div class="form-group"><label>Notes (optional)</label><input type="text" id="bk-new-notes" placeholder="e.g. First appointment"/></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" onclick="closeCreateBookingModal()">Cancel</button>
+        <button class="btn btn-primary" onclick="submitCreateBooking()">Create Booking</button>
+      </div>
+    </div>
+  </div>
+
   <div id="section-reminders" class="section">
     <div class="topbar">
       <div class="page-title">⏳ <span>Payment Reminders</span></div>

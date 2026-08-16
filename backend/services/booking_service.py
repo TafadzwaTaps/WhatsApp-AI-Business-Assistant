@@ -456,37 +456,76 @@ def create_booking(
     notes:         str   = "",
 ) -> Optional[dict]:
     """
-    Create a booking record. Returns the created row or None on error.
-    Does NOT send WhatsApp messages — caller handles that.
+    Create a booking record. Returns the created row or None on error/conflict.
+
+    Uses the create_booking_atomic() Postgres function (see migration) to
+    make the availability check and insert atomic via an advisory lock —
+    this closes a real race condition: the previous check_availability()
+    then insert() pattern let two customers both pass the check within
+    milliseconds of each other and double-book the same slot. Falls back
+    to the old non-atomic insert if the migration hasn't been applied yet
+    (e.g. mid-deploy), so this never hard-breaks booking creation.
     """
     from datetime import datetime, timezone
     from core.db import supabase
 
     end_time = _add_time(start_time, duration_hrs)
-    now      = datetime.now(timezone.utc).isoformat()
 
     try:
-        res = supabase.table("bookings").insert({
-            "business_id":    business_id,
-            "customer_phone": customer_phone,
-            "booking_date":   booking_date,
-            "start_time":     start_time,
-            "end_time":       end_time,
-            "duration_hrs":   duration_hrs,
-            "service_name":   service_name or "",
-            "notes":          notes or "",
-            "status":         "confirmed",
-            "created_at":     now,
+        res = supabase.rpc("create_booking_atomic", {
+            "p_business_id":    business_id,
+            "p_customer_phone": customer_phone,
+            "p_booking_date":   booking_date,
+            "p_start_time":     start_time,
+            "p_end_time":       end_time,
+            "p_duration_hrs":   duration_hrs,
+            "p_service_name":   service_name or "",
+            "p_notes":          notes or "",
         }).execute()
 
-        booking = res.data[0] if res.data else None
-        if booking:
-            log.info("booking created  id=%s  biz=%s  date=%s  time=%s",
-                     booking.get("id"), business_id, booking_date, start_time)
-        return booking
+        row = (res.data or [{}])[0] if res.data else {}
+        if not row.get("ok"):
+            log.info("create_booking: slot conflict  biz=%s  date=%s  time=%s",
+                     business_id, booking_date, start_time)
+            return None
+
+        booking_id = row.get("booking_id")
+        log.info("booking created (atomic)  id=%s  biz=%s  date=%s  time=%s",
+                 booking_id, business_id, booking_date, start_time)
+        # Fetch the full row to return the same shape callers already expect
+        fetched = (
+            supabase.table("bookings").select("*").eq("id", booking_id).limit(1).execute()
+        )
+        return fetched.data[0] if fetched.data else {"id": booking_id}
+
     except Exception as exc:
-        log.error("create_booking error: %s", exc)
-        return None
+        # RPC missing (migration not yet applied) or any other DB error —
+        # fall back to the original non-atomic insert rather than failing
+        # booking creation outright. Logged clearly so it's visible that
+        # the atomic path isn't active yet.
+        log.warning("create_booking_atomic unavailable, falling back to non-atomic insert: %s", exc)
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            res = supabase.table("bookings").insert({
+                "business_id":    business_id,
+                "customer_phone": customer_phone,
+                "booking_date":   booking_date,
+                "start_time":     start_time,
+                "end_time":       end_time,
+                "duration_hrs":   duration_hrs,
+                "service_name":   service_name or "",
+                "notes":          notes or "",
+                "status":         "confirmed",
+                "created_at":     now,
+            }).execute()
+            booking = res.data[0] if res.data else None
+            if booking:
+                log.info("booking created (fallback, non-atomic)  id=%s  biz=%s",
+                         booking.get("id"), business_id)
+            return booking
+        except Exception as exc2:
+            log.error("create_booking fallback error: %s", exc2)
+            return None
 
 
 def get_bookings(business_id: int, upcoming_only: bool = True) -> list[dict]:
