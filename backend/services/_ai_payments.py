@@ -407,6 +407,15 @@ def _process_payment(
     from services._ai_memory import _update_order_history
 
     # 1. Create order
+    # Fix: order notification and pay-settings injection previously ran
+    # INSIDE this same try block. If either of those non-critical side
+    # effects raised anything unexpected, it was caught by the generic
+    # `except Exception` below and told the customer "Something went wrong
+    # saving your order" — even when create_order_supabase() had already
+    # succeeded and the order genuinely existed in the database. Both are
+    # now moved outside this try block, each with its own isolated
+    # try/except, so a side-effect failure can never masquerade as an
+    # order-creation failure again.
     try:
         log.info("checkout  method=%s  phone=%s  items=%d", method, phone, len(cart))
         order = create_order_supabase(
@@ -417,17 +426,6 @@ def _process_payment(
         )
         order["business_name"]   = business_name
         order["currency_symbol"] = currency_sym  # ensures EcoCash/PayPal instructions use correct currency
-
-        # Instant order notification to the business owner — fire-and-forget,
-        # never affects the customer's checkout flow if it fails.
-        _notify_business_new_order(
-            business_id, order, phone, cart, currency_sym, phone_number_id, wa_token,
-        )
-        try:
-            pay_settings = crud.get_business_payment_settings(business_id)
-            order.update(pay_settings)
-        except Exception as exc:
-            log.warning("payment settings injection failed: %s", exc)
         log.info("order created  id=%s  method=%s", order.get("id", "?"), method)
     except ValueError as exc:
         log.warning("order blocked: %s", exc)
@@ -528,6 +526,24 @@ def _process_payment(
             "❌ Something went wrong saving your order.\n\n"
             "Your cart is still saved — please try *checkout* again in a moment."
         )
+
+    # 1b. Non-critical side effects — order already exists at this point, so
+    # neither of these can ever cause the customer to see an "order failed"
+    # message. Each is independently isolated; a failure in one doesn't
+    # skip the other or affect anything below.
+    try:
+        pay_settings = crud.get_business_payment_settings(business_id)
+        order.update(pay_settings)
+    except Exception as exc:
+        log.warning("payment settings injection failed (non-critical): %s", exc)
+
+    try:
+        # Instant order notification to the business owner — fire-and-forget.
+        _notify_business_new_order(
+            business_id, order, phone, cart, currency_sym, phone_number_id, wa_token,
+        )
+    except Exception as exc:
+        log.warning("order notification failed (non-critical): %s", exc)
 
     # 2. Call payment gateway
     try:
