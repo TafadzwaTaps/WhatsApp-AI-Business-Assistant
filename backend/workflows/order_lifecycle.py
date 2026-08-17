@@ -143,7 +143,18 @@ def create_order_supabase(
         qty   = int(item["qty"])
         price = float(item["price"])
 
-        reduce_stock_by_name(business_id, name, qty, _is_service_biz)
+        # Service businesses skip stock reduction entirely — there's nothing
+        # to reduce for a haircut or consultation. Calling reduce_stock_by_name
+        # WITHOUT the is_service_business argument here (rather than passing
+        # it through) is deliberate: services/inventory.py has repeatedly
+        # failed to deploy in sync with this file, and a version mismatch
+        # between the two crashes every single checkout with a TypeError.
+        # Skipping the call outright for services means this file no longer
+        # depends on inventory.py's signature matching at all — only
+        # product businesses (which never needed the extra parameter) call
+        # it, using the exact same call shape that has always worked.
+        if not _is_service_biz:
+            reduce_stock_by_name(business_id, name, qty)
 
         subtotal = price * qty
         total += subtotal
