@@ -134,6 +134,33 @@ _TIME_12H = re.compile(
 _TIME_24H = re.compile(r"\b(\d{1,2}):(\d{2})\b")
 _TIME_OCLOCK = re.compile(r"\b(\d{1,2})\s*o'?\s*clock\b", re.IGNORECASE)
 
+# Vague time-of-day words — used as a fallback ONLY when no exact time was
+# given at all, so "tomorrow afternoon" still produces something bookable
+# instead of forcing the customer back through another round-trip just to
+# name an exact hour. Deliberately conservative, business-hours-appropriate
+# defaults — a business can always be asked to adjust in the confirmation
+# step if the default doesn't suit them.
+_TIME_OF_DAY_WORDS = {
+    "early morning": "07:00", "morning": "09:00",
+    "midday": "12:00", "noon": "12:00", "lunchtime": "12:00",
+    "afternoon": "14:00", "mid-afternoon": "15:00",
+    "evening": "17:00", "tonight": "18:00", "late": "19:00",
+}
+_TIME_OF_DAY_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in sorted(_TIME_OF_DAY_WORDS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
+# Bare weekday name with no "next"/"this" prefix — e.g. just "Friday 10am".
+# _REL_NEXT_DAY/_REL_THIS_WEEK below require that prefix; this is the far
+# more natural, common phrasing and previously wasn't recognised at all.
+# Matches any full or abbreviated weekday name; resolved by taking the
+# first 3 letters and looking them up in _WEEKDAYS, which already has an
+# entry for every day in both forms.
+_REL_BARE_WEEKDAY = re.compile(
+    r"\b(mon|tue|wed|thu|fri|sat|sun)[a-z]*\b", re.IGNORECASE
+)
+
 # Duration
 _DUR_PATTERN = re.compile(
     r"\b(\d+(?:\.\d+)?)\s*(?:hour|hr|h)\s*(?:(\d+)\s*(?:min|minutes?))?\b",
@@ -214,6 +241,18 @@ def _resolve_relative_date(text: str) -> Optional[date]:
                     delta = 7
                 return today + timedelta(days=delta)
 
+    # Bare weekday name, no "next"/"this" prefix — e.g. just "Friday".
+    # Checked last so it never overrides a more specific match above
+    # (e.g. "next Friday" is still handled by _REL_NEXT_DAY first).
+    m = _REL_BARE_WEEKDAY.search(text)
+    if m:
+        target_wd = _WEEKDAYS.get(m.group(1).lower()[:3])
+        if target_wd is not None:
+            delta = (target_wd - today.weekday() + 7) % 7
+            if delta == 0:
+                delta = 7   # "today is Friday, customer says Friday" → next Friday
+            return today + timedelta(days=delta)
+
     return None
 
 
@@ -239,6 +278,14 @@ def _parse_time(text: str) -> Optional[str]:
         # If no am/pm, assume business hours: 1-8 → pm, 9-12 → am
         if 1 <= h <= 8: h += 12
         return f"{h:02d}:00"
+
+    # Vague time-of-day word ("afternoon", "evening"...) — last resort,
+    # only reached when no exact time was given at all. Lets a reply like
+    # "tomorrow afternoon" produce a real bookable slot instead of forcing
+    # another back-and-forth just to name an exact hour.
+    m = _TIME_OF_DAY_PATTERN.search(text)
+    if m:
+        return _TIME_OF_DAY_WORDS.get(m.group(1).lower())
 
     return None
 
@@ -273,6 +320,45 @@ def _format_time(t: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # PUBLIC PARSE FUNCTION
 # ─────────────────────────────────────────────────────────────────────────────
+
+def parse_date_time_only(text: str) -> tuple:
+    """
+    Extract a date and/or time from text WITHOUT requiring a booking-intent
+    keyword ("book", "schedule"...) — for use when intent is already
+    established by conversation state (the customer is already mid-booking,
+    e.g. replying to "what day works for you?"), where a bare reply like
+    "tomorrow" or "3pm" should parse on its own rather than being rejected
+    for not containing the word "book".
+
+    Returns (date_str, time_str) — either may be None if not found in text.
+    Reuses the exact same date/time extraction as parse_booking_request();
+    only the intent-keyword gate is skipped.
+    """
+    date_str = None
+    time_str = None
+
+    m = _DATE_RANGE.search(text)
+    if m:
+        d1 = _parse_date_str(m.group(1))
+        if d1:
+            date_str = d1.isoformat()
+    if not date_str:
+        rel = _resolve_relative_date(text.lower())
+        if rel:
+            date_str = rel.isoformat()
+    if not date_str:
+        for pattern in (_DATE_ISO, _DATE_SLASH, _DATE_WORDS):
+            m = pattern.search(text)
+            if m:
+                parsed = _parse_date_str(m.group(0))
+                if parsed:
+                    date_str = parsed.isoformat()
+                    break
+
+    time_str = _parse_time(text)
+
+    return date_str, time_str
+
 
 def parse_booking_request(text: str) -> ParsedBooking:
     """

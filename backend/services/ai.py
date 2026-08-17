@@ -784,102 +784,183 @@ def generate_reply(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
-    # P0.2b — AWAITING APPOINTMENT TIME (service businesses only)
-    # Replaces the delivery/pickup question for services — a haircut or
-    # consultation doesn't get delivered or picked up, it gets scheduled.
+    # P0.2b — BOOKING FLOW (service businesses only) — happens BEFORE payment
+    # Replaces the old delivery/pickup question for services entirely — a
+    # haircut or consultation doesn't get delivered or picked up, it gets
+    # scheduled. Collecting the appointment slot before asking for payment
+    # (rather than after, which read as confusing — "Booking confirmed!"
+    # followed immediately by "now tell us when") means the customer always
+    # knows exactly what they're paying for before they pay.
+    #
     # Reuses the same NLP parsing, availability checking, and atomic
     # double-booking-safe creation already built for the standalone
-    # WhatsApp booking flow (services/booking_service.py), so a paid
-    # service order becomes a real row in the bookings table — visible in
-    # the dashboard's Bookings calendar, eligible for reminders, and
-    # protected by the same conflict-safe creation logic.
+    # WhatsApp booking flow (services/booking_service.py) — a paid service
+    # order becomes a real row in the bookings table, visible in the
+    # dashboard's Bookings calendar and eligible for reminders.
     # ══════════════════════════════════════════════════════════════════════════
-    if current_state == "awaiting_appointment_time":
-        session   = _read_state_data(phone, business_id).get("session") or {}
-        order_id  = session.get("order_id")
-        reference = session.get("reference", f"ORDER-{order_id}" if order_id else "your order")
-        log.info("awaiting_appointment_time  order=%s  ref=%s  text=%r", order_id, reference, text)
+    if current_state == "awaiting_booking_date":
+        session  = _get_session(phone, business_id)
+        snapshot = session.get("cart_snapshot") or cart
 
-        try:
-            from services.booking_service import parse_booking_request, check_availability, create_booking
+        if text.strip().lower() == "cancel":
+            _reset_state(phone, business_id)
+            return "🚫 No problem — booking cancelled. Type *menu* to start again."
 
-            # parse_booking_request() only parses text that already contains
-            # a booking-intent keyword ("book", "schedule", etc.) — correct
-            # for the standalone WhatsApp booking flow where intent isn't
-            # yet established, but at this point the customer has already
-            # paid and been asked specifically for a time, so their reply
-            # ("tomorrow at 3pm") won't contain those keywords on its own.
-            # Prepending one reuses the existing, working parser as-is
-            # rather than duplicating or modifying its intent detection.
-            parsed = parse_booking_request(f"book {text}")
+        from services.booking_service import parse_date_time_only, check_availability, _format_date, _format_time
+        date_str, time_str = parse_date_time_only(text)
 
-            if not parsed.has_booking_intent or not parsed.date_str or not parsed.time_str:
-                return (
-                    f"🤔 I couldn't quite catch a day and time in that.\n\n"
-                    f"Please reply with something like *\"tomorrow at 3pm\"* or *\"Friday 10am\"*.\n"
-                    f"_Type *cancel* if you'd rather we contact you to arrange a time._"
-                )
+        if not date_str:
+            return (
+                "🤔 I didn't quite catch a day there.\n\n"
+                "Try something like *\"tomorrow\"*, *\"Friday\"*, or *\"20 August\"*.\n"
+                "_Type *cancel* to stop booking._"
+            )
 
-            avail = check_availability(business_id, parsed.date_str, parsed.time_str, 1.0)
+        if time_str:
+            avail = check_availability(business_id, date_str, time_str, 1.0)
             if not avail.get("available"):
                 return (
-                    f"😔 Sorry, that time isn't available "
+                    "😔 Sorry, that time isn't available "
                     f"({avail.get('reason', 'slot taken')}).\n\n"
-                    f"Please suggest another day/time — e.g. *\"Friday 2pm\"*."
+                    "Please suggest another day/time — e.g. *\"Friday 2pm\"*."
                 )
-
-            product_name = ""
-            try:
-                cart_snapshot = _get_session(phone, business_id).get("cart_snapshot") or []
-                if cart_snapshot:
-                    product_name = cart_snapshot[0].get("name", "")
-            except Exception:
-                pass
-
-            booking = create_booking(
-                business_id=business_id, customer_phone=phone,
-                booking_date=parsed.date_str, start_time=parsed.time_str,
-                duration_hrs=1.0, service_name=product_name,
-                notes=f"Linked to {reference}",
-            )
-
-            if not booking:
-                return (
-                    f"😔 Sorry, that time was just booked. Please choose another available time — "
-                    f"e.g. *\"Friday 2pm\"*."
-                )
-
-            _reset_state(phone, business_id)
-
+            from services._ai_state import _set_booking_confirm
+            _set_booking_confirm(phone, business_id, snapshot, date_str, time_str)
             from datetime import date as _date_cls
+            try:
+                date_disp = _format_date(_date_cls.fromisoformat(date_str))
+            except Exception:
+                date_disp = date_str
+            time_disp = _format_time(time_str)
+            return (
+                f"📅 *{date_disp}* at *{time_disp}* — sound good?\n\n"
+                "Reply *yes* to confirm and move on to payment, "
+                "or suggest a different day/time."
+            )
+
+        from services._ai_state import _set_awaiting_booking_time
+        _set_awaiting_booking_time(phone, business_id, snapshot, date_str)
+        from datetime import date as _date_cls
+        try:
+            date_disp = _format_date(_date_cls.fromisoformat(date_str))
+        except Exception:
+            date_disp = date_str
+        return (
+            f"Got it — *{date_disp}*! ⏰ What time works for you?\n"
+            "_e.g. \"10am\", \"2:30pm\", or \"afternoon\"_"
+        )
+
+    if current_state == "awaiting_booking_time":
+        session      = _get_session(phone, business_id)
+        snapshot     = session.get("cart_snapshot") or cart
+        booking_date = session.get("booking_date")
+
+        if text.strip().lower() == "cancel":
+            _reset_state(phone, business_id)
+            return "🚫 No problem — booking cancelled. Type *menu* to start again."
+
+        if not booking_date:
+            from services._ai_state import _set_awaiting_booking_date
+            _set_awaiting_booking_date(phone, business_id, snapshot)
+            return (
+                "🤔 Let's start over on the date — what day works for you?\n"
+                "_e.g. \"tomorrow\" or \"Friday\"_"
+            )
+
+        from services.booking_service import parse_date_time_only, check_availability, _format_date, _format_time
+        _, time_str = parse_date_time_only(text)
+
+        if not time_str:
+            return (
+                "🤔 I didn't catch a time there.\n\n"
+                "Try something like *\"10am\"*, *\"2:30pm\"*, or *\"afternoon\"*.\n"
+                "_Type *cancel* to stop booking._"
+            )
+
+        avail = check_availability(business_id, booking_date, time_str, 1.0)
+        if not avail.get("available"):
+            return (
+                "😔 Sorry, that time isn't available "
+                f"({avail.get('reason', 'slot taken')}).\n\n"
+                "Please suggest another time for that day."
+            )
+
+        from services._ai_state import _set_booking_confirm
+        _set_booking_confirm(phone, business_id, snapshot, booking_date, time_str)
+        from datetime import date as _date_cls
+        try:
+            date_disp = _format_date(_date_cls.fromisoformat(booking_date))
+        except Exception:
+            date_disp = booking_date
+        time_disp = _format_time(time_str)
+        return (
+            f"📅 *{date_disp}* at *{time_disp}* — sound good?\n\n"
+            "Reply *yes* to confirm and move on to payment, "
+            "or suggest a different day/time."
+        )
+
+    if current_state == "booking_confirm":
+        session      = _get_session(phone, business_id)
+        snapshot     = session.get("cart_snapshot") or cart
+        booking_date = session.get("booking_date")
+        booking_time = session.get("booking_time")
+
+        if text.strip().lower() == "cancel":
+            _reset_state(phone, business_id)
+            return "🚫 No problem — booking cancelled. Type *menu* to start again."
+
+        if _is_yes(text):
+            _set_checkout_state(phone, business_id, snapshot,
+                                 booking_date=booking_date, booking_time=booking_time)
             from services.booking_service import _format_date, _format_time
+            from datetime import date as _date_cls
             try:
-                date_disp = _format_date(_date_cls.fromisoformat(parsed.date_str))
+                date_disp = _format_date(_date_cls.fromisoformat(booking_date))
             except Exception:
-                date_disp = parsed.date_str
-            try:
-                time_disp = _format_time(parsed.time_str)
-            except Exception:
-                time_disp = parsed.time_str
-
+                date_disp = booking_date
+            time_disp = _format_time(booking_time) if booking_time else ""
+            payment_menu = _build_payment_menu(snapshot, business_id, _currency_sym)
             return (
-                f"✅ *Booking confirmed!*\n\n"
-                f"📦 Order    : *{reference}*\n"
-                f"🗓️ Date     : *{date_disp}*\n"
-                f"⏰ Time     : *{time_disp}*\n\n"
-                f"We look forward to seeing you! 😊\n"
-                f"_Type *{reference.lower()}* anytime to check your status._"
-            )
-        except Exception as exc:
-            log.exception("awaiting_appointment_time error: %s", exc)
-            _set_human_handoff(phone, business_id)
-            return (
-                f"❌ We're having trouble scheduling your appointment right now.\n"
-                f"I've notified the business owner to help you directly — "
-                f"they'll be with you shortly. 🙏\n\n"
-                f"Your order *{reference}* is saved, so nothing is lost."
+                f"🗓️ *Appointment: {date_disp} at {time_disp}*\n\n"
+                f"{payment_menu}"
             )
 
+        from services.booking_service import parse_date_time_only, check_availability, _format_date, _format_time
+        date_str, time_str = parse_date_time_only(text)
+        date_str = date_str or booking_date
+        time_str = time_str or booking_time
+
+        if not date_str or not time_str:
+            return (
+                "Reply *yes* to confirm, or tell me a different day/time — "
+                "e.g. *\"Saturday 11am\"*.\n"
+                "_Type *cancel* to stop booking._"
+            )
+
+        avail = check_availability(business_id, date_str, time_str, 1.0)
+        if not avail.get("available"):
+            return (
+                "😔 Sorry, that time isn't available "
+                f"({avail.get('reason', 'slot taken')}).\n\n"
+                "Please suggest another day/time."
+            )
+
+        from services._ai_state import _set_booking_confirm
+        _set_booking_confirm(phone, business_id, snapshot, date_str, time_str)
+        from datetime import date as _date_cls
+        try:
+            date_disp = _format_date(_date_cls.fromisoformat(date_str))
+        except Exception:
+            date_disp = date_str
+        time_disp = _format_time(time_str)
+        return (
+            f"📅 *{date_disp}* at *{time_disp}* — sound good?\n\n"
+            "Reply *yes* to confirm and move on to payment, "
+            "or suggest a different day/time."
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P0.3 — AWAITING FULFILLMENT (delivery vs pickup)
     # ══════════════════════════════════════════════════════════════════════════
     # P0.3 — AWAITING FULFILLMENT (delivery vs pickup)
     # ══════════════════════════════════════════════════════════════════════════
@@ -1064,23 +1145,22 @@ def generate_reply(
                 else f"📋 *Reference noted:* `{proof_value}`"
             )
 
-            # Service businesses don't have delivery/pickup — they have a
-            # booking time. Checked first, before any of the delivery/
-            # pickup branching below, so a service business's flow never
-            # falls into fulfillment-method logic that doesn't apply to it.
+            # Service businesses now book their appointment BEFORE reaching
+            # payment at all (see the confirm_order/awaiting_booking_date/
+            # awaiting_booking_time/booking_confirm states earlier in this
+            # function) — by the time proof is submitted here, the slot is
+            # already secured, so there's nothing further to ask. Just
+            # confirm receipt and stop, rather than asking a redundant
+            # "when would you like to come in?" a second time.
             if _is_service_biz:
-                from services._ai_state import _set_awaiting_appointment_time
-                _set_awaiting_appointment_time(phone, business_id,
-                                               order_id=order_id, reference=reference)
+                _reset_state(phone, business_id)
                 return (
                     f"✅ *Payment proof received. Thank you!*\n\n"
                     f"{proof_display}\n"
                     f"📦 *{reference}* | 💳 {method_label}\n\n"
                     f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
-                    f"{'─' * 28}\n"
-                    f"🗓️ *When would you like to come in?*\n\n"
-                    f"_Reply with your preferred day and time —_\n"
-                    f"_e.g. \"tomorrow at 3pm\" or \"Friday 10am\"_"
+                    f"🗓️ Your appointment is booked — we'll see you then! 😊\n"
+                    f"_Type *{reference.lower()}* anytime to check your status._"
                 )
 
             _set_awaiting_fulfillment(phone, business_id,
@@ -1221,6 +1301,15 @@ def generate_reply(
         snapshot = session.get("cart_snapshot") or cart
 
         if _is_yes(text):
+            if _is_service_biz:
+                from services._ai_state import _set_awaiting_booking_date
+                _set_awaiting_booking_date(phone, business_id, snapshot)
+                svc_name = snapshot[0].get("name", "your appointment") if snapshot else "your appointment"
+                return (
+                    f"🎉 Great choice! Let's get *{svc_name}* booked in.\n\n"
+                    f"🗓️ What day works for you?\n"
+                    f"_e.g. \"tomorrow\", \"Friday\", or \"20 August\"_"
+                )
             _set_checkout_state(phone, business_id, snapshot)
             return _build_payment_menu(snapshot, business_id, _currency_sym)
 

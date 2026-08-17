@@ -76,8 +76,23 @@ class STATE:
 # Valid state transitions. Key = current state, value = set of allowed next states.
 _TRANSITIONS: dict[str, set[str]] = {
     STATE.BROWSING:         {STATE.CONFIRM_ORDER, STATE.CHECKOUT, STATE.HUMAN_HANDOFF},
-    STATE.CONFIRM_ORDER:    {STATE.CHECKOUT, STATE.BROWSING, STATE.CANCELLED},
+    # AWAITING_BOOKING_DATE added here — service businesses go collect an
+    # appointment slot before payment, instead of going straight to CHECKOUT.
+    STATE.CONFIRM_ORDER:    {STATE.CHECKOUT, STATE.AWAITING_BOOKING_DATE, STATE.BROWSING, STATE.CANCELLED},
     STATE.CHECKOUT:         {STATE.AWAITING_PAYMENT, STATE.BROWSING, STATE.CANCELLED},
+
+    # Booking states — were defined in STATE.ALL but never wired into the
+    # transition map, so they were unreachable. A customer can jump straight
+    # from AWAITING_BOOKING_DATE to BOOKING_CONFIRM (or even CHECKOUT) if
+    # they give both a day and a time in one message — the flow only asks
+    # for what's still missing rather than forcing rigid one-field-at-a-time
+    # steps.
+    STATE.AWAITING_BOOKING_DATE: {STATE.AWAITING_BOOKING_TIME, STATE.BOOKING_CONFIRM,
+                                   STATE.CHECKOUT, STATE.BROWSING, STATE.CANCELLED},
+    STATE.AWAITING_BOOKING_TIME: {STATE.BOOKING_CONFIRM, STATE.CHECKOUT,
+                                   STATE.BROWSING, STATE.CANCELLED},
+    STATE.BOOKING_CONFIRM:       {STATE.CHECKOUT, STATE.AWAITING_BOOKING_DATE,
+                                   STATE.BROWSING, STATE.CANCELLED},
     STATE.AWAITING_PAYMENT: {STATE.AWAITING_PROOF, STATE.AWAITING_FULFILLMENT,
                               STATE.COMPLETED, STATE.CANCELLED, STATE.MANUAL_REVIEW},
     STATE.AWAITING_PROOF:   {STATE.AWAITING_FULFILLMENT, STATE.MANUAL_REVIEW, STATE.CANCELLED},
@@ -156,6 +171,9 @@ def is_active_order_state(state: str) -> bool:
         STATE.AWAITING_FULFILLMENT,
         STATE.AWAITING_ADDRESS,
         STATE.MANUAL_REVIEW,
+        STATE.AWAITING_BOOKING_DATE,
+        STATE.AWAITING_BOOKING_TIME,
+        STATE.BOOKING_CONFIRM,
     }
 
 

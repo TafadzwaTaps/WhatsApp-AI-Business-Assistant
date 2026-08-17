@@ -403,9 +403,20 @@ def _process_payment(
     )
     from services._ai_state import (
         _set_awaiting_payment, _set_awaiting_fulfillment, _write_state_data,
-        _get_session, _set_awaiting_appointment_time,
+        _get_session, _reset_state, _set_human_handoff,
     )
     from services._ai_memory import _update_order_history
+
+    # For service businesses, the appointment slot is chosen and validated
+    # BEFORE reaching payment (see the awaiting_booking_date/_time/
+    # booking_confirm states in ai.py) — read it now, before the state
+    # transitions below move away from "checkout" and this session data
+    # becomes unreachable.
+    _booking_date = _booking_time = None
+    if is_service_business:
+        _pre_payment_session = _get_session(phone, business_id)
+        _booking_date = _pre_payment_session.get("booking_date")
+        _booking_time = _pre_payment_session.get("booking_time")
 
     # 1. Create order
     # Fix: order notification and pay-settings injection previously ran
@@ -546,6 +557,35 @@ def _process_payment(
     except Exception as exc:
         log.warning("order notification failed (non-critical): %s", exc)
 
+    # 1c. Create the actual appointment booking, using the slot the customer
+    # already picked and had validated during checkout. Unlike the two
+    # side-effects above, whether this succeeds genuinely matters to the
+    # customer (they need to know if their time was secured) — but it still
+    # can't turn into a false "order failed" message, since the order is
+    # already committed by this point regardless of what happens here. The
+    # rare failure case (someone else took the slot in the few seconds
+    # between confirmation and payment) is surfaced honestly in the reply
+    # built below, not silently swallowed.
+    _booking_created = None
+    if is_service_business and _booking_date and _booking_time:
+        try:
+            from services.booking_service import create_booking
+            product_name = cart[0].get("name", "") if cart else ""
+            _booking_created = create_booking(
+                business_id=business_id, customer_phone=phone,
+                booking_date=_booking_date, start_time=_booking_time,
+                duration_hrs=1.0, service_name=product_name,
+                notes=f"Linked to ORDER-{order.get('id', '')}",
+            )
+            if _booking_created:
+                log.info("booking created  id=%s  order=%s  date=%s  time=%s",
+                         _booking_created.get("id"), order.get("id"), _booking_date, _booking_time)
+            else:
+                log.warning("booking creation lost race at payment time  order=%s  date=%s  time=%s",
+                            order.get("id"), _booking_date, _booking_time)
+        except Exception as exc:
+            log.warning("booking creation failed: %s", exc)
+
     # 2. Call payment gateway
     try:
         if method == "ecocash":
@@ -607,7 +647,18 @@ def _process_payment(
     ref = pay.get("reference", f"ORDER-{oid}")
 
     if method == "cash" and is_service_business:
-        _set_awaiting_appointment_time(phone, business_id, order_id=oid, reference=ref)
+        if _booking_created or not (_booking_date and _booking_time):
+            # Nothing further to ask — the appointment slot was already
+            # chosen and validated before payment.
+            _reset_state(phone, business_id)
+        else:
+            # Rare conflict case — hand off to a human rather than trying
+            # to route the customer's next free-text reply through a new
+            # retry state (the booking states all lead toward payment,
+            # which has already happened here — building a separate
+            # "already-paid retry" sub-flow for an edge case this rare
+            # isn't worth the added complexity).
+            _set_human_handoff(phone, business_id)
     elif method == "cash":
         _set_awaiting_fulfillment(phone, business_id, order_id=oid, reference=ref)
     elif auto_verified:
@@ -626,15 +677,35 @@ def _process_payment(
     # 8. Return payment message
     if method == "cash" and is_service_business:
         total = float(order.get("total_price") or 0)
+        if _booking_created:
+            from services.booking_service import _format_date, _format_time
+            from datetime import date as _date_cls
+            try:
+                date_disp = _format_date(_date_cls.fromisoformat(_booking_date))
+            except Exception:
+                date_disp = _booking_date
+            time_disp = _format_time(_booking_time)
+            return (
+                f"✅ *All set!*\n\n"
+                f"📦 Order       : *{ref}*\n"
+                f"🗓️ Appointment : *{date_disp} at {time_disp}*\n"
+                f"💰 Total       : *{currency_sym}{total:.2f}*\n"
+                f"💵 Payment     : *Cash on arrival*\n\n"
+                f"We look forward to seeing you! 😊\n"
+                f"_Type *{ref.lower()}* anytime to check your status._"
+            )
+        # Rare: the slot was taken by someone else in the few seconds
+        # between confirmation and payment. The order/payment is still
+        # valid — only the specific time wasn't secured — so this is
+        # honest about that rather than silently pretending it worked.
         return (
-            f"✅ *Booking confirmed!*\n\n"
+            f"✅ *Order confirmed!* (payment received)\n\n"
             f"📦 Order   : *{ref}*\n"
             f"💰 Total   : *{currency_sym}{total:.2f}*\n"
             f"💵 Payment : *Cash on arrival*\n\n"
-            f"{'─' * 28}\n"
-            f"🗓️ *When would you like to come in?*\n\n"
-            f"_Reply with your preferred day and time —_\n"
-            f"_e.g. \"tomorrow at 3pm\" or \"Friday 10am\"_"
+            f"😔 Unfortunately your chosen time was just taken by someone else.\n"
+            f"Please reply with another day/time and we'll lock it in — "
+            f"e.g. *\"Friday 2pm\"*."
         )
     if method == "cash":
         total = float(order.get("total_price") or 0)

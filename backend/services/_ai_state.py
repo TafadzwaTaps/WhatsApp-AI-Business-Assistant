@@ -94,13 +94,51 @@ def _set_state(phone: str, business_id: int, state: str, **extra) -> None:
     _write_state_data(phone, business_id, patch)
 
 
-def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list) -> None:
+def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list,
+                         booking_date: str = None, booking_time: str = None) -> None:
     from services.conversation_service import can_transition, STATE
     current = _get_state(phone, business_id)
     if not can_transition(current, STATE.CHECKOUT):
         log.warning("_set_checkout_state: invalid transition %s→checkout  phone=%s", current, phone)
+    session = {"cart_snapshot": cart_snapshot}
+    # Optional — set when a service business has already picked an
+    # appointment slot before reaching checkout, so _process_payment can
+    # create the booking alongside the order. None for every existing
+    # caller (product businesses), so this is fully backward compatible.
+    if booking_date:
+        session["booking_date"] = booking_date
+    if booking_time:
+        session["booking_time"] = booking_time
     _set_state(phone, business_id, "checkout",
+               session=session,
+               pending_payment=None)
+
+
+def _set_awaiting_booking_date(phone: str, business_id: int, cart_snapshot: list) -> None:
+    """
+    Enter awaiting_booking_date — service businesses collect an appointment
+    slot BEFORE payment, rather than being asked to pay first and then
+    asked when they'd like to come in (confusing, and what this replaces).
+    """
+    _set_state(phone, business_id, "awaiting_booking_date",
                session={"cart_snapshot": cart_snapshot},
+               pending_payment=None)
+
+
+def _set_awaiting_booking_time(phone: str, business_id: int, cart_snapshot: list,
+                                booking_date: str) -> None:
+    """Enter awaiting_booking_time — a valid date was given, still need a time."""
+    _set_state(phone, business_id, "awaiting_booking_time",
+               session={"cart_snapshot": cart_snapshot, "booking_date": booking_date},
+               pending_payment=None)
+
+
+def _set_booking_confirm(phone: str, business_id: int, cart_snapshot: list,
+                          booking_date: str, booking_time: str) -> None:
+    """Enter booking_confirm — full date+time known and available; customer reviews before paying."""
+    _set_state(phone, business_id, "booking_confirm",
+               session={"cart_snapshot": cart_snapshot, "booking_date": booking_date,
+                        "booking_time": booking_time},
                pending_payment=None)
 
 
