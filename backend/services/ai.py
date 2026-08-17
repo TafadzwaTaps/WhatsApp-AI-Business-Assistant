@@ -784,6 +784,103 @@ def generate_reply(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P0.2b — AWAITING APPOINTMENT TIME (service businesses only)
+    # Replaces the delivery/pickup question for services — a haircut or
+    # consultation doesn't get delivered or picked up, it gets scheduled.
+    # Reuses the same NLP parsing, availability checking, and atomic
+    # double-booking-safe creation already built for the standalone
+    # WhatsApp booking flow (services/booking_service.py), so a paid
+    # service order becomes a real row in the bookings table — visible in
+    # the dashboard's Bookings calendar, eligible for reminders, and
+    # protected by the same conflict-safe creation logic.
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "awaiting_appointment_time":
+        session   = _read_state_data(phone, business_id).get("session") or {}
+        order_id  = session.get("order_id")
+        reference = session.get("reference", f"ORDER-{order_id}" if order_id else "your order")
+        log.info("awaiting_appointment_time  order=%s  ref=%s  text=%r", order_id, reference, text)
+
+        try:
+            from services.booking_service import parse_booking_request, check_availability, create_booking
+
+            # parse_booking_request() only parses text that already contains
+            # a booking-intent keyword ("book", "schedule", etc.) — correct
+            # for the standalone WhatsApp booking flow where intent isn't
+            # yet established, but at this point the customer has already
+            # paid and been asked specifically for a time, so their reply
+            # ("tomorrow at 3pm") won't contain those keywords on its own.
+            # Prepending one reuses the existing, working parser as-is
+            # rather than duplicating or modifying its intent detection.
+            parsed = parse_booking_request(f"book {text}")
+
+            if not parsed.has_booking_intent or not parsed.date_str or not parsed.time_str:
+                return (
+                    f"🤔 I couldn't quite catch a day and time in that.\n\n"
+                    f"Please reply with something like *\"tomorrow at 3pm\"* or *\"Friday 10am\"*.\n"
+                    f"_Type *cancel* if you'd rather we contact you to arrange a time._"
+                )
+
+            avail = check_availability(business_id, parsed.date_str, parsed.time_str, 1.0)
+            if not avail.get("available"):
+                return (
+                    f"😔 Sorry, that time isn't available "
+                    f"({avail.get('reason', 'slot taken')}).\n\n"
+                    f"Please suggest another day/time — e.g. *\"Friday 2pm\"*."
+                )
+
+            product_name = ""
+            try:
+                cart_snapshot = _get_session(phone, business_id).get("cart_snapshot") or []
+                if cart_snapshot:
+                    product_name = cart_snapshot[0].get("name", "")
+            except Exception:
+                pass
+
+            booking = create_booking(
+                business_id=business_id, customer_phone=phone,
+                booking_date=parsed.date_str, start_time=parsed.time_str,
+                duration_hrs=1.0, service_name=product_name,
+                notes=f"Linked to {reference}",
+            )
+
+            if not booking:
+                return (
+                    f"😔 Sorry, that time was just booked. Please choose another available time — "
+                    f"e.g. *\"Friday 2pm\"*."
+                )
+
+            _reset_state(phone, business_id)
+
+            from datetime import date as _date_cls
+            from services.booking_service import _format_date, _format_time
+            try:
+                date_disp = _format_date(_date_cls.fromisoformat(parsed.date_str))
+            except Exception:
+                date_disp = parsed.date_str
+            try:
+                time_disp = _format_time(parsed.time_str)
+            except Exception:
+                time_disp = parsed.time_str
+
+            return (
+                f"✅ *Booking confirmed!*\n\n"
+                f"📦 Order    : *{reference}*\n"
+                f"🗓️ Date     : *{date_disp}*\n"
+                f"⏰ Time     : *{time_disp}*\n\n"
+                f"We look forward to seeing you! 😊\n"
+                f"_Type *{reference.lower()}* anytime to check your status._"
+            )
+        except Exception as exc:
+            log.exception("awaiting_appointment_time error: %s", exc)
+            _set_human_handoff(phone, business_id)
+            return (
+                f"❌ We're having trouble scheduling your appointment right now.\n"
+                f"I've notified the business owner to help you directly — "
+                f"they'll be with you shortly. 🙏\n\n"
+                f"Your order *{reference}* is saved, so nothing is lost."
+            )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P0.3 — AWAITING FULFILLMENT (delivery vs pickup)
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "awaiting_fulfillment":
@@ -958,9 +1055,6 @@ def generate_reply(
             except Exception as exc:
                 log.warning("proof recording failed: %s", exc)
 
-            _set_awaiting_fulfillment(phone, business_id,
-                                      order_id=order_id, reference=reference)
-
             method_label = {"ecocash": "EcoCash", "paypal": "PayPal", "cash": "Cash"}.get(
                 method, method.title()
             )
@@ -969,6 +1063,28 @@ def generate_reply(
                 if proof_value == "image_attached"
                 else f"📋 *Reference noted:* `{proof_value}`"
             )
+
+            # Service businesses don't have delivery/pickup — they have a
+            # booking time. Checked first, before any of the delivery/
+            # pickup branching below, so a service business's flow never
+            # falls into fulfillment-method logic that doesn't apply to it.
+            if _is_service_biz:
+                from services._ai_state import _set_awaiting_appointment_time
+                _set_awaiting_appointment_time(phone, business_id,
+                                               order_id=order_id, reference=reference)
+                return (
+                    f"✅ *Payment proof received. Thank you!*\n\n"
+                    f"{proof_display}\n"
+                    f"📦 *{reference}* | 💳 {method_label}\n\n"
+                    f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
+                    f"{'─' * 28}\n"
+                    f"🗓️ *When would you like to come in?*\n\n"
+                    f"_Reply with your preferred day and time —_\n"
+                    f"_e.g. \"tomorrow at 3pm\" or \"Friday 10am\"_"
+                )
+
+            _set_awaiting_fulfillment(phone, business_id,
+                                      order_id=order_id, reference=reference)
 
             # Clean proof-received confirmation — no mixed concerns.
             # Only ask delivery vs pickup if both options are available.
@@ -1150,6 +1266,7 @@ def generate_reply(
                 phone=phone, business_id=business_id, business_name=business_name,
                 currency_sym=_currency_sym,
                 phone_number_id=_phone_number_id, wa_token=_wa_token,
+                is_service_business=_is_service_biz,
             )
 
         from services.payment_service import available_methods

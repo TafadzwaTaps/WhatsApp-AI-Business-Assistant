@@ -393,6 +393,7 @@ def _process_payment(
     currency_sym: str = "$",
     phone_number_id: str = "",
     wa_token: str = "",
+    is_service_business: bool = False,
 ) -> str:
     from workflows.order_lifecycle import create_order_supabase
     from services.payment_service import (
@@ -402,7 +403,7 @@ def _process_payment(
     )
     from services._ai_state import (
         _set_awaiting_payment, _set_awaiting_fulfillment, _write_state_data,
-        _get_session,
+        _get_session, _set_awaiting_appointment_time,
     )
     from services._ai_memory import _update_order_history
 
@@ -605,7 +606,9 @@ def _process_payment(
     oid = order.get("id")
     ref = pay.get("reference", f"ORDER-{oid}")
 
-    if method == "cash":
+    if method == "cash" and is_service_business:
+        _set_awaiting_appointment_time(phone, business_id, order_id=oid, reference=ref)
+    elif method == "cash":
         _set_awaiting_fulfillment(phone, business_id, order_id=oid, reference=ref)
     elif auto_verified:
         _set_awaiting_payment(phone, business_id, order_id=oid, method=method, reference=ref)
@@ -621,6 +624,18 @@ def _process_payment(
     _send_pdf_invoice(order, phone, business_id)
 
     # 8. Return payment message
+    if method == "cash" and is_service_business:
+        total = float(order.get("total_price") or 0)
+        return (
+            f"✅ *Booking confirmed!*\n\n"
+            f"📦 Order   : *{ref}*\n"
+            f"💰 Total   : *{currency_sym}{total:.2f}*\n"
+            f"💵 Payment : *Cash on arrival*\n\n"
+            f"{'─' * 28}\n"
+            f"🗓️ *When would you like to come in?*\n\n"
+            f"_Reply with your preferred day and time —_\n"
+            f"_e.g. \"tomorrow at 3pm\" or \"Friday 10am\"_"
+        )
     if method == "cash":
         total = float(order.get("total_price") or 0)
         return (

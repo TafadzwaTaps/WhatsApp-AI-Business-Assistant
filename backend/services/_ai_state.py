@@ -173,6 +173,19 @@ def _set_awaiting_address(phone: str, business_id: int,
                session={"order_id": order_id, "reference": reference})
 
 
+def _set_awaiting_appointment_time(phone: str, business_id: int,
+                                    order_id, reference: str) -> None:
+    """
+    Enter awaiting_appointment_time state — service businesses don't have
+    delivery/pickup, they have a booking time. Mirrors _set_awaiting_fulfillment
+    exactly, just a distinctly-named state so product-business behaviour
+    (delivery/pickup) is never at risk of being touched by this addition.
+    """
+    _set_state(phone, business_id, "awaiting_appointment_time",
+               session={"order_id": order_id, "reference": reference},
+               pending_payment=None, pending_proof=None)
+
+
 def _set_human_handoff(phone: str, business_id: int) -> None:
     """Pause AI and flag this customer for human agent attention."""
     _set_state(phone, business_id, "human_handoff",
