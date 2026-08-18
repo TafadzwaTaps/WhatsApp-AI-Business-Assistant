@@ -769,7 +769,14 @@ def format_booking_confirmation(booking: dict, business_name: str = "") -> str:
 
 
 def format_reminder_message(booking: dict, business_name: str = "") -> str:
-    """WhatsApp reminder message sent before the appointment."""
+    """
+    WhatsApp reminder message sent before the appointment. Explicitly asks
+    the customer to confirm or cancel — a plain "your appointment is coming
+    up" notice doesn't tell the business whether the customer is actually
+    still coming, which is the whole point of sending a reminder in the
+    first place. The customer's yes/no reply is handled by the
+    awaiting_reminder_response conversation state (see ai.py).
+    """
     d   = booking.get("booking_date", "")
     t   = booking.get("start_time", "")
     svc = booking.get("service_name", "")
@@ -788,8 +795,8 @@ def format_reminder_message(booking: dict, business_name: str = "") -> str:
         f"Your appointment{svc_line} is coming up{biz_line}!\n\n"
         f"  📅 *{d_fmt}*\n"
         f"  🕐 *{t_fmt}*\n\n"
-        f"We look forward to seeing you! 😊\n\n"
-        f"_Need to cancel or reschedule? Reply *cancel booking* or *reschedule booking*._"
+        f"Are you still able to make it? 😊\n\n"
+        f"Reply *yes* to confirm, or *no* if you need to cancel."
     )
 
 

@@ -133,7 +133,15 @@ def _biz_paypal_email(order: dict) -> tuple[str, str]:
 def available_methods(order: dict = None) -> list[str]:
     """
     Return ordered list of configured payment methods for this business.
-    Cash is always included. Order: EcoCash → PayPal → Cash.
+    Cash is always included. Order: EcoCash → Bank Transfer → BLIK → PayPal → Cash.
+
+    EcoCash, Bank Transfer, and BLIK are all opt-in — a method only appears
+    if the business has actually configured it (an EcoCash number, bank
+    details, or a BLIK number respectively). This means a Poland-based
+    business never sees an irrelevant "EcoCash (Zimbabwe)" option unless
+    they specifically set one up (e.g. to serve Zimbabwean diaspora
+    customers), and can instead configure Bank Transfer or BLIK — payment
+    methods that actually make sense for their region — in Settings.
     """
     order   = order or {}
     methods: list[str] = []
@@ -141,6 +149,12 @@ def available_methods(order: dict = None) -> list[str]:
     eco_number, _ = _biz_ecocash(order)
     if eco_number:
         methods.append("ecocash")
+
+    if (order.get("bank_transfer_details") or "").strip():
+        methods.append("banktransfer")
+
+    if (order.get("blik_number") or "").strip():
+        methods.append("blik")
 
     paypal_email, _ = _biz_paypal_email(order)
     if paypal_email or _env("PAYPAL_CLIENT_ID"):
@@ -562,6 +576,84 @@ def generate_ecocash_instructions(order: dict) -> dict:
         f"_Keep your receipt screenshot just in case!_"
     )
     log.info("ecocash instructions  ref=%s  total=%.2f  number=%s", ref, total, number)
+    return result
+
+
+def generate_bank_transfer_instructions(order: dict) -> dict:
+    """
+    Bank transfer payment instructions — the standard, widely-understood
+    payment method across Europe (including Poland). Uses the business's
+    own bank details from Settings, mirroring the EcoCash pattern exactly:
+    always requires manual proof, no live gateway integration.
+    """
+    result = _base("banktransfer", order)
+    total  = _total(order)
+    ref    = _ref(order)
+
+    details = (order.get("bank_transfer_details") or "").strip()
+
+    if not details:
+        log.warning("generate_bank_transfer_instructions: no bank details for biz=%s",
+                    order.get("business_id", "?"))
+        result["error"]  = "Bank transfer details not configured"
+        result["status"] = "error"
+        result["message"] = (
+            "⚠️ Bank transfer details aren't set up yet.\n"
+            "Please contact us to arrange payment directly."
+        )
+        return result
+
+    result["auto_verified"] = False   # always requires manual proof
+    result["message"] = (
+        f"🏦 *Pay via Bank Transfer*\n"
+        f"{'─' * 28}\n"
+        f"{details}\n"
+        f"  Amount   : *{_sym(order)}{total:.2f}*\n"
+        f"  Ref      : *{ref}*\n"
+        f"{'─' * 28}\n"
+        f"_Please include the reference above in your transfer note._\n\n"
+        f"Once sent, reply *paid* and send your confirmation or screenshot. 📸"
+    )
+    log.info("bank transfer instructions  ref=%s  total=%.2f", ref, total)
+    return result
+
+
+def generate_blik_instructions(order: dict) -> dict:
+    """
+    BLIK payment instructions — the dominant instant-payment method in
+    Poland, used via the customer's own banking app. Mirrors the EcoCash
+    pattern: always requires manual proof, no live gateway integration.
+    """
+    result = _base("blik", order)
+    total  = _total(order)
+    ref    = _ref(order)
+
+    number = (order.get("blik_number") or "").strip()
+
+    if not number:
+        log.warning("generate_blik_instructions: no BLIK number for biz=%s",
+                    order.get("business_id", "?"))
+        result["error"]  = "BLIK number not configured"
+        result["status"] = "error"
+        result["message"] = (
+            "⚠️ BLIK details aren't set up yet.\n"
+            "Please contact us to arrange payment directly."
+        )
+        return result
+
+    result["auto_verified"] = False   # always requires manual proof
+    result["message"] = (
+        f"📲 *Pay via BLIK*\n"
+        f"{'─' * 28}\n"
+        f"  Send to  : *{number}*\n"
+        f"  Amount   : *{_sym(order)}{total:.2f}*\n"
+        f"  Ref      : *{ref}*\n"
+        f"{'─' * 28}\n"
+        f"📱 Open your banking app, choose *BLIK transfer to phone number*, "
+        f"and send to the number above.\n\n"
+        f"Once sent, reply *paid* and send your confirmation or screenshot. 📸"
+    )
+    log.info("blik instructions  ref=%s  total=%.2f  number=%s", ref, total, number)
     return result
 
 

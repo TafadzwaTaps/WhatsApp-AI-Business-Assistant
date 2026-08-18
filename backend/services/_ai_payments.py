@@ -76,6 +76,12 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
             pay = generate_ecocash_instructions(order)
         elif method == "paypal":
             pay = paypal_payment(order)
+        elif method == "banktransfer":
+            from services.payment_service import generate_bank_transfer_instructions
+            pay = generate_bank_transfer_instructions(order)
+        elif method == "blik":
+            from services.payment_service import generate_blik_instructions
+            pay = generate_blik_instructions(order)
         else:
             pay = generate_cash_instructions(order)
         return pay.get("message", f"Please complete payment for *{reference}*.")
@@ -592,6 +598,12 @@ def _process_payment(
             pay = generate_ecocash_instructions(order)
         elif method == "paypal":
             pay = paypal_payment(order)
+        elif method == "banktransfer":
+            from services.payment_service import generate_bank_transfer_instructions
+            pay = generate_bank_transfer_instructions(order)
+        elif method == "blik":
+            from services.payment_service import generate_blik_instructions
+            pay = generate_blik_instructions(order)
         else:
             pay = generate_cash_instructions(order)
     except Exception as exc:

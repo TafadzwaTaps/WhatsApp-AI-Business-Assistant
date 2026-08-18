@@ -116,29 +116,43 @@ def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list,
 
 def _set_awaiting_booking_date(phone: str, business_id: int, cart_snapshot: list) -> None:
     """
-    Enter awaiting_booking_date — service businesses collect an appointment
+    Enter checkout_booking_date — service businesses collect an appointment
     slot BEFORE payment, rather than being asked to pay first and then
     asked when they'd like to come in (confusing, and what this replaces).
     """
-    _set_state(phone, business_id, "awaiting_booking_date",
+    _set_state(phone, business_id, "checkout_booking_date",
                session={"cart_snapshot": cart_snapshot},
                pending_payment=None)
 
 
 def _set_awaiting_booking_time(phone: str, business_id: int, cart_snapshot: list,
                                 booking_date: str) -> None:
-    """Enter awaiting_booking_time — a valid date was given, still need a time."""
-    _set_state(phone, business_id, "awaiting_booking_time",
+    """Enter checkout_booking_time — a valid date was given, still need a time."""
+    _set_state(phone, business_id, "checkout_booking_time",
                session={"cart_snapshot": cart_snapshot, "booking_date": booking_date},
                pending_payment=None)
 
 
 def _set_booking_confirm(phone: str, business_id: int, cart_snapshot: list,
                           booking_date: str, booking_time: str) -> None:
-    """Enter booking_confirm — full date+time known and available; customer reviews before paying."""
-    _set_state(phone, business_id, "booking_confirm",
+    """Enter checkout_booking_confirm — full date+time known and available; customer reviews before paying."""
+    _set_state(phone, business_id, "checkout_booking_confirm",
                session={"cart_snapshot": cart_snapshot, "booking_date": booking_date,
                         "booking_time": booking_time},
+               pending_payment=None)
+
+
+def _set_awaiting_reminder_response(phone: str, business_id: int, booking_id) -> None:
+    """
+    Enter awaiting_reminder_response — sent proactively (via the reminder
+    cron/dashboard trigger), not as part of a normal in-conversation step,
+    so this can overwrite whatever state the customer happened to be in.
+    That's intentional: answering "are you still coming?" takes priority
+    over whatever else they were doing, and they can always resume
+    browsing/ordering afterwards since answering resets to browsing.
+    """
+    _set_state(phone, business_id, "awaiting_reminder_response",
+               session={"booking_id": booking_id},
                pending_payment=None)
 
 

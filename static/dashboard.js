@@ -1614,6 +1614,8 @@ async function loadSettings() {
       _setVal('set-ecocash-number', pay.ecocash_number || '');
       _setVal('set-ecocash-name',   pay.ecocash_name   || '');
       _setVal('set-paypal-email',   pay.paypal_email   || '');
+      _setVal('set-banktransfer-details', pay.bank_transfer_details || '');
+      _setVal('set-blik-number',    pay.blik_number    || '');
       const statusEl = document.getElementById('payment-settings-status');
       if (statusEl) {
         const parts = [];
@@ -1826,6 +1828,31 @@ async function savePayPalSettings() {
     setLoading(btn, true);
     await apiFetch('/me/payment-settings/paypal', { method: 'POST', body: JSON.stringify({ paypal_email: email }) });
     toast('✅ PayPal email saved — customers will send to ' + email);
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+async function saveBankTransferSettings() {
+  const details = _getVal('set-banktransfer-details').trim();
+  if (!details) { toast('Enter your bank transfer details', true); return; }
+  const btn = document.querySelector('[onclick="saveBankTransferSettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me/payment-settings/banktransfer', { method: 'POST', body: JSON.stringify({ bank_transfer_details: details }) });
+    toast('✅ Bank transfer details saved');
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+async function saveBlikSettings() {
+  const number = _getVal('set-blik-number').trim();
+  if (!number) { toast('Enter your BLIK phone number', true); return; }
+  if (number.length < 7) { toast('Include the full phone number', true); return; }
+  const btn = document.querySelector('[onclick="saveBlikSettings()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me/payment-settings/blik', { method: 'POST', body: JSON.stringify({ blik_number: number }) });
+    toast('✅ BLIK number saved — customers will send to ' + number);
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
 }

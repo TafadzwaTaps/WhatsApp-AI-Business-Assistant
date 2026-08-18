@@ -142,30 +142,35 @@ def _recommend(phone: str, business_id: int, products: list, exclude: str = "") 
 
 # ── Cart formatters ───────────────────────────────────────────────────────────
 
-def _format_cart(cart: list, currency_sym: str = "$") -> str:
+def _format_cart(cart: list, currency_sym: str = "$", is_service: bool = False) -> str:
     if not cart:
-        return "🛒 Your cart is empty. Type *menu* to see what we have!"
+        return ("📝 Nothing selected yet. Type *menu* to see what we offer!" if is_service
+                else "🛒 Your cart is empty. Type *menu* to see what we have!")
     total = 0.0
     lines = []
     for i in cart:
         sub = i["qty"] * float(i["price"])
         total += sub
         lines.append(f"  • {i['name']} ×{i['qty']}  —  {currency_sym}{sub:.2f}")
-    return "🛒 *Your Cart:*\n" + "\n".join(lines) + f"\n\n💰 *Total: {currency_sym}{total:.2f}*"
+    header = "📝 *Booking Summary:*\n" if is_service else "🛒 *Your Cart:*\n"
+    return header + "\n".join(lines) + f"\n\n💰 *Total: {currency_sym}{total:.2f}*"
 
 
-def _build_confirm_prompt(cart: list, currency_sym: str = "$") -> str:
-    """Double-confirmation message shown before placing the order."""
-    cart_summary = _format_cart(cart, currency_sym)
+def _build_confirm_prompt(cart: list, currency_sym: str = "$", is_service: bool = False) -> str:
+    """Double-confirmation message shown before placing the order/booking."""
+    cart_summary = _format_cart(cart, currency_sym, is_service)
+    label = "booking" if is_service else "order"
+    edit_hint = "adjust your selection" if is_service else "edit your cart"
     return (
-        f"📋 *Please confirm your order:*\n\n"
+        f"📋 *Please confirm your {label}:*\n\n"
         f"{cart_summary}\n\n"
-        f"Is this correct? Reply *yes* to continue or *no* to edit your cart.\n"
+        f"Is this correct? Reply *yes* to continue or *no* to {edit_hint}.\n"
         f"_Type *cancel* to cancel entirely._"
     )
 
 
-def _build_payment_menu(cart: list, business_id: int, currency_sym: str = "$") -> str:
+def _build_payment_menu(cart: list, business_id: int, currency_sym: str = "$",
+                         is_service: bool = False) -> str:
     """Payment method selection message. business_id required for per-business settings."""
     import crud
     from services.payment_service import available_methods
@@ -175,8 +180,10 @@ def _build_payment_menu(cart: list, business_id: int, currency_sym: str = "$") -
     except Exception:
         pay_settings = {}
 
-    cart_summary = _format_cart(cart, currency_sym)
+    cart_summary = _format_cart(cart, currency_sym, is_service)
     methods      = available_methods({**pay_settings, "business_id": business_id})
+
+    cash_label = "Cash — Pay in person" if is_service else "Cash — Pay on delivery or pickup"
 
     options: list[str] = []
     num = 1
@@ -185,8 +192,12 @@ def _build_payment_menu(cart: list, business_id: int, currency_sym: str = "$") -
             options.append(f"{num}️⃣  *EcoCash* — Dial *151# (Zimbabwe)")
         elif m == "paypal":
             options.append(f"{num}️⃣  *PayPal* — Email or secure link")
+        elif m == "banktransfer":
+            options.append(f"{num}️⃣  *Bank Transfer* — Details sent after selecting")
+        elif m == "blik":
+            options.append(f"{num}️⃣  *BLIK* — Pay via your banking app")
         elif m == "cash":
-            options.append(f"{num}️⃣  *Cash* — Pay on delivery or pickup")
+            options.append(f"{num}️⃣  *{cash_label}*")
         num += 1
 
     return (

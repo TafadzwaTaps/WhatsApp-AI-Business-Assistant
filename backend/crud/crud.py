@@ -154,11 +154,17 @@ def get_business_payment_settings(business_id: int) -> dict:
         return {
             "ecocash_number": "", "ecocash_name": "",
             "paypal_email": "", "payment_number": "", "payment_name": "",
+            "bank_transfer_details": "", "blik_number": "",
         }
     return {
         "ecocash_number": biz.get("ecocash_number") or biz.get("payment_number") or "",
         "ecocash_name":   biz.get("ecocash_name")   or biz.get("payment_name")  or "",
         "paypal_email":   biz.get("paypal_email")   or "",
+        # New — lets non-EcoCash-region businesses (e.g. Poland/EU) offer a
+        # payment method that actually makes sense for their customers,
+        # instead of only ever seeing "EcoCash — Dial *151# (Zimbabwe)".
+        "bank_transfer_details": biz.get("bank_transfer_details") or "",
+        "blik_number":           biz.get("blik_number") or "",
         # Legacy aliases — kept for backward compatibility with invoice.py
         "payment_number": biz.get("ecocash_number") or biz.get("payment_number") or "",
         "payment_name":   biz.get("ecocash_name")   or biz.get("payment_name")  or "",

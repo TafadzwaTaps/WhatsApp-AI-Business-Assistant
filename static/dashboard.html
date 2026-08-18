@@ -2232,6 +2232,27 @@
           </div>
         </div>
         <div class="panel">
+          <div class="panel-header"><div class="panel-title">🏦 Bank Transfer</div></div>
+          <div class="panel-body">
+            <div class="form-group"><label>Bank Details <span style="color:var(--text-dim);font-weight:400">(shown to customers exactly as typed — account name, number, bank, IBAN etc.)</span></label>
+              <textarea id="set-banktransfer-details" rows="3" placeholder="Account name: Golden Clippers Barber&#10;IBAN: PL00 0000 0000 0000 0000 0000 0000&#10;Bank: mBank"></textarea>
+            </div>
+            <button class="btn btn-primary" onclick="saveBankTransferSettings()">Save Bank Transfer</button>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">📲 BLIK</div></div>
+          <div class="panel-body">
+            <div class="form-group"><label>BLIK Phone Number <span style="color:var(--text-dim);font-weight:400">(the number customers send BLIK transfers to)</span></label>
+              <input type="tel" id="set-blik-number" placeholder="+48 500 000 000"/>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.6;">
+              The default instant-payment method for customers in Poland.
+            </div>
+            <button class="btn btn-primary" onclick="saveBlikSettings()">Save BLIK</button>
+          </div>
+        </div>
+        <div class="panel">
           <div class="panel-header">
             <div class="panel-title">💳 Online Payments</div>
             <span id="stripe-badge" style="font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:20px;background:var(--surface2);color:var(--text-dim);">Loading…</span>

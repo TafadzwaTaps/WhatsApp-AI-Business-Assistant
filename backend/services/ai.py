@@ -339,6 +339,40 @@ def generate_reply(
         return ""
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P-3a — AWAITING REMINDER RESPONSE
+    # Sent proactively when an appointment reminder is dispatched (see
+    # expansion_routes.py's /bookings/reminders/run) — takes priority over
+    # anything else the customer might be doing, since answering "are you
+    # still coming?" is time-sensitive for the business. Checked before
+    # human_handoff so a reminder reply always gets through even if the
+    # customer was mid-handoff for something unrelated.
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "awaiting_reminder_response":
+        session    = _get_session(phone, business_id)
+        booking_id = session.get("booking_id")
+
+        if _is_yes(text):
+            _reset_state(phone, business_id)
+            return "🎉 Great, we'll see you then! Thanks for confirming. 😊"
+
+        if _is_no(text) or text.strip().lower() in ("cancel", "no", "can't make it", "cant make it"):
+            try:
+                from services.booking_service import cancel_booking
+                cancel_booking(booking_id, business_id)
+            except Exception as exc:
+                log.warning("reminder-response cancel failed: %s", exc)
+            _reset_state(phone, business_id)
+            return (
+                "👌 No problem — your appointment has been cancelled.\n\n"
+                "Type *menu* anytime if you'd like to book a new time."
+            )
+
+        return (
+            "🤔 Just to confirm — are you still able to make your appointment?\n\n"
+            "Reply *yes* to confirm, or *no* if you need to cancel."
+        )
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P-3 — HUMAN HANDOFF MODE
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "human_handoff":
@@ -771,11 +805,13 @@ def generate_reply(
                         f"*{r['name']}*" for r in recs) + "."
 
             rec_block = ("\n\n" + sugg_text) if sugg_text else ""
+            _added_header = "✅ *Added!*" if _is_service_biz else "✅ *Added to your cart!*"
+            _cta_verb = "book" if _is_service_biz else "order"
             return (
-                f"✅ *Added to your cart!*\n\n"
-                f"{_format_cart(cart, _currency_sym)}"
+                f"{_added_header}\n\n"
+                f"{_format_cart(cart, _currency_sym, _is_service_biz)}"
                 f"{rec_block}\n\n"
-                f"_Type *checkout* when you're ready to order._"
+                f"_Type *checkout* when you're ready to {_cta_verb}._"
             )
 
         return (
@@ -798,7 +834,7 @@ def generate_reply(
     # order becomes a real row in the bookings table, visible in the
     # dashboard's Bookings calendar and eligible for reminders.
     # ══════════════════════════════════════════════════════════════════════════
-    if current_state == "awaiting_booking_date":
+    if current_state == "checkout_booking_date":
         session  = _get_session(phone, business_id)
         snapshot = session.get("cart_snapshot") or cart
 
@@ -850,7 +886,7 @@ def generate_reply(
             "_e.g. \"10am\", \"2:30pm\", or \"afternoon\"_"
         )
 
-    if current_state == "awaiting_booking_time":
+    if current_state == "checkout_booking_time":
         session      = _get_session(phone, business_id)
         snapshot     = session.get("cart_snapshot") or cart
         booking_date = session.get("booking_date")
@@ -899,7 +935,7 @@ def generate_reply(
             "or suggest a different day/time."
         )
 
-    if current_state == "booking_confirm":
+    if current_state == "checkout_booking_confirm":
         session      = _get_session(phone, business_id)
         snapshot     = session.get("cart_snapshot") or cart
         booking_date = session.get("booking_date")
@@ -919,7 +955,7 @@ def generate_reply(
             except Exception:
                 date_disp = booking_date
             time_disp = _format_time(booking_time) if booking_time else ""
-            payment_menu = _build_payment_menu(snapshot, business_id, _currency_sym)
+            payment_menu = _build_payment_menu(snapshot, business_id, _currency_sym, _is_service_biz)
             return (
                 f"🗓️ *Appointment: {date_disp} at {time_disp}*\n\n"
                 f"{payment_menu}"
@@ -1311,7 +1347,7 @@ def generate_reply(
                     f"_e.g. \"tomorrow\", \"Friday\", or \"20 August\"_"
                 )
             _set_checkout_state(phone, business_id, snapshot)
-            return _build_payment_menu(snapshot, business_id, _currency_sym)
+            return _build_payment_menu(snapshot, business_id, _currency_sym, _is_service_biz)
 
         if _is_no(text):
             _reset_state(phone, business_id)
@@ -1330,9 +1366,27 @@ def generate_reply(
     # P4 — CHECKOUT STATE
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "checkout":
-        method = _detect_payment_method(text)
+        # Numeric shortcuts ("1", "2", "3"...) must map to whatever is
+        # ACTUALLY shown in this business's payment menu, not a fixed
+        # EcoCash→PayPal→Cash assumption — that assumption breaks the
+        # moment a business has Bank Transfer or BLIK configured, since the
+        # menu is a variable-length, business-specific list. Resolved fresh
+        # here, in the same order _build_payment_menu() renders it in.
+        from services.payment_service import available_methods as _avail_methods_for_numeric
+        try:
+            _pay_settings_for_numeric = crud.get_business_payment_settings(business_id)
+        except Exception:
+            _pay_settings_for_numeric = {}
+        _menu_methods = _avail_methods_for_numeric(
+            {**_pay_settings_for_numeric, "business_id": business_id})
 
-        if method in ("ecocash", "paypal", "cash"):
+        _stripped = text.strip().rstrip("️⃣").strip()
+        if _stripped.isdigit() and 1 <= int(_stripped) <= len(_menu_methods):
+            method = _menu_methods[int(_stripped) - 1]
+        else:
+            method = _detect_payment_method(text)
+
+        if method in ("ecocash", "paypal", "cash", "banktransfer", "blik"):
             # Defense-in-depth: re-check restriction here too, since this is
             # the actual order-creation point. Covers any path that reaches
             # the checkout state without passing through the "checkout"
@@ -1365,10 +1419,14 @@ def generate_reply(
             pay_settings = {}
         methods = available_methods({**pay_settings, "business_id": business_id})
 
+        _retry_cash_label = "Cash on arrival" if _is_service_biz else "Cash on delivery"
+        _retry_labels = {
+            "ecocash": "EcoCash", "paypal": "PayPal", "cash": _retry_cash_label,
+            "banktransfer": "Bank Transfer", "blik": "BLIK",
+        }
         opts, num = [], 1
         for m in methods:
-            label = {"ecocash": "EcoCash", "paypal": "PayPal", "cash": "Cash on delivery"}.get(
-                m, m)
+            label = _retry_labels.get(m, m)
             opts.append(f"  {num}️⃣  *{label}*")
             num += 1
 
@@ -1626,7 +1684,7 @@ def generate_reply(
         if not _check_rate_limit(phone, business_id):
             return _rate_limit_message()
         _set_confirm_state(phone, business_id, cart)
-        return _build_confirm_prompt(cart, _currency_sym)
+        return _build_confirm_prompt(cart, _currency_sym, _is_service_biz)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P6 — REMOVE ITEM
@@ -1757,11 +1815,12 @@ def generate_reply(
                 _save_cart(phone, business_id, cart)
                 log.info("multi-add  items=%s  phone=%s", added_names, phone)
                 blocked_note = f"\n\n⚠️ Could not add: {', '.join(blocked)}" if blocked else ""
+                _cta_verb2 = "book" if _is_service_biz else "order"
                 return (
-                    f"👍 Added {', '.join(added_names)} to your cart.\n\n"
-                    f"{_format_cart(cart, _currency_sym)}"
+                    f"👍 Added {', '.join(added_names)}.\n\n"
+                    f"{_format_cart(cart, _currency_sym, _is_service_biz)}"
                     f"{blocked_note}"
-                    f"\n\n_Type *checkout* when you're ready to order._"
+                    f"\n\n_Type *checkout* when you're ready to {_cta_verb2}._"
                 )
 
         # ── P7c: Single item ──────────────────────────────────────────────────
@@ -1837,7 +1896,8 @@ def generate_reply(
                     msg += "\n\n💡 You might also like " + " or ".join(
                         f"*{r['name']}*" for r in recs) + "."
 
-            msg += "\n\n_Type *checkout* when you're ready to order._"
+            _cta_verb3 = "book" if _is_service_biz else "order"
+            msg += f"\n\n_Type *checkout* when you're ready to {_cta_verb3}._"
             return msg
 
     # ══════════════════════════════════════════════════════════════════════════

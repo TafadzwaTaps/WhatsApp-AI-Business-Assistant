@@ -367,6 +367,10 @@ def _detect_payment_method(text: str) -> str | None:
         return "cash"
     if t == "cash":
         return "cash"
+    if any(w in t for w in ["bank transfer", "banktransfer", "bank", "transfer", "wire", "iban"]):
+        return "banktransfer"
+    if "blik" in t:
+        return "blik"
     return None
 
 

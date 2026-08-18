@@ -56,10 +56,23 @@ class STATE:
 
     ORDER_PREVIEW          = "order_preview"    # parser showed preview, waiting for yes/no
 
-    # Booking states — service businesses only
-    AWAITING_BOOKING_DATE = "awaiting_booking_date"
-    AWAITING_BOOKING_TIME = "awaiting_booking_time"
-    BOOKING_CONFIRM       = "booking_confirm"
+    # Standalone WhatsApp booking flow states (natural-language "book me
+    # tomorrow at 3" intent) — pre-existing, do not rename or reuse.
+    AWAITING_BOOKING_DATE      = "awaiting_booking_date"
+    AWAITING_BOOKING_TIME      = "awaiting_booking_time"
+    BOOKING_CONFIRM            = "booking_confirm"
+
+    # Checkout-integrated booking states (service businesses booking an
+    # appointment as part of the cart/checkout flow) — deliberately
+    # namespaced separately from the standalone flow's states above, since
+    # both flows collect the same kind of information (a date and a time)
+    # but are different flows with different next steps, and sharing state
+    # names caused one to silently shadow the other.
+    CHECKOUT_BOOKING_DATE      = "checkout_booking_date"
+    CHECKOUT_BOOKING_TIME      = "checkout_booking_time"
+    CHECKOUT_BOOKING_CONFIRM   = "checkout_booking_confirm"
+
+    AWAITING_REMINDER_RESPONSE = "awaiting_reminder_response"
 
     ALL = {
         BROWSING, CONFIRM_ORDER, CHECKOUT,
@@ -68,31 +81,36 @@ class STATE:
         ORDER_PREVIEW,
         MANUAL_REVIEW, HUMAN_HANDOFF,
         SURVEY, COMPLETED, CANCELLED,
-        # Booking states
+        # Standalone booking flow
         "awaiting_booking_date", "awaiting_booking_time", "booking_confirm",
+        # Checkout-integrated booking flow
+        "checkout_booking_date", "checkout_booking_time", "checkout_booking_confirm",
+        "awaiting_reminder_response",
     }
 
 
 # Valid state transitions. Key = current state, value = set of allowed next states.
 _TRANSITIONS: dict[str, set[str]] = {
     STATE.BROWSING:         {STATE.CONFIRM_ORDER, STATE.CHECKOUT, STATE.HUMAN_HANDOFF},
-    # AWAITING_BOOKING_DATE added here — service businesses go collect an
+    # CHECKOUT_BOOKING_DATE added here — service businesses go collect an
     # appointment slot before payment, instead of going straight to CHECKOUT.
-    STATE.CONFIRM_ORDER:    {STATE.CHECKOUT, STATE.AWAITING_BOOKING_DATE, STATE.BROWSING, STATE.CANCELLED},
+    STATE.CONFIRM_ORDER:    {STATE.CHECKOUT, STATE.CHECKOUT_BOOKING_DATE, STATE.BROWSING, STATE.CANCELLED},
     STATE.CHECKOUT:         {STATE.AWAITING_PAYMENT, STATE.BROWSING, STATE.CANCELLED},
 
-    # Booking states — were defined in STATE.ALL but never wired into the
-    # transition map, so they were unreachable. A customer can jump straight
-    # from AWAITING_BOOKING_DATE to BOOKING_CONFIRM (or even CHECKOUT) if
-    # they give both a day and a time in one message — the flow only asks
-    # for what's still missing rather than forcing rigid one-field-at-a-time
-    # steps.
-    STATE.AWAITING_BOOKING_DATE: {STATE.AWAITING_BOOKING_TIME, STATE.BOOKING_CONFIRM,
+    # Checkout-integrated booking flow — a customer can jump straight from
+    # CHECKOUT_BOOKING_DATE to CHECKOUT_BOOKING_CONFIRM (or even CHECKOUT)
+    # if they give both a day and a time in one message.
+    STATE.CHECKOUT_BOOKING_DATE: {STATE.CHECKOUT_BOOKING_TIME, STATE.CHECKOUT_BOOKING_CONFIRM,
                                    STATE.CHECKOUT, STATE.BROWSING, STATE.CANCELLED},
-    STATE.AWAITING_BOOKING_TIME: {STATE.BOOKING_CONFIRM, STATE.CHECKOUT,
+    STATE.CHECKOUT_BOOKING_TIME: {STATE.CHECKOUT_BOOKING_CONFIRM, STATE.CHECKOUT,
                                    STATE.BROWSING, STATE.CANCELLED},
-    STATE.BOOKING_CONFIRM:       {STATE.CHECKOUT, STATE.AWAITING_BOOKING_DATE,
+    STATE.CHECKOUT_BOOKING_CONFIRM: {STATE.CHECKOUT, STATE.CHECKOUT_BOOKING_DATE,
                                    STATE.BROWSING, STATE.CANCELLED},
+    # A reminder can be sent while the customer is in ANY state (they might
+    # be mid-checkout on a different order, or just browsing) — so this
+    # state is reachable from anywhere via _ALWAYS_ALLOWED-style handling
+    # in _ai_state.py, and always returns to BROWSING once answered.
+    STATE.AWAITING_REMINDER_RESPONSE: {STATE.BROWSING, STATE.CANCELLED},
     STATE.AWAITING_PAYMENT: {STATE.AWAITING_PROOF, STATE.AWAITING_FULFILLMENT,
                               STATE.COMPLETED, STATE.CANCELLED, STATE.MANUAL_REVIEW},
     STATE.AWAITING_PROOF:   {STATE.AWAITING_FULFILLMENT, STATE.MANUAL_REVIEW, STATE.CANCELLED},
@@ -174,6 +192,9 @@ def is_active_order_state(state: str) -> bool:
         STATE.AWAITING_BOOKING_DATE,
         STATE.AWAITING_BOOKING_TIME,
         STATE.BOOKING_CONFIRM,
+        STATE.CHECKOUT_BOOKING_DATE,
+        STATE.CHECKOUT_BOOKING_TIME,
+        STATE.CHECKOUT_BOOKING_CONFIRM,
     }
 
 

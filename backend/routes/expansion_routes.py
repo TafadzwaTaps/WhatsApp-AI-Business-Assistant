@@ -217,6 +217,16 @@ async def run_booking_reminders(user=Depends(require_business), _plan=Depends(re
         result = send_whatsapp(phone_id, token, phone, msg)
         if "error" not in result:
             supabase.table("bookings").update({"reminder_24h_sent": True}).eq("id", b["id"]).execute()
+            # Sets the customer's conversation state so their yes/no reply
+            # to this reminder is understood and actually confirms or
+            # cancels the booking, rather than being treated as a generic
+            # message. Non-fatal if this fails — the reminder itself still
+            # sent successfully either way.
+            try:
+                from services._ai_state import _set_awaiting_reminder_response
+                _set_awaiting_reminder_response(phone, bid, booking_id=b["id"])
+            except Exception as exc:
+                log.warning("failed to set reminder-response state for %s: %s", phone, exc)
             sent += 1
         else:
             skipped += 1

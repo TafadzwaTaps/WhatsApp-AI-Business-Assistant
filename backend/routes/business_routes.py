@@ -208,6 +208,12 @@ class EcoCashSettingsUpdate(BaseModel):
 class PayPalSettingsUpdate(BaseModel):
     paypal_email: str
 
+class BankTransferSettingsUpdate(BaseModel):
+    bank_transfer_details: str
+
+class BlikSettingsUpdate(BaseModel):
+    blik_number: str
+
 class PaymentSettingsUpdate(BaseModel):
     ecocash_number: Optional[str] = None
     ecocash_name:   Optional[str] = None
@@ -221,11 +227,15 @@ def get_payment_settings(user=Depends(require_business)):
     ecocash_number = b.get("ecocash_number") or b.get("payment_number") or ""
     ecocash_name   = b.get("ecocash_name")   or b.get("payment_name")  or ""
     paypal_email   = b.get("paypal_email") or ""
+    bank_details   = b.get("bank_transfer_details") or ""
+    blik_number    = b.get("blik_number") or ""
     return {
         "business_name": b.get("name", ""),
         "ecocash_number": ecocash_number, "ecocash_name": ecocash_name,
         "ecocash_configured": bool(ecocash_number),
         "paypal_email": paypal_email, "paypal_configured": bool(paypal_email),
+        "bank_transfer_details": bank_details, "bank_transfer_configured": bool(bank_details),
+        "blik_number": blik_number, "blik_configured": bool(blik_number),
         "payment_number": ecocash_number, "payment_name": ecocash_name,
     }
 
@@ -286,6 +296,29 @@ def update_paypal_settings(data: PayPalSettingsUpdate, user=Depends(require_busi
     b = crud.update_business(user["business_id"], _D())
     if not b: raise HTTPException(500, "Failed to save PayPal settings")
     return {"ok": True, "message": f"PayPal email saved. Customers will send money to {email}.", "paypal_email": email}
+
+
+@router.post("/me/payment-settings/banktransfer")
+def update_bank_transfer_settings(data: BankTransferSettingsUpdate, user=Depends(require_business)):
+    details = data.bank_transfer_details.strip()
+    if not details: raise HTTPException(422, "Bank transfer details are required")
+    class _D:
+        def dict(self, **_): return {"bank_transfer_details": details}
+    b = crud.update_business(user["business_id"], _D())
+    if not b: raise HTTPException(500, "Failed to save bank transfer settings")
+    return {"ok": True, "message": "Bank transfer details saved.", "bank_transfer_details": details}
+
+
+@router.post("/me/payment-settings/blik")
+def update_blik_settings(data: BlikSettingsUpdate, user=Depends(require_business)):
+    number = data.blik_number.strip()
+    if not number: raise HTTPException(422, "BLIK phone number is required")
+    if len(number) < 7: raise HTTPException(422, "Include the full phone number")
+    class _D:
+        def dict(self, **_): return {"blik_number": number}
+    b = crud.update_business(user["business_id"], _D())
+    if not b: raise HTTPException(500, "Failed to save BLIK settings")
+    return {"ok": True, "message": f"BLIK number saved. Customers will send to {number}.", "blik_number": number}
 
 
 # ── Stripe settings ──────────────────────────────────────────────────────────
