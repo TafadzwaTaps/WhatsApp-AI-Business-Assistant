@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import html as _html_escape
+import json
 import re
 from urllib.parse import quote
 
@@ -454,25 +455,262 @@ def _get_reviews(business_id: int, limit: int = 6) -> list[dict]:
 
 # ── HTML section builders ─────────────────────────────────────────────────────
 
+# ── Multi-language support (free, client-side, zero dependencies) ──────────
+# UI CHROME only — nav labels, buttons, section headers, and other fixed
+# text baked into every generated site. Business-entered content (product
+# names/descriptions, tagline, about text, reviews) is written by the
+# business owner in whatever language they used and is intentionally left
+# untranslated — auto-translating someone else's own words risks changing
+# their meaning, and a real translation API for that would not be free at
+# any real scale. This covers the parts of the page WaziBot itself writes.
+#
+# Implemented as a plain embedded JSON dict + vanilla JS text-swap (see
+# _i18n_switcher_html/_i18n_script below) — no external library, so there
+# is no CDN dependency, no added page-load latency, and nothing that can
+# fail if a third-party script is blocked or offline.
+SITE_I18N = {
+  "en": {
+    "nav_home": "Home",
+    "nav_products": "Products",
+    "nav_about": "About",
+    "nav_reviews": "Reviews",
+    "nav_gallery": "Gallery",
+    "nav_contact": "Contact",
+    "hero_cta": "Order on WhatsApp",
+    "our_products": "Our Products",
+    "our_services": "Our Services",
+    "our_menu": "Our Menu",
+    "available": "Available",
+    "out_of_stock": "Out of stock",
+    "order_btn": "Order",
+    "book_btn": "Book",
+    "buy_now": "Buy Now",
+    "pay_btn": "Pay",
+    "products_soon": "Products coming soon. Contact us on WhatsApp!",
+    "services_soon": "Services coming soon. Contact us on WhatsApp!",
+    "about_us": "About Us",
+    "whatsapp_ordering": "WhatsApp Ordering",
+    "customer_reviews": "Customer Reviews",
+    "get_in_touch": "Get In Touch",
+    "message_us": "Message Us on WhatsApp",
+    "checkout": "Checkout",
+    "total": "Total",
+    "pay_securely": "Pay Securely",
+    "powered_by": "Powered by",
+    "contact_below": "Contact us on WhatsApp below."
+  },
+  "pl": {
+    "nav_home": "Strona główna",
+    "nav_products": "Produkty",
+    "nav_about": "O nas",
+    "nav_reviews": "Opinie",
+    "nav_gallery": "Galeria",
+    "nav_contact": "Kontakt",
+    "hero_cta": "Zamów przez WhatsApp",
+    "our_products": "Nasze Produkty",
+    "our_services": "Nasze Usługi",
+    "our_menu": "Nasze Menu",
+    "available": "Dostępne",
+    "out_of_stock": "Niedostępne",
+    "order_btn": "Zamów",
+    "book_btn": "Zarezerwuj",
+    "buy_now": "Kup Teraz",
+    "pay_btn": "Zapłać",
+    "products_soon": "Produkty wkrótce dostępne. Skontaktuj się z nami przez WhatsApp!",
+    "services_soon": "Usługi wkrótce dostępne. Skontaktuj się z nami przez WhatsApp!",
+    "about_us": "O Nas",
+    "whatsapp_ordering": "Zamówienia przez WhatsApp",
+    "customer_reviews": "Opinie Klientów",
+    "get_in_touch": "Skontaktuj się",
+    "message_us": "Napisz na WhatsApp",
+    "checkout": "Zamówienie",
+    "total": "Razem",
+    "pay_securely": "Zapłać Bezpiecznie",
+    "powered_by": "Obsługiwane przez",
+    "contact_below": "Skontaktuj się z nami przez WhatsApp poniżej."
+  },
+  "fr": {
+    "nav_home": "Accueil",
+    "nav_products": "Produits",
+    "nav_about": "À propos",
+    "nav_reviews": "Avis",
+    "nav_gallery": "Galerie",
+    "nav_contact": "Contact",
+    "hero_cta": "Commander sur WhatsApp",
+    "our_products": "Nos Produits",
+    "our_services": "Nos Services",
+    "our_menu": "Notre Menu",
+    "available": "Disponible",
+    "out_of_stock": "Rupture de stock",
+    "order_btn": "Commander",
+    "book_btn": "Réserver",
+    "buy_now": "Acheter",
+    "pay_btn": "Payer",
+    "products_soon": "Produits bientôt disponibles. Contactez-nous sur WhatsApp !",
+    "services_soon": "Services bientôt disponibles. Contactez-nous sur WhatsApp !",
+    "about_us": "À Propos de Nous",
+    "whatsapp_ordering": "Commandes via WhatsApp",
+    "customer_reviews": "Avis Clients",
+    "get_in_touch": "Contactez-nous",
+    "message_us": "Écrivez-nous sur WhatsApp",
+    "checkout": "Commande",
+    "total": "Total",
+    "pay_securely": "Payer en Sécurité",
+    "powered_by": "Propulsé par",
+    "contact_below": "Contactez-nous sur WhatsApp ci-dessous."
+  },
+  "pt": {
+    "nav_home": "Início",
+    "nav_products": "Produtos",
+    "nav_about": "Sobre",
+    "nav_reviews": "Avaliações",
+    "nav_gallery": "Galeria",
+    "nav_contact": "Contato",
+    "hero_cta": "Pedir pelo WhatsApp",
+    "our_products": "Nossos Produtos",
+    "our_services": "Nossos Serviços",
+    "our_menu": "Nosso Cardápio",
+    "available": "Disponível",
+    "out_of_stock": "Esgotado",
+    "order_btn": "Pedir",
+    "book_btn": "Reservar",
+    "buy_now": "Comprar",
+    "pay_btn": "Pagar",
+    "products_soon": "Produtos em breve. Fale conosco pelo WhatsApp!",
+    "services_soon": "Serviços em breve. Fale conosco pelo WhatsApp!",
+    "about_us": "Sobre Nós",
+    "whatsapp_ordering": "Pedidos pelo WhatsApp",
+    "customer_reviews": "Avaliações de Clientes",
+    "get_in_touch": "Entre em Contato",
+    "message_us": "Mande Mensagem no WhatsApp",
+    "checkout": "Finalizar Pedido",
+    "total": "Total",
+    "pay_securely": "Pagar com Segurança",
+    "powered_by": "Desenvolvido por",
+    "contact_below": "Fale conosco pelo WhatsApp abaixo."
+  },
+  "es": {
+    "nav_home": "Inicio",
+    "nav_products": "Productos",
+    "nav_about": "Nosotros",
+    "nav_reviews": "Reseñas",
+    "nav_gallery": "Galería",
+    "nav_contact": "Contacto",
+    "hero_cta": "Pedir por WhatsApp",
+    "our_products": "Nuestros Productos",
+    "our_services": "Nuestros Servicios",
+    "our_menu": "Nuestro Menú",
+    "available": "Disponible",
+    "out_of_stock": "Agotado",
+    "order_btn": "Pedir",
+    "book_btn": "Reservar",
+    "buy_now": "Comprar",
+    "pay_btn": "Pagar",
+    "products_soon": "Productos disponibles pronto. ¡Contáctanos por WhatsApp!",
+    "services_soon": "Servicios disponibles pronto. ¡Contáctanos por WhatsApp!",
+    "about_us": "Sobre Nosotros",
+    "whatsapp_ordering": "Pedidos por WhatsApp",
+    "customer_reviews": "Reseñas de Clientes",
+    "get_in_touch": "Contáctanos",
+    "message_us": "Escríbenos por WhatsApp",
+    "checkout": "Finalizar Compra",
+    "total": "Total",
+    "pay_securely": "Pagar de Forma Segura",
+    "powered_by": "Desarrollado por",
+    "contact_below": "Contáctanos por WhatsApp abajo."
+  }
+}
+
+SITE_I18N_LANGS = [
+    ("en", "🇬🇧", "English"), ("pl", "🇵🇱", "Polski"), ("fr", "🇫🇷", "Français"),
+    ("pt", "🇵🇹", "Português"), ("es", "🇪🇸", "Español"),
+]
+
+
+def _i18n_switcher_html() -> str:
+    """
+    Small language dropdown rendered inside the nav bar. Flag emojis need
+    no icon library or asset files — genuinely zero-dependency.
+    """
+    options = "".join(
+        f'<option value="{code}">{flag} {name}</option>'
+        for code, flag, name in SITE_I18N_LANGS
+    )
+    return f'''<select id="wz-lang-switch" class="i18n-switch" onchange="_wzSetLang(this.value)"
+        aria-label="Language / Język / Langue / Idioma">{options}</select>'''
+
+
+def _i18n_script() -> str:
+    """
+    Vanilla-JS language switcher. Swaps the textContent of every
+    [data-i18n] element using the SITE_I18N dict embedded in the page as
+    JSON — no external library, no network request, works offline.
+    Remembers the visitor's choice in localStorage; otherwise tries to
+    match their browser language, falling back to English.
+    """
+    i18n_json = json.dumps(SITE_I18N, ensure_ascii=False)
+    supported = json.dumps([c for c, _, _ in SITE_I18N_LANGS])
+    return f'''
+<script>
+const WZ_I18N = {i18n_json};
+const WZ_I18N_SUPPORTED = {supported};
+
+function _wzApplyLang(lang) {{
+  const dict = WZ_I18N[lang] || WZ_I18N['en'];
+  document.querySelectorAll('[data-i18n]').forEach(el => {{
+    const key = el.getAttribute('data-i18n');
+    if (dict[key]) el.textContent = dict[key];
+  }});
+  const sw = document.getElementById('wz-lang-switch');
+  if (sw) sw.value = lang;
+  document.documentElement.setAttribute('lang', lang);
+}}
+
+function _wzSetLang(lang) {{
+  try {{ localStorage.setItem('wz_lang', lang); }} catch (e) {{}}
+  _wzApplyLang(lang);
+}}
+
+(function _wzInitLang() {{
+  let lang = 'en';
+  try {{
+    const saved = localStorage.getItem('wz_lang');
+    if (saved && WZ_I18N_SUPPORTED.includes(saved)) {{
+      lang = saved;
+    }} else {{
+      const browserLang = (navigator.language || 'en').slice(0, 2).toLowerCase();
+      if (WZ_I18N_SUPPORTED.includes(browserLang)) lang = browserLang;
+    }}
+  }} catch (e) {{}}
+  _wzApplyLang(lang);
+}})();
+</script>
+'''
+
+
 def _nav_html(sections: dict, biz_name: str) -> str:
     """Sticky top navigation bar with links to visible sections."""
-    links = [('home', 'Home'), ('products', '🛍 Products')]
+    # (anchor, emoji-prefix, translation key) — emoji kept OUTSIDE the
+    # data-i18n span so swapping languages never wipes it out.
+    links = [('home', '', 'nav_home'), ('products', '🛍 ', 'nav_products')]
     if sections.get("about"):
-        links.append(('about', 'About'))
+        links.append(('about', '', 'nav_about'))
     if sections.get("reviews"):
-        links.append(('reviews', '⭐ Reviews'))
+        links.append(('reviews', '⭐ ', 'nav_reviews'))
     if sections.get("gallery"):
-        links.append(('gallery', 'Gallery'))
-    links.append(('contact', 'Contact'))
+        links.append(('gallery', '', 'nav_gallery'))
+    links.append(('contact', '', 'nav_contact'))
 
     items = "".join(
-        f'<a href="#{anchor}" class="nav-link">{label}</a>'
-        for anchor, label in links
+        f'<a href="#{anchor}" class="nav-link">{emoji}<span data-i18n="{key}">'
+        f'{SITE_I18N["en"][key]}</span></a>'
+        for anchor, emoji, key in links
     )
     return f"""
   <nav class="site-nav" id="top-nav">
     <div class="nav-inner">
       <span class="nav-brand">{_e(biz_name)}</span>
+      {_i18n_switcher_html()}
       <button class="nav-toggle" onclick="toggleMobileNav()" aria-label="Menu">&#9776;</button>
       <div class="nav-links" id="nav-links">{items}</div>
     </div>
@@ -504,7 +742,7 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
     wa_href = f"/go/{_e(_hero_slug)}" if _hero_slug else _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
     cta = (
         f'<a class="hero-cta" href="{wa_href}" rel="noopener">'
-        f'💬 Order on WhatsApp</a>'
+        f'💬 <span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span></a>'
     ) if settings["show_ordering"] else ""
 
     return f"""
@@ -523,21 +761,22 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
 def _products_section_html(products: list, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0, is_service: bool = False) -> str:
     cat_filter = _category_filter_html(products)
     cards      = "\n".join(_product_card_html(p, currency_sym, wa_phone, biz_name, business_id, is_service) for p in products) if products else (
-        '<p class="empty-msg">Services coming soon. Contact us on WhatsApp!</p>' if is_service else
-        '<p class="empty-msg">Products coming soon. Contact us on WhatsApp!</p>'
+        f'<p class="empty-msg" data-i18n="services_soon">{SITE_I18N["en"]["services_soon"]}</p>' if is_service else
+        f'<p class="empty-msg" data-i18n="products_soon">{SITE_I18N["en"]["products_soon"]}</p>'
     )
     # Service businesses always show "Our Services" — checked first, since a
     # service business (salon, barbershop, consultant) offering items with
     # a food-adjacent category name would otherwise be mislabeled "Our Menu".
     if is_service:
-        label = "💇 Our Services"
+        emoji, i18n_key = "💇", "our_services"
     elif any(
         (p.get("category") or "").lower() in ("meals","food","drinks","desserts","breakfast","lunch","dinner")
         for p in products
     ):
-        label = "🍽 Our Menu"
+        emoji, i18n_key = "🍽", "our_menu"
     else:
-        label = "🛍 Our Products"
+        emoji, i18n_key = "🛍", "our_products"
+    label = f'{emoji} <span data-i18n="{i18n_key}">{SITE_I18N["en"][i18n_key]}</span>'
 
     return f"""
   <section class="products-section" id="products">
@@ -565,9 +804,9 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
     available = True if is_service else (stock is None or stock > 0)
 
     badge = (
-        '<span class="stock-badge in">✅ Available</span>'
+        f'<span class="stock-badge in">✅ <span data-i18n="available">{SITE_I18N["en"]["available"]}</span></span>'
         if available else
-        '<span class="stock-badge out">❌ Out of stock</span>'
+        f'<span class="stock-badge out">❌ <span data-i18n="out_of_stock">{SITE_I18N["en"]["out_of_stock"]}</span></span>'
     )
     img_html = (
         f'<img src="{_e(image_url)}" alt="{name}" class="prod-img" loading="lazy">'
@@ -582,7 +821,8 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         f"wzBuyNow({business_id},{repr(str(p.get('id','')))},{repr(str(name))},{price},'{_e(currency_sym)}')"
         if business_id else ""
     )
-    buy_label = "💳 Pay" if is_service else "💳 Buy Now"
+    _buy_key = "pay_btn" if is_service else "buy_now"
+    buy_label = f'💳 <span data-i18n="{_buy_key}">{SITE_I18N["en"][_buy_key]}</span>'
     buy_btn = (
         f'<button class="btn-buy" onclick="{buy_now_js}" {"" if available else "disabled"}>{buy_label}</button>'
         if business_id else ""
@@ -598,7 +838,7 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         f'<div class="prod-foot">'
         f'<span class="prod-price">{_e(currency_sym)}{price:.2f}</span>'
         f'{badge}'
-        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">💬 {"Book" if is_service else "Order"}</a>'
+        f'<a class="btn-order" href="{_wa_url(wa_phone, order_text)}" target="_blank" rel="noopener">💬 <span data-i18n="{"book_btn" if is_service else "order_btn"}">{SITE_I18N["en"]["book_btn" if is_service else "order_btn"]}</span></a>'
         f'{buy_btn}'
         f'</div></div></div>'
     )
@@ -644,13 +884,13 @@ def _about_html(biz: dict, settings: dict) -> str:
   <section class="about-section" id="about">
     <div class="section-inner about-grid">
       <div class="about-text">
-        <h2 class="section-title">About Us</h2>
+        <h2 class="section-title"><span data-i18n="about_us">About Us</span></h2>
         <p class="about-desc">{desc}</p>
         {location_html}
         {hours_html}
       </div>
       <div class="about-visual">
-        <div class="about-stat"><span class="stat-num">💬</span><span class="stat-label">WhatsApp Ordering</span></div>
+        <div class="about-stat"><span class="stat-num">💬</span><span class="stat-label" data-i18n="whatsapp_ordering">WhatsApp Ordering</span></div>
         <div class="about-stat"><span class="stat-num">⚡</span><span class="stat-label">Fast Delivery</span></div>
         <div class="about-stat"><span class="stat-num">🛡</span><span class="stat-label">Trusted & Secure</span></div>
       </div>
@@ -700,7 +940,7 @@ def _reviews_html(reviews: list) -> str:
     return f"""
   <section class="reviews-section" id="reviews">
     <div class="section-inner">
-      <h2 class="section-title">⭐ Customer Reviews</h2>
+      <h2 class="section-title">⭐ <span data-i18n="customer_reviews">Customer Reviews</span></h2>
       <div class="reviews-grid">{"".join(cards)}</div>
     </div>
   </section>"""
@@ -738,7 +978,7 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
         items.append(f'<div class="contact-item"><span class="ci-icon">📍</span><span>{_e(settings["location"])}</span></div>')
     if settings["show_hours"] and settings["business_hours"]:
         items.append(f'<div class="contact-item"><span class="ci-icon">🕐</span><span>{_e(settings["business_hours"])}</span></div>')
-    items_html = "".join(items) if items else '<p class="empty-msg">Contact us on WhatsApp below.</p>'
+    items_html = "".join(items) if items else '<p class="empty-msg" data-i18n="contact_below">Contact us on WhatsApp below.</p>'
 
     wa_href = _wa_url(wa_phone, f"Hi {name}! I'd like to get in touch.")
 
@@ -761,11 +1001,11 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
     return f"""
   <section class="contact-section" id="contact">
     <div class="section-inner contact-inner">
-      <h2 class="section-title">📬 Get In Touch</h2>
+      <h2 class="section-title">📬 <span data-i18n="get_in_touch">Get In Touch</span></h2>
       <div class="contact-details">{items_html}</div>
       {map_html}
       <a class="wa-cta-big" href="{wa_href}" target="_blank" rel="noopener">
-        💬 Message Us on WhatsApp
+        💬 <span data-i18n="message_us">Message Us on WhatsApp</span>
       </a>
     </div>
   </section>"""
@@ -833,6 +1073,10 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
 .nav-link:hover{{color:var(--nav-active);background:var(--surface)}}
 .nav-toggle{{display:none;background:none;border:none;color:var(--nav-active);
              font-size:22px;cursor:pointer;margin-left:auto}}
+.i18n-switch{{background:var(--surface);color:var(--nav-text);border:1px solid var(--border);
+              border-radius:6px;padding:5px 8px;font-size:13px;cursor:pointer;
+              margin-left:8px;flex-shrink:0}}
+.i18n-switch:hover{{border-color:var(--nav-active)}}
 
 /* ── Hero ── */
 .hero{{background:linear-gradient(135deg,var(--brand) 0%,var(--brand-dark) 100%);
@@ -1009,18 +1253,18 @@ def _buy_now_html(biz_id: int, currency_sym: str, currency_code: str, palette: d
 <div id="wz-cart-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:{bg};border-radius:16px;padding:28px;width:min(420px,94vw);max-height:90vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
-      <h3 style="font-size:18px;font-weight:700;color:{p['text']}">Checkout</h3>
+      <h3 style="font-size:18px;font-weight:700;color:{p['text']}" data-i18n="checkout">Checkout</h3>
       <button onclick="document.getElementById('wz-cart-overlay').style.display='none'"
         style="background:none;border:none;font-size:22px;cursor:pointer;color:{muted}">&#x2715;</button>
     </div>
     <div id="wz-cart-items" style="margin-bottom:20px;border-bottom:1px solid {border};padding-bottom:16px;color:{p['text']}"></div>
     <div style="display:flex;justify-content:space-between;margin-bottom:20px;color:{p['text']}">
-      <span style="font-weight:600">Total</span>
+      <span style="font-weight:600" data-i18n="total">Total</span>
       <span id="wz-cart-total" style="font-weight:700;font-size:18px;color:{theme}"></span>
     </div>
     <button id="wz-checkout-btn" onclick="wzCheckout()"
       style="width:100%;background:{theme};color:#fff;border:none;padding:14px;border-radius:10px;font-size:16px;font-weight:700;cursor:pointer;">
-      &#x1F4B3; Pay Securely
+      &#x1F4B3; <span data-i18n="pay_securely">Pay Securely</span>
     </button>
     <div style="text-align:center;margin-top:12px;font-size:11px;color:{muted};">
       &#x1F512; Payments processed securely by Stripe &bull; SSL Encrypted
@@ -1250,12 +1494,13 @@ def generate_site_html(slug: str) -> str:
 {gallery_sec}
 {contact_sec}
   <footer>
-    <p>Powered by <a href="https://wazibothq.com" target="_blank">WaziBot</a>
+    <p><span data-i18n="powered_by">Powered by</span> <a href="https://wazibothq.com" target="_blank">WaziBot</a>
        &mdash; AI Employee for WhatsApp Businesses</p>
     <p style="margin-top:8px;font-size:11px;opacity:.6;">🔒 Payments processed securely by Stripe &bull; PCI DSS Level 1 &bull; SSL Encrypted</p>
   </footer>
 {wa_sticky}
 {_JS}
+{_i18n_script()}
 </body>
 </html>"""
 
