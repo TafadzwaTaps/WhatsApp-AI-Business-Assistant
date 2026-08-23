@@ -71,6 +71,19 @@ else:
 
 # ── Runtime config ────────────────────────────────────────────────────────────
 VERIFY_TOKEN           = os.getenv("VERIFY_TOKEN", "myverifytoken123")
+if VERIFY_TOKEN == "myverifytoken123":
+    # Unlike SECRET_KEY, this can't be safely auto-randomized — it must
+    # match the value configured in Meta's App Dashboard for the webhook
+    # subscription handshake to work at all, so changing it here would
+    # break real setup rather than protect anything. Lower severity than
+    # SECRET_KEY/SUPER_ADMIN_PASSWORD too: it only gates Meta's one-time
+    # subscription verification handshake, not ongoing message
+    # authentication (that's WHATSAPP_APP_SECRET, handled separately) —
+    # but it's still a known, public default worth a loud warning.
+    log.warning(
+        "⚠️  VERIFY_TOKEN is using the default placeholder value. Set VERIFY_TOKEN "
+        "in Render env vars to match what's configured in your Meta App Dashboard."
+    )
 WHATSAPP_APP_SECRET    = os.getenv("WHATSAPP_APP_SECRET", "").strip()
 SHARED_PHONE_NUMBER_ID = os.getenv("SHARED_PHONE_NUMBER_ID", "").strip()
 SHARED_WA_TOKEN        = os.getenv("SHARED_WA_TOKEN", "").strip()

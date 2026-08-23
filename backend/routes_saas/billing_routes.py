@@ -332,7 +332,17 @@ def send_trial_warnings(request: Request):
     Protected by CRON_SECRET env var header to prevent abuse.
     """
     secret = os.getenv("CRON_SECRET", "")
-    if secret and request.headers.get("x-cron-secret") != secret:
+    # Fixed: previously "if secret and ..." meant an UNSET secret skipped
+    # this check entirely, leaving the endpoint wide open to anyone who
+    # discovered the URL. Unlike the WhatsApp webhook (where failing closed
+    # would block live customer messaging), this endpoint only runs a daily
+    # background job — failing closed here costs a delayed cron run, not
+    # broken customer-facing functionality, so there's no reason not to
+    # require the secret unconditionally.
+    if not secret:
+        log.error("🚨 CRON_SECRET not configured — refusing to run this endpoint unauthenticated")
+        raise HTTPException(503, "Cron endpoint not configured")
+    if request.headers.get("x-cron-secret") != secret:
         raise HTTPException(403, "Forbidden")
 
     from core.db import supabase
@@ -389,7 +399,17 @@ def cleanup_orphaned_carts(request: Request):
     Protected by CRON_SECRET. Safe to run daily.
     """
     secret = os.getenv("CRON_SECRET", "")
-    if secret and request.headers.get("x-cron-secret") != secret:
+    # Fixed: previously "if secret and ..." meant an UNSET secret skipped
+    # this check entirely, leaving the endpoint wide open to anyone who
+    # discovered the URL. Unlike the WhatsApp webhook (where failing closed
+    # would block live customer messaging), this endpoint only runs a daily
+    # background job — failing closed here costs a delayed cron run, not
+    # broken customer-facing functionality, so there's no reason not to
+    # require the secret unconditionally.
+    if not secret:
+        log.error("🚨 CRON_SECRET not configured — refusing to run this endpoint unauthenticated")
+        raise HTTPException(503, "Cron endpoint not configured")
+    if request.headers.get("x-cron-secret") != secret:
         raise HTTPException(403, "Forbidden")
 
     from core.db import supabase

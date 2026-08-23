@@ -21,9 +21,26 @@ load_dotenv()
 SECRET_KEY  = os.getenv("SECRET_KEY", "change_this_in_production_use_env_file")
 _WEAK_KEYS = {"change_this_in_production_use_env_file", "secret", "dev", "", "mysecret"}
 if SECRET_KEY in _WEAK_KEYS:
+    # Fixed: previously this only logged a warning and then CONTINUED using
+    # the known, hardcoded default — meaning every JWT this server issues
+    # would be signed with a secret visible in the source code, letting
+    # anyone forge a valid token for any business. A warning that doesn't
+    # change behavior doesn't close the hole.
+    #
+    # Generating a random secret here instead means the hole is closed
+    # immediately: no one can forge tokens without knowing this process's
+    # in-memory secret, which was never written anywhere. The real cost is
+    # that every restart/redeploy invalidates all existing sessions (forces
+    # re-login) until SECRET_KEY is actually set in Render — a meaningful
+    # but bounded inconvenience, not a security hole, and a strong signal
+    # to actually go fix the env var.
+    import secrets as _secrets
+    SECRET_KEY = _secrets.token_hex(32)
     import logging as _kal; _kal.getLogger("wazibot.security").critical(
-        "SECRET_KEY is unset or uses an insecure default value. "
-        "Set SECRET_KEY in Render env vars. "
+        "🚨 SECRET_KEY is unset or uses an insecure default value — generated "
+        "a random one for this process instead of using the known default. "
+        "ALL SESSIONS WILL BE INVALIDATED ON EVERY RESTART until you set a "
+        "real SECRET_KEY in Render env vars. "
         "Generate: python -c \"import secrets; print(secrets.token_hex(32))\""
     )
 ALGORITHM   = "HS256"
@@ -34,9 +51,19 @@ REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 SUPER_ADMIN_USERNAME = os.getenv("SUPER_ADMIN_USERNAME", "superadmin")
 SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "superadmin123")
 _WEAK_ADMIN_PWS = {"superadmin123", "admin", "password", "admin123", "wazibot", ""}
-if SUPER_ADMIN_PASSWORD in _WEAK_ADMIN_PWS:
+# Fixed: previously this only warned — the default "superadmin"/"superadmin123"
+# credential kept working for login regardless. verify_password() supports
+# plaintext comparison for backward compatibility, so this wasn't even a
+# hash anyone would need to crack — the literal password from this file
+# would work as-is. SUPER_ADMIN_LOGIN_DISABLED is checked by auth_routes.py
+# to refuse ALL superadmin logins outright until a real password is set —
+# a credential (unlike SECRET_KEY) can't be safely auto-randomized, since
+# the admin needs to know it to log in at all.
+SUPER_ADMIN_LOGIN_DISABLED = SUPER_ADMIN_PASSWORD in _WEAK_ADMIN_PWS
+if SUPER_ADMIN_LOGIN_DISABLED:
     import logging as _kal2; _kal2.getLogger("wazibot.security").critical(
-        "SUPER_ADMIN_PASSWORD is weak or default. Set a strong password in Render env vars."
+        "🚨 SUPER_ADMIN_PASSWORD is weak or default — superadmin login is now "
+        "DISABLED until you set a strong SUPER_ADMIN_PASSWORD in Render env vars."
     )
 
 class _LoggingOAuth2PasswordBearer(OAuth2PasswordBearer):

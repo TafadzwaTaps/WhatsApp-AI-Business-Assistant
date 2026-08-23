@@ -1242,8 +1242,8 @@ async function loadConversations() {
       const lastDir = c.last_direction || c.direction || '';
       const lastAt = c.last_message_at || c.created_at || c.timestamp || null;
       const unread = c.unread_count || 0;
-      return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${phone}',this)">
-      <div class="contact-phone">${phone}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
+      return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${escHtml(phone)}',this)">
+      <div class="contact-phone">${escHtml(phone)}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
       <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(lastMsg)}</div>
       <div class="contact-time">${fmtTime(lastAt)}</div>
     </div>`;

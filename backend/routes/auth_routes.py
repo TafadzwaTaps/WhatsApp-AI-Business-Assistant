@@ -14,7 +14,7 @@ from core.auth import (
     create_access_token, create_refresh_token,
     decode_token,
     get_current_user, require_superadmin, require_business,
-    SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD,
+    SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_LOGIN_DISABLED,
 )
 from services.security import (
     check as _rate_check,
@@ -198,6 +198,12 @@ def login(data: LoginRequest, request: Request):
     username = data.username.strip().lower()
 
     if username == SUPER_ADMIN_USERNAME.lower():
+        if SUPER_ADMIN_LOGIN_DISABLED:
+            # SUPER_ADMIN_PASSWORD is still the known default — refusing
+            # login outright rather than letting a publicly-known password
+            # from this codebase work as a real credential.
+            log.error("superadmin login attempt blocked — SUPER_ADMIN_PASSWORD not configured  ip=%s", ip)
+            raise HTTPException(403, "Superadmin login is disabled until a secure password is configured.")
         if not verify_password(data.password, SUPER_ADMIN_PASSWORD):
             record_failed_login(ip, username)
             raise HTTPException(401, "Invalid credentials")
