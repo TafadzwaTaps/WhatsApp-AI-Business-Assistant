@@ -493,6 +493,8 @@ def check_availability(
     booking_date: str,
     start_time:   str,
     duration_hrs: float = 1.0,
+    _biz_config: dict = None,
+    _existing_bookings: list = None,
 ) -> dict:
     """
     Check if a slot is available. Validates, in order:
@@ -521,14 +523,25 @@ def check_availability(
 
         end_time = _add_time(start_time, duration_hrs)
 
-        biz_res = (
-            supabase.table("businesses")
-            .select("features_json, working_hours_start, working_hours_end, booking_lead_hrs")
-            .eq("id", business_id)
-            .limit(1)
-            .execute()
-        )
-        biz = (biz_res.data or [{}])[0] if biz_res.data else {}
+        # Performance: get_available_slots() checks many candidate times for
+        # the same business/day in a loop. Without this, each candidate
+        # re-fetched business config AND all existing bookings from
+        # scratch — an N+1 query pattern. When the caller already has this
+        # data (see get_available_slots below), it's passed in directly and
+        # these two queries are skipped entirely. Single-slot callers
+        # (dashboard, WhatsApp, public page create) are unaffected — they
+        # don't pass these, so behavior is identical to before.
+        if _biz_config is not None:
+            biz = _biz_config
+        else:
+            biz_res = (
+                supabase.table("businesses")
+                .select("features_json, working_hours_start, working_hours_end, booking_lead_hrs")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
+            biz = (biz_res.data or [{}])[0] if biz_res.data else {}
 
         # timezone is NOT a direct businesses column — it's stored inside
         # features_json (see business_routes.py's user_profile block,
@@ -579,15 +592,18 @@ def check_availability(
             return {"available": False, "reason": "Could not verify — please try again", "conflicts": []}
 
         # 3. Conflict check against existing bookings
-        res = (
-            supabase.table("bookings")
-            .select("id, start_time, end_time, customer_phone, status")
-            .eq("business_id", business_id)
-            .eq("booking_date", booking_date)
-            .in_("status", ["pending", "confirmed"])
-            .execute()
-        )
-        existing = res.data or []
+        if _existing_bookings is not None:
+            existing = _existing_bookings
+        else:
+            res = (
+                supabase.table("bookings")
+                .select("id, start_time, end_time, customer_phone, status")
+                .eq("business_id", business_id)
+                .eq("booking_date", booking_date)
+                .in_("status", ["pending", "confirmed"])
+                .execute()
+            )
+            existing = res.data or []
 
         conflicts = []
         for b in existing:
@@ -628,24 +644,46 @@ def get_available_slots(
     available times that then fail on booking is not.
     """
     try:
+        from core.db import supabase
+
         start_h, start_m = 8, 0
         end_h,   end_m   = 17, 0
+        biz_config = {}
         try:
-            from core.db import supabase
+            # Fetched ONCE here (not per-candidate) — the same full config
+            # check_availability() would otherwise re-fetch on every call.
+            # See check_availability's _biz_config param for the other half
+            # of this fix.
             biz_res = (
                 supabase.table("businesses")
-                .select("working_hours_start, working_hours_end")
+                .select("features_json, working_hours_start, working_hours_end, booking_lead_hrs")
                 .eq("id", business_id)
                 .limit(1)
                 .execute()
             )
-            biz = (biz_res.data or [{}])[0] if biz_res.data else {}
-            hs = (biz.get("working_hours_start") or "08:00")[:5]
-            he = (biz.get("working_hours_end")   or "17:00")[:5]
+            biz_config = (biz_res.data or [{}])[0] if biz_res.data else {}
+            hs = (biz_config.get("working_hours_start") or "08:00")[:5]
+            he = (biz_config.get("working_hours_end")   or "17:00")[:5]
             start_h, start_m = map(int, hs.split(":"))
             end_h,   end_m   = map(int, he.split(":"))
         except Exception as exc:
             log.warning("get_available_slots: could not load working hours, using default: %s", exc)
+
+        existing_bookings = []
+        try:
+            # Also fetched ONCE — the same conflicts list every candidate's
+            # check_availability() call would otherwise re-query separately.
+            book_res = (
+                supabase.table("bookings")
+                .select("id, start_time, end_time, customer_phone, status")
+                .eq("business_id", business_id)
+                .eq("booking_date", booking_date)
+                .in_("status", ["pending", "confirmed"])
+                .execute()
+            )
+            existing_bookings = book_res.data or []
+        except Exception as exc:
+            log.warning("get_available_slots: could not load existing bookings: %s", exc)
 
         slots = []
         cur_mins = start_h * 60 + start_m
@@ -654,7 +692,10 @@ def get_available_slots(
 
         while cur_mins + duration_mins <= end_mins:
             candidate = f"{cur_mins // 60:02d}:{cur_mins % 60:02d}"
-            avail = check_availability(business_id, booking_date, candidate, duration_hrs)
+            avail = check_availability(
+                business_id, booking_date, candidate, duration_hrs,
+                _biz_config=biz_config, _existing_bookings=existing_bookings,
+            )
             if avail.get("available"):
                 slots.append(candidate)
             cur_mins += interval_mins

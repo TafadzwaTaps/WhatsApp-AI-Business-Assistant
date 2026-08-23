@@ -17,3 +17,7 @@ cryptography>=42.0.0
 python-dotenv>=1.0.0
 stripe>=7.0.0
 qrcode[pil]>=7.4.2
+
+# ── Testing (dev only — not required at runtime, safe to include) ──────────
+pytest>=8.0.0
+pytest-mock>=3.14.0

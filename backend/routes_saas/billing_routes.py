@@ -17,6 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 import logging
+import os  # Bug fix: os.getenv() is used throughout this file (CRON_SECRET
+           # checks, etc.) but "os" was never imported — every call to
+           # those endpoints raised NameError at runtime. Confirmed via
+           # test_cron_security.py: this predates the CRON_SECRET
+           # fail-closed fix, the endpoints were non-functional before
+           # that fix too.
 
 from core.auth import require_business
 
