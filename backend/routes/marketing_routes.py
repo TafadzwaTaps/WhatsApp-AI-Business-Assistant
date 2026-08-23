@@ -144,18 +144,19 @@ def get_keyword(user=Depends(require_business)):
 
 
 @router.get("/marketing/qr")
-def get_qr_image(user=Depends(require_business)):
+def get_qr_image(dest: str = "whatsapp", user=Depends(require_business)):
     """
     Serve the QR code PNG for the authenticated business.
     Returns image/png — use as <img src="/marketing/qr"> with auth header.
     Security: authenticated endpoint — only serves the caller's own QR.
+    dest: "whatsapp" (default) or "booking" — see generate_qr_png().
     """
     from services.marketing_service import get_marketing_kit, generate_qr_png
     kit = get_marketing_kit(user["business_id"])
     if "error" in kit:
         raise HTTPException(404, kit["error"])
     try:
-        png_bytes = generate_qr_png(kit["business_name"])
+        png_bytes = generate_qr_png(kit["business_name"], dest=dest)
     except ImportError as exc:
         raise HTTPException(503, str(exc))
     except Exception as exc:
@@ -165,24 +166,25 @@ def get_qr_image(user=Depends(require_business)):
 
 
 @router.get("/marketing/qr/download")
-def download_qr(user=Depends(require_business)):
+def download_qr(dest: str = "whatsapp", user=Depends(require_business)):
     """
     Download QR PNG with a descriptive filename.
     Feature 4: 'flavoury-foods-whatsapp-qr.png'
+    dest: "whatsapp" (default) or "booking" — see generate_qr_png().
     """
     from services.marketing_service import get_marketing_kit, generate_qr_png, _name_to_slug
     kit = get_marketing_kit(user["business_id"])
     if "error" in kit:
         raise HTTPException(404, kit["error"])
     try:
-        png_bytes = generate_qr_png(kit["business_name"])
+        png_bytes = generate_qr_png(kit["business_name"], dest=dest)
     except ImportError as exc:
         raise HTTPException(503, str(exc))
     except Exception as exc:
         raise HTTPException(500, "QR generation failed")
 
     slug     = kit["slug"]
-    filename = f"{slug}-whatsapp-qr.png"
+    filename = f"{slug}-{dest}-qr.png"
     return Response(
         content=png_bytes,
         media_type="image/png",

@@ -75,16 +75,24 @@ def generate_whatsapp_link(business_name: str) -> str:
 _qr_cache: dict[str, bytes] = {}
 
 
-def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4) -> bytes:
+def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4,
+                     dest: str = "whatsapp") -> bytes:
     """
-    Generate a PNG QR code for the business's WhatsApp deep link.
-    Returns raw PNG bytes. Cached by keyword so repeated calls are free.
+    Generate a PNG QR code for the business.
+    Returns raw PNG bytes. Cached by (keyword, dest) so repeated calls are free.
+
+    dest: "whatsapp" (default) — scans route through /qr/{slug}, a tracking
+          redirect that records a qr_scan event before bouncing to WhatsApp.
+          "booking" — scans go straight to the native public booking page
+          (/book/{slug}), which records its own booking_page_view event on
+          load, so scan tracking still works without a second redirect hop.
 
     Raises ImportError if qrcode/Pillow not installed (add to requirements.txt).
     """
     keyword = generate_business_keyword(business_name)
-    if keyword in _qr_cache:
-        return _qr_cache[keyword]
+    cache_key = f"{keyword}:{dest}"
+    if cache_key in _qr_cache:
+        return _qr_cache[cache_key]
 
     try:
         import qrcode
@@ -95,12 +103,16 @@ def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4) -> 
             "and redeploy."
         )
 
-    # QR codes point to /qr/{slug} (tracking redirect) instead of directly
-    # to WhatsApp — this lets us count QR scans before the WhatsApp redirect.
     import os
     base_url = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
     slug     = _name_to_slug(business_name)
-    qr_target_url = f"{base_url}/qr/{slug}"
+    if dest == "booking":
+        qr_target_url = f"{base_url}/book/{slug}"
+    else:
+        # QR codes point to /qr/{slug} (tracking redirect) instead of
+        # directly to WhatsApp — this lets us count QR scans before the
+        # WhatsApp redirect.
+        qr_target_url = f"{base_url}/qr/{slug}"
 
     qr = qrcode.QRCode(
         version=None,           # auto-size
@@ -125,9 +137,9 @@ def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4) -> 
         img.save(buf)
         png_bytes = buf.getvalue()
 
-    _qr_cache[keyword] = png_bytes
-    log.info("QR generated  business=%s  keyword=%s  size=%d bytes",
-             business_name, keyword, len(png_bytes))
+    _qr_cache[cache_key] = png_bytes
+    log.info("QR generated  business=%s  keyword=%s  dest=%s  size=%d bytes",
+             business_name, keyword, dest, len(png_bytes))
     return png_bytes
 
 

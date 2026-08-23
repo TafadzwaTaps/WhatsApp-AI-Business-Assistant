@@ -57,6 +57,16 @@ def record_whatsapp_click(business_id: int) -> None:
     _record_event(business_id, "whatsapp_click")
 
 
+def record_booking_page_view(business_id: int) -> None:
+    """Call when a customer opens /book/{slug}."""
+    _record_event(business_id, "booking_page_view")
+
+
+def record_booking_completed(business_id: int, booking_id=None) -> None:
+    """Call when a booking is successfully created via the public page."""
+    _record_event(business_id, "booking_completed", {"booking_id": booking_id} if booking_id else None)
+
+
 def record_conversation_started(business_id: int, phone: str) -> None:
     """
     Call when the FIRST message from a customer arrives in the webhook.

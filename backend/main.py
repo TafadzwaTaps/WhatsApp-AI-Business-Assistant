@@ -447,7 +447,14 @@ try:
 except Exception as _e:
     log.warning("SaaS marketplace_routes failed: %s: %s", type(_e).__name__, _e)
 
-_SAAS_ROUTERS_LOADED = any([billing_router, saas_admin_router, onboarding_router, marketplace_router])
+booking_public_router = None
+try:
+    from routes.booking_routes import router as booking_public_router
+    log.info("Public booking_router loaded")
+except Exception as _e:
+    log.warning("Public booking_routes failed: %s: %s", type(_e).__name__, _e)
+
+_SAAS_ROUTERS_LOADED = any([billing_router, saas_admin_router, onboarding_router, marketplace_router, booking_public_router])
 if _SAAS_ROUTERS_LOADED:
     log.info("SaaS routers loaded successfully")
 else:
@@ -490,6 +497,7 @@ if billing_router:     app.include_router(billing_router)
 if saas_admin_router:  app.include_router(saas_admin_router)
 if onboarding_router:  app.include_router(onboarding_router)
 if marketplace_router: app.include_router(marketplace_router)
+if booking_public_router: app.include_router(booking_public_router)
 
 # ── Feature 1: Weekly report scheduler ───────────────────────────────────
 # Runs in a daemon thread — never blocks startup or requests.

@@ -609,6 +609,62 @@ def check_availability(
         return {"available": False, "reason": "Could not verify — please try again", "conflicts": []}
 
 
+def get_available_slots(
+    business_id:  int,
+    booking_date: str,
+    duration_hrs: float = 1.0,
+    interval_mins: int = 30,
+) -> dict:
+    """
+    Return every open slot for a given day — used by the public booking
+    page to show a grid of times, rather than check_availability's single
+    yes/no answer for one candidate slot. Reuses check_availability() for
+    each candidate so the exact same working-hours/lead-time/conflict/
+    timezone logic applies here too — no separate rules to keep in sync.
+
+    Returns {"slots": [...], "reason": str}. On failure, returns an empty
+    slot list rather than raising or fabricating times — a page showing
+    "no times available right now" is honest; a page showing fake
+    available times that then fail on booking is not.
+    """
+    try:
+        start_h, start_m = 8, 0
+        end_h,   end_m   = 17, 0
+        try:
+            from core.db import supabase
+            biz_res = (
+                supabase.table("businesses")
+                .select("working_hours_start, working_hours_end")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
+            biz = (biz_res.data or [{}])[0] if biz_res.data else {}
+            hs = (biz.get("working_hours_start") or "08:00")[:5]
+            he = (biz.get("working_hours_end")   or "17:00")[:5]
+            start_h, start_m = map(int, hs.split(":"))
+            end_h,   end_m   = map(int, he.split(":"))
+        except Exception as exc:
+            log.warning("get_available_slots: could not load working hours, using default: %s", exc)
+
+        slots = []
+        cur_mins = start_h * 60 + start_m
+        end_mins = end_h * 60 + end_m
+        duration_mins = int(duration_hrs * 60)
+
+        while cur_mins + duration_mins <= end_mins:
+            candidate = f"{cur_mins // 60:02d}:{cur_mins % 60:02d}"
+            avail = check_availability(business_id, booking_date, candidate, duration_hrs)
+            if avail.get("available"):
+                slots.append(candidate)
+            cur_mins += interval_mins
+
+        return {"slots": slots, "reason": "" if slots else "No available times for this day"}
+    except Exception as exc:
+        log.warning("get_available_slots error: %s", exc)
+        return {"slots": [], "reason": "Could not load availability — please try again"}
+
+
 def create_booking(
     business_id:   int,
     customer_phone: str,

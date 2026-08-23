@@ -45,7 +45,7 @@ router = APIRouter()
 # working today, and automatically picks up the optional columns the moment
 # their migration is run — no further code change needed.
 _ALWAYS_SAFE_BIZ_FIELDS = "id,name,category,currency,currency_symbol,onboarding_completed"
-_OPTIONAL_BIZ_FIELDS    = ("tagline", "logo_url", "theme_colour")
+_OPTIONAL_BIZ_FIELDS    = ("tagline", "logo_url", "theme_colour", "is_service_business")
 
 _ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
 _OPTIONAL_PRODUCT_FIELDS    = ("description", "category", "image_url", "stock")
@@ -122,6 +122,7 @@ def _name_to_slug(name: str) -> str:
 
 def _safe_biz(b: dict) -> dict:
     """Return only public-safe business fields."""
+    slug = _name_to_slug(b.get("name", ""))
     return {
         "id":           b.get("id"),
         "name":         b.get("name", ""),
@@ -131,7 +132,10 @@ def _safe_biz(b: dict) -> dict:
         "theme_colour": b.get("theme_colour", "#00c853"),
         "currency":     b.get("currency", "USD"),
         "currency_sym": b.get("currency_symbol", "$"),
-        "slug":         _name_to_slug(b.get("name", "")),
+        "slug":         slug,
+        # Only present when the business actually has bookings enabled —
+        # the directory should show no "Book Now" button otherwise.
+        "booking_url":  f"/book/{slug}" if b.get("is_service_business") else None,
     }
 
 

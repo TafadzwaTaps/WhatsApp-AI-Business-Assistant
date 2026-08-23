@@ -79,7 +79,8 @@ def _wa_url(phone: str, text: str = "") -> str:
 _ALWAYS_SAFE_FIELDS = "id,name,category,currency_symbol,features_json"
 _OPTIONAL_FIELDS     = ("tagline", "logo_url", "theme_colour", "contact_phone",
                         "ecocash_number", "paypal_email", "use_shared_number",
-                        "is_service_business")
+                        "is_service_business", "working_hours_start",
+                        "working_hours_end", "booking_lead_hrs")
 _columns_cache: set | None = None
 
 _ALWAYS_SAFE_PRODUCT_FIELDS = "id,name,price"
@@ -717,7 +718,7 @@ def _nav_html(sections: dict, biz_name: str) -> str:
   </nav>"""
 
 
-def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
+def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = False) -> str:
     name      = _e(biz.get("name", "Our Business"))
     category  = _e(biz.get("category", ""))
     tagline   = _e(biz.get("tagline") or settings.get("description") or f"Order {biz.get('category','products')} on WhatsApp")
@@ -744,6 +745,17 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str) -> str:
         f'<a class="hero-cta" href="{wa_href}" rel="noopener">'
         f'💬 <span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span></a>'
     ) if settings["show_ordering"] else ""
+
+    # Service businesses get an additional "Book an Appointment" CTA
+    # linking straight to the native public booking page — only shown
+    # when the business actually has bookings enabled, matching the
+    # original spec's "If the business does not have bookings enabled,
+    # do not display the CTA."
+    if is_service and _hero_slug:
+        cta += (
+            f' <a class="hero-cta hero-cta-secondary" href="/book/{_e(_hero_slug)}" rel="noopener">'
+            f'🗓️ Book an Appointment</a>'
+        )
 
     return f"""
   <section class="hero" id="home">
@@ -1101,6 +1113,9 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
            border-radius:50px;font-size:16px;font-weight:700;text-decoration:none;
            box-shadow:0 4px 24px rgba(0,0,0,.2);transition:transform .2s,box-shadow .2s}}
 .hero-cta:hover{{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.3)}}
+.hero-cta-secondary{{background:transparent;color:#fff;border:2px solid rgba(255,255,255,.6);
+                      box-shadow:none;margin-left:10px}}
+.hero-cta-secondary:hover{{background:rgba(255,255,255,.12);border-color:#fff}}
 
 /* ── Sections ── */
 .section-inner{{max-width:var(--maxw);margin:0 auto;padding:0 24px}}
@@ -1453,8 +1468,8 @@ def generate_site_html(slug: str) -> str:
     css           = _build_css(palette, font_stack, layout, theme, theme_dark)
     seo           = _seo_tags(name, category, tagline, slug)
     nav           = _nav_html(sections, name)
-    hero          = _hero_html(biz, settings, wa_phone)
     is_service    = bool(biz.get("is_service_business", False))
+    hero          = _hero_html(biz, settings, wa_phone, is_service)
     products_sec  = _products_section_html(products, currency_sym, wa_phone, name, biz['id'], is_service)
     about_sec     = _about_html(biz, settings)
     reviews_sec   = _reviews_html(reviews)

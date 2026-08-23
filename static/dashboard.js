@@ -2873,6 +2873,19 @@ function renderMarketingKit(data) {
   });
 }
 
+let _qrDest = 'whatsapp';
+
+function setQrDest(dest) {
+  _qrDest = dest;
+  const wa = document.getElementById('qr-dest-whatsapp');
+  const bk = document.getElementById('qr-dest-booking');
+  if (wa) wa.className = dest === 'whatsapp' ? 'btn btn-primary' : 'btn btn-ghost';
+  if (bk) bk.className = dest === 'booking'  ? 'btn btn-primary' : 'btn btn-ghost';
+  wa && (wa.style.cssText = 'padding:6px 14px;font-size:12px;');
+  bk && (bk.style.cssText = 'padding:6px 14px;font-size:12px;');
+  mktRefreshQR();
+}
+
 async function loadMarketingQR() {
   const img = document.getElementById('mkt-qr-img');
   const loading = document.getElementById('mkt-qr-loading');
@@ -2881,7 +2894,7 @@ async function loadMarketingQR() {
   if (!img) return;
   try {
     const token = localStorage.getItem('wazi_token') || '';
-    const resp  = await fetch('/marketing/qr', { headers: { 'Authorization': `Bearer ${token}` } });
+    const resp  = await fetch('/marketing/qr?dest=' + encodeURIComponent(_qrDest), { headers: { 'Authorization': `Bearer ${token}` } });
     if (!resp.ok) throw new Error(await resp.text());
     const blob = await resp.blob();
     img.src = URL.createObjectURL(blob);
@@ -2898,11 +2911,11 @@ async function loadMarketingQR() {
 async function mktDownloadQR() {
   try {
     const token = localStorage.getItem('wazi_token') || '';
-    const resp  = await fetch('/marketing/qr/download', { headers: { 'Authorization': `Bearer ${token}` } });
+    const resp  = await fetch('/marketing/qr/download?dest=' + encodeURIComponent(_qrDest), { headers: { 'Authorization': `Bearer ${token}` } });
     if (!resp.ok) throw new Error('Download failed');
     const blob  = await resp.blob();
     const url   = URL.createObjectURL(blob);
-    const fname = (_mktData?.slug || 'business') + '-whatsapp-qr.png';
+    const fname = (_mktData?.slug || 'business') + '-' + _qrDest + '-qr.png';
     const a = document.createElement('a');
     a.href = url; a.download = fname;
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
