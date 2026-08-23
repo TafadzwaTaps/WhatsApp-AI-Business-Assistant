@@ -373,6 +373,8 @@ function _setServiceMode(isService) {
   if (lp) lp.style.color = isService ? 'var(--text-dim)' : 'var(--text)';
   if (ls) ls.style.color = isService ? 'var(--text)'    : 'var(--text-dim)';
 
+  _populateOrderStatusFilter();
+
   _applyServiceMode(isService);
 }
 
@@ -840,6 +842,43 @@ async function loadOrders() {
   }
 }
 
+// ── Order status labels — separate sets for product vs service businesses ──
+// Previously the status filter dropdown always showed the full product-
+// fulfillment lifecycle (Preparing/Ready/Out for Delivery/Delivered) even
+// for a barber shop or salon, where those steps don't apply — a haircut
+// isn't "prepared" or "delivered". The actual appointment/booking status
+// (confirmed, completed, no-show, etc.) is already tracked separately in
+// the Bookings section; this ORDER status is purely about payment/order
+// lifecycle, so the service-business set is intentionally shorter.
+const _ORDER_STATUS_LABELS = {
+  all: 'All Statuses', pending: 'Pending', pending_cash: 'Confirmed (Cash)',
+  confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready',
+  out_for_delivery: 'Out for Delivery', delivered: 'Delivered',
+  completed: 'Completed', cancelled: 'Cancelled',
+};
+const _ORDER_STATUS_LABELS_SERVICE = {
+  all: 'All Statuses', pending: 'Pending', pending_cash: 'Confirmed (Cash)',
+  confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled',
+};
+// Filter option ORDER per business type — product keeps every existing
+// status; service drops the delivery-fulfillment-only steps.
+const _ORDER_STATUS_KEYS_PRODUCT = ['all','pending','pending_cash','confirmed','preparing','ready','out_for_delivery','delivered','completed','cancelled'];
+const _ORDER_STATUS_KEYS_SERVICE = ['all','pending','pending_cash','confirmed','completed','cancelled'];
+
+function _populateOrderStatusFilter() {
+  const sel = document.getElementById('order-status-filter');
+  if (!sel) return;
+  const isService = !!window.IS_SERVICE_BUSINESS;
+  const keys   = isService ? _ORDER_STATUS_KEYS_SERVICE : _ORDER_STATUS_KEYS_PRODUCT;
+  const labels = isService ? _ORDER_STATUS_LABELS_SERVICE : _ORDER_STATUS_LABELS;
+  const prevValue = sel.value || 'all';
+  sel.innerHTML = keys.map(k => `<option value="${k}">${labels[k]}</option>`).join('');
+  // Keep the previous selection if it's still valid for this business type,
+  // otherwise fall back to "all" rather than silently landing on something
+  // that no longer exists in the list.
+  sel.value = keys.includes(prevValue) ? prevValue : 'all';
+}
+
 function renderOrders(orders, bodyId, showStatus) {
   const cols = showStatus ? 7 : 6;
   const tbody = document.getElementById(bodyId);
@@ -854,7 +893,7 @@ function renderOrders(orders, bodyId, showStatus) {
     <td>${escHtml(o.product_name||'—')}</td>
     <td>${o.quantity||0}</td>
     <td><span class="badge badge-green">${getCurrencySymbol()}${(o.total_price||0).toFixed(2)}</span></td>
-    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml(status)}</span></td>`:''}
+    ${showStatus?`<td><span class="badge ${status==='pending'?'badge-amber':'badge-green'}">${escHtml((window.IS_SERVICE_BUSINESS ? _ORDER_STATUS_LABELS_SERVICE[status] : _ORDER_STATUS_LABELS[status]) || status)}</span></td>`:''}
     <td>${fmtTime(o.created_at || o.createdAt || o.timestamp)}</td>
   </tr>`;
   }).join('');

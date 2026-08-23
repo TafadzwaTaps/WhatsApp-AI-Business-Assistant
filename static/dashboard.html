@@ -599,15 +599,6 @@
       <div style="display:flex;gap:6px;align-items:center;">
         <select id="order-status-filter" onchange="filterOrdersByStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
           <option value="all">All Statuses</option>
-          <option value="pending">Pending</option>
-          <option value="pending_cash">Confirmed (Cash)</option>
-          <option value="confirmed">Confirmed</option>
-          <option value="preparing">Preparing</option>
-          <option value="ready">Ready</option>
-          <option value="out_for_delivery">Out for Delivery</option>
-          <option value="delivered">Delivered</option>
-          <option value="completed">Completed</option>
-          <option value="cancelled">Cancelled</option>
         </select>
         <button class="btn btn-ghost" id="orders-view-list" onclick="setOrderView('list')" style="font-size:11px;padding:6px 10px;opacity:1;" title="List view">☰</button>
         <button class="btn btn-ghost" id="orders-view-kanban" onclick="setOrderView('kanban')" style="font-size:11px;padding:6px 10px;opacity:0.4;" title="Kanban view">⬛</button>

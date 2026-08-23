@@ -148,8 +148,12 @@ def update_booking_status(
     user=Depends(require_business),
     _plan=Depends(require_plan("GROWTH")),
 ):
-    """Update booking status: confirmed | completed | cancelled | rescheduled"""
-    valid = {"confirmed", "completed", "cancelled", "rescheduled", "pending"}
+    """Update booking status: confirmed | completed | cancelled | rescheduled | no_show"""
+    # Bug fix: "no_show" was missing from this whitelist even though the
+    # dashboard's booking table has always had a "No-show" button that
+    # sends exactly this value (see _bkSetStatus in dashboard.js) — every
+    # click on it was rejected by this validation before reaching the DB.
+    valid = {"confirmed", "completed", "cancelled", "rescheduled", "pending", "no_show"}
     if status not in valid:
         raise HTTPException(400, f"status must be one of {valid}")
     try:
