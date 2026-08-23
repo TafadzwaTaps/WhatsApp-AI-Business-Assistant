@@ -98,9 +98,29 @@ os.makedirs(INVOICES_DIR, exist_ok=True)
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None)
 
+# ── CORS ──────────────────────────────────────────────────────────────────
+# Previously allow_origins=["*"] — unrestricted. Mobile apps (Flutter) are
+# NOT affected by this change: CORS is enforced by browsers, not by native
+# HTTP clients, so the mobile API keeps working exactly as before regardless
+# of what's listed here. This restricts which BROWSER-based origins may
+# make cross-origin requests (e.g. a malicious site embedding a fetch()
+# call to steal a logged-in user's data via their browser session).
+# ALLOWED_ORIGINS lets ops add more domains without a code change/redeploy
+# of this file; the hardcoded defaults cover the known production domains
+# and local development so nothing breaks if that env var isn't set yet.
+_default_origins = [
+    "https://wazibothq.com",
+    "https://www.wazibothq.com",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+]
+_extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
+_cors_origins = list(dict.fromkeys(_default_origins + _extra_origins))  # dedupe, keep order
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
@@ -507,5 +527,25 @@ try:
         )
 except Exception as _deploy_check_exc:
     log.warning("Deploy consistency check failed to run: %s", _deploy_check_exc)
+
+# ── Security configuration check ────────────────────────────────────────────
+# WHATSAPP_APP_SECRET missing means webhook signature verification is
+# currently DISABLED — verify_meta_signature() intentionally fails open
+# (returns True) rather than rejecting all WhatsApp traffic outright, since
+# hard-failing here would break live customer messaging the instant this
+# deploys with the secret still unset. That tradeoff is the right one for
+# not breaking working functionality, but it must never be silent — this
+# fires a loud, repeated, impossible-to-miss warning on every boot until
+# the secret is actually set in Render's environment variables.
+if not WHATSAPP_APP_SECRET:
+    log.error(
+        "🚨🚨🚨 SECURITY: WHATSAPP_APP_SECRET is NOT SET — webhook signature "
+        "verification is DISABLED. Anyone who discovers your webhook URL can "
+        "currently send fake WhatsApp events with no authentication. Set "
+        "WHATSAPP_APP_SECRET in Render's environment variables immediately. "
+        "This warning will repeat on every deploy until it is fixed."
+    )
+else:
+    log.info("✅ SECURITY CHECK — WHATSAPP_APP_SECRET is configured, webhook signature verification active")
 log.info("🏷️  BUILD MARKER — currency_fix_v3 + tenant_router_null_safe_v1 — "
          "if you do NOT see this exact line after a fresh deploy, the deploy did not pick up these files")

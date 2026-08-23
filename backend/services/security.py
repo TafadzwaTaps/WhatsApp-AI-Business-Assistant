@@ -153,6 +153,11 @@ LIMITS = {
     "payment_verify":{"max_calls": 10,"window": 60},    # 10/min per IP
     "webhook":      {"max_calls": 300,"window": 60},    # 300/min (Meta sends bursts)
     "reminders":    {"max_calls": 3,  "window": 300},   # 3 per 5min
+    # Public-facing booking creation/availability endpoints had no rate
+    # limiting at all — a scripted client could spam fake bookings or
+    # hammer availability checks with no cost. 10/min is generous for a
+    # genuine customer booking an appointment, but blocks casual abuse.
+    "booking":      {"max_calls": 10, "window": 60},    # 10/min per IP
 }
 
 

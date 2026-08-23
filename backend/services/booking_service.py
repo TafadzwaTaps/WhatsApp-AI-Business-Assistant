@@ -495,14 +495,90 @@ def check_availability(
     duration_hrs: float = 1.0,
 ) -> dict:
     """
-    Check if a slot is available.
+    Check if a slot is available. Validates, in order:
+      1. The slot is genuinely within the business's working hours.
+      2. The slot respects the business's minimum booking notice
+         (booking_lead_hrs), evaluated in the business's OWN timezone —
+         not server time, which is what "now" silently meant before this
+         fix. A business in Europe/Warsaw and one in Africa/Harare see
+         different real-world deadlines for the same UTC instant.
+      3. No conflicting booking already exists for that slot.
+
     Returns {"available": bool, "reason": str, "conflicts": list}
-    Never raises.
+    Never raises — but unlike before, a failure to verify now correctly
+    reports unavailable rather than silently waving the booking through.
+    Production booking systems must fail closed: a DB hiccup during the
+    availability check is exactly the moment a double-booking could slip
+    through undetected if this returned "available" by default.
     """
     try:
+        from datetime import datetime, date as _date_cls
+        try:
+            from zoneinfo import ZoneInfo
+        except ImportError:
+            from backports.zoneinfo import ZoneInfo  # py<3.9 fallback, rarely needed
         from core.db import supabase
+
         end_time = _add_time(start_time, duration_hrs)
 
+        biz_res = (
+            supabase.table("businesses")
+            .select("features_json, working_hours_start, working_hours_end, booking_lead_hrs")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        biz = (biz_res.data or [{}])[0] if biz_res.data else {}
+
+        # timezone is NOT a direct businesses column — it's stored inside
+        # features_json (see business_routes.py's user_profile block,
+        # added there specifically to avoid a schema migration). Reusing
+        # the same field is semantically correct here: it already
+        # represents the business's own location/timezone (paired with
+        # "country", defaulted to Africa/Harare), not just a personal
+        # dashboard display preference.
+        _fj        = biz.get("features_json") or {}
+        tz_name    = _fj.get("timezone") or "UTC"
+        hours_start = (biz.get("working_hours_start") or "08:00")[:5]
+        hours_end   = (biz.get("working_hours_end")   or "17:00")[:5]
+        lead_hrs    = biz.get("booking_lead_hrs")
+        lead_hrs    = int(lead_hrs) if lead_hrs is not None else 1
+
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            log.warning("check_availability: unknown timezone %r for biz=%s, defaulting to UTC",
+                        tz_name, business_id)
+            tz = ZoneInfo("UTC")
+
+        # 1. Working hours check
+        if start_time < hours_start or end_time > hours_end:
+            return {
+                "available": False,
+                "reason": f"Outside working hours ({hours_start}–{hours_end})",
+                "conflicts": [],
+            }
+
+        # 2. Minimum notice check — compared in the BUSINESS's own timezone,
+        #    not naive server time.
+        try:
+            requested_dt = datetime.combine(
+                _date_cls.fromisoformat(booking_date),
+                datetime.strptime(start_time, "%H:%M").time(),
+            ).replace(tzinfo=tz)
+            now_in_biz_tz = datetime.now(tz)
+            hours_until = (requested_dt - now_in_biz_tz).total_seconds() / 3600
+            if hours_until < lead_hrs:
+                return {
+                    "available": False,
+                    "reason": f"Needs at least {lead_hrs}h notice",
+                    "conflicts": [],
+                }
+        except Exception as exc:
+            log.warning("check_availability: lead-time check failed, failing closed: %s", exc)
+            return {"available": False, "reason": "Could not verify — please try again", "conflicts": []}
+
+        # 3. Conflict check against existing bookings
         res = (
             supabase.table("bookings")
             .select("id, start_time, end_time, customer_phone, status")
@@ -528,8 +604,9 @@ def check_availability(
         }
     except Exception as exc:
         log.warning("check_availability error: %s", exc)
-        # Fail open — don't block booking on DB error
-        return {"available": True, "reason": "Could not verify", "conflicts": []}
+        # Fail CLOSED — a database hiccup during the safety check is exactly
+        # the moment a double-booking could slip through if this said "yes".
+        return {"available": False, "reason": "Could not verify — please try again", "conflicts": []}
 
 
 def create_booking(
@@ -545,17 +622,30 @@ def create_booking(
     Create a booking record. Returns the created row or None on error/conflict.
 
     Uses the create_booking_atomic() Postgres function (see migration) to
-    make the availability check and insert atomic via an advisory lock —
+    make the CONFLICT check and insert atomic via an advisory lock —
     this closes a real race condition: the previous check_availability()
     then insert() pattern let two customers both pass the check within
     milliseconds of each other and double-book the same slot. Falls back
     to the old non-atomic insert if the migration hasn't been applied yet
     (e.g. mid-deploy), so this never hard-breaks booking creation.
+
+    Working-hours and minimum-notice validation happens HERE, inside this
+    function, rather than being left to each caller to check first —
+    create_booking_atomic() only guards against conflicting bookings, not
+    hours/lead-time, so relying on callers to call check_availability()
+    separately meant any caller that forgot could create an out-of-hours
+    or no-notice booking. This makes the guarantee unconditional.
     """
     from datetime import datetime, timezone
     from core.db import supabase
 
     end_time = _add_time(start_time, duration_hrs)
+
+    avail = check_availability(business_id, booking_date, start_time, duration_hrs)
+    if not avail.get("available"):
+        log.info("create_booking: rejected by check_availability  biz=%s  date=%s  time=%s  reason=%s",
+                 business_id, booking_date, start_time, avail.get("reason"))
+        return None
 
     try:
         res = supabase.rpc("create_booking_atomic", {

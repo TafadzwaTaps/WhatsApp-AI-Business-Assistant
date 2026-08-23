@@ -80,7 +80,7 @@ TIERS: dict[str, dict] = {
         "stripe_price_id_monthly": "",
         "stripe_price_id_annual":  "",
     },
-    # ── Starter — $1.99/month ─────────────────────────────────────────────────
+    # ── Starter — $5.99/month ─────────────────────────────────────────────────
     "starter": {
         "label":               "Starter",
         "price_monthly":       5.99,

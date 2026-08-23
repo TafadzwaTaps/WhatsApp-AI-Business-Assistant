@@ -9,12 +9,13 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, validator
 
 import crud
 from core.auth import require_business, require_superadmin
 from core.plan_guard import require_plan
+from services.security import check as _rate_check
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -109,8 +110,9 @@ def list_bookings(
 
 
 @router.post("/bookings", status_code=201)
-def create_booking_api(data: BookingCreate, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
+def create_booking_api(data: BookingCreate, request: Request, user=Depends(require_business), _plan=Depends(require_plan("GROWTH"))):
     """Manually create a booking from the dashboard."""
+    _rate_check("booking", request)
     from services.booking_service import create_booking, check_availability
     bid = user["business_id"]
 
@@ -236,6 +238,7 @@ async def run_booking_reminders(user=Depends(require_business), _plan=Depends(re
 
 @router.get("/bookings/availability")
 def check_slot_availability(
+    request: Request,
     booking_date: str  = Query(..., description="YYYY-MM-DD"),
     start_time:   str  = Query(..., description="HH:MM"),
     duration_hrs: float = 1.0,
@@ -243,6 +246,7 @@ def check_slot_availability(
     _plan=Depends(require_plan("GROWTH")),
 ):
     """Check if a slot is available."""
+    _rate_check("booking", request)
     from services.booking_service import check_availability
     return check_availability(user["business_id"], booking_date, start_time, duration_hrs)
 
