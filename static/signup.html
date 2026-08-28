@@ -663,7 +663,6 @@ function next(to) {
     var p2 = document.getElementById('s-pass2').value;
     var ok = true;
     if (u.length < 3)          { fieldErr('s-user',  'ferr-user',  'At least 3 characters'); ok = false; }
-    else if (/\s/.test(u))     { fieldErr('s-user',  'ferr-user',  'No spaces allowed');      ok = false; }
     if (!em || !em.includes('@')) { fieldErr('s-email', 'ferr-email', 'Enter a valid email address'); ok = false; }
     if (p.length < 6)          { fieldErr('s-pass',  'ferr-pass',  'At least 6 characters'); ok = false; }
     if (p !== p2)              { fieldErr('s-pass2', 'ferr-pass2', 'Passwords do not match'); ok = false; }

@@ -55,9 +55,14 @@ class SignupRequest(BaseModel):
 
     @validator("username")
     def username_valid(cls, v):
+        # Spaces are now allowed — usernames are purely a login credential
+        # here (matched via .eq("owner_username", ...) in crud.py, never
+        # used as a URL path segment or slug — that's derived separately
+        # from the business name), so there's no technical reason to
+        # forbid them. Uniqueness is still fully enforced below in
+        # signup(), unchanged — this only removes the space restriction.
         v = v.strip().lower()
         if len(v) < 3: raise ValueError("Username must be ≥ 3 characters")
-        if " " in v:   raise ValueError("Username cannot contain spaces")
         return v
 
     @validator("password")
