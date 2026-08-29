@@ -2882,6 +2882,19 @@
           </div>
         </div>
         <div class="panel">
+          <div class="panel-header"><div class="panel-title">📲 Your Referral QR Code</div></div>
+          <div class="panel-body" style="text-align:center;">
+            <div style="font-size:12px;color:var(--text-dim);font-family:var(--mono);margin-bottom:16px;line-height:1.7;">
+              A scannable, shareable graphic — post it on social media, print it, or send it directly. Anyone who scans it and signs up counts toward your referrals. 🎁
+            </div>
+            <div id="ref-qr-loading" style="padding:32px;color:var(--text-dim);font-family:var(--mono);font-size:12px;">Generating your QR code…</div>
+            <img id="ref-qr-img" src="" alt="Your WaziBot referral QR code"
+                 style="display:none;max-width:220px;width:100%;border-radius:12px;margin-bottom:14px;"/>
+            <div id="ref-qr-error" style="display:none;color:var(--red);font-family:var(--mono);font-size:12px;margin-bottom:14px;"></div>
+            <a id="ref-qr-download" href="#" style="display:none;width:100%;text-decoration:none;" class="btn btn-primary">⬇ Download QR Code</a>
+          </div>
+        </div>
+        <div class="panel">
           <div class="panel-header"><div class="panel-title">📊 Referral Stats</div></div>
           <div class="panel-body">
             <div class="stats-grid" style="grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">

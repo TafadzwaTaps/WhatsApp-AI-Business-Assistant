@@ -1279,6 +1279,7 @@ def generate_reply(
                     phone=phone, business_id=business_id,
                     business_name=business_name,
                     order_id=order_id, reference=reference,
+                    is_service_business=_is_service_biz,
                 )
             else:
                 _set_awaiting_proof(phone, business_id,

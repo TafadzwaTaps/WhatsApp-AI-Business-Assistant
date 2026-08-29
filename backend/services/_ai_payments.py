@@ -175,17 +175,18 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
     """Look up an order and return a rich formatted status message."""
     try:
         from workflows.order_lifecycle import get_order
+        _ref_word = "BOOKING" if flavor == "service" else "ORDER"
         order = get_order(order_id)
         if not order:
             return (
-                f"❓ I couldn't find *ORDER-{order_id}*.\n\n"
-                "Please check the order number and try again, "
+                f"❓ I couldn't find *{_ref_word}-{order_id}*.\n\n"
+                "Please check the number and try again, "
                 "or type *help* for assistance."
             )
 
         if str(order.get("customer_phone", "")).replace("+", "") != str(phone).replace("+", ""):
             if order.get("business_id") != business_id:
-                return f"❓ I couldn't find *ORDER-{order_id}* for your account."
+                return f"❓ I couldn't find *{_ref_word}-{order_id}* for your account."
 
         status         = order.get("status", "pending")
         payment_status = order.get("payment_status", "pending")
@@ -243,15 +244,20 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
         # Short legend so first-time customers know what the dots mean —
         # omitted for cancelled orders since the dot bar itself is replaced
         # by a single "❌ Cancelled" line in that case.
-        legend_line = (
-            "\n_Received → Verifying → Confirmed → Preparing → Complete_"
-            if s_lower != "cancelled" else ""
+        _legend_text = (
+            "Received → Verifying → Confirmed → Complete"
+            if flavor == "service" else
+            "Received → Verifying → Confirmed → Preparing → Complete"
         )
+        legend_line = f"\n_{_legend_text}_" if s_lower != "cancelled" else ""
 
+        _status_title  = "Booking Status" if flavor == "service" else "Order Status"
+        _status_label  = "Booking " if flavor == "service" else "Order   "
+        _menu_hint     = "book again" if flavor == "service" else "place a new order"
         return (
-            f"📋 *Order Status*\n"
+            f"📋 *{_status_title}*\n"
             f"{'─' * 26}\n"
-            f"  Order   : *ORDER-{order_id}*\n"
+            f"  {_status_label}: *{_ref_word}-{order_id}*\n"
             f"  Date    : {created}\n"
             f"  Total   : *{sym}{total:.2f}*\n"
             f"{'─' * 26}\n"
@@ -263,11 +269,12 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
             f"{legend_line}"
             f"{agent_note}\n"
             f"{'─' * 26}\n"
-            f"_Type *menu* to place a new order._"
+            f"_Type *menu* to {_menu_hint}._"
         )
     except Exception as exc:
         log.error("_order_status_message error: %s", exc)
-        return f"❓ Could not load order *ORDER-{order_id}* right now. Please try again."
+        _ref_word_err = "BOOKING" if flavor == "service" else "ORDER"
+        return f"❓ Could not load *{_ref_word_err}-{order_id}* right now. Please try again."
 
 
 # ── PayPal paid handler ───────────────────────────────────────────────────────
@@ -278,6 +285,7 @@ def _handle_paypal_paid_message(
     business_name: str,
     order_id,
     reference: str,
+    is_service_business: bool = False,
 ) -> str:
     """
     Called when a user says "paid" while awaiting a PayPal payment.
@@ -288,6 +296,8 @@ def _handle_paypal_paid_message(
 
     state_data      = _read_state_data(phone, business_id)
     paypal_order_id = state_data.get("paypal_order_id", "")
+    _ref_word = "Booking" if is_service_business else "Order"
+    _proc_word = "booking" if is_service_business else "order"
 
     if not paypal_order_id:
         log.warning("_handle_paypal_paid_message: no paypal_order_id  phone=%s", phone)
@@ -297,8 +307,8 @@ def _handle_paypal_paid_message(
             f"✅ *Got it! Thank you for paying.*\n\n"
             f"To confirm your PayPal payment, please send your *transaction ID* "
             f"or a *screenshot* of the payment.\n\n"
-            f"📦 Order: *{reference}*\n\n"
-            f"_This helps us verify and process your order. 🙏_"
+            f"📦 {_ref_word}: *{reference}*\n\n"
+            f"_This helps us verify and process your {_proc_word}. 🙏_"
         )
 
     try:
@@ -319,22 +329,23 @@ def _handle_paypal_paid_message(
 
         _reset_state(phone, business_id)
         amount = details.get("amount", 0)
+        _next_step = "We'll see you at your appointment!" if is_service_business else "We're now preparing your order. You'll hear from us shortly! 🙌"
         return (
             f"✅ *PayPal Payment Confirmed!*\n\n"
             f"Thank you! Your payment of *${amount:.2f} USD* has been verified.\n\n"
-            f"📦 Order : *{reference}*\n"
+            f"📦 {_ref_word} : *{reference}*\n"
             f"📍 Status: *CONFIRMED*\n\n"
-            f"We're now preparing your order. You'll hear from us shortly! 🙌\n\n"
+            f"{_next_step}\n\n"
             f"_Thank you for choosing *{business_name}*!_"
         )
 
     return (
         f"⏳ *We're verifying your PayPal payment.*\n\n"
-        f"📦 Order: *{reference}*\n\n"
+        f"📦 {_ref_word}: *{reference}*\n\n"
         f"This usually only takes a few seconds. You'll receive an automatic "
         f"confirmation message as soon as your payment clears.\n\n"
         f"_No action needed — just wait for our message! 😊_\n"
-        f"_Type *cancel* if you want to cancel this order._"
+        f"_Type *cancel* if you want to cancel this {_proc_word}._"
     )
 
 
@@ -656,7 +667,13 @@ def _process_payment(
     # 5. Set conversation state
     auto_verified = pay.get("auto_verified", False)
     oid = order.get("id")
-    ref = pay.get("reference", f"ORDER-{oid}")
+    # Service businesses see "BOOKING-39", product businesses see "ORDER-39"
+    # — same underlying orders-table row either way, just labeled to match
+    # what the customer actually did (booked an appointment vs placed an
+    # order). Fixed here at the source since every downstream message in
+    # this function reads this one `ref` value.
+    _ref_prefix = "BOOKING" if is_service_business else "ORDER"
+    ref = pay.get("reference", f"{_ref_prefix}-{oid}")
 
     if method == "cash" and is_service_business:
         if _booking_created or not (_booking_date and _booking_time):
@@ -697,9 +714,10 @@ def _process_payment(
             except Exception:
                 date_disp = _booking_date
             time_disp = _format_time(_booking_time)
+            _ref_label = "Booking" if is_service_business else "Order"
             return (
                 f"✅ *All set!*\n\n"
-                f"📦 Order       : *{ref}*\n"
+                f"📦 {_ref_label}       : *{ref}*\n"
                 f"🗓️ Appointment : *{date_disp} at {time_disp}*\n"
                 f"💰 Total       : *{currency_sym}{total:.2f}*\n"
                 f"💵 Payment     : *Cash on arrival*\n\n"
@@ -711,8 +729,8 @@ def _process_payment(
         # valid — only the specific time wasn't secured — so this is
         # honest about that rather than silently pretending it worked.
         return (
-            f"✅ *Order confirmed!* (payment received)\n\n"
-            f"📦 Order   : *{ref}*\n"
+            f"✅ *Booking confirmed!* (payment received)\n\n"
+            f"📦 Booking : *{ref}*\n"
             f"💰 Total   : *{currency_sym}{total:.2f}*\n"
             f"💵 Payment : *Cash on arrival*\n\n"
             f"😔 Unfortunately your chosen time was just taken by someone else.\n"

@@ -334,6 +334,32 @@ def get_referral(user=Depends(require_business)):
     return get_referral_stats(user["business_id"])
 
 
+@router.get("/me/referral/qr")
+def get_referral_qr(user=Depends(require_business)):
+    """
+    Branded, downloadable QR code encoding this business's own referral
+    link — for sharing on social media/flyers to help drive signups (and
+    therefore their referral count), same authenticated-endpoint pattern
+    as /marketing/qr.
+    """
+    from services.growth_service import get_referral_stats
+    from services.marketing_service import generate_referral_qr_png
+    from fastapi.responses import Response
+
+    stats = get_referral_stats(user["business_id"])
+    code  = stats.get("referral_code", "")
+    link  = stats.get("referral_link", "")
+    if not code or not link:
+        raise HTTPException(404, "Referral code not available yet")
+
+    try:
+        png_bytes = generate_referral_qr_png(code, link)
+    except ImportError as exc:
+        raise HTTPException(500, str(exc))
+
+    return Response(content=png_bytes, media_type="image/png")
+
+
 # ── Referral credit withdrawal ────────────────────────────────────────────────
 
 class WithdrawRequest(BaseModel):

@@ -75,6 +75,110 @@ def generate_whatsapp_link(business_name: str) -> str:
 _qr_cache: dict[str, bytes] = {}
 
 
+def generate_referral_qr_png(referral_code: str, referral_link: str) -> bytes:
+    """
+    Branded QR code encoding a business owner's own referral link — used
+    on the Referrals tab so they can share/print/post something more
+    compelling than a plain text link, which should genuinely help boost
+    referral counts (a shareable graphic gets posted; a raw URL usually
+    doesn't). Deliberately styled (WaziBot green, rounded modules, wordmark)
+    rather than reusing generate_qr_png()'s plain black-and-white style —
+    that one is a quick "scan to message us" utility QR for a till/table,
+    this one is meant to be posted on social media, so it needs to look
+    like something worth sharing.
+
+    Cached by referral_code so repeated calls (e.g. re-opening the tab)
+    are free, same pattern as generate_qr_png().
+
+    Raises ImportError if qrcode/Pillow not installed (already required —
+    see generate_qr_png above).
+    """
+    cache_key = f"referral:{referral_code}"
+    if cache_key in _qr_cache:
+        return _qr_cache[cache_key]
+
+    try:
+        import qrcode
+        from qrcode.image.styledpil import StyledPilImage
+        from qrcode.image.styles.moduledrawers import RoundedModuleDrawer
+        from qrcode.image.styles.colormasks import SolidFillColorMask
+        from PIL import Image, ImageDraw, ImageFont
+    except ImportError:
+        raise ImportError(
+            "qrcode[pil] not installed. Add 'qrcode[pil]>=7.4.2' to requirements.txt "
+            "and redeploy."
+        )
+
+    BRAND_GREEN = (34, 197, 94)    # matches --green in landing.html/dashboard.html
+    BRAND_DARK  = (10, 15, 13)     # matches --bg
+    TEXT_DIM    = (232, 245, 233)
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=qrcode.constants.ERROR_CORRECT_H,  # more damage tolerance — room for real-world printing/screenshots
+        box_size=12,
+        border=3,
+    )
+    qr.add_data(referral_link)
+    qr.make(fit=True)
+
+    qr_img = qr.make_image(
+        image_factory=StyledPilImage,
+        module_drawer=RoundedModuleDrawer(),
+        color_mask=SolidFillColorMask(back_color=(255, 255, 255), front_color=BRAND_GREEN),
+    ).convert("RGB")
+    qr_size = qr_img.size[0]
+
+    # Card layout: wordmark + tagline top, white rounded QR card center,
+    # CTA + the referrer's own code at the bottom (so if someone downloads
+    # several of these, or a friend asks "whose code is this", it's
+    # readable on the image itself, not just embedded invisibly in the QR).
+    PAD, TOP_SPACE, BOTTOM_SPACE = 60, 130, 150
+    card_w = qr_size + PAD * 2
+    card_h = qr_size + TOP_SPACE + BOTTOM_SPACE
+    card = Image.new("RGB", (card_w, card_h), BRAND_DARK)
+    draw = ImageDraw.Draw(card)
+
+    try:
+        font_wordmark = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 54)
+        font_tagline  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 20)
+        font_cta      = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 20)
+        font_code     = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf", 24)
+    except Exception:
+        # Font file not present on this host — fall back to PIL's default
+        # bitmap font rather than failing the whole QR generation.
+        font_wordmark = font_tagline = font_cta = font_code = ImageFont.load_default()
+
+    def _center(y, text, font, fill):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        w = bbox[2] - bbox[0]
+        draw.text(((card_w - w) / 2, y), text, font=font, fill=fill)
+
+    _center(34, "WaziBot", font_wordmark, BRAND_GREEN)
+    _center(96, "Try WhatsApp AI for your business", font_tagline, TEXT_DIM)
+
+    qr_pad = 24
+    qr_card = Image.new("RGB", (qr_size + qr_pad*2, qr_size + qr_pad*2), (255, 255, 255))
+    mask = Image.new("L", qr_card.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle([0, 0, qr_card.size[0]-1, qr_card.size[1]-1], radius=20, fill=255)
+    qr_card_rgb = Image.new("RGB", qr_card.size, BRAND_DARK)
+    qr_card_rgb.paste(qr_card, (0, 0), mask)
+    qr_card_rgb.paste(qr_img, (qr_pad, qr_pad))
+    card.paste(qr_card_rgb, ((card_w - qr_card_rgb.size[0]) // 2, TOP_SPACE))
+
+    cta_y = TOP_SPACE + qr_card_rgb.size[1] + 26
+    _center(cta_y, "Scan to get started free", font_cta, TEXT_DIM)
+    _center(cta_y + 34, f"Referral code: {referral_code}", font_code, BRAND_GREEN)
+
+    buf = io.BytesIO()
+    card.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    _qr_cache[cache_key] = png_bytes
+    log.info("Referral QR generated  code=%s  size=%d bytes", referral_code, len(png_bytes))
+    return png_bytes
+
+
 def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4,
                      dest: str = "whatsapp") -> bytes:
     """

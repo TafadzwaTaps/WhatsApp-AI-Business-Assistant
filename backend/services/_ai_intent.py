@@ -286,7 +286,11 @@ def _is_payment_confirmation(text: str) -> bool:
 
 # ── Order reference ───────────────────────────────────────────────────────────
 
-_ORDER_REF_RE = re.compile(r"\border[-\s#]*(\d+)\b", re.IGNORECASE)
+# "booking" recognized as an alias for "order" — service businesses show
+# customers "BOOKING-39" instead of "ORDER-39", but it's the exact same
+# underlying orders-table row, so status-check recognition must accept
+# both prefixes to look it up correctly either way.
+_ORDER_REF_RE = re.compile(r"\b(?:order|booking)[-\s#]*(\d+)\b", re.IGNORECASE)
 
 
 def _extract_order_id(text: str) -> int | None:

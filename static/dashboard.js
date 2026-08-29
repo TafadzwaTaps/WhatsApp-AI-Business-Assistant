@@ -4883,8 +4883,37 @@ async function loadReferralTab() {
     _refData = await apiFetch('/me/referral');
     renderReferralTab(_refData);
     await loadReferralMessage('whatsapp');
+    loadReferralQR();  // fire-and-forget — the tab's other content doesn't wait on this
   } catch (e) {
     console.warn('Referral load failed:', e.message);
+  }
+}
+
+async function loadReferralQR() {
+  const img     = document.getElementById('ref-qr-img');
+  const loading = document.getElementById('ref-qr-loading');
+  const errEl   = document.getElementById('ref-qr-error');
+  const dlBtn   = document.getElementById('ref-qr-download');
+  if (!img) return;
+  try {
+    const token = localStorage.getItem('wazi_token') || '';
+    const resp  = await fetch('/me/referral/qr', { headers: { 'Authorization': `Bearer ${token}` } });
+    if (!resp.ok) throw new Error(await resp.text());
+    const blob = await resp.blob();
+    const url  = URL.createObjectURL(blob);
+    img.src = url;
+    img.style.display = 'block';
+    if (loading) loading.style.display = 'none';
+    if (errEl)   errEl.style.display   = 'none';
+    if (dlBtn) {
+      dlBtn.href = url;
+      const code = (_refData && _refData.referral_code) || 'wazibot';
+      dlBtn.download = `wazibot-referral-${code}.png`;
+      dlBtn.style.display = 'inline-flex';
+    }
+  } catch (e) {
+    if (loading) loading.style.display = 'none';
+    if (errEl) { errEl.textContent = 'Could not generate QR: ' + e.message; errEl.style.display = 'block'; }
   }
 }
 
