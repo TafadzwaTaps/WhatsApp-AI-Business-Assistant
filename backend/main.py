@@ -19,7 +19,7 @@ import requests as http_requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -181,6 +181,11 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# Public SEO endpoints. Register before slug-based routes so sitemap/robots
+# are always matched literally and never interpreted as a store slug.
+from routes.seo_routes import router as seo_router
+app.include_router(seo_router)
 
 
 def _html(name: str) -> FileResponse:
