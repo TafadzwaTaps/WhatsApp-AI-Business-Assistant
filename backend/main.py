@@ -19,7 +19,7 @@ import requests as http_requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -181,11 +181,6 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-# Public SEO endpoints. Register before slug-based routes so sitemap/robots
-# are always matched literally and never interpreted as a store slug.
-from routes.seo_routes import router as seo_router
-app.include_router(seo_router)
 
 
 def _html(name: str) -> FileResponse:
@@ -433,6 +428,7 @@ from routes.chat_routes     import router as chat_router
 from routes.growth_routes     import router as growth_router
 from routes.expansion_routes  import router as expansion_router
 from routes.ux_routes         import router as ux_router
+from routes.seo_routes        import router as seo_router
 
 # ── SaaS Extension Routers (optional — try/except so system works if missing) ─
 billing_router     = None
@@ -482,6 +478,12 @@ app.include_router(auth_router)
 app.include_router(password_reset_router)
 app.include_router(webhook_router)
 app.include_router(admin_router)
+
+# SEO — /sitemap.xml and /robots.txt (Google crawlability). Written earlier
+# but never wired in here, which is why /sitemap.xml previously returned
+# FastAPI's default {"detail":"Not Found"}. Public, unauthenticated, no
+# interaction with auth/Stripe/WhatsApp/dashboard.
+app.include_router(seo_router)
 
 # ── Route-shadowing fix ────────────────────────────────────────────────────
 # business_router registers GET /analytics/{business_id} (an int path param,
