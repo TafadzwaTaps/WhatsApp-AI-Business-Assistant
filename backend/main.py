@@ -205,12 +205,16 @@ def _html(name: str) -> FileResponse:
 # something to bulk-include here. That's a deliberate, separate decision —
 # flagged in the SEO report rather than guessed at.
 _SITEMAP_PAGES = [
-    ("/",         "1.0", "weekly"),
-    ("/pricing",  "0.9", "weekly"),
-    ("/signup",   "0.8", "monthly"),
-    ("/directory","0.8", "daily"),
-    ("/privacy",  "0.3", "yearly"),
-    ("/terms",    "0.3", "yearly"),
+    ("/",                 "1.0", "weekly"),
+    ("/what-is-wazibot",  "0.9", "monthly"),
+    ("/pricing",          "0.9", "weekly"),
+    ("/signup",           "0.8", "monthly"),
+    ("/about",            "0.7", "monthly"),
+    ("/faq",              "0.7", "monthly"),
+    ("/contact",          "0.6", "monthly"),
+    ("/directory",        "0.8", "daily"),
+    ("/privacy",          "0.3", "yearly"),
+    ("/terms",            "0.3", "yearly"),
 ]
 
 @app.get("/sitemap.xml", include_in_schema=False)
@@ -287,6 +291,16 @@ def signup_page(): return _html("signup.html")
 def privacy_page(): return _html("privacy.html")
 @app.get("/terms")
 def terms_page(): return _html("terms.html")
+
+# ── SEO content pages ────────────────────────────────────────────────────────
+@app.get("/what-is-wazibot")
+def what_is_wazibot_page(): return _html("what-is-wazibot.html")
+@app.get("/about")
+def about_page(): return _html("about.html")
+@app.get("/faq")
+def faq_page(): return _html("faq.html")
+@app.get("/contact")
+def contact_page(): return _html("contact.html")
 
 @app.get("/pricing")
 def pricing_page(): return _html("pricing.html")
