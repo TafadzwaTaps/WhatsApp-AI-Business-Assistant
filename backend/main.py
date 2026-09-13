@@ -191,6 +191,68 @@ def _html(name: str) -> FileResponse:
     return FileResponse(path)
 
 
+# ── SEO: sitemap.xml + robots.txt ───────────────────────────────────────────
+# Registered here (before other page routes, at the top of the static-page
+# block) so nothing can shadow them via a broader path pattern. Neither
+# requires authentication and neither goes through any auth/tenant
+# middleware — both must be reachable by Googlebot unconditionally.
+#
+# Only fixed, genuinely public platform pages are listed — no per-business
+# storefronts (/store/{slug}, /site/{slug}, /book/{slug}) are included yet.
+# Those are dynamically generated per-tenant pages; deciding which ones are
+# "complete enough" to index is a real editorial judgment call (a business
+# with no products/logo/description filled in shouldn't be indexed), not
+# something to bulk-include here. That's a deliberate, separate decision —
+# flagged in the SEO report rather than guessed at.
+_SITEMAP_PAGES = [
+    ("/",         "1.0", "weekly"),
+    ("/pricing",  "0.9", "weekly"),
+    ("/signup",   "0.8", "monthly"),
+    ("/directory","0.8", "daily"),
+    ("/privacy",  "0.3", "yearly"),
+    ("/terms",    "0.3", "yearly"),
+]
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap_xml():
+    from fastapi.responses import Response
+    base = "https://wazibothq.com"
+    urls = "\n".join(
+        f"  <url>\n"
+        f"    <loc>{base}{path}</loc>\n"
+        f"    <priority>{priority}</priority>\n"
+        f"    <changefreq>{freq}</changefreq>\n"
+        f"  </url>"
+        for path, priority, freq in _SITEMAP_PAGES
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}\n"
+        '</urlset>'
+    )
+    return Response(content=xml, media_type="application/xml")
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots_txt():
+    from fastapi.responses import Response
+    lines = [
+        "User-agent: *",
+        "Allow: /",
+        "",
+        # Genuinely private/authenticated application areas — kept out of
+        # the crawl path entirely, not just left to noindex meta tags.
+        "Disallow: /dashboard",
+        "Disallow: /inbox",
+        "Disallow: /onboarding",
+        "Disallow: /config/public",
+        "",
+        "Sitemap: https://wazibothq.com/sitemap.xml",
+    ]
+    return Response(content="\n".join(lines), media_type="text/plain")
+
+
 # ── Static page routes ────────────────────────────────────────────────────────
 @app.get("/")
 def landing():    return _html("landing.html")
@@ -428,7 +490,6 @@ from routes.chat_routes     import router as chat_router
 from routes.growth_routes     import router as growth_router
 from routes.expansion_routes  import router as expansion_router
 from routes.ux_routes         import router as ux_router
-from routes.seo_routes        import router as seo_router
 
 # ── SaaS Extension Routers (optional — try/except so system works if missing) ─
 billing_router     = None
@@ -478,12 +539,6 @@ app.include_router(auth_router)
 app.include_router(password_reset_router)
 app.include_router(webhook_router)
 app.include_router(admin_router)
-
-# SEO — /sitemap.xml and /robots.txt (Google crawlability). Written earlier
-# but never wired in here, which is why /sitemap.xml previously returned
-# FastAPI's default {"detail":"Not Found"}. Public, unauthenticated, no
-# interaction with auth/Stripe/WhatsApp/dashboard.
-app.include_router(seo_router)
 
 # ── Route-shadowing fix ────────────────────────────────────────────────────
 # business_router registers GET /analytics/{business_id} (an int path param,
