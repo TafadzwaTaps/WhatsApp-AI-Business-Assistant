@@ -210,8 +210,11 @@ _SITEMAP_PAGES = [
     ("/pricing",                   "0.9", "weekly"),
     ("/features",                  "0.8", "monthly"),
     ("/whatsapp-ai",               "0.8", "monthly"),
-    ("/whatsapp-order-management", "0.7", "monthly"),
-    ("/whatsapp-customer-support", "0.7", "monthly"),
+    ("/whatsapp-order-management",     "0.7", "monthly"),
+    ("/whatsapp-customer-support",      "0.7", "monthly"),
+    ("/whatsapp-business-automation",   "0.7", "monthly"),
+    ("/whatsapp-marketing",             "0.7", "monthly"),
+    ("/inventory-management",           "0.6", "monthly"),
     ("/signup",                    "0.8", "monthly"),
     ("/about",                     "0.7", "monthly"),
     ("/faq",                       "0.7", "monthly"),
@@ -313,6 +316,12 @@ def whatsapp_ai_page(): return _html("whatsapp-ai.html")
 def whatsapp_order_mgmt_page(): return _html("whatsapp-order-management.html")
 @app.get("/whatsapp-customer-support")
 def whatsapp_support_page(): return _html("whatsapp-customer-support.html")
+@app.get("/whatsapp-business-automation")
+def whatsapp_automation_page(): return _html("whatsapp-business-automation.html")
+@app.get("/whatsapp-marketing")
+def whatsapp_marketing_page(): return _html("whatsapp-marketing.html")
+@app.get("/inventory-management")
+def inventory_mgmt_page(): return _html("inventory-management.html")
 
 @app.get("/pricing")
 def pricing_page(): return _html("pricing.html")
