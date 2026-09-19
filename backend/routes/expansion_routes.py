@@ -164,7 +164,28 @@ def update_booking_status(
             .execute()
         )
         if not res.data: raise HTTPException(404, "Booking not found")
-        return {"ok": True, "booking": res.data[0]}
+        updated_booking = res.data[0]
+
+        # Sync the linked order when a booking is cancelled or the customer
+        # doesn't show up — previously the order stayed however it was
+        # (e.g. "confirmed"/"paid"), so cancelling in Bookings had no effect
+        # on the Orders page or the revenue total, which still counted a
+        # cancelled/no-show appointment as if it had actually happened.
+        # order_id is only present on bookings created after this fix
+        # (see migration_booking_order_link.sql) — older bookings created
+        # before the migration simply have nothing to sync, which is a
+        # known, honest limitation rather than a silent failure.
+        if status in ("cancelled", "no_show"):
+            linked_order_id = updated_booking.get("order_id")
+            if linked_order_id:
+                try:
+                    supabase.table("orders").update({"status": "cancelled"}) \
+                        .eq("id", linked_order_id).eq("business_id", user["business_id"]).execute()
+                except Exception as exc_sync:
+                    log.warning("update_booking_status: could not sync linked order=%s: %s",
+                                linked_order_id, exc_sync)
+
+        return {"ok": True, "booking": updated_booking}
     except HTTPException: raise
     except Exception as exc: raise HTTPException(500, str(exc))
 

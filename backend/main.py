@@ -171,8 +171,14 @@ app.add_middleware(SecurityHeadersMiddleware)
 
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request, exc: RateLimitExceeded):
+    # Logging fix: this used the raw X-Forwarded-For header directly rather
+    # than the properly-extracted client IP, so security logs for rate-limit
+    # events showed whatever a client sent verbatim (including a forged
+    # value) instead of the actual real IP the fixed _get_client_ip() now
+    # resolves correctly.
+    from services.security import _get_client_ip
     log.warning("rate_limit_exceeded  endpoint=%s  ip=%s", request.url.path,
-                request.headers.get("x-forwarded-for", getattr(request.client, "host", "?")))
+                _get_client_ip(request))
     return JSONResponse(
         status_code=429,
         content={"detail": "Too many requests. Please wait and try again."},
@@ -215,6 +221,10 @@ _SITEMAP_PAGES = [
     ("/whatsapp-business-automation",   "0.7", "monthly"),
     ("/whatsapp-marketing",             "0.7", "monthly"),
     ("/inventory-management",           "0.6", "monthly"),
+    ("/solutions",                       "0.7", "monthly"),
+    ("/solutions/restaurants",           "0.6", "monthly"),
+    ("/solutions/retail",                "0.6", "monthly"),
+    ("/solutions/beauty",                "0.6", "monthly"),
     ("/signup",                    "0.8", "monthly"),
     ("/about",                     "0.7", "monthly"),
     ("/faq",                       "0.7", "monthly"),
@@ -322,6 +332,14 @@ def whatsapp_automation_page(): return _html("whatsapp-business-automation.html"
 def whatsapp_marketing_page(): return _html("whatsapp-marketing.html")
 @app.get("/inventory-management")
 def inventory_mgmt_page(): return _html("inventory-management.html")
+@app.get("/solutions")
+def solutions_hub_page(): return _html("solutions.html")
+@app.get("/solutions/restaurants")
+def solutions_restaurants_page(): return _html("solutions/restaurants.html")
+@app.get("/solutions/retail")
+def solutions_retail_page(): return _html("solutions/retail.html")
+@app.get("/solutions/beauty")
+def solutions_beauty_page(): return _html("solutions/beauty.html")
 
 @app.get("/pricing")
 def pricing_page(): return _html("pricing.html")

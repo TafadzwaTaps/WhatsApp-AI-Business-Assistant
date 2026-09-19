@@ -714,6 +714,7 @@ def create_booking(
     duration_hrs:  float = 1.0,
     service_name:  str   = "",
     notes:         str   = "",
+    order_id:      int   = None,
 ) -> Optional[dict]:
     """
     Create a booking record. Returns the created row or None on error/conflict.
@@ -736,69 +737,94 @@ def create_booking(
     from datetime import datetime, timezone
     from core.db import supabase
 
-    end_time = _add_time(start_time, duration_hrs)
-
-    avail = check_availability(business_id, booking_date, start_time, duration_hrs)
-    if not avail.get("available"):
-        log.info("create_booking: rejected by check_availability  biz=%s  date=%s  time=%s  reason=%s",
-                 business_id, booking_date, start_time, avail.get("reason"))
-        return None
-
+    # Bug fix: everything below used to run unguarded before entering the
+    # atomic-RPC try block — including _add_time() and the check_availability()
+    # call. _add_time() in particular has no internal exception handling at
+    # all, unlike check_availability() and parse_booking_request(), which
+    # both explicitly document "never raises". If anything in this setup
+    # step ever threw for any reason, the exception propagated all the way
+    # up through the WhatsApp webhook handler, which replaces it with a
+    # generic "thanks for contacting us" message — silently discarding
+    # whatever the customer was actually in the middle of doing, including
+    # a fully confirmed booking. This outer try/except makes the same
+    # "never raises" guarantee the rest of this module already follows,
+    # regardless of what specifically goes wrong.
     try:
-        res = supabase.rpc("create_booking_atomic", {
-            "p_business_id":    business_id,
-            "p_customer_phone": customer_phone,
-            "p_booking_date":   booking_date,
-            "p_start_time":     start_time,
-            "p_end_time":       end_time,
-            "p_duration_hrs":   duration_hrs,
-            "p_service_name":   service_name or "",
-            "p_notes":          notes or "",
-        }).execute()
+        end_time = _add_time(start_time, duration_hrs)
 
-        row = (res.data or [{}])[0] if res.data else {}
-        if not row.get("ok"):
-            log.info("create_booking: slot conflict  biz=%s  date=%s  time=%s",
-                     business_id, booking_date, start_time)
+        avail = check_availability(business_id, booking_date, start_time, duration_hrs)
+        if not avail.get("available"):
+            log.info("create_booking: rejected by check_availability  biz=%s  date=%s  time=%s  reason=%s",
+                     business_id, booking_date, start_time, avail.get("reason"))
             return None
 
-        booking_id = row.get("booking_id")
-        log.info("booking created (atomic)  id=%s  biz=%s  date=%s  time=%s",
-                 booking_id, business_id, booking_date, start_time)
-        # Fetch the full row to return the same shape callers already expect
-        fetched = (
-            supabase.table("bookings").select("*").eq("id", booking_id).limit(1).execute()
-        )
-        return fetched.data[0] if fetched.data else {"id": booking_id}
-
-    except Exception as exc:
-        # RPC missing (migration not yet applied) or any other DB error —
-        # fall back to the original non-atomic insert rather than failing
-        # booking creation outright. Logged clearly so it's visible that
-        # the atomic path isn't active yet.
-        log.warning("create_booking_atomic unavailable, falling back to non-atomic insert: %s", exc)
         try:
-            now = datetime.now(timezone.utc).isoformat()
-            res = supabase.table("bookings").insert({
-                "business_id":    business_id,
-                "customer_phone": customer_phone,
-                "booking_date":   booking_date,
-                "start_time":     start_time,
-                "end_time":       end_time,
-                "duration_hrs":   duration_hrs,
-                "service_name":   service_name or "",
-                "notes":          notes or "",
-                "status":         "confirmed",
-                "created_at":     now,
+            res = supabase.rpc("create_booking_atomic", {
+                "p_business_id":    business_id,
+                "p_customer_phone": customer_phone,
+                "p_booking_date":   booking_date,
+                "p_start_time":     start_time,
+                "p_end_time":       end_time,
+                "p_duration_hrs":   duration_hrs,
+                "p_service_name":   service_name or "",
+                "p_notes":          notes or "",
             }).execute()
-            booking = res.data[0] if res.data else None
-            if booking:
-                log.info("booking created (fallback, non-atomic)  id=%s  biz=%s",
-                         booking.get("id"), business_id)
-            return booking
-        except Exception as exc2:
-            log.error("create_booking fallback error: %s", exc2)
-            return None
+
+            row = (res.data or [{}])[0] if res.data else {}
+            if not row.get("ok"):
+                log.info("create_booking: slot conflict  biz=%s  date=%s  time=%s",
+                         business_id, booking_date, start_time)
+                return None
+
+            booking_id = row.get("booking_id")
+            log.info("booking created (atomic)  id=%s  biz=%s  date=%s  time=%s",
+                     booking_id, business_id, booking_date, start_time)
+            if order_id:
+                try:
+                    supabase.table("bookings").update({"order_id": order_id}).eq("id", booking_id).execute()
+                except Exception as exc_link:
+                    log.warning("create_booking: could not link order_id=%s to booking=%s: %s",
+                                order_id, booking_id, exc_link)
+            # Fetch the full row to return the same shape callers already expect
+            fetched = (
+                supabase.table("bookings").select("*").eq("id", booking_id).limit(1).execute()
+            )
+            return fetched.data[0] if fetched.data else {"id": booking_id}
+
+        except Exception as exc:
+            # RPC missing (migration not yet applied) or any other DB error —
+            # fall back to the original non-atomic insert rather than failing
+            # booking creation outright. Logged clearly so it's visible that
+            # the atomic path isn't active yet.
+            log.warning("create_booking_atomic unavailable, falling back to non-atomic insert: %s", exc)
+            try:
+                now = datetime.now(timezone.utc).isoformat()
+                _insert_row = {
+                    "business_id":    business_id,
+                    "customer_phone": customer_phone,
+                    "booking_date":   booking_date,
+                    "start_time":     start_time,
+                    "end_time":       end_time,
+                    "duration_hrs":   duration_hrs,
+                    "service_name":   service_name or "",
+                    "notes":          notes or "",
+                    "status":         "confirmed",
+                    "created_at":     now,
+                }
+                if order_id:
+                    _insert_row["order_id"] = order_id
+                res = supabase.table("bookings").insert(_insert_row).execute()
+                booking = res.data[0] if res.data else None
+                if booking:
+                    log.info("booking created (fallback, non-atomic)  id=%s  biz=%s",
+                             booking.get("id"), business_id)
+                return booking
+            except Exception as exc2:
+                log.error("create_booking fallback error: %s", exc2)
+                return None
+    except Exception as exc3:
+        log.exception("create_booking: unexpected error, returning None instead of raising: %s", exc3)
+        return None
 
 
 def get_bookings(business_id: int, upcoming_only: bool = True) -> list[dict]:
@@ -841,7 +867,16 @@ def get_bookings_for_customer(business_id: int, customer_phone: str) -> list[dic
 
 
 def cancel_booking(booking_id: int, business_id: int) -> Optional[dict]:
-    """Cancel a booking. Returns updated row or None."""
+    """
+    Cancel a booking. Returns updated row or None.
+
+    Also syncs the linked order's status to "cancelled" if one exists
+    (order_id is only populated on bookings created after
+    migration_booking_order_link.sql — see create_booking's order_id
+    param) — otherwise a cancelled booking left its order looking
+    unaffected: still "confirmed"/"paid" in Orders, still counted in
+    revenue, with nothing on the Orders page showing it was cancelled.
+    """
     try:
         from core.db import supabase
         res = (
@@ -851,7 +886,17 @@ def cancel_booking(booking_id: int, business_id: int) -> Optional[dict]:
             .eq("business_id", business_id)
             .execute()
         )
-        return res.data[0] if res.data else None
+        booking = res.data[0] if res.data else None
+        if booking:
+            linked_order_id = booking.get("order_id")
+            if linked_order_id:
+                try:
+                    supabase.table("orders").update({"status": "cancelled"}) \
+                        .eq("id", linked_order_id).eq("business_id", business_id).execute()
+                except Exception as exc_sync:
+                    log.warning("cancel_booking: could not sync linked order=%s: %s",
+                                linked_order_id, exc_sync)
+        return booking
     except Exception as exc:
         log.error("cancel_booking error: %s", exc)
         return None

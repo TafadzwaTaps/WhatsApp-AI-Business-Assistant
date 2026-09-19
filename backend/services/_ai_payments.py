@@ -593,6 +593,7 @@ def _process_payment(
                 booking_date=_booking_date, start_time=_booking_time,
                 duration_hrs=1.0, service_name=product_name,
                 notes=f"Linked to ORDER-{order.get('id', '')}",
+                order_id=order.get("id"),
             )
             if _booking_created:
                 log.info("booking created  id=%s  order=%s  date=%s  time=%s",

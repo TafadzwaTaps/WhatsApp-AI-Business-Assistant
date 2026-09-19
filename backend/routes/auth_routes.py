@@ -20,6 +20,8 @@ from services.security import (
     check as _rate_check,
     record_failed_login, is_login_locked, clear_failed_logins,
     check_password_strength,
+    check_signup_abuse, check_signup_success_limit, record_signup_success,
+    is_disposable_email,
 )
 from routes._deps import log
 
@@ -80,6 +82,18 @@ class SignupRequest(BaseModel):
 @router.post("/auth/signup")
 def signup(data: SignupRequest, request: Request):
     _rate_check("signup", request)
+    # Layered signup abuse protection — hourly/daily attempt limits per IP,
+    # checked before any other work so a scripted client burns nothing but
+    # a rejected request. See services/security.py for the full policy and
+    # why this is separate from the short-window "signup" limit above.
+    check_signup_abuse(request)
+    if is_disposable_email(data.email):
+        # Generic message, matching every other signup rejection here —
+        # never reveals that the rejection reason was specifically the
+        # email domain, which would help an attacker iterate toward a
+        # domain that isn't blocked.
+        raise HTTPException(400, "We couldn't create your account with that email address. Please use a different email.")
+
     pw_ok, pw_msg = check_password_strength(data.password)
     if not pw_ok:
         raise HTTPException(400, pw_msg)
@@ -130,6 +144,11 @@ def signup(data: SignupRequest, request: Request):
         contact_phone     = data.contact_phone.strip() if data.contact_phone else ""
         use_shared_number = data.use_shared_number
 
+    # Checked here — right before creation, not earlier — so it only ever
+    # rejects an IP that's actually about to succeed for the second time
+    # today, not one still working through unrelated validation errors.
+    check_signup_success_limit(request)
+
     try:
         biz = crud.create_business(_Payload())
     except Exception as _dbe:
@@ -141,6 +160,11 @@ def signup(data: SignupRequest, request: Request):
                 raise HTTPException(400, "An account with that email already exists.")
         log.error("signup: DB error: %s", _dbe)
         raise HTTPException(500, "Signup failed. Please try again.")
+
+    # Recorded only now that creation has genuinely succeeded — see
+    # check_signup_success_limit's docstring for why this is a separate
+    # step rather than folded into the check above.
+    record_signup_success(request)
     log.info("🆕 Signup: %s (@%s)", biz["name"], biz["owner_username"])
 
     # Auto-start 14-day trial + generate referral code for every new signup

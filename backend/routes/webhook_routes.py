@@ -430,10 +430,34 @@ async def receive_message(request: Request):
         )
     except Exception as exc:
         log.exception("📦 STEP 6 FAIL: %s", exc)
-        reply = (
-            f"Hi! 👋 Thanks for contacting *{business['name']}*. "
-            f"We received your message and will get back to you shortly."
-        )
+        # Bug fix: this generic "thanks for contacting us" message reads as
+        # a first-contact auto-reply — confusing and misleading if the
+        # customer was actually mid-booking or mid-checkout when something
+        # failed, since it gives no indication anything they were doing was
+        # even acknowledged. Check their current state so the apology at
+        # least reflects what they were actually in the middle of, rather
+        # than sounding like their message was never processed at all.
+        try:
+            from services._ai_state import _get_state
+            _crash_state = _get_state(customer_phone, business["id"]) or ""
+        except Exception:
+            _crash_state = ""
+
+        if "booking" in _crash_state:
+            reply = (
+                f"😔 Sorry — something went wrong confirming your booking with "
+                f"*{business['name']}*. Please try again, or type *book* to start over."
+            )
+        elif _crash_state in ("checkout", "awaiting_payment"):
+            reply = (
+                f"😔 Sorry — something went wrong processing your order with "
+                f"*{business['name']}*. Please try again, or contact us directly."
+            )
+        else:
+            reply = (
+                f"Hi! 👋 Thanks for contacting *{business['name']}*. "
+                f"We received your message and will get back to you shortly."
+            )
 
     # STEP 7: Save outgoing
     out_msg: dict = {}

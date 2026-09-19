@@ -125,9 +125,16 @@ def get_business_stats(business_id: int) -> dict:
         orders = orders_res.data or []
 
         total_orders   = len(orders)
-        paid_orders    = sum(1 for o in orders if o.get("payment_status") == "paid")
+        # A cancelled order (including one whose linked booking was marked
+        # cancelled or no-show — see booking_service.py's order_id sync)
+        # must not count toward paid_orders or total_revenue, even if it
+        # was paid before the cancellation happened. The service/product
+        # was never actually delivered, so it shouldn't read as revenue.
+        paid_orders    = sum(1 for o in orders
+                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
         total_revenue  = sum(float(o.get("total_price") or 0)
-                             for o in orders if o.get("payment_status") == "paid")
+                             for o in orders
+                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
         pending_orders = sum(1 for o in orders
                              if o.get("status") in ("pending", "confirmed", "pending_cash"))
 

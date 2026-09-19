@@ -64,10 +64,39 @@ _rate_store: dict[str, deque] = defaultdict(deque)
 
 
 def _get_client_ip(request) -> str:
-    """Extract real IP, respecting X-Forwarded-For from Render's proxy."""
+    """
+    Extract the real client IP, correctly handling Render's proxy layer.
+
+    Bug fix: this previously took the FIRST value in X-Forwarded-For
+    unconditionally. On Render (and any single-trusted-proxy setup), the
+    platform's own edge proxy APPENDS the true client IP to the end of
+    that header — it does not overwrite whatever the client already sent.
+    That means an attacker could send a request with
+    "X-Forwarded-For: 1.2.3.4" and Render would forward it as
+    "X-Forwarded-For: 1.2.3.4, <attacker's real IP>" — taking the FIRST
+    value picked up the attacker's own forged IP, not their real one,
+    completely defeating every IP-based rate limit in this file (login
+    lockout, booking limits, and the new signup limiter below) with a
+    single custom header on each request.
+
+    Taking the LAST value instead is correct for Render's single-hop
+    proxy architecture: only Render's own edge can add that final
+    segment, so it's the one part of the header a client cannot forge.
+    If WaziBot is ever deployed behind an additional trusted proxy layer
+    (e.g. a CDN in front of Render), this would need to trust the
+    second-to-last value instead — see TRUSTED_PROXY_DEPTH below.
+    """
+    import os
+    trusted_proxy_depth = int(os.getenv("TRUSTED_PROXY_DEPTH", "1"))
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
-        return xff.split(",")[0].strip()
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            # trusted_proxy_depth=1 (Render's default single hop) -> last value.
+            # A higher value accounts for additional trusted proxies in front
+            # of Render, configurable via env var rather than hardcoded.
+            idx = max(0, len(parts) - trusted_proxy_depth)
+            return parts[idx]
     return getattr(request.client, "host", "unknown")
 
 
@@ -165,6 +194,115 @@ def check(name: str, request) -> None:
     """Convenience: check a named limit from LIMITS config."""
     cfg = LIMITS.get(name, {"max_calls": 60, "window": 60})
     rate_limit(name, request, cfg["max_calls"], cfg["window"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNUP ABUSE PROTECTION
+#
+# Layered, IP-based signup limiting. Reuses the same rate_limit() engine
+# and _get_client_ip() above rather than a separate mechanism — the fixed
+# proxy-aware IP extraction is what makes any of this meaningful; without
+# it, every limit here could be bypassed with a single forged header.
+#
+# All thresholds are configurable via env vars with sensible defaults, per
+# the spec's own requirement not to hardcode them. Defaults deliberately
+# generous enough that shared-IP situations (offices, campuses, mobile
+# carrier NAT) aren't punished for normal, infrequent signups — this is
+# about stopping scripted mass account creation, not rationing genuine use.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import os as _os_signup
+
+SIGNUP_MAX_ATTEMPTS_PER_IP_HOUR         = int(_os_signup.getenv("SIGNUP_MAX_ATTEMPTS_PER_IP_HOUR", "3"))
+SIGNUP_MAX_ATTEMPTS_PER_IP_DAY          = int(_os_signup.getenv("SIGNUP_MAX_ATTEMPTS_PER_IP_DAY", "5"))
+SIGNUP_MAX_SUCCESSFUL_ACCOUNTS_PER_IP_DAY = int(_os_signup.getenv("SIGNUP_MAX_SUCCESSFUL_ACCOUNTS_PER_IP_DAY", "1"))
+
+_signup_success_lock:  threading.Lock = threading.Lock()
+_signup_success_store: dict[str, deque] = defaultdict(deque)
+_SIGNUP_SUCCESS_WINDOW = 24 * 60 * 60  # 24 hours
+
+
+def check_signup_abuse(request) -> None:
+    """
+    Call at the very start of the signup endpoint, before any other work.
+    Raises RateLimitExceeded (same exception the rest of this module uses,
+    caught by the same global handler) if this IP has made too many signup
+    ATTEMPTS recently — regardless of whether those attempts succeeded.
+
+    Two windows, both enforced: an hourly burst limit (catches fast
+    scripted abuse) and a daily total (catches slower, spread-out abuse
+    that stays under the hourly threshold). Both must pass.
+    """
+    rate_limit("signup_hourly", request,
+               SIGNUP_MAX_ATTEMPTS_PER_IP_HOUR, 3600)
+    rate_limit("signup_daily", request,
+               SIGNUP_MAX_ATTEMPTS_PER_IP_DAY, 86400)
+
+
+def check_signup_success_limit(request) -> None:
+    """
+    Call after check_signup_abuse() but BEFORE actually creating the
+    account. Raises RateLimitExceeded if this IP has already produced its
+    daily quota of successful accounts.
+
+    Deliberately separate from rate_limit()'s check+record-in-one-step
+    design: this only PEEKS at the count, never records here. Recording a
+    "successful signup" attempt that then fails for an unrelated reason
+    (duplicate email, DB error) would wrongly burn this IP's daily quota
+    for an account that was never actually created — record_signup_success()
+    below is the only thing that actually adds an entry, and it's only
+    called once account creation has genuinely succeeded.
+    """
+    ip = _get_client_ip(request)
+    now = time.time()
+    with _signup_success_lock:
+        window = _signup_success_store[ip]
+        cutoff = now - _SIGNUP_SUCCESS_WINDOW
+        while window and window[0] < cutoff:
+            window.popleft()
+        if len(window) >= SIGNUP_MAX_SUCCESSFUL_ACCOUNTS_PER_IP_DAY:
+            log.warning("signup_success_limit: EXCEEDED  ip=%s  count=%d", ip, len(window))
+            raise RateLimitExceeded("signup_success", retry_after=_SIGNUP_SUCCESS_WINDOW)
+
+
+def record_signup_success(request) -> None:
+    """Call exactly once, immediately after an account is genuinely created."""
+    ip = _get_client_ip(request)
+    with _signup_success_lock:
+        _signup_success_store[ip].append(time.time())
+
+
+# ── Disposable email protection ─────────────────────────────────────────────
+# Configurable via BLOCK_DISPOSABLE_EMAILS rather than always-on, so this
+# never blocks a legitimate signup in an environment that hasn't reviewed
+# the list. The list itself is a small, well-known baseline — genuinely
+# comprehensive disposable-domain coverage needs a maintained external
+# list/API (several free ones exist), which is a reasonable thing to wire
+# in later without changing how this function is called.
+BLOCK_DISPOSABLE_EMAILS = _os_signup.getenv("BLOCK_DISPOSABLE_EMAILS", "false").lower() == "true"
+
+_DISPOSABLE_EMAIL_DOMAINS = {
+    "mailinator.com", "guerrillamail.com", "10minutemail.com", "tempmail.com",
+    "temp-mail.org", "throwawaymail.com", "yopmail.com", "trashmail.com",
+    "getnada.com", "sharklasers.com", "dispostable.com", "maildrop.cc",
+    "fakeinbox.com", "mailnesia.com", "mintemail.com", "spamgourmet.com",
+}
+
+
+def is_disposable_email(email: str) -> bool:
+    """
+    Returns True only if BLOCK_DISPOSABLE_EMAILS is enabled AND the
+    domain matches the known baseline list. Never blocks anything when
+    the feature flag is off — safe default for local development, per
+    the spec's explicit requirement not to break that.
+    """
+    if not BLOCK_DISPOSABLE_EMAILS:
+        return False
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return False
+    domain = email.rsplit("@", 1)[-1]
+    return domain in _DISPOSABLE_EMAIL_DOMAINS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
