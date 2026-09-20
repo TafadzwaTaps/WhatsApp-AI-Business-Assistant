@@ -830,7 +830,10 @@ def update_order_status_api(order_id: int, data: OrderStatusUpdate, user=Depends
     existing = crud.get_order_by_id(order_id, user["business_id"])
     if not existing: raise HTTPException(404, "Order not found")
     try:
-        order = update_order_status_supabase(order_id, data.status)
+        # Passing business_id here too — belt-and-suspenders alongside the
+        # existence check above, now that update_order_status_supabase()
+        # can enforce it directly at the database write itself.
+        order = update_order_status_supabase(order_id, data.status, business_id=user["business_id"])
     except ValueError as exc: raise HTTPException(400, str(exc))
     return {"message": "Status updated", "order_id": order_id, "status": order["status"]}
 

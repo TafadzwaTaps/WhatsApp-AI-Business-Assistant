@@ -63,7 +63,7 @@ _rate_lock  = threading.Lock()
 _rate_store: dict[str, deque] = defaultdict(deque)
 
 
-def _get_client_ip(request) -> str:
+def get_client_ip(request) -> str:
     """
     Extract the real client IP, correctly handling Render's proxy layer.
 
@@ -122,7 +122,7 @@ def rate_limit(
     Never raises any other exception.
     """
     try:
-        ip  = _get_client_ip(request)
+        ip  = get_client_ip(request)
         key = f"{limit_name}:{ip}:{key_suffix}"
         now = time.time()
 
@@ -153,7 +153,7 @@ def rate_limit(
 def get_rate_limit_headers(limit_name: str, request, max_calls: int, window_seconds: int) -> dict:
     """Return X-RateLimit-* headers for the response."""
     try:
-        ip  = _get_client_ip(request)
+        ip  = get_client_ip(request)
         key = f"{limit_name}:{ip}:"
         now = time.time()
         with _rate_lock:
@@ -253,7 +253,7 @@ def check_signup_success_limit(request) -> None:
     below is the only thing that actually adds an entry, and it's only
     called once account creation has genuinely succeeded.
     """
-    ip = _get_client_ip(request)
+    ip = get_client_ip(request)
     now = time.time()
     with _signup_success_lock:
         window = _signup_success_store[ip]
@@ -267,7 +267,7 @@ def check_signup_success_limit(request) -> None:
 
 def record_signup_success(request) -> None:
     """Call exactly once, immediately after an account is genuinely created."""
-    ip = _get_client_ip(request)
+    ip = get_client_ip(request)
     with _signup_success_lock:
         _signup_success_store[ip].append(time.time())
 
@@ -340,6 +340,106 @@ def clear_failed_logins(ip: str, username: str) -> None:
     key = f"{ip}:{username.lower()}"
     with _failed_login_lock:
         _failed_logins.pop(key, None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGIN LIMITS — IP-only and account-only dimensions
+#
+# The tracker above only catches ONE (ip, username) pair repeating — it
+# misses two real attack patterns:
+#   - credential stuffing: one IP trying many DIFFERENT accounts, each
+#     pair only ever attempted once or twice, never tripping the combined
+#     threshold
+#   - distributed brute force: one account attacked from many rotating
+#     IPs, where each individual IP+account pair also never trips it
+#
+# These two trackers close both gaps independently. Both are time-limited,
+# not permanent — a permanent account lock would let anyone lock a real
+# business out of their own account just by deliberately failing a few
+# logins against it, which is worse than the attack it would prevent.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import os as _os_login
+
+LOGIN_MAX_ATTEMPTS_PER_IP      = int(_os_login.getenv("LOGIN_MAX_ATTEMPTS_PER_IP", "20"))
+LOGIN_MAX_ATTEMPTS_PER_ACCOUNT = int(_os_login.getenv("LOGIN_MAX_ATTEMPTS_PER_ACCOUNT", "10"))
+LOGIN_LOCKOUT_MINUTES          = int(_os_login.getenv("LOGIN_LOCKOUT_MINUTES", "15"))
+
+_ip_login_lock:      threading.Lock = threading.Lock()
+_ip_login_fails:     dict[str, list[float]] = defaultdict(list)
+_IP_LOGIN_WINDOW = 300  # 5 minutes — same window as the combined tracker
+
+_account_login_lock:  threading.Lock = threading.Lock()
+_account_login_fails: dict[str, list[float]] = defaultdict(list)
+
+
+def record_failed_login_ip(ip: str) -> None:
+    """Record a failed login attempt against this IP, independent of which
+    account was targeted — this is what catches credential stuffing."""
+    now = time.time()
+    with _ip_login_lock:
+        _ip_login_fails[ip].append(now)
+        _ip_login_fails[ip] = [t for t in _ip_login_fails[ip] if now - t < _IP_LOGIN_WINDOW]
+
+
+def check_ip_login_limit(ip: str) -> None:
+    """
+    Raises RateLimitExceeded if this IP has failed too many logins recently,
+    regardless of which account(s) it was trying. Deliberately generous
+    (default 20 in 5 minutes) — an office, campus, or mobile carrier NAT
+    can plausibly produce several unrelated legitimate failed logins in a
+    short window; this is about stopping automated stuffing, not
+    rationing normal shared-IP use.
+    """
+    now = time.time()
+    with _ip_login_lock:
+        recent = [t for t in _ip_login_fails[ip] if now - t < _IP_LOGIN_WINDOW]
+        _ip_login_fails[ip] = recent
+    if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_IP:
+        log.warning("login_ip_limit: EXCEEDED  ip=%s  count=%d", ip, len(recent))
+        raise RateLimitExceeded("login_ip", retry_after=_IP_LOGIN_WINDOW)
+
+
+def record_failed_login_account(username: str) -> None:
+    """Record a failed login attempt against this account, independent of
+    which IP it came from — this is what catches distributed brute force
+    (the same account attacked from many rotating IPs)."""
+    key = username.lower()
+    now = time.time()
+    with _account_login_lock:
+        _account_login_fails[key].append(now)
+        window = LOGIN_LOCKOUT_MINUTES * 60
+        _account_login_fails[key] = [t for t in _account_login_fails[key] if now - t < window]
+
+
+def check_account_login_lockout(username: str) -> None:
+    """
+    Raises RateLimitExceeded if this account has been targeted too many
+    times recently, regardless of which IP(s) the attempts came from.
+    Time-limited (LOGIN_LOCKOUT_MINUTES, default 15) — never a permanent
+    lock, so this can't be weaponized as a denial-of-service against a
+    real business by an attacker who just wants them locked out.
+    """
+    key = username.lower()
+    now = time.time()
+    window = LOGIN_LOCKOUT_MINUTES * 60
+    with _account_login_lock:
+        recent = [t for t in _account_login_fails[key] if now - t < window]
+        _account_login_fails[key] = recent
+    if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_ACCOUNT:
+        log.warning("login_account_lockout: EXCEEDED  username=%s  count=%d", username, len(recent))
+        raise RateLimitExceeded("login_account", retry_after=window)
+
+
+def clear_account_login_lockout(username: str) -> None:
+    """Call on successful login — the real owner has proven their identity,
+    so past failures against this account no longer need to count against
+    them. Deliberately NOT mirrored for the IP-level tracker: a successful
+    login by one legitimate user on a shared IP shouldn't erase evidence
+    that the same IP was recently used to attack OTHER accounts."""
+    key = username.lower()
+    with _account_login_lock:
+        _account_login_fails.pop(key, None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -541,3 +641,9 @@ def validate_upload(
         return False, f"Unexpected file type: {content_type}"
 
     return True, ""
+
+
+# Backward-compatible alias — some call sites (main.py) already import the
+# private name directly; keeping both avoids a churny rename across files
+# that don't need to change for this fix.
+_get_client_ip = get_client_ip

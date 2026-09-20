@@ -148,6 +148,55 @@ def decode_token(token: str) -> dict:
         )
 
 
+# ── Session invalidation on password reset ──────────────────────────────────
+# The access token is issued with the business's password_changed_at
+# timestamp embedded in it (as "pwd_ts"). If the business later resets
+# their password, that column gets a new, later timestamp — so any token
+# issued BEFORE the reset now has a stale "pwd_ts" and gets rejected here,
+# even though its signature and expiry are both still perfectly valid.
+# Without this, a stolen/leaked token would stay usable for its full
+# 8-hour lifetime no matter what the account owner does about it.
+#
+# A short-lived cache avoids turning every single authenticated request
+# into a database lookup — the auth check stays fast for the overwhelming
+# majority of requests, at the cost of revocation taking up to
+# _PWD_TS_CACHE_TTL seconds to actually take effect instead of being
+# instant. That's a deliberate, bounded tradeoff: near-real-time
+# revocation without a DB round-trip on every request.
+#
+# Fully backward compatible: a token with no "pwd_ts" claim (anything
+# issued before this feature existed) skips the check entirely — no
+# existing session is invalidated by deploying this.
+_pwd_ts_cache: dict[int, tuple[str, float]] = {}
+_PWD_TS_CACHE_TTL = 60  # seconds
+
+
+def _get_current_password_changed_at(business_id: int) -> str | None:
+    import time as _time
+    cached = _pwd_ts_cache.get(business_id)
+    now = _time.time()
+    if cached and (now - cached[1]) < _PWD_TS_CACHE_TTL:
+        return cached[0]
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("password_changed_at")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        value = (res.data[0].get("password_changed_at") if res.data else None)
+    except Exception:
+        # Fail open on lookup errors — a transient DB hiccup must not lock
+        # every business out of their own account. The signature/expiry
+        # check above still fully applies; this is an additional layer,
+        # not the only one.
+        return None
+    _pwd_ts_cache[business_id] = (value, now)
+    return value
+
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     import logging as _al
     _log = _al.getLogger("wazibot.auth")
@@ -162,6 +211,14 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     if not username:
         _log.warning("AUTH FAILED: reason=missing_sub_in_token")
         raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    token_pwd_ts = payload.get("pwd_ts")
+    if token_pwd_ts and business_id is not None:
+        current_pwd_ts = _get_current_password_changed_at(business_id)
+        if current_pwd_ts and current_pwd_ts != token_pwd_ts:
+            _log.warning("AUTH FAILED: reason=password_changed_since_token_issued  business_id=%s", business_id)
+            raise HTTPException(status_code=401, detail="Your password was changed. Please log in again.")
+
     return {"username": username, "role": role, "business_id": business_id}
 
 

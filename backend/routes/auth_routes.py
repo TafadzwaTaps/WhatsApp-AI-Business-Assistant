@@ -22,16 +22,31 @@ from services.security import (
     check_password_strength,
     check_signup_abuse, check_signup_success_limit, record_signup_success,
     is_disposable_email,
+    get_client_ip,
+    check_ip_login_limit, check_account_login_lockout,
+    record_failed_login_ip, record_failed_login_account,
+    clear_account_login_lockout,
 )
 from routes._deps import log
 
 router = APIRouter()
 
 
-def _token_pair(sub: str, role: str, business_id: int | None = None) -> dict:
+def _token_pair(sub: str, role: str, business_id: int | None = None, pwd_ts: str | None = None) -> dict:
+    """
+    pwd_ts (optional) embeds the business's password_changed_at value at
+    the moment this token pair is issued. core.auth.get_current_user()
+    compares this against the business's CURRENT value on each request
+    (via a short-lived cache) — if they've since reset their password,
+    this embedded value goes stale and the token stops being accepted,
+    even though its signature and expiry are both still valid. Omitted
+    entirely for superadmin tokens (no business_id, nothing to compare).
+    """
     data: dict = {"sub": sub, "role": role}
     if business_id is not None:
         data["business_id"] = business_id
+    if pwd_ts:
+        data["pwd_ts"] = pwd_ts
     return {
         "access_token":  create_access_token(data),
         "refresh_token": create_refresh_token(data),
@@ -219,10 +234,29 @@ class LoginRequest(BaseModel):
 @router.post("/auth/login")
 def login(data: LoginRequest, request: Request):
     _rate_check("login", request)
-    ip = request.headers.get("x-forwarded-for", getattr(request.client, "host", "unknown")).split(",")[0].strip()
+    # Bug fix: this endpoint previously computed its own inline IP extraction
+    # ("x-forwarded-for"...split(",")[0]) instead of using the shared,
+    # already-fixed get_client_ip() — meaning the proxy-spoofing fix from
+    # the last round of this audit never actually reached the login
+    # endpoint's rate limiting at all. Using the shared function here closes
+    # that gap and matches the "reuse, don't duplicate" principle this
+    # whole audit is built around.
+    ip = get_client_ip(request)
+
+    # Three independent dimensions, all must pass — closes two real gaps
+    # in the original single IP+username tracker: an attacker trying many
+    # DIFFERENT accounts from one IP (credential stuffing) never tripped
+    # the old per-(ip,username) threshold since each pair only ever saw
+    # one attempt; and an attacker rotating through many IPs against ONE
+    # account (distributed brute force) never tripped it either, since
+    # each IP+account pair looked fresh. Time-limited, not permanent —
+    # a permanent account lock would let anyone lock a legitimate business
+    # out of their own account just by failing a few login attempts.
     if is_login_locked(ip, data.username):
-        log.warning("login_locked  ip=%s  username=%s", ip, data.username)
+        log.warning("login_locked  ip_account=%s  username=%s", ip, data.username)
         raise HTTPException(429, "Too many failed login attempts. Please try again in 5 minutes.")
+    check_ip_login_limit(ip)
+    check_account_login_lockout(data.username)
 
     username = data.username.strip().lower()
 
@@ -235,21 +269,27 @@ def login(data: LoginRequest, request: Request):
             raise HTTPException(403, "Superadmin login is disabled until a secure password is configured.")
         if not verify_password(data.password, SUPER_ADMIN_PASSWORD):
             record_failed_login(ip, username)
+            record_failed_login_ip(ip)
+            record_failed_login_account(username)
             raise HTTPException(401, "Invalid credentials")
         clear_failed_logins(ip, username)
+        clear_account_login_lockout(username)
         return {**_token_pair(SUPER_ADMIN_USERNAME, "superadmin"), "role": "superadmin"}
 
     biz = crud.get_business_by_username(username)
     if not biz or not verify_password(data.password, biz["owner_password"]):
         record_failed_login(ip, username)
+        record_failed_login_ip(ip)
+        record_failed_login_account(username)
         raise HTTPException(401, "Invalid credentials")
     if not biz.get("is_active", True):
         raise HTTPException(403, "Account suspended. Contact support.")
 
     clear_failed_logins(ip, username)
+    clear_account_login_lockout(username)
     log.info("🔑 Login: %s", biz["owner_username"])
     return {
-        **_token_pair(biz["owner_username"], "business", biz["id"]),
+        **_token_pair(biz["owner_username"], "business", biz["id"], biz.get("password_changed_at")),
         "role":          "business",
         "business_name": biz["name"],
         "business_id":   biz["id"],
@@ -273,6 +313,7 @@ def refresh_token_endpoint(data: RefreshRequest):
     sub         = payload.get("sub", "")
     role        = payload.get("role", "business")
     business_id = payload.get("business_id")
+    pwd_ts      = None
 
     if role == "business":
         biz = crud.get_business_by_username(sub)
@@ -280,9 +321,22 @@ def refresh_token_endpoint(data: RefreshRequest):
             raise HTTPException(401, "Account not found or suspended.")
         business_id = biz["id"]
 
+        # Reuses the biz row already fetched above — no extra DB query.
+        # get_current_user() enforces this same check for regular access
+        # tokens, but /auth/refresh has its own separate decode path and
+        # never calls get_current_user(), so a stolen refresh token could
+        # otherwise keep minting fresh access tokens forever even after a
+        # password reset. Checked here directly for that reason.
+        current_pwd_ts = biz.get("password_changed_at")
+        token_pwd_ts   = payload.get("pwd_ts")
+        if token_pwd_ts and current_pwd_ts and current_pwd_ts != token_pwd_ts:
+            log.warning("refresh_token rejected: password changed since issuance  business_id=%s", business_id)
+            raise HTTPException(401, "Your password was changed. Please log in again.")
+        pwd_ts = current_pwd_ts
+
     log.info("🔄 Token refreshed for: %s", sub)
     return {
-        **_token_pair(sub, role, business_id),
+        **_token_pair(sub, role, business_id, pwd_ts),
         "role": role,
         **({} if business_id is None else {"business_id": business_id}),
     }

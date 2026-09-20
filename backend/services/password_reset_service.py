@@ -198,10 +198,15 @@ def complete_password_reset(raw_token: str, new_password: str) -> dict:
         from core.db import supabase
         now = datetime.now(timezone.utc).isoformat()
 
-        # Hash with bcrypt before storing
+        # Hash with bcrypt before storing. password_changed_at is set in
+        # the SAME update so any access/refresh token issued before this
+        # moment carries a now-stale embedded pwd_ts and gets rejected by
+        # core.auth.get_current_user() / the /auth/refresh handler — the
+        # actual session-invalidation mechanism this timestamp exists for.
         from core.auth import hash_password as _hash_pw
+        _now_iso = datetime.now(timezone.utc).isoformat()
         supabase.table("businesses").update(
-            {"owner_password": _hash_pw(new_password)}
+            {"owner_password": _hash_pw(new_password), "password_changed_at": _now_iso}
         ).eq("id", bid).execute()
 
         # Mark this token as used

@@ -275,13 +275,33 @@ def next_order_stage(status: str) -> str:
         return "confirmed"
 
 
-def update_order_status_supabase(order_id: int, status: str) -> dict:
-    """Update order status with transition validation."""
+def update_order_status_supabase(order_id: int, status: str, business_id: int = None) -> dict:
+    """
+    Update order status with transition validation.
+
+    business_id is optional and defaults to None for backward compatibility
+    with existing callers — every current call site already does its own
+    ownership check before calling this (confirmed by direct audit across
+    business_routes.py, admin_routes.py, chat_routes.py, and the WhatsApp/
+    webhook pipeline, where business_id comes from trusted server-side
+    context rather than client input). But this function had no
+    enforcement of its own, meaning its safety depended entirely on every
+    future caller remembering that same discipline — one missed check
+    anywhere would be a real cross-tenant vulnerability with nothing to
+    catch it. Passing business_id here adds that enforcement directly at
+    the point of the actual database write, for any caller that opts in.
+    """
     if status not in VALID_STATUSES:
         raise ValueError(f"Invalid status '{status}'. Valid: {VALID_STATUSES}")
 
     existing = get_order(order_id)
     if not existing:
+        raise ValueError(f"Order id={order_id} not found")
+
+    if business_id is not None and existing.get("business_id") != business_id:
+        # Same shape as "not found" rather than a distinct "forbidden" —
+        # doesn't reveal to a caller probing IDs whether an order exists
+        # at all versus belongs to someone else.
         raise ValueError(f"Order id={order_id} not found")
 
     current = existing.get("status", "pending")
@@ -296,12 +316,14 @@ def update_order_status_supabase(order_id: int, status: str) -> dict:
     if status == "paid" and _has_col("payment_status"):
         update_payload["payment_status"] = "paid"
 
-    res = (
+    _query = (
         supabase.table("orders")
         .update(update_payload)
         .eq("id", order_id)
-        .execute()
     )
+    if business_id is not None:
+        _query = _query.eq("business_id", business_id)
+    res = _query.execute()
     if not res.data:
         raise ValueError(f"Order id={order_id} update failed")
 
