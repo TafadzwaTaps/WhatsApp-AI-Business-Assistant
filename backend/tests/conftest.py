@@ -12,9 +12,20 @@ before any fixture has a chance to run. Patching sys.modules only inside
 a fixture would be too late for anything already imported by then.
 """
 
+import os
 import sys
 import types
 import pytest
+
+# core/crypto.py intentionally calls sys.exit(1) at import time if FERNET_KEY
+# is missing (see its own docstring: "The app REFUSES TO START if the key is
+# absent or malformed — intentional"). That's correct production behavior,
+# but it means importing anything that transitively imports core.crypto
+# (e.g. `import crud`) would abort test collection entirely. Tests never
+# encrypt/decrypt anything real, so a fixed, non-secret, test-only key is
+# fine here — set with setdefault so a real FERNET_KEY in the test
+# environment (if ever present) always wins.
+os.environ.setdefault("FERNET_KEY", "vqjwHchtwFX0fcKKZGaWUPVQYRQynhRPFaCJiwUPtJw=")
 
 
 class FakeSupabaseResult:

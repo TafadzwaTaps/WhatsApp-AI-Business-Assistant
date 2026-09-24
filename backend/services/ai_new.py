@@ -1,4 +1,14 @@
 """
+⚠️  NOT THE PRODUCTION AI ENGINE — kept for reference only, not imported
+    anywhere in backend/. The live entry point is services/ai.py
+    (`from services.ai import generate_reply`, used by
+    routes/webhook_routes.py and routes/business_routes.py). This file is
+    an older/partial snapshot that predates ai.py's business-flavor
+    wording block (food/retail/service copy) and several later fixes —
+    do not wire it back in without reconciling those differences first.
+    (Confirmed via Phase 0 audit, 2026-09-24: zero importers found for
+    ai_new.generate_reply anywhere in the repo.)
+
 ai.py — WaziBot Ordering Engine  v7  (refactored)
 
 Single public entry point: generate_reply()

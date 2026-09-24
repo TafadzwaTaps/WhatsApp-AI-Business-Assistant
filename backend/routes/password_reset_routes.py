@@ -11,6 +11,21 @@ Security:
   - Never reveals whether an email exists (enumeration protection)
   - Token validated server-side on every reset attempt
   - Password strength enforced server-side
+
+⚠️  DISABLED, 2026-09-24 (Phase 1 security fix): this module used to also
+    expose POST /auth/reset-password-direct — a second reset path that
+    changed a password given only a username/email, with no proof the
+    caller controlled that account (no token, no email round-trip). That
+    is a direct account-takeover vector, since a username or email is
+    often semi-public. Its route decorator has been removed below so it
+    is no longer reachable (the handler function and DirectResetRequest
+    model are left in place, unregistered, per the "don't delete working
+    code" rule — see the comment at that function for details). The
+    frontend page that called it (static/forgot-password.html) has been
+    updated to use the secure POST /auth/forgot-password + email-link
+    flow instead (which static/reset-password.html already implements
+    correctly with token validation). Only the three endpoints listed
+    above are live now.
 """
 from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
@@ -133,12 +148,26 @@ class DirectResetRequest(BaseModel):
     confirm_password: str
 
 
-@router.post("/auth/reset-password-direct")
+# ⚠️  Route decorator intentionally removed, 2026-09-24 (Phase 1 security fix).
+# This handler let anyone who knew a username or email reset that account's
+# password outright — no proof of ownership (no token, no email round-trip).
+# That's a textbook account-takeover vector, so it's been taken out of
+# service by simply not registering it as a route (FastAPI only exposes
+# functions with an @router.<verb>(...) decorator). The function body is
+# left untouched below, per the standing "don't delete working code" rule,
+# in case it's ever needed for reference — but it must NOT be re-registered
+# without adding real proof-of-ownership (e.g. requiring the secure token
+# flow instead). The only supported way to reset a forgotten password is
+# now: POST /auth/forgot-password → emailed link → POST /auth/reset-password.
 def reset_password_direct(data: DirectResetRequest, request: Request):
     """
     Reset password directly using username or email address.
     No email link required — user proves they know their identifier.
     Rate limited: 5 attempts per IP per hour.
+
+    DISABLED — see the module docstring and the comment directly above
+    this function. Kept unregistered (no @router decorator) rather than
+    deleted.
     """
     try:
         from services.security import rate_limit

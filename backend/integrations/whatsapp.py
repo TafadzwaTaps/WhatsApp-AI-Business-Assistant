@@ -9,7 +9,6 @@ import requests
 
 from fastapi import APIRouter, Request
 import crud
-from services.ai_service import generate_reply
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,6 +61,13 @@ async def whatsapp_webhook(request: Request):
             log.warning("log_message failed: %s", e)
 
         products = crud.get_products(business_id)
+
+        # Lazy import (not module-level): this route is legacy/unregistered
+        # (the live webhook is routes/webhook_routes.py), kept only for
+        # backwards-compat per the module docstring. Importing here avoids
+        # ever paying the cost — or risking a circular import — unless this
+        # dead path is actually exercised.
+        from services.ai import generate_reply
 
         reply = generate_reply(
             message=message,

@@ -97,23 +97,51 @@ async def receive_message(request: Request):
 
         msg_obj  = value["messages"][0]
         msg_type = msg_obj.get("type", "")
-        SUPPORTED_TYPES = ("text", "image", "document", "sticker", "audio")
+        SUPPORTED_TYPES = ("text", "image", "document", "sticker", "audio",
+                            "video", "location", "contacts", "interactive", "button")
         if msg_type not in SUPPORTED_TYPES:
             log.info("Webhook: skipping unsupported message type=%s", msg_type)
             return {"status": "ok"}
 
-        if msg_type in ("image", "document", "sticker"):
-            img_obj = msg_obj.get(msg_type, {})
-            text = img_obj.get("caption", "").strip() or "[image]"
+        # Build `text` per message type. IMPORTANT: this must be the ONLY
+        # place `text` gets assigned below — a prior version of this code
+        # set a type-specific placeholder here (e.g. "[voice_note]") and
+        # then unconditionally overwrote it a few lines later with
+        # msg_obj.get("text", {}).get("body", ""), which is always empty
+        # for non-text payloads. That silently dropped every voice note,
+        # image, document and sticker (the missing-fields check below would
+        # then trip on the now-empty `text` and return before STEP 6 ever
+        # ran). Fixed 2026-09-24 — see Phase 0 audit.
+        if msg_type == "text":
+            text = msg_obj.get("text", {}).get("body", "").strip()
+        elif msg_type in ("image", "document", "sticker"):
+            media_obj = msg_obj.get(msg_type, {})
+            text = media_obj.get("caption", "").strip() or "[image]"
         elif msg_type == "audio":
             text = "[voice_note]"
-        elif msg_type != "text":
-            return {"status": "ok"}
+        elif msg_type == "video":
+            media_obj = msg_obj.get("video", {})
+            text = media_obj.get("caption", "").strip() or "[video]"
+        elif msg_type == "location":
+            text = "[location]"
+        elif msg_type == "contacts":
+            text = "[contact_card]"
+        elif msg_type in ("interactive", "button"):
+            # Button/list replies carry their selected text here instead of
+            # the top-level "text" field.
+            interactive_obj = msg_obj.get("interactive", {}) or msg_obj.get("button", {})
+            text = (
+                interactive_obj.get("button_reply", {}).get("title")
+                or interactive_obj.get("list_reply", {}).get("title")
+                or interactive_obj.get("text")
+                or msg_obj.get("button", {}).get("text", "")
+            ).strip() or "[unsupported]"
+        else:
+            text = ""
 
         metadata        = value.get("metadata", {})
         phone_number_id = metadata.get("phone_number_id", "")
         customer_phone  = msg_obj.get("from", "")
-        text            = msg_obj.get("text", {}).get("body", "").strip()
         wa_message_id   = msg_obj.get("id", "")
 
         if not phone_number_id or not customer_phone or not text:
@@ -282,20 +310,49 @@ async def receive_message(request: Request):
         message_has_image = (msg_type in ("image", "document", "sticker"))
         is_voice_note = (msg_type == "audio")
 
+        voice_transcript = None
         if is_voice_note and text == "[voice_note]":
-            reply = (
-                "🎤 I heard your voice note! Unfortunately I can't process audio yet.\n\n"
-                "Could you type your order instead? Type *menu* to get started! 😊"
-            )
-            try:
-                out_msg = crud.create_message(
-                    customer["id"], business["id"], reply, "outgoing", sender_type="ai",
+            # Reuses the same Whisper call already proven out on the
+            # dashboard's POST /voice/transcribe endpoint — added here so
+            # voice notes sent on WhatsApp actually get answered instead of
+            # always hitting the "can't process audio yet" fallback below.
+            # Fails closed to that same friendly fallback on any error
+            # (missing OPENAI_API_KEY, network failure, empty transcript).
+            audio_obj = msg_obj.get("audio", {})
+            media_id  = audio_obj.get("id", "")
+            if media_id and token:
+                try:
+                    from services.whatsapp_service import transcribe_whatsapp_voice_note
+                    voice_transcript = await transcribe_whatsapp_voice_note(
+                        media_id=media_id, wa_token=token,
+                        language=(business.get("preferred_language") or "en"),
+                    )
+                except Exception as exc:
+                    log.warning("voice transcription call failed: %s", exc)
+                    voice_transcript = None
+
+            if not voice_transcript:
+                reply = (
+                    "🎤 Sorry, I couldn't understand that voice message. "
+                    "Could you try again or type your order instead? "
+                    "Type *menu* to get started! 😊"
                 )
-            except Exception as exc:
-                log.warning("STEP 7 voice-note-reply failed: %s", exc)
-            if token:
-                send_whatsapp(phone_number_id, token, customer_phone, reply)
-            return {"status": "ok"}
+                try:
+                    out_msg = crud.create_message(
+                        customer["id"], business["id"], reply, "outgoing", sender_type="ai",
+                    )
+                except Exception as exc:
+                    log.warning("STEP 7 voice-note-reply failed: %s", exc)
+                if token:
+                    send_whatsapp(phone_number_id, token, customer_phone, reply)
+                return {"status": "ok"}
+
+            # Transcription succeeded — treat the transcript as this
+            # message's text and fall through into the normal pipeline
+            # below (language detection, generate_reply, etc.) exactly
+            # like any typed message.
+            text = voice_transcript
+            log.info("🎤 voice note transcribed  phone=%s  text=%r", customer_phone, text)
 
         # ── Multi-language: explicit customer language-switch request ──────
         # New module, additive only — never touches generate_reply() or the
@@ -407,6 +464,7 @@ async def receive_message(request: Request):
             products=products,
             message_has_image=message_has_image,
             message_is_from_agent=is_from_agent,
+            voice_transcript=voice_transcript,
             business_config=biz_config,
         )
 
