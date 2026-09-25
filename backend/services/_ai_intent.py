@@ -55,6 +55,10 @@ _REORDER_PHRASES = {
     "repeat last order", "same order", "order again", "same as last time",
     "same as before", "repeat order", "reorder", "last order again",
     "previous order", "order same thing",
+    # Phase 4 (2026-09-25): "the usual" is one of the spec's own worked
+    # examples for natural-language reordering — added as a plain phrase
+    # alongside the existing ones, same _is_reorder_request()/P4.5 handler.
+    "the usual", "my usual", "usual order",
 }
 
 

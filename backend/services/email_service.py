@@ -13,7 +13,7 @@ Required env var:
   RESEND_API_KEY   — Resend API key (from resend.com)
 
 Optional env vars:
-  EMAIL_FROM       — sender address (default: noreply@wazibot.com)
+  EMAIL_FROM       — sender address (default: noreply@wazibothq.com)
   WAZIBOT_URL      — base URL for links (default: https://wazibothq.com)
 
 Usage (after successful signup):
@@ -33,7 +33,7 @@ from typing import Optional
 log = logging.getLogger("wazibot.email")
 
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
-_EMAIL_FROM     = os.getenv("EMAIL_FROM", "WaziBot <noreply@wazibot.com>")
+_EMAIL_FROM     = os.getenv("EMAIL_FROM", "WaziBot <noreply@wazibothq.com>")
 _BASE_URL       = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
 
 

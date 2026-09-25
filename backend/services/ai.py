@@ -52,6 +52,10 @@ INTENT PRIORITY (do not reorder)
   P4.5  Reorder
   P5    Checkout trigger
   P6    Remove item
+  P6.5  Comparative reference ("the cheaper one") — Phase 4
+  P6.6  Quantity correction ("make it 3") — Phase 4
+  P6.7  Product substitution ("change the chicken to beef") — Phase 4
+  P6.8  Recommendation query ("what do you recommend?") — Phase 4
   P7    Add to cart (order parser → multi-item → single item)
   P8    Cart view
   P9    Browse menu
@@ -1739,6 +1743,176 @@ def generate_reply(
         log.info("remove: no match  search_term=%r  cart_items=%s",
                  search_term, [i["name"] for i in cart])
         return f"⚠️ I couldn't find that item in your cart.\n\n{_format_cart(cart, _currency_sym)}"
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.5 — COMPARATIVE REFERENCE ("I'll take the cheaper one", "the first one")
+    # Resolves only against products the bot itself most recently displayed
+    # via the P6.8 recommendation flow below (session.last_shown_products) —
+    # never guesses which product "cheaper" means if nothing was shown.
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from services.nl_commerce import resolve_comparative_reference
+        _last_shown = (_get_session(phone, business_id) or {}).get("last_shown_products") or []
+        if _last_shown:
+            _ref = resolve_comparative_reference(text, _last_shown)
+            if _ref:
+                fresh = None
+                try:
+                    fresh = crud.get_product_by_name(business_id, _ref["name"])
+                except Exception as exc:
+                    log.warning("comparative-ref: stock refresh failed: %s", exc)
+                product = fresh or next((p for p in products if p["name"] == _ref["name"]), None)
+                if product:
+                    available = _resolve_stock(product, _is_service_biz)
+                    if available is not None and available <= 0:
+                        return (
+                            f"😔 *{product['name']}* is currently out of stock.\n\n"
+                            "Type *menu* to see what's available."
+                        )
+                    found = False
+                    for item in cart:
+                        if item["name"] == product["name"]:
+                            item["qty"] += 1
+                            found = True
+                            break
+                    if not found:
+                        cart.append({"name": product["name"], "qty": 1, "price": float(product["price"])})
+                    _save_cart(phone, business_id, cart)
+                    log.info("comparative-ref  product=%r  phone=%s", product["name"], phone)
+                    return (
+                        f"👍 Added *{product['name']}* to your cart.\n\n"
+                        f"{_format_cart(cart, _currency_sym)}"
+                    )
+    except Exception as exc:
+        log.debug("comparative-ref check failed (ignored): %s", exc)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.6 — QUANTITY CORRECTION ("make it 3" / "make that three")
+    # Only acts when unambiguous: the cart has exactly one distinct line
+    # item. With more than one item, never guess which one — ask instead.
+    # ══════════════════════════════════════════════════════════════════════════
+    if cart:
+        try:
+            from services.nl_commerce import detect_quantity_correction
+            _new_qty = detect_quantity_correction(text)
+        except Exception as exc:
+            log.debug("qty-correction detection failed (ignored): %s", exc)
+            _new_qty = None
+        if _new_qty is not None:
+            if len(cart) == 1:
+                item = cart[0]
+                product_name = item["name"]
+                available = None
+                try:
+                    fresh = crud.get_product_by_name(business_id, product_name)
+                    if fresh:
+                        available = _resolve_stock(fresh, _is_service_biz)
+                except Exception as exc:
+                    log.warning("qty-correction: stock refresh failed: %s", exc)
+                if available is not None and _new_qty > available:
+                    return (
+                        f"⚠️ Only *{available}* unit(s) of *{product_name}* available "
+                        f"(you asked for {_new_qty})."
+                    )
+                item["qty"] = _new_qty
+                _save_cart(phone, business_id, cart)
+                log.info("qty-correction  item=%r  qty=%d  phone=%s", product_name, _new_qty, phone)
+                return (
+                    f"👍 Updated *{product_name}* to ×{_new_qty}.\n\n"
+                    f"{_format_cart(cart, _currency_sym)}"
+                )
+            names = ", ".join(f"*{i['name']}*" for i in cart)
+            return (
+                f"Just to make sure 😊 — which item should I update to {_new_qty}? "
+                f"You have: {names}"
+            )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.7 — PRODUCT SUBSTITUTION ("change the chicken to beef")
+    # Both sides must confidently match (an existing cart line, and a real
+    # catalogue product) — if either match fails, do nothing here and fall
+    # through to the normal flow rather than perform a partial/silent swap.
+    # ══════════════════════════════════════════════════════════════════════════
+    if cart:
+        try:
+            from services.nl_commerce import detect_substitution_phrase, match_cart_item_by_text
+            _sub = detect_substitution_phrase(text)
+        except Exception as exc:
+            log.debug("substitution detection failed (ignored): %s", exc)
+            _sub = None
+        if _sub:
+            from_text, to_text = _sub
+            from_item = match_cart_item_by_text(cart, from_text)
+            to_product = _find_product(to_text, products) if from_item else None
+            if from_item and to_product and to_product["name"] != from_item["name"]:
+                try:
+                    fresh = crud.get_product_by_name(business_id, to_product["name"])
+                    if fresh:
+                        to_product = fresh
+                except Exception as exc:
+                    log.warning("substitution: stock refresh failed: %s", exc)
+                qty = from_item["qty"]
+                available = _resolve_stock(to_product, _is_service_biz)
+                if available is not None and qty > available:
+                    return (
+                        f"😔 *{to_product['name']}* only has {available} unit(s) available "
+                        f"(you need {qty})."
+                    )
+                cart.remove(from_item)
+                found = False
+                for item in cart:
+                    if item["name"] == to_product["name"]:
+                        item["qty"] += qty
+                        found = True
+                        break
+                if not found:
+                    cart.append({"name": to_product["name"], "qty": qty, "price": float(to_product["price"])})
+                _save_cart(phone, business_id, cart)
+                log.info("substitution  from=%r  to=%r  qty=%d  phone=%s",
+                          from_item["name"], to_product["name"], qty, phone)
+                return (
+                    f"👍 Swapped *{from_item['name']}* for *{to_product['name']}*.\n\n"
+                    f"{_format_cart(cart, _currency_sym)}"
+                )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.8 — RECOMMENDATION QUERY ("what do you recommend?", "anything under $10?")
+    # Only ever surfaces real products already returned by crud.get_products()
+    # for this business, filtered/sorted in Python — never invents a product,
+    # price, or stock status. Remembers what it showed (session.last_shown_
+    # products) so a follow-up like "the cheaper one" (P6.5 above) can resolve.
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from services.nl_commerce import (
+            is_recommendation_query, extract_price_ceiling, filter_recommended_products,
+        )
+        if is_recommendation_query(text):
+            max_price = extract_price_ceiling(text)
+            picks = filter_recommended_products(
+                products, max_price=max_price, is_service_business=_is_service_biz,
+            )
+            if not picks:
+                if max_price is not None:
+                    return (
+                        f"😔 I don't have anything under {_currency_sym}{max_price:.0f} right now.\n\n"
+                        "Type *menu* to see everything we have."
+                    )
+                return "I'm not sure what to suggest right now 😊 — type *menu* to see everything we have."
+
+            _existing_session = _get_session(phone, business_id)
+            _existing_session["last_shown_products"] = [
+                {"name": p["name"], "price": float(p["price"]), "id": p.get("id")} for p in picks
+            ]
+            _write_state_data(phone, business_id, {"session": _existing_session})
+
+            price_note = f" under {_currency_sym}{max_price:.0f}" if max_price is not None else ""
+            lines = [f"• *{p['name']}* — {_currency_sym}{float(p['price']):.2f}" for p in picks]
+            return (
+                f"Here's what I'd recommend{price_note} 😊\n\n" + "\n".join(lines) +
+                f"\n\n_Just tell me which one, e.g. \"{picks[0]['name']}\" or \"the cheaper one\"._"
+            )
+    except Exception as exc:
+        log.debug("recommendation-query check failed (ignored): %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P7 — ADD TO CART (order parser → multi-item → single item)
