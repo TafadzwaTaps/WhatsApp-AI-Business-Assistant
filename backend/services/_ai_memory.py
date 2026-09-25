@@ -37,6 +37,8 @@ def _get_memory(phone: str, business_id: int) -> dict:
         mem.setdefault("order_count",    0)
         mem.setdefault("last_seen",      "")
         mem.setdefault("last_rating",    "")
+        mem.setdefault("preferred_payment_method", "")
+        mem.setdefault("preferred_fulfillment",    "")
 
         if is_new:
             # First contact — create the row now so this customer is visible

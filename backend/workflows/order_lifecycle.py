@@ -346,10 +346,20 @@ def _sync_user_memory_after_order(business_id: int, customer_phone: str) -> None
     """
     try:
         import crud
-        # Count confirmed/delivered orders and sum their totals
+        # Count confirmed/delivered orders and sum their totals. Also pull
+        # payment_method/fulfillment_method (Phase 3, 2026-09-25) — but
+        # only the columns that actually exist on this business's orders
+        # table (_has_col), same defensive pattern used everywhere else
+        # in this file, so a business without those columns never errors.
+        _select_cols = ["total_price", "payment_status", "status", "created_at"]
+        if _has_col("payment_method"):
+            _select_cols.append("payment_method")
+        if _has_col("fulfillment_method"):
+            _select_cols.append("fulfillment_method")
+
         res = (
             supabase.table("orders")
-            .select("total_price, payment_status, status")
+            .select(",".join(_select_cols))
             .eq("business_id", business_id)
             .eq("customer_phone", customer_phone)
             .execute()
@@ -360,15 +370,37 @@ def _sync_user_memory_after_order(business_id: int, customer_phone: str) -> None
             "paid", "confirmed", "preparing", "ready",
             "out_for_delivery", "delivered", "pending_cash"
         }
-        order_count  = sum(1 for r in rows if r.get("status", "") in confirmed_statuses
-                           or r.get("payment_status", "") in confirmed_statuses)
-        total_spent  = sum(float(r.get("total_price") or 0) for r in rows
-                           if r.get("status", "") in confirmed_statuses
-                           or r.get("payment_status", "") in confirmed_statuses)
+        confirmed_rows = [
+            r for r in rows
+            if r.get("status", "") in confirmed_statuses
+            or r.get("payment_status", "") in confirmed_statuses
+        ]
+        order_count  = len(confirmed_rows)
+        total_spent  = sum(float(r.get("total_price") or 0) for r in confirmed_rows)
 
         mem = crud.get_user_memory(customer_phone, business_id)
         mem["order_count"] = max(int(mem.get("order_count", 0) or 0), order_count)
         mem["total_spent"] = max(float(mem.get("total_spent", 0) or 0), round(total_spent, 2))
+
+        # Backend remains the source of truth here too: this is the real
+        # payment method / fulfillment choice from the customer's most
+        # recent confirmed order — never inferred or guessed by the AI.
+        # Reasonable-effort "most recent" sort since not every deployment
+        # has created_at populated identically; falls back to insertion
+        # order (list order) if sorting fails for any reason.
+        try:
+            confirmed_rows_sorted = sorted(
+                confirmed_rows, key=lambda r: r.get("created_at") or "", reverse=True
+            )
+        except Exception:
+            confirmed_rows_sorted = confirmed_rows
+        if confirmed_rows_sorted:
+            latest = confirmed_rows_sorted[0]
+            if latest.get("payment_method"):
+                mem["preferred_payment_method"] = latest["payment_method"]
+            if latest.get("fulfillment_method"):
+                mem["preferred_fulfillment"] = latest["fulfillment_method"]
+
         crud.save_user_memory(customer_phone, business_id, mem)
         log.info("user_memory synced  biz=%s  phone=%s  orders=%s  spent=%.2f",
                  business_id, customer_phone, order_count, total_spent)

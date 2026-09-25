@@ -393,6 +393,78 @@ async def receive_message(request: Request):
         msg_from          = msg_obj.get("from", "")
         is_from_agent     = bool(business_phone_id and msg_from and msg_from == business_phone_id)
 
+        # ── Phase 2: Conversational Intent Engine ───────────────────────────
+        # New, read-only classification layer that runs BEFORE the existing
+        # deterministic AI (generate_reply() / the carts.state_data state
+        # machine below) — see services/intent_engine.py's module docstring
+        # for the full design rationale. It does NOT replace anything below.
+        # Classification+logging always runs (cheap, deterministic, never
+        # blocks or alters the reply below) so its real-world accuracy can
+        # be judged from the logs before anything is allowed to act on it.
+        #
+        # The low-confidence clarification intercept described in the Phase
+        # 2 spec is implemented below but gated behind
+        # INTENT_ENGINE_LOW_CONFIDENCE_INTERCEPT (default OFF). A keyword
+        # classifier's coverage of real customer phrasing can't be fully
+        # proven ahead of time — testing this found plausible real messages
+        # ("please order two burgers", "hello there") it doesn't yet
+        # recognise, which would otherwise hijack a message the existing
+        # state machine already handles fine via its own P11/P12 fallback.
+        # Shipping this OFF by default is the "smallest safe change" for
+        # this phase; turn it on (Render env var, no redeploy needed) once
+        # a few days of intent.classified logs show the classifier's
+        # "unknown" rate on real traffic is low enough to trust.
+        if not is_from_agent and not message_has_image and not text.startswith("["):
+            try:
+                # Phase 3: resolve elliptical replies ("two." after "which
+                # one?" -> "chicken.") against the customer's own last few
+                # messages before logging/acting on the classification —
+                # see services/conversation_context.py's module docstring.
+                # Reads only (crud.get_recent_messages, bounded to a small
+                # limit) from the messages already kept for the dashboard
+                # inbox — no new storage, no LLM, same $0-cost design as
+                # Phase 2. Falls back to the plain Phase 2 classification
+                # (still fully correct on its own) if this fails for any
+                # reason or the customer record isn't available yet.
+                from services.conversation_context import classify_with_context
+                _intent_result = classify_with_context(
+                    text, customer_id=customer.get("id"),
+                    products=crud.get_products(business["id"]),
+                    language=(business.get("preferred_language") or "en"),
+                )
+                _log_event(
+                    "intent.classified", phone=customer_phone, biz=business["id"],
+                    intent=_intent_result.intent, confidence=_intent_result.confidence,
+                    tier=_intent_result.tier, entities=_intent_result.entities,
+                )
+
+                _intercept_enabled = os.getenv(
+                    "INTENT_ENGINE_LOW_CONFIDENCE_INTERCEPT", "false"
+                ).strip().lower() in ("1", "true", "yes", "on")
+
+                if _intercept_enabled and _intent_result.tier == "low":
+                    from services._ai_state import _get_state
+                    _current_state = _get_state(customer_phone, business["id"])
+                    if _current_state == "browsing":
+                        clarify_reply = (
+                            "I'd be happy to help 😊 Are you looking for a product, "
+                            "checking an order, making a booking, or something else?"
+                        )
+                        try:
+                            crud.create_message(
+                                customer["id"], business["id"], clarify_reply,
+                                "outgoing", sender_type="ai",
+                            )
+                        except Exception as exc:
+                            log.warning("STEP 6b intent-clarification-reply failed: %s", exc)
+                        if token:
+                            send_whatsapp(phone_number_id, token, customer_phone, clarify_reply)
+                        return {"status": "ok"}
+            except Exception as exc:
+                # Classification is purely additive — any failure here must
+                # never block or alter the existing reply pipeline below.
+                log.debug("intent_engine classification failed (ignored): %s", exc)
+
         # Build per-business config so AI can tailor its copy
         # ── Self-healing business-config lookup ─────────────────────────────────
         # If the `business` dict came from a SELECT that's missing columns

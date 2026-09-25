@@ -164,6 +164,48 @@ def get_messages_by_customer(
     return res.data or []
 
 
+def get_recent_messages(customer_id: int, limit: int = 6) -> list[dict]:
+    """
+    Return the last `limit` messages for a customer, in chronological
+    order (oldest of the batch first, most recent last) — the natural
+    order for reading as "recent conversation so far".
+
+    Added for Phase 2 (services/conversation_context.py): unlike
+    get_messages_by_customer() above, which orders ascending with an
+    offset for paginated inbox scrolling (oldest-first from the start,
+    not from the end), this fetches from the END of the conversation.
+    Does not add any new storage — reuses the same `messages` rows
+    already written by create_message() for the dashboard inbox.
+    """
+    if limit <= 0:
+        return []
+    # "text, direction, created_at" are the only columns guaranteed present
+    # on every deployment (see create_message() above — sender_type/
+    # sender_name/agent_id are optional, gated by _has_messages_col). A
+    # select() naming an optional column that doesn't exist on a given
+    # business's schema would error, so this deliberately selects "*" and
+    # picks the guaranteed fields back out in Python instead.
+    res = (
+        supabase.table("messages")
+        .select("*")
+        .eq("customer_id", customer_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    rows = res.data or []
+    trimmed = [
+        {
+            "text": r.get("text", ""),
+            "direction": r.get("direction", ""),
+            "sender_type": r.get("sender_type"),
+            "created_at": r.get("created_at"),
+        }
+        for r in rows
+    ]
+    return list(reversed(trimmed))
+
+
 def mark_messages_read(customer_id: int, business_id: int) -> None:
     supabase.table("messages").update({
         "is_read": True,

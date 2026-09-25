@@ -84,6 +84,7 @@ from crud.messages import (  # noqa: F401
     create_message,
     _has_messages_col,
     get_messages_by_customer,
+    get_recent_messages,
     mark_messages_read,
     get_chat_conversations,
     delete_message,

@@ -233,6 +233,18 @@ def save_user_memory(phone: str, business_id: int, memory: dict) -> dict:
         "last_seen":       memory.get("last_seen") or _now(),
         "last_rating":     memory.get("last_rating", ""),
         "last_suggestion": memory.get("last_suggestion", ""),
+        # Phase 3 (2026-09-25): the customer's own most recent real
+        # payment method / fulfillment choice, backfilled by
+        # workflows.order_lifecycle._sync_user_memory_after_order() from
+        # actual completed orders — never guessed by the AI. Same
+        # _has_memory_col-gated pattern as every other extended field
+        # above: on a business whose user_memory table doesn't have these
+        # two columns yet, they're simply left out of the write (no
+        # error) until the migration below runs.
+        #   ALTER TABLE user_memory ADD COLUMN preferred_payment_method text;
+        #   ALTER TABLE user_memory ADD COLUMN preferred_fulfillment text;
+        "preferred_payment_method": memory.get("preferred_payment_method", ""),
+        "preferred_fulfillment":    memory.get("preferred_fulfillment", ""),
     }
     for col, val in _MEMORY_EXTENDED.items():
         if _has_memory_col(col):
