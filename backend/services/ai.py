@@ -61,6 +61,7 @@ INTENT PRIORITY (do not reorder)
   P9    Browse menu
   P10   Order reference lookup
   P11   Help / greeting
+  P11.5 Business info Q&A (hours, location, delivery fee, etc.) — Phase 5
   P12   Fallback
 """
 
@@ -2340,6 +2341,39 @@ def generate_reply(
                     f"_Type *{ref.lower()}* for full status._"
                 )
             return _order_status_message(active["id"], phone, business_id, _currency_sym, _biz_flavor)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P11.5 — BUSINESS INFO Q&A (Phase 5: Business Knowledge Layer)
+    # Answers factual questions about the business itself (hours, location,
+    # delivery fee, payment methods, contact, social, etc.) using ONLY real
+    # data from the business's own DB record — never invents a policy, fee,
+    # or set of hours. Categories with no real data (delivery areas, return/
+    # cancellation policy, booking rules, promotions, FAQs — none of these
+    # have a backing column today, confirmed by audit) get the same honest
+    # "not sure yet" reply the spec itself prescribes, not a guess.
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from services.business_knowledge import (
+            detect_business_info_category, build_business_info_answer,
+        )
+        _biz_qna_category = detect_business_info_category(text)
+        if _biz_qna_category:
+            try:
+                _biz_record = crud.get_business_by_id(business_id) or {}
+            except Exception as exc:
+                log.warning("business_knowledge: get_business_by_id failed: %s", exc)
+                _biz_record = {}
+            _biz_answer = build_business_info_answer(
+                _biz_qna_category, _biz_record, business_name, _currency_sym,
+            )
+            log.info("business_info_query  category=%s  answered=%s  phone=%s",
+                      _biz_qna_category, bool(_biz_answer), phone)
+            return _biz_answer or (
+                "🙏 I'm not sure about that yet. Let me connect you with the team.\n\n"
+                "_Type *agent* to talk to someone, or *menu* to keep browsing._"
+            )
+    except Exception as exc:
+        log.debug("business_info_query check failed (ignored): %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P12 — FALLBACK
