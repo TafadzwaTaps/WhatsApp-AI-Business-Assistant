@@ -565,6 +565,10 @@ def get_pending_handoffs(business_id: int) -> list[dict]:
                 "customer_name": cust.get("customer_name") or "",
                 "unread_count": cust.get("unread_count") or 0,
                 "handoff_reason": sd.get("handoff_reason", ""),
+                # Phase 9: internal CUSTOMER/ISSUE/ORDER/PURCHASE/REQUEST/AI
+                # SUMMARY block built at handoff time — for the business/
+                # agent only, never shown to the customer.
+                "handoff_summary": sd.get("handoff_summary", ""),
                 "wait_seconds": wait_seconds,
                 "state":        "human_handoff",
             })

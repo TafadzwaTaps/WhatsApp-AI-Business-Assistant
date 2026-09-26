@@ -1351,6 +1351,26 @@ body {
 .conv-summary-chip.loyal  { border-color: rgba(34,197,94,.3);   color: var(--green); }
 .conv-summary-chip.urgent { border-color: rgba(239,68,68,.3);   color: var(--red); }
 
+/* ── Phase 9: internal AI handoff summary — agent-only, never sent to customer ── */
+.conv-summary-ai-note { flex-basis: 100%; font-size: 10.5px; }
+.conv-summary-ai-note summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  padding: 2px 0;
+}
+.conv-summary-ai-note pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 6px 0 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  font-family: inherit;
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
 /* ── Phase 1: Agent notes panel ── */
 .agent-notes-panel {
   display: none;

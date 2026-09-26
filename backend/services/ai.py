@@ -272,7 +272,113 @@ _FLAVOR_COPY = {
 }
 
 
-def generate_reply(
+def _escalate_to_human(
+    phone: str, business_id: int, business_name: str, text: str,
+    trigger_reason: str, issue: str, ai_summary: str, currency_sym: str = "$",
+) -> str:
+    """
+    Phase 9 — the actual escalation action, shared by every automatic
+    trigger: sets state to human_handoff, generates a support ticket,
+    builds the internal CUSTOMER/ISSUE/ORDER/PURCHASE/REQUEST/AI SUMMARY
+    block (services/handoff_triggers.build_handoff_summary) and stores it
+    in state_data.session.handoff_summary — visible to the business/agent
+    via get_pending_handoffs()/the /chat/handoff/{id}/summary route, never
+    sent to the customer — and notifies the dashboard.
+
+    Returns the generated ticket number (not a customer-facing reply) so
+    callers that want the standard handoff acknowledgement can use
+    _trigger_smart_handoff() below, while callers with their own
+    de-escalation copy (e.g. P0.6's repeat-abuse final notice) can call
+    this directly and keep their own return text unchanged.
+    """
+    from services.handoff_triggers import build_handoff_summary
+
+    _set_human_handoff(phone, business_id)
+
+    # Customer name + most recent order (real data only — never invented)
+    customer_name  = "Unknown"
+    order_ref      = ""
+    purchase_lines = []
+    purchase_total = None
+    try:
+        mem = _get_memory(phone, business_id)
+        customer_name = mem.get("customer_name") or "Unknown"
+    except Exception as exc:
+        log.debug("smart_handoff: memory lookup failed: %s", exc)
+    try:
+        active = _get_active_order(phone, business_id)
+        if active and active.get("id"):
+            order_ref = f"ORDER-{active['id']}"
+            full = crud.get_order_by_id(active["id"], business_id)
+            if full:
+                items = full.get("items") or []
+                if isinstance(items, list):
+                    for it in items:
+                        name = it.get("name") or it.get("product_name") or "item"
+                        qty  = it.get("qty") or it.get("quantity") or 1
+                        purchase_lines.append(f"{qty} × {name}")
+                if full.get("total_price") is not None:
+                    purchase_total = float(full["total_price"] or 0)
+    except Exception as exc:
+        log.debug("smart_handoff: order lookup failed: %s", exc)
+
+    ticket = ""
+    try:
+        from services.whatsapp_catalog import generate_ticket_number
+        customer = crud.get_or_create_customer(phone, business_id)
+        cust_id  = customer.get("id") if customer else 0
+        ticket   = generate_ticket_number(cust_id, business_id)
+    except Exception as exc:
+        log.debug("smart_handoff: ticket generation failed: %s", exc)
+
+    summary = build_handoff_summary(
+        customer_name=customer_name, issue=issue, order_ref=order_ref,
+        purchase_lines=purchase_lines, purchase_total=purchase_total,
+        currency_sym=currency_sym, request_text=text, ai_summary=ai_summary,
+    )
+
+    try:
+        _write_state_data(phone, business_id, {
+            "state": "human_handoff",
+            "session": {
+                "ticket": ticket, "handoff_reason": trigger_reason,
+                "handoff_summary": summary,
+            },
+        })
+    except Exception as exc:
+        log.debug("smart_handoff: state write failed: %s", exc)
+
+    try:
+        _handoff_mod().notify_dashboard(phone, business_id, business_name)
+    except Exception as exc:
+        log.debug("smart_handoff: notify_dashboard failed: %s", exc)
+
+    log.info(
+        "smart_handoff: triggered  phone=%s  biz=%s  reason=%s  ticket=%s",
+        phone, business_id, trigger_reason, ticket,
+    )
+    return ticket
+
+
+def _trigger_smart_handoff(
+    phone: str, business_id: int, business_name: str, text: str,
+    trigger_reason: str, issue: str, ai_summary: str, currency_sym: str = "$",
+) -> str:
+    """
+    Convenience wrapper around _escalate_to_human() for the common case:
+    escalate AND return the standard customer-facing handoff
+    acknowledgement (ticket + reason + estimated response time) — used by
+    every new Phase 9 trigger, and by the pre-existing explicit-request
+    handler above (now sharing this instead of duplicating the same steps).
+    """
+    ticket = _escalate_to_human(
+        phone, business_id, business_name, text,
+        trigger_reason, issue, ai_summary, currency_sym,
+    )
+    return _handoff_mod().handoff_acknowledgement(business_name, ticket=ticket, reason=trigger_reason)
+
+
+def _generate_reply_core(
     message: str,
     phone: str,
     business_id: int,
@@ -397,25 +503,72 @@ def generate_reply(
     # P-2.5 — HUMAN HANDOFF REQUEST DETECTION
     # ══════════════════════════════════════════════════════════════════════════
     if _handoff_mod().is_handoff_request(text) or _is_human_request(text):
-        _set_human_handoff(phone, business_id)
+        return _trigger_smart_handoff(
+            phone, business_id, business_name, text,
+            trigger_reason="Customer request",
+            issue="Customer explicitly asked to speak with a human agent.",
+            ai_summary="Customer requested a human agent directly.",
+            currency_sym=_currency_sym,
+        )
 
-        # Generate a support ticket number and store it for the agent + customer
-        ticket = ""
-        try:
-            from services.whatsapp_catalog import generate_ticket_number
-            customer = crud.get_or_create_customer(phone, business_id)
-            cust_id  = customer.get("id") if customer else 0
-            ticket   = generate_ticket_number(cust_id, business_id)
-            _write_state_data(phone, business_id, {
-                "state": "human_handoff",
-                "session": {"ticket": ticket, "handoff_reason": "Customer request"},
-            })
-        except Exception as exc:
-            log.debug("ticket generation failed: %s", exc)
+    # ══════════════════════════════════════════════════════════════════════════
+    # P-2.6 — SMART HANDOFF TRIGGERS (Phase 9)
+    # Automatic triggers beyond an explicit request: a business's own
+    # escalation keywords, a sensitive issue, a reported booking conflict,
+    # and a serious complaint that isn't profane/abusive (that's P0.6,
+    # below, which already escalates on its own after repeat offenses).
+    # Each of these hands off on the FIRST occurrence — waiting for a
+    # repeat isn't appropriate for a safety/legal issue or an angry
+    # customer. "Payment dispute"/"refund dispute" are handled at P0.5
+    # (their existing, more specific block, extended below); "complex
+    # request" and "repeated misunderstanding" are handled at the P12
+    # fallback / generate_reply() wrapper, since both require knowing the
+    # deterministic engine already failed to understand the message.
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from services.handoff_triggers import (
+            matches_business_escalation_rule, is_sensitive_issue,
+            is_booking_conflict_complaint, is_serious_complaint,
+        )
 
-        _handoff_mod().notify_dashboard(phone, business_id, business_name)
-        log.info("human_handoff: triggered  phone=%s  biz=%s  ticket=%s", phone, business_id, ticket)
-        return _handoff_mod().handoff_acknowledgement(business_name, ticket=ticket, reason="Customer request")
+        _biz_rule_hit = matches_business_escalation_rule(text, business_config)
+        if _biz_rule_hit:
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, text,
+                trigger_reason="Business escalation rule",
+                issue=f"Message matched this business's escalation keyword: \"{_biz_rule_hit}\".",
+                ai_summary="Matched a business-configured escalation rule — routing to a human as configured.",
+                currency_sym=_currency_sym,
+            )
+
+        if is_sensitive_issue(text):
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, text,
+                trigger_reason="Sensitive issue",
+                issue="Customer raised a sensitive issue (safety, health, or legal/discrimination concern).",
+                ai_summary="This needs a human — it may involve safety, health, or a legal/discrimination matter.",
+                currency_sym=_currency_sym,
+            )
+
+        if is_booking_conflict_complaint(text):
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, text,
+                trigger_reason="Booking conflict",
+                issue="Customer is reporting a scheduling/booking conflict that already happened.",
+                ai_summary="Customer reports a booking conflict (e.g. double-booked or no one available). Needs manual resolution.",
+                currency_sym=_currency_sym,
+            )
+
+        if is_serious_complaint(text):
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, text,
+                trigger_reason="Serious complaint",
+                issue="Customer has a serious complaint about their experience.",
+                ai_summary="Customer is seriously unhappy. No profanity/abuse detected, but the tone and content warrant a human response.",
+                currency_sym=_currency_sym,
+            )
+    except Exception as exc:
+        log.debug("smart-handoff trigger check failed (ignored): %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-2 — AGENT MESSAGE DETECTION
@@ -585,25 +738,32 @@ def generate_reply(
         except Exception as exc:
             log.warning("refund handler: order lookup failed: %s", exc)
 
+        # Phase 9: a payment/refund dispute is one of the spec's own
+        # automatic human-handoff triggers — previously this block only
+        # acknowledged the request without ever actually notifying a human.
+        # Now it does both: the order-specific details the customer sees
+        # are still built from the real order (never invented), and the
+        # conversation is also hard-escalated with an internal summary.
         if recent_order:
             ref        = f"ORDER-{recent_order['id']}"
             pay_status = recent_order.get("payment_status", "pending")
             total      = float(recent_order.get("total_price") or 0)
-            return (
-                f"💳 *Refund / Dispute Request*\n\n"
-                f"We've noted your request regarding *{ref}*.\n\n"
-                f"  💰 Amount : ${total:.2f}\n"
-                f"  📍 Payment: {pay_status.upper()}\n\n"
-                f"Our team will review your request and get back to you shortly.\n\n"
-                f"_For urgent issues, please contact us directly. "
-                f"Refunds are processed within 24–48 hours once verified._\n\n"
-                f"_Thank you for your patience. 🙏_"
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, text,
+                trigger_reason=f"Refund/dispute — {ref}",
+                issue=f"Customer is requesting a refund or disputing a payment on {ref}.",
+                ai_summary=(
+                    f"Customer wants a refund or is disputing payment on {ref} "
+                    f"(amount {_currency_sym}{total:.2f}, payment status: {pay_status})."
+                ),
+                currency_sym=_currency_sym,
             )
-        return (
-            f"💳 *Refund / Dispute Request*\n\n"
-            f"We've noted your request and our team will be in touch shortly.\n\n"
-            f"_Please include your order reference (e.g. *ORDER-13*) "
-            f"to help us find your payment. Thank you! 🙏_"
+        return _trigger_smart_handoff(
+            phone, business_id, business_name, text,
+            trigger_reason="Refund/dispute request",
+            issue="Customer is requesting a refund or disputing a payment.",
+            ai_summary="Customer wants a refund or is disputing a payment. No matching order found on file yet — ask for their order reference.",
+            currency_sym=_currency_sym,
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -648,10 +808,18 @@ def generate_reply(
                 f"speak with a human team member. 🙏"
             )
         else:
-            # Third+ offense — escalate to human + final warning
+            # Third+ offense — escalate to human + final warning.
+            # Keeps this block's own de-escalation copy (a normal handoff
+            # acknowledgement isn't the right tone here) but now also
+            # generates the internal summary via the shared Phase 9 helper.
             try:
-                _set_human_handoff(phone, business_id)
-                _handoff_mod().notify_dashboard(phone, business_id, business_name)
+                _escalate_to_human(
+                    phone, business_id, business_name, text,
+                    trigger_reason="Repeated abusive language",
+                    issue=f"Customer used offensive/abusive language {warning_count}+ times in this conversation.",
+                    ai_summary="Repeated abusive/offensive language after warnings. Handle with care; account may need review.",
+                    currency_sym=_currency_sym,
+                )
             except Exception as exc:
                 log.debug("abuse escalation handoff failed: %s", exc)
             return (
@@ -1334,7 +1502,7 @@ def generate_reply(
         if message_has_image:
             _set_awaiting_proof(phone, business_id,
                                 order_id=order_id, method=method, reference=reference)
-            return generate_reply(
+            return _generate_reply_core(
                 message="image",
                 phone=phone, business_id=business_id,
                 business_name=business_name, products=products,
@@ -2689,7 +2857,7 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     product = _find_product(text, products)
     if product:
-        return generate_reply(
+        return _generate_reply_core(
             message=product["name"],
             phone=phone, business_id=business_id,
             business_name=business_name, products=products,
@@ -2742,3 +2910,130 @@ def generate_reply(
         f"  🙋 *agent* — talk to a human\n\n"
         f"_Type *help* anytime to see this list again._"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Phase 9 — PUBLIC ENTRY POINT WRAPPER
+#
+# Adds the two smart-handoff triggers that can only be judged AFTER the
+# deterministic engine (_generate_reply_core, above) has tried and failed
+# to understand a message:
+#   - "complex request"          — a single, structurally complex message
+#                                   that still hit the P12 fallback
+#   - "repeated misunderstanding" — the P12 fallback hit several times in
+#                                   a row
+# Every other Phase 9 trigger (explicit request, business rule, sensitive
+# issue, booking conflict, serious complaint, payment/refund dispute,
+# repeated abuse) is recognisable from the message alone and is handled
+# inside _generate_reply_core() itself — see its own docstring / the
+# P-2.5, P-2.6, P0.5, and P0.6 blocks.
+#
+# This wrapper never edits _generate_reply_core()'s huge existing priority
+# chain — it only reads the small, fixed set of exact strings its P12
+# fallback already returns (unchanged), so it can tell "understood" from
+# "not understood" without touching a single line of that logic.
+# ══════════════════════════════════════════════════════════════════════════
+
+_P12_FALLBACK_MARKERS = (
+    "🤔 I didn't catch that.\n\n",
+    "🤔 I'm not sure what you mean — but happy to help!\n\n",
+    "🤔 I'm not sure what you mean — but here's where you're at:\n\n",
+    "🤖 Hmm, I'm not sure what you mean by that — but no worries! 😊\n\n",
+    # P11.5's own "no real data for this category" fallback — functionally
+    # the same "AI doesn't have an answer" signal as the P12 markers above.
+    "🙏 I'm not sure about that yet. Let me connect you with the team.\n\n",
+)
+
+# Consecutive P12 fallbacks before "repeated misunderstanding" escalates.
+# 1 (this message) is never enough on its own — that would escalate on
+# every single typo — but repeated back-to-back confusion is a genuine
+# signal the deterministic engine isn't going to get there on its own.
+_MISUNDERSTANDING_HANDOFF_THRESHOLD = 3
+
+
+def generate_reply(
+    message: str,
+    phone: str,
+    business_id: int,
+    business_name: str,
+    products: list,
+    message_has_image: bool = False,
+    message_is_from_agent: bool = False,
+    voice_transcript: str | None = None,
+    business_config: dict | None = None,
+) -> str:
+    """
+    Public entry point. Runs the full deterministic engine
+    (_generate_reply_core) unchanged, then applies the two Phase 9
+    handoff triggers described above. See the module-level comment just
+    above this function for the full rationale.
+    """
+    reply = _generate_reply_core(
+        message=message, phone=phone, business_id=business_id,
+        business_name=business_name, products=products,
+        message_has_image=message_has_image,
+        message_is_from_agent=message_is_from_agent,
+        voice_transcript=voice_transcript, business_config=business_config,
+    )
+
+    # Agent-echoed messages and image messages never go through the
+    # misunderstanding/complexity checks below — nothing to escalate.
+    if message_is_from_agent or not isinstance(reply, str):
+        return reply
+
+    is_fallback = any(reply.startswith(m) for m in _P12_FALLBACK_MARKERS)
+
+    if not is_fallback:
+        # Understood — reset the streak if one was building.
+        try:
+            session = _get_session(phone, business_id) or {}
+            if session.get("misunderstood_count"):
+                _write_state_data(
+                    phone, business_id,
+                    {"session": {**session, "misunderstood_count": 0}},
+                )
+        except Exception as exc:
+            log.debug("misunderstood_count reset failed (ignored): %s", exc)
+        return reply
+
+    try:
+        from services.handoff_triggers import is_complex_request
+
+        _cfg           = business_config or {}
+        _currency_sym  = (_cfg.get("currency_symbol") or "$").strip() or "$"
+        _text_for_flow = (voice_transcript or message or "").strip()
+
+        if is_complex_request(_text_for_flow):
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, _text_for_flow,
+                trigger_reason="Complex request",
+                issue="Customer sent a complex message the AI could not fully understand or action.",
+                ai_summary=(
+                    "Message appears to contain multiple or complex requests the "
+                    "deterministic assistant couldn't confidently parse."
+                ),
+                currency_sym=_currency_sym,
+            )
+
+        session = _get_session(phone, business_id) or {}
+        count   = int(session.get("misunderstood_count", 0) or 0) + 1
+        _write_state_data(
+            phone, business_id,
+            {"session": {**session, "misunderstood_count": count}},
+        )
+
+        if count >= _MISUNDERSTANDING_HANDOFF_THRESHOLD:
+            return _trigger_smart_handoff(
+                phone, business_id, business_name, _text_for_flow,
+                trigger_reason="Repeated misunderstanding",
+                issue=f"AI failed to understand the customer's message {count} times in a row.",
+                ai_summary=(
+                    "Customer had to repeat themselves multiple times without the "
+                    "AI understanding. Needs a human to take over."
+                ),
+                currency_sym=_currency_sym,
+            )
+    except Exception as exc:
+        log.debug("misunderstanding-escalation check failed (ignored): %s", exc)
+
+    return reply

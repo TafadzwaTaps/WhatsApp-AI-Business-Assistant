@@ -1042,7 +1042,17 @@ async function loadConvSummary(customerId) {
       data.pending_payment ? `<span class="conv-summary-chip urgent">💳 ${escHtml(data.pending_payment)}</span>` : '',
     ].filter(Boolean).join('');
 
-    panel.innerHTML = chips || `<span class="conv-summary-chip">New Customer</span>`;
+    // Phase 9: internal AI handoff summary (CUSTOMER/ISSUE/ORDER/PURCHASE/
+    // REQUEST/AI SUMMARY) — for the agent only, shown as a small collapsible
+    // note below the existing chips. Never sent to the customer.
+    const aiSummaryBlock = data.handoff_ai_summary
+      ? `<details class="conv-summary-ai-note">
+           <summary>🧠 AI handoff summary</summary>
+           <pre>${escHtml(data.handoff_ai_summary)}</pre>
+         </details>`
+      : '';
+
+    panel.innerHTML = (chips || `<span class="conv-summary-chip">New Customer</span>`) + aiSummaryBlock;
     panel.classList.toggle('visible', currentHandoffState);
   } catch (_) {
     panel.classList.remove('visible');

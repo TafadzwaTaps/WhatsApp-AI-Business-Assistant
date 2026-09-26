@@ -176,8 +176,13 @@ def handoff_summary(customer_id: int, user=Depends(require_business)):
         reason      = sd.get("handoff_reason", "")
         priority    = sd.get("handoff_priority", "normal")
         pending_pay = sd.get("pending_payment")
+        # Phase 9: the structured internal handoff summary (CUSTOMER/ISSUE/
+        # ORDER/PURCHASE/REQUEST/AI SUMMARY), built by services/ai.py's
+        # _escalate_to_human() at the moment a conversation was handed off —
+        # for the business/agent only, never sent to the customer.
+        ai_summary  = sd.get("handoff_summary", "")
     except Exception:
-        state, reason, priority, pending_pay = "unknown", "", "normal", None
+        state, reason, priority, pending_pay, ai_summary = "unknown", "", "normal", None, ""
 
     # Recent messages (last 5)
     recent_msgs = []
@@ -210,6 +215,7 @@ def handoff_summary(customer_id: int, user=Depends(require_business)):
         "current_state":   state,
         "handoff_reason":  reason,
         "handoff_priority": priority,
+        "handoff_ai_summary": ai_summary,
         "pending_payment": pending_summary,
         "recent_messages": recent_msgs,
         "summary_text": (
