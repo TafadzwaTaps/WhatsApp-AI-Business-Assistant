@@ -74,6 +74,16 @@ class STATE:
 
     AWAITING_REMINDER_RESPONSE = "awaiting_reminder_response"
 
+    # Reschedule flow for an EXISTING booking (Phase 7) — deliberately
+    # namespaced separately from both booking flows above: rescheduling
+    # collects the same date+time information but must call
+    # reschedule_booking() on an existing row instead of create_booking(),
+    # so it needs its own states to avoid colliding with a fresh booking
+    # in progress.
+    RESCHEDULE_AWAITING_DATE = "reschedule_awaiting_date"
+    RESCHEDULE_AWAITING_TIME = "reschedule_awaiting_time"
+    RESCHEDULE_CONFIRM       = "reschedule_confirm"
+
     ALL = {
         BROWSING, CONFIRM_ORDER, CHECKOUT,
         AWAITING_PAYMENT, AWAITING_PROOF,
@@ -86,6 +96,8 @@ class STATE:
         # Checkout-integrated booking flow
         "checkout_booking_date", "checkout_booking_time", "checkout_booking_confirm",
         "awaiting_reminder_response",
+        # Reschedule flow (Phase 7)
+        "reschedule_awaiting_date", "reschedule_awaiting_time", "reschedule_confirm",
     }
 
 
@@ -111,6 +123,12 @@ _TRANSITIONS: dict[str, set[str]] = {
     # state is reachable from anywhere via _ALWAYS_ALLOWED-style handling
     # in _ai_state.py, and always returns to BROWSING once answered.
     STATE.AWAITING_REMINDER_RESPONSE: {STATE.BROWSING, STATE.CANCELLED},
+    # Reschedule flow (Phase 7) — a customer can jump straight to
+    # RESCHEDULE_CONFIRM if they give both a day and a time in one message.
+    STATE.RESCHEDULE_AWAITING_DATE: {STATE.RESCHEDULE_AWAITING_TIME, STATE.RESCHEDULE_CONFIRM,
+                                      STATE.BROWSING, STATE.CANCELLED},
+    STATE.RESCHEDULE_AWAITING_TIME: {STATE.RESCHEDULE_CONFIRM, STATE.BROWSING, STATE.CANCELLED},
+    STATE.RESCHEDULE_CONFIRM:       {STATE.BROWSING, STATE.CANCELLED},
     STATE.AWAITING_PAYMENT: {STATE.AWAITING_PROOF, STATE.AWAITING_FULFILLMENT,
                               STATE.COMPLETED, STATE.CANCELLED, STATE.MANUAL_REVIEW},
     STATE.AWAITING_PROOF:   {STATE.AWAITING_FULFILLMENT, STATE.MANUAL_REVIEW, STATE.CANCELLED},
@@ -141,6 +159,9 @@ _LABELS: dict[str, str] = {
     STATE.SURVEY:           "Satisfaction survey",
     STATE.COMPLETED:        "Completed",
     STATE.CANCELLED:        "Cancelled",
+    STATE.RESCHEDULE_AWAITING_DATE: "Rescheduling — choosing new date",
+    STATE.RESCHEDULE_AWAITING_TIME: "Rescheduling — choosing new time",
+    STATE.RESCHEDULE_CONFIRM:       "Rescheduling — confirming",
 }
 
 

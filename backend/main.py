@@ -636,6 +636,18 @@ try:
 except Exception as _wrs_err:
     log.warning("weekly_report_scheduler: failed to start (non-fatal): %s", _wrs_err)
 
+# ── Feature 2: Booking reminder scheduler (Phase 7) ─────────────────────
+# Runs in a daemon thread — never blocks startup or requests.
+# Checks every 30 minutes for bookings needing a reminder. Before this,
+# reminders only ever went out if a business owner (or their own external
+# cron) manually hit POST /bookings/reminders/run — see
+# services/booking_service.py's attach_booking_reminder_scheduler for why.
+try:
+    from services.booking_service import attach_booking_reminder_scheduler
+    attach_booking_reminder_scheduler(app)
+except Exception as _brs_err:
+    log.warning("booking_reminder_scheduler: failed to start (non-fatal): %s", _brs_err)
+
 log.info("🚀 WaziBot API started — %d route modules registered", 8)
 
 # ── Deployment consistency check ────────────────────────────────────────────

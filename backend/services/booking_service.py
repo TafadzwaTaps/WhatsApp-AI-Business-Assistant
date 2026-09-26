@@ -102,7 +102,14 @@ _WEEKDAYS = {
 
 _BOOKING_INTENT_PATTERNS = re.compile(
     r"\b(book|appointment|appoint|schedule|reserve|slot|session|visit|"
-    r"come in|come over|see you|meeting|consultation)\b",
+    # Phase 7 (2026-09-26): bare "come" added — the spec's own worked
+    # example is literally "Can I come tomorrow afternoon?", which has
+    # neither "come in" nor "come over". Kept in sync with services/
+    # _ai_intent.py's _BOOKING_INTENT_RE, which gates whether ai.py enters
+    # this booking flow at all — that check was updated the same way, so
+    # this one must match it or a message that gets past the gate could
+    # still fail to parse here.
+    r"come|come in|come over|see you|meeting|consultation)\b",
     re.IGNORECASE,
 )
 
@@ -1030,6 +1037,180 @@ def format_reminder_message(booking: dict, business_name: str = "") -> str:
         f"Are you still able to make it? 😊\n\n"
         f"Reply *yes* to confirm, or *no* if you need to cancel."
     )
+
+
+def send_reminders_for_business(business_id: int, business: Optional[dict] = None) -> dict:
+    """
+    Send WhatsApp reminders for a single business's upcoming bookings
+    (within the next ~24.5h, skipping any already reminded).
+
+    Extracted from routes/expansion_routes.py's POST /bookings/reminders/run
+    (Phase 7) so the exact same logic can be reused by both that
+    HTTP endpoint (dashboard/manual trigger, plan-gated) and the automatic
+    background scheduler below — one implementation, two callers, instead
+    of the two drifting apart over time.
+
+    Returns {"ok": bool, "sent": int, "skipped": int, "error": str|None}.
+    Never raises.
+    """
+    try:
+        import crud as _crud
+        from core.db import supabase
+
+        biz = business if business is not None else _crud.get_business_by_id(business_id)
+        if not biz:
+            return {"ok": False, "sent": 0, "skipped": 0, "error": "Business not found"}
+        biz_name = biz.get("name", "")
+
+        reminders = get_upcoming_reminders(business_id, window_hours=24.5)
+        sent, skipped = 0, 0
+
+        from routes.webhook_routes import send_whatsapp
+        if not send_whatsapp:
+            return {"ok": False, "sent": 0, "skipped": 0, "error": "WhatsApp sender not initialised"}
+
+        try:
+            token    = _crud.get_decrypted_token(biz)
+            phone_id = biz.get("whatsapp_phone_id", "")
+        except Exception:
+            token, phone_id = "", ""
+
+        import os
+        if not token or not phone_id:
+            phone_id = os.getenv("SHARED_PHONE_NUMBER_ID", "").strip()
+            token    = os.getenv("SHARED_WA_TOKEN", "").strip()
+
+        if not token or not phone_id:
+            return {"ok": False, "sent": 0, "skipped": 0, "error": "No WhatsApp credentials"}
+
+        for b in reminders:
+            if b.get("reminder_24h_sent"):
+                skipped += 1
+                continue
+            phone = b.get("customer_phone", "")
+            if not phone:
+                continue
+
+            msg = format_reminder_message(b, biz_name)
+            result = send_whatsapp(phone_id, token, phone, msg)
+            if "error" not in result:
+                supabase.table("bookings").update({"reminder_24h_sent": True}).eq("id", b["id"]).execute()
+                try:
+                    from services._ai_state import _set_awaiting_reminder_response
+                    _set_awaiting_reminder_response(phone, business_id, booking_id=b["id"])
+                except Exception as exc:
+                    log.warning("send_reminders_for_business: could not set reminder-response state for %s: %s",
+                                phone, exc)
+                sent += 1
+            else:
+                skipped += 1
+
+        return {"ok": True, "sent": sent, "skipped": skipped, "error": None}
+    except Exception as exc:
+        log.warning("send_reminders_for_business error (biz=%s): %s", business_id, exc)
+        return {"ok": False, "sent": 0, "skipped": 0, "error": str(exc)}
+
+
+def run_all_due_reminders() -> dict:
+    """
+    Sweep every eligible service business and send due booking reminders.
+    Used by attach_booking_reminder_scheduler() below — the automatic,
+    unattended counterpart of the manual/dashboard-triggered
+    POST /bookings/reminders/run endpoint.
+
+    Eligibility mirrors that endpoint's own plan gate (require_plan("GROWTH"))
+    since this bypasses the HTTP auth layer entirely (there's no logged-in
+    dashboard user in a background thread) — a free-plan business must not
+    get GROWTH-only reminder sending just because a scheduler runs in the
+    background. The plan check fails OPEN (business is still processed) on
+    an unexpected plan-guard error, consistent with the other fail-open plan
+    checks already in this codebase (see services/ai.py's own booking plan
+    check) — a plan-guard hiccup should not silently stop reminders (and
+    therefore bookings) from working, only a real "not on this plan" result.
+
+    Returns {"businesses": int, "sent": int, "skipped": int, "errors": int}.
+    Never raises.
+    """
+    processed = sent_total = skipped_total = errors = 0
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("id, name")
+            .eq("is_active", True)
+            .eq("is_service_business", True)
+            .execute()
+        )
+        businesses = res.data or []
+        log.info("run_all_due_reminders: checking %d service businesses", len(businesses))
+
+        for biz in businesses:
+            biz_id = biz.get("id")
+            if not biz_id:
+                continue
+            try:
+                from core.plan_guard import feature_access
+                allowed = feature_access("bookings", biz_id).get("allowed", True)
+            except Exception as exc:
+                log.debug("run_all_due_reminders: plan check skipped (fail-open) biz=%s: %s", biz_id, exc)
+                allowed = True
+            if not allowed:
+                continue
+
+            processed += 1
+            result = send_reminders_for_business(biz_id, biz)
+            if result.get("ok"):
+                sent_total    += result.get("sent", 0)
+                skipped_total += result.get("skipped", 0)
+            else:
+                errors += 1
+
+    except Exception as exc:
+        log.error("run_all_due_reminders: top-level error: %s", exc)
+
+    summary = {"businesses": processed, "sent": sent_total, "skipped": skipped_total, "errors": errors}
+    log.info("run_all_due_reminders: complete %s", summary)
+    return summary
+
+
+def attach_booking_reminder_scheduler(app) -> None:
+    """
+    Attach a simple background thread that checks for due booking
+    reminders every 30 minutes and sends them automatically.
+
+    Before this, get_upcoming_reminders()/format_reminder_message() and the
+    /bookings/reminders/run endpoint all worked correctly, but nothing ever
+    called that endpoint on its own — reminders only went out if a business
+    owner (or an external cron someone set up themselves) manually triggered
+    it. This closes that gap using the exact same pattern already
+    established for weekly reports (services/weekly_report_service.py's
+    attach_weekly_report_scheduler) — stdlib threading only, no new
+    dependency, a daemon thread that never blocks startup or requests, and
+    a bounded retry-sleep on error so one bad run doesn't kill the loop.
+
+    A 30-minute interval (rather than weekly-report's once-a-week) matches
+    what reminders actually need: get_upcoming_reminders()'s 24.5h window
+    combined with the per-booking reminder_24h_sent flag means a reminder
+    is still sent well within the window even if a run is missed or slow;
+    checking more often just means less delay between "a booking crosses
+    into the 24h window" and "the reminder actually goes out."
+    """
+    import threading
+    import time as _time
+
+    def _loop():
+        log.info("booking_reminder_scheduler: background thread started")
+        while True:
+            try:
+                _time.sleep(1800)   # 30 minutes
+                run_all_due_reminders()
+            except Exception as exc:
+                log.warning("booking_reminder_scheduler: loop error: %s", exc)
+                _time.sleep(1800)
+
+    t = threading.Thread(target=_loop, daemon=True, name="booking-reminder-scheduler")
+    t.start()
+    log.info("booking_reminder_scheduler: daemon thread launched")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

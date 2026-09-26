@@ -516,17 +516,29 @@ import re as _booking_re
 
 _BOOKING_INTENT_RE = _booking_re.compile(
     r"\b(book|appointment|appoint|schedule|reserve|slot|session|visit|"
-    r"come in|come over|see you|meeting|consultation|available)\b",
+    # Phase 7 (2026-09-26): bare "come" added alongside the existing
+    # "come in"/"come over" — the spec's own worked example is literally
+    # "Can I come tomorrow afternoon?", which has neither. Safe to add
+    # unqualified since this whole detector is only ever consulted for
+    # is_service_business=True (see module note above) — retail businesses
+    # never reach this check at all.
+    r"come|come in|come over|see you|meeting|consultation|available)\b",
     re.IGNORECASE,
 )
 
+# Phase 7 (2026-09-26): both patterns below now tolerate one filler word
+# ("my"/"the") between the verb and the noun — "cancel my booking" and
+# "reschedule my appointment" are far more natural than the bare "cancel
+# booking"/"reschedule booking" these previously required, and real
+# customers type the former. Purely additive: everything that matched
+# before still matches.
 _CANCEL_BOOKING_RE = _booking_re.compile(
-    r"\b(cancel|cancell?ation)\s+(booking|appointment|slot|session)\b",
+    r"\b(cancel|cancell?ation)\s+(?:my\s+|the\s+)?(booking|appointment|slot|session)\b",
     re.IGNORECASE,
 )
 
 _RESCHEDULE_RE = _booking_re.compile(
-    r"\b(reschedule|move|change|postpone)\s+(booking|appointment|slot)\b",
+    r"\b(reschedule|move|change|postpone)\s+(?:my\s+|the\s+)?(booking|appointment|slot)\b",
     re.IGNORECASE,
 )
 

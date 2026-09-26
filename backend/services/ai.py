@@ -848,7 +848,8 @@ def generate_reply(
             return "🚫 No problem — booking cancelled. Type *menu* to start again."
 
         from services.booking_service import parse_date_time_only, check_availability, _format_date, _format_time
-        date_str, time_str = parse_date_time_only(text)
+        from services.booking_nlp import resolve_time_for_booking, format_slot_options
+        date_str, _raw_time_str = parse_date_time_only(text)
 
         if not date_str:
             return (
@@ -857,7 +858,10 @@ def generate_reply(
                 "_Type *cancel* to stop booking._"
             )
 
-        if time_str:
+        _time_res = resolve_time_for_booking(business_id, date_str, text)
+
+        if _time_res["outcome"] == "exact":
+            time_str = _time_res["time"]
             avail = check_availability(business_id, date_str, time_str, 1.0)
             if not avail.get("available"):
                 return (
@@ -886,6 +890,13 @@ def generate_reply(
             date_disp = _format_date(_date_cls.fromisoformat(date_str))
         except Exception:
             date_disp = date_str
+
+        if _time_res["outcome"] == "options":
+            return (f"📅 *{date_disp}* — " + format_slot_options(_time_res["slots"]) +
+                    "\n\n_Type *cancel* to stop booking._")
+        if _time_res["outcome"] == "ask":
+            return (f"Got it — *{date_disp}*! Sure 😊 What time works for you?\n"
+                    "_e.g. \"10am\", \"2:30pm\"_")
         return (
             f"Got it — *{date_disp}*! ⏰ What time works for you?\n"
             "_e.g. \"10am\", \"2:30pm\", or \"afternoon\"_"
@@ -909,15 +920,22 @@ def generate_reply(
             )
 
         from services.booking_service import parse_date_time_only, check_availability, _format_date, _format_time
-        _, time_str = parse_date_time_only(text)
+        from services.booking_nlp import resolve_time_for_booking, format_slot_options
+        _, _raw_time_str = parse_date_time_only(text)
 
-        if not time_str:
+        _time_res = resolve_time_for_booking(business_id, booking_date, text)
+        if _time_res["outcome"] == "no_time":
             return (
                 "🤔 I didn't catch a time there.\n\n"
                 "Try something like *\"10am\"*, *\"2:30pm\"*, or *\"afternoon\"*.\n"
                 "_Type *cancel* to stop booking._"
             )
+        if _time_res["outcome"] == "options":
+            return format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to stop booking._"
+        if _time_res["outcome"] == "ask":
+            return "Sure 😊 What time works for you?\n_e.g. \"10am\", \"2:30pm\"_"
 
+        time_str = _time_res["time"]
         avail = check_availability(business_id, booking_date, time_str, 1.0)
         if not avail.get("available"):
             return (
@@ -967,11 +985,25 @@ def generate_reply(
             )
 
         from services.booking_service import parse_date_time_only, check_availability, _format_date, _format_time
-        date_str, time_str = parse_date_time_only(text)
+        from services.booking_nlp import resolve_time_for_booking, format_slot_options
+        date_str, _raw_time_str = parse_date_time_only(text)
         date_str = date_str or booking_date
-        time_str = time_str or booking_time
 
-        if not date_str or not time_str:
+        if not date_str:
+            return (
+                "Reply *yes* to confirm, or tell me a different day/time — "
+                "e.g. *\"Saturday 11am\"*.\n"
+                "_Type *cancel* to stop booking._"
+            )
+
+        _time_res = resolve_time_for_booking(business_id, date_str, text)
+        if _time_res["outcome"] == "options":
+            return format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to stop booking._"
+        if _time_res["outcome"] == "ask":
+            return "Sure 😊 What time would you prefer?\n_Type *cancel* to stop booking._"
+
+        time_str = _time_res.get("time") or booking_time
+        if not time_str:
             return (
                 "Reply *yes* to confirm, or tell me a different day/time — "
                 "e.g. *\"Saturday 11am\"*.\n"
@@ -1495,8 +1527,54 @@ def generate_reply(
             parse_booking_request, format_booking_preview, create_booking,
             get_bookings_for_customer, cancel_booking as _cancel_booking,
             format_booking_confirmation, _format_date, _format_time,
+            check_availability, reschedule_booking as _reschedule_booking,
         )
+        from services.booking_nlp import resolve_time_for_booking, format_slot_options
         from datetime import date as _date
+
+        # ── Phase 7: cancel/reschedule checked BEFORE the generic "my
+        # bookings" query below ─────────────────────────────────────────────
+        # "cancel my booking" and "reschedule my appointment" both also
+        # match _is_my_bookings_query() (its own pattern includes bare
+        # "my booking"/"my appointment", meant for "show me my booking(s)").
+        # A specific action verb (cancel/reschedule) always beats the
+        # generic "show my bookings" query when both match the same
+        # message — checking these first is what makes that work, rather
+        # than an actual cancel/reschedule request silently being answered
+        # with a bookings list instead.
+        if _is_cancel_booking(text):
+            bookings = get_bookings_for_customer(business_id, phone)
+            active   = [b for b in bookings if b.get("status") in ("confirmed","pending","rescheduled")]
+            if not active:
+                return "ℹ️ You have no active bookings to cancel.\n\nType *book* to make a new appointment."
+            booking = active[0]
+            if _cancel_booking(booking["id"], business_id):
+                try:    d_fmt = _format_date(_date.fromisoformat(booking["booking_date"]))
+                except: d_fmt = booking.get("booking_date","")
+                return f"🚫 *Booking Cancelled*\n\nYour appointment on *{d_fmt}* has been cancelled.\n\n_Type *book* to make a new appointment._"
+            return "⚠️ Could not cancel your booking. Please contact us directly."
+
+        # Phase 7: reschedule an EXISTING booking. _is_reschedule_booking()
+        # and reschedule_booking() both already existed before Phase 7 but
+        # were never wired together — the bot's own format_booking_
+        # confirmation()/my-bookings messages actively advertise "reschedule
+        # booking" as a working command, so this closes a real gap rather
+        # than adding a new one. Checked here (before the current_state
+        # checks below) so it always works as an escape hatch, the same way
+        # cancel does above, even if the customer is mid-way through
+        # something else.
+        if _is_reschedule_booking(text):
+            bookings = get_bookings_for_customer(business_id, phone)
+            active   = [b for b in bookings if b.get("status") in ("confirmed", "pending", "rescheduled")]
+            if not active:
+                return "ℹ️ You have no active bookings to reschedule.\n\nType *book* to make a new appointment."
+            booking = active[0]
+            _write_state_data(phone, business_id, {"state": "reschedule_awaiting_date",
+                "session": {"reschedule_booking_id": booking["id"]}})
+            try:    d_fmt = _format_date(_date.fromisoformat(booking.get("booking_date", "")))
+            except: d_fmt = booking.get("booking_date", "")
+            return (f"🔄 Let's reschedule your *{d_fmt}* appointment.\n\n"
+                    f"What new date works for you?\n\n_e.g. *tomorrow*, *Friday*, *14 June*_\n_Type *cancel* to go back._")
 
         if _is_my_bookings_query(text):
             bookings = get_bookings_for_customer(business_id, phone)
@@ -1519,17 +1597,81 @@ def generate_reply(
                 "\n\n_Type *cancel booking* to cancel | *reschedule booking* to change_"
             )
 
-        if _is_cancel_booking(text):
-            bookings = get_bookings_for_customer(business_id, phone)
-            active   = [b for b in bookings if b.get("status") in ("confirmed","pending","rescheduled")]
-            if not active:
-                return "ℹ️ You have no active bookings to cancel.\n\nType *book* to make a new appointment."
-            booking = active[0]
-            if _cancel_booking(booking["id"], business_id):
-                try:    d_fmt = _format_date(_date.fromisoformat(booking["booking_date"]))
-                except: d_fmt = booking.get("booking_date","")
-                return f"🚫 *Booking Cancelled*\n\nYour appointment on *{d_fmt}* has been cancelled.\n\n_Type *book* to make a new appointment._"
-            return "⚠️ Could not cancel your booking. Please contact us directly."
+        if current_state == "reschedule_awaiting_date":
+            session = _read_state_data(phone, business_id).get("session") or {}
+            if _is_cancel(text):
+                _reset_state(phone, business_id)
+                return "🚫 Reschedule cancelled. Your original booking is unchanged."
+            parsed = parse_booking_request(text)
+            if not parsed.date_str:
+                from services.booking_service import _parse_date_str, _resolve_relative_date
+                raw = _parse_date_str(text) or _resolve_relative_date(text)
+                if raw:
+                    parsed.date_str = raw.isoformat()
+            if not parsed.date_str:
+                return "📅 I didn't catch that date.\n\n_e.g. *tomorrow*, *Friday*, *14/09*_\n_Type *cancel* to go back._"
+
+            _time_res = resolve_time_for_booking(business_id, parsed.date_str, text, duration_hrs=_default_slot_mins/60)
+            try:    d_fmt = _format_date(_date.fromisoformat(parsed.date_str))
+            except: d_fmt = parsed.date_str
+
+            if _time_res["outcome"] == "exact":
+                _write_state_data(phone, business_id, {"state": "reschedule_confirm",
+                    "session": {**session, "new_date": parsed.date_str, "new_time": _time_res["time"]}})
+                return (f"🔄 New time: *{d_fmt}* at *{_format_time(_time_res['time'])}*.\n\n"
+                        "Reply *yes* to confirm or *no* to change.")
+
+            _write_state_data(phone, business_id, {"state": "reschedule_awaiting_time",
+                "session": {**session, "new_date": parsed.date_str}})
+            if _time_res["outcome"] == "options":
+                return f"📅 *{d_fmt}* — " + format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to go back._"
+            if _time_res["outcome"] == "ask":
+                return f"📅 Got it — *{d_fmt}*. Sure 😊 What time would you prefer?\n\n_Type *cancel* to go back._"
+            return (f"📅 Got it — *{d_fmt}*.\n\nWhat time would you like?\n\n"
+                    "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
+
+        if current_state == "reschedule_awaiting_time":
+            session = _read_state_data(phone, business_id).get("session") or {}
+            if _is_cancel(text):
+                _reset_state(phone, business_id)
+                return "🚫 Reschedule cancelled. Your original booking is unchanged."
+            new_date  = session.get("new_date", "")
+            _time_res = resolve_time_for_booking(business_id, new_date, text, duration_hrs=_default_slot_mins/60)
+
+            if _time_res["outcome"] == "exact":
+                _write_state_data(phone, business_id, {"state": "reschedule_confirm",
+                    "session": {**session, "new_time": _time_res["time"]}})
+                try:    d_fmt = _format_date(_date.fromisoformat(new_date))
+                except: d_fmt = new_date
+                return (f"🔄 New time: *{d_fmt}* at *{_format_time(_time_res['time'])}*.\n\n"
+                        "Reply *yes* to confirm or *no* to change.")
+            if _time_res["outcome"] == "options":
+                return format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to go back._"
+            if _time_res["outcome"] == "ask":
+                return "Sure 😊 What time would you prefer?\n\n_Type *cancel* to go back._"
+            return "🕐 I didn't catch that time.\n\n_e.g. *10am*, *2:30pm*, *14:00*_\n_Type *cancel* to go back._"
+
+        if current_state == "reschedule_confirm":
+            session = _read_state_data(phone, business_id).get("session") or {}
+            if _is_cancel(text) or _is_no(text):
+                _reset_state(phone, business_id)
+                return "🚫 Reschedule cancelled. Your original booking is unchanged."
+            if _is_yes(text):
+                booking_id = session.get("reschedule_booking_id")
+                new_date   = session.get("new_date", "")
+                new_time   = session.get("new_time", "")
+                avail = check_availability(business_id, new_date, new_time, _default_slot_mins/60)
+                if not avail.get("available"):
+                    _reset_state(phone, business_id)
+                    return (f"😔 Sorry, that time was just taken ({avail.get('reason','slot taken')}).\n\n"
+                            "Type *reschedule booking* to try another time.")
+                updated = _reschedule_booking(booking_id, business_id, new_date, new_time,
+                                               duration_hrs=_default_slot_mins/60)
+                _reset_state(phone, business_id)
+                if updated:
+                    return "✅ *Booking Rescheduled!*\n\n" + format_booking_confirmation(updated, business_name)
+                return "⚠️ Could not reschedule your booking. Please contact us directly."
+            return "Please reply *yes* to confirm the new time or *no* to cancel the reschedule."
 
         if current_state == "awaiting_booking_date":
             session = _read_state_data(phone, business_id).get("session") or {}
@@ -1544,16 +1686,24 @@ def generate_reply(
                     parsed.date_str = raw.isoformat()
                     parsed.has_booking_intent = True
             if parsed.date_str:
-                if parsed.time_str:
-                    _write_state_data(phone, business_id, {"state": "booking_confirm",
-                        "session": {**session, "booking_date": parsed.date_str, "time_str": parsed.time_str}})
-                    from services.booking_service import ParsedBooking as _PB
-                    return format_booking_preview(_PB(has_booking_intent=True, date_str=parsed.date_str,
-                        time_str=parsed.time_str, duration_hrs=_default_slot_mins/60), business_name)
-                _write_state_data(phone, business_id, {"state": "awaiting_booking_time",
-                    "session": {**session, "booking_date": parsed.date_str}})
+                from services.booking_service import ParsedBooking as _PB
+                _time_res = resolve_time_for_booking(business_id, parsed.date_str, text, duration_hrs=_default_slot_mins/60)
                 try:    d_fmt = _format_date(_date.fromisoformat(parsed.date_str))
                 except: d_fmt = parsed.date_str
+
+                if _time_res["outcome"] == "exact":
+                    _write_state_data(phone, business_id, {"state": "booking_confirm",
+                        "session": {**session, "booking_date": parsed.date_str, "time_str": _time_res["time"]}})
+                    return format_booking_preview(_PB(has_booking_intent=True, date_str=parsed.date_str,
+                        time_str=_time_res["time"], duration_hrs=_default_slot_mins/60), business_name)
+
+                _write_state_data(phone, business_id, {"state": "awaiting_booking_time",
+                    "session": {**session, "booking_date": parsed.date_str}})
+                if _time_res["outcome"] == "options":
+                    return f"📅 *{d_fmt}* — " + format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to go back._"
+                if _time_res["outcome"] == "ask":
+                    return (f"📅 Got it — *{d_fmt}*. Sure 😊 What time would you prefer?\n\n"
+                            "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
                 return (f"📅 Got it — *{d_fmt}*.\n\nWhat time would you like?\n\n"
                         "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
             return ("📅 I didn't catch that date.\n\n_e.g. *tomorrow*, *Friday*, *14/09*_\n_Type *cancel* to go back._")
@@ -1563,15 +1713,20 @@ def generate_reply(
             if _is_cancel(text):
                 _reset_state(phone, business_id)
                 return "🚫 Booking cancelled. Type *book* to start again."
-            from services.booking_service import _parse_time, ParsedBooking as _PB
-            time_str = _parse_time(text)
-            if time_str:
-                booking_date = session.get("booking_date","")
+            from services.booking_service import ParsedBooking as _PB
+            booking_date = session.get("booking_date","")
+            _time_res = resolve_time_for_booking(business_id, booking_date, text, duration_hrs=_default_slot_mins/60)
+
+            if _time_res["outcome"] == "exact":
                 _write_state_data(phone, business_id, {"state": "booking_confirm",
-                    "session": {**session, "time_str": time_str}})
+                    "session": {**session, "time_str": _time_res["time"]}})
                 return format_booking_preview(_PB(has_booking_intent=True, date_str=booking_date,
-                    time_str=time_str, duration_hrs=_default_slot_mins/60,
+                    time_str=_time_res["time"], duration_hrs=_default_slot_mins/60,
                     service_name=session.get("service","")), business_name)
+            if _time_res["outcome"] == "options":
+                return format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to go back._"
+            if _time_res["outcome"] == "ask":
+                return "Sure 😊 What time would you prefer?\n\n_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._"
             return ("🕐 I didn't catch that time.\n\n_e.g. *10am*, *2:30pm*, *14:00*_\n_Type *cancel* to go back._")
 
         if current_state == "booking_confirm":
@@ -1597,16 +1752,31 @@ def generate_reply(
 
         if _is_booking_intent(text):
             parsed = parse_booking_request(text)
-            if parsed.confidence >= 0.85 and parsed.date_str and parsed.time_str:
+            _time_res = (resolve_time_for_booking(business_id, parsed.date_str, text, duration_hrs=_default_slot_mins/60)
+                         if parsed.date_str else {"outcome": "no_time"})
+
+            if parsed.date_str and _time_res["outcome"] == "exact":
                 _write_state_data(phone, business_id, {"state": "booking_confirm",
-                    "session": {"booking_date": parsed.date_str, "time_str": parsed.time_str,
+                    "session": {"booking_date": parsed.date_str, "time_str": _time_res["time"],
                                 "service": parsed.service_name or ""}})
-                return format_booking_preview(parsed, business_name)
+                from services.booking_service import ParsedBooking as _PB
+                return format_booking_preview(_PB(has_booking_intent=True, date_str=parsed.date_str,
+                    time_str=_time_res["time"], duration_hrs=_default_slot_mins/60,
+                    service_name=parsed.service_name), business_name)
+            elif parsed.date_str and _time_res["outcome"] == "options":
+                _write_state_data(phone, business_id, {"state": "awaiting_booking_time",
+                    "session": {"booking_date": parsed.date_str, "service": parsed.service_name or ""}})
+                try:    d_fmt = _format_date(_date.fromisoformat(parsed.date_str))
+                except: d_fmt = parsed.date_str
+                return f"📅 *{d_fmt}* — " + format_slot_options(_time_res["slots"]) + "\n\n_Type *cancel* to go back._"
             elif parsed.date_str:
                 _write_state_data(phone, business_id, {"state": "awaiting_booking_time",
                     "session": {"booking_date": parsed.date_str, "service": parsed.service_name or ""}})
                 try:    d_fmt = _format_date(_date.fromisoformat(parsed.date_str))
                 except: d_fmt = parsed.date_str
+                if _time_res["outcome"] == "ask":
+                    return (f"📅 Great! *{d_fmt}* works. Sure 😊 What time would you prefer?\n\n"
+                            "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
                 return (f"📅 Great! *{d_fmt}* works.\n\nWhat time would you like?\n\n"
                         "_e.g. *10am*, *2:30pm*_\n_Type *cancel* to go back._")
             else:

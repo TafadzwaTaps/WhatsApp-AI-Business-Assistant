@@ -206,59 +206,22 @@ async def run_booking_reminders(user=Depends(require_business), _plan=Depends(re
     Call from Render cron or dashboard.
     Sends for bookings within next 24h (not already reminded).
     """
-    from services.booking_service import get_upcoming_reminders, format_reminder_message
-    from core.db import supabase
+    # Phase 7: the actual send logic now lives in
+    # services.booking_service.send_reminders_for_business() so this HTTP
+    # endpoint and the automatic background scheduler
+    # (attach_booking_reminder_scheduler, wired up in main.py) share one
+    # implementation instead of two copies drifting apart.
+    from services.booking_service import send_reminders_for_business
     bid = user["business_id"]
     biz = crud.get_business_by_id(bid)
     if not biz: raise HTTPException(404, "Business not found")
-    biz_name = biz.get("name", "")
 
-    reminders = get_upcoming_reminders(bid, window_hours=24.5)
-    sent, skipped = 0, 0
-
-    # Runtime send_whatsapp — imported from routes context
-    from routes.webhook_routes import send_whatsapp
-    if not send_whatsapp:
-        raise HTTPException(503, "WhatsApp sender not initialised")
-
-    try:
-        token    = crud.get_decrypted_token(biz)
-        phone_id = biz.get("whatsapp_phone_id", "")
-    except Exception:
-        token, phone_id = "", ""
-
-    import os
-    if not token or not phone_id:
-        phone_id = os.getenv("SHARED_PHONE_NUMBER_ID", "").strip()
-        token    = os.getenv("SHARED_WA_TOKEN", "").strip()
-
-    if not token or not phone_id:
-        return {"ok": False, "error": "No WhatsApp credentials"}
-
-    for b in reminders:
-        if b.get("reminder_24h_sent"): skipped += 1; continue
-        phone = b.get("customer_phone", "")
-        if not phone: continue
-
-        msg = format_reminder_message(b, biz_name)
-        result = send_whatsapp(phone_id, token, phone, msg)
-        if "error" not in result:
-            supabase.table("bookings").update({"reminder_24h_sent": True}).eq("id", b["id"]).execute()
-            # Sets the customer's conversation state so their yes/no reply
-            # to this reminder is understood and actually confirms or
-            # cancels the booking, rather than being treated as a generic
-            # message. Non-fatal if this fails — the reminder itself still
-            # sent successfully either way.
-            try:
-                from services._ai_state import _set_awaiting_reminder_response
-                _set_awaiting_reminder_response(phone, bid, booking_id=b["id"])
-            except Exception as exc:
-                log.warning("failed to set reminder-response state for %s: %s", phone, exc)
-            sent += 1
-        else:
-            skipped += 1
-
-    return {"ok": True, "sent": sent, "skipped": skipped}
+    result = send_reminders_for_business(bid, biz)
+    if not result.get("ok") and result.get("error") in ("No WhatsApp credentials",):
+        return {"ok": False, "error": result["error"]}
+    if not result.get("ok") and result.get("error") == "WhatsApp sender not initialised":
+        raise HTTPException(503, result["error"])
+    return {"ok": result.get("ok", False), "sent": result.get("sent", 0), "skipped": result.get("skipped", 0)}
 
 
 @router.get("/bookings/availability")
