@@ -389,6 +389,32 @@ async def receive_message(request: Request):
         except Exception as exc:
             log.debug("detect_and_set_language failed (ignored): %s", exc)
 
+        # ── Phase 6: understand a non-English message ───────────────────────
+        # Mirrors the outgoing maybe_translate() wrapper below, in reverse:
+        # an offline, best-effort word/phrase substitution turns known
+        # foreign words into English BEFORE the message reaches the existing
+        # deterministic pipeline (fuzzy_matcher, ai.py, nl_commerce.py,
+        # business_knowledge.py) — none of which need to change, since they
+        # already understand English. Uses the customer's STORED preferred_
+        # language (set just above, or by an earlier turn / explicit
+        # /translate command), not just this message's own signal words, so
+        # a later bare "mbiri" ("2") still resolves correctly even though it
+        # carries no language signal on its own. Only ever narrows what the
+        # existing matcher sees as unmatched text into matched text — never
+        # removes information the matcher already used, so this cannot make
+        # an existing English conversation behave any differently.
+        try:
+            from services.translation_layer import get_customer_language, translate_incoming_to_english
+            _customer_lang = get_customer_language(customer_phone, business["id"])
+            if _customer_lang and _customer_lang != "en":
+                _translated_text = translate_incoming_to_english(text, _customer_lang)
+                if _translated_text != text:
+                    log.info("incoming translation applied  phone=%s  lang=%s",
+                              customer_phone, _customer_lang)
+                    text = _translated_text
+        except Exception as exc:
+            log.debug("translate_incoming_to_english failed (ignored): %s", exc)
+
         business_phone_id = business.get("whatsapp_phone_id", "")
         msg_from          = msg_obj.get("from", "")
         is_from_agent     = bool(business_phone_id and msg_from and msg_from == business_phone_id)
@@ -549,7 +575,7 @@ async def receive_message(request: Request):
         # phrases, or explicitly via the language-switch command above.
         try:
             from services.translation_layer import maybe_translate
-            reply = maybe_translate(reply, customer_phone, business["id"])
+            reply = maybe_translate(reply, customer_phone, business["id"], products=products)
         except Exception as exc:
             log.debug("maybe_translate failed (using original reply): %s", exc)
 

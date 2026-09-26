@@ -18,6 +18,12 @@ python-dotenv>=1.0.0
 stripe>=7.0.0
 qrcode[pil]>=7.4.2
 
+# Phase 6 — statistical language detection for services/translation_layer.py
+# (pure Python, works fully offline — no external API, no added AI cost).
+# The code degrades gracefully (falls back to keyword-only detection) if
+# this is ever missing, so it's safe even before the next deploy picks it up.
+langdetect>=1.0.9
+
 # ── Testing (dev only — not required at runtime, safe to include) ──────────
 pytest>=8.0.0
 pytest-mock>=3.14.0
