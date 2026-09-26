@@ -1478,8 +1478,24 @@ def generate_reply(
     # ══════════════════════════════════════════════════════════════════════════
     # P4.3 — INTRODUCTION DETECTION (before product fuzzy match)
     # "My name is Tafadzwa" must never reach the product matcher.
+    #
+    # Phase 8 guard (2026-09-26): "I'm buying a birthday gift" matches the
+    # same "I'm <word>" shape as a name introduction ("buying" parses as a
+    # first name), which would wrongly swallow the spec's own worked
+    # example before P6.9 ever sees it. Rather than touch the shared
+    # _is_introduction()/_extract_name() functions (used elsewhere too),
+    # this is a narrow, local, additive guard: skip introduction handling
+    # only for the specific case of a gift/occasion statement, and let it
+    # fall through to P6.9 below.
     # ══════════════════════════════════════════════════════════════════════════
-    if _is_introduction(text):
+    _p43_is_gift_statement = False
+    try:
+        from services.sales_conversation import is_gift_occasion_statement as _p43_gift_check
+        _p43_is_gift_statement = _p43_gift_check(text)
+    except Exception:
+        pass
+
+    if _is_introduction(text) and not _p43_is_gift_statement:
         detected_name = _extract_name(text)
         if detected_name:
             try:
@@ -2084,6 +2100,129 @@ def generate_reply(
             )
     except Exception as exc:
         log.debug("recommendation-query check failed (ignored): %s", exc)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.9 — SALES CONVERSATION (Phase 8)
+    # Helps customers without being pushy. Never invents a discount, never
+    # pressures, never claims false scarcity, never manipulates — every product
+    # surfaced here is a real one already returned by crud.get_products(), and
+    # every price is its real stored price. Three moments handled:
+    #   1. Price objection      ("that's too expensive")   -> real cheaper picks
+    #   2. Complement question  ("what goes well with this?") -> real cross-sell
+    #      (reuses services/sales_ai_service.py's existing scoring engine)
+    #   3. Gift/occasion framing ("I'm buying a birthday gift") -> ask budget,
+    #      then real picks within it (a soft session flag, not a hard state,
+    #      so it never interferes with any other in-progress flow)
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from services.sales_conversation import (
+            is_price_objection, pick_cheaper_alternatives,
+            is_complement_query, is_gift_occasion_statement, extract_budget_amount,
+        )
+
+        _p69_session = _get_session(phone, business_id) or {}
+
+        # ── P6.9a: awaiting a reply to "What's your budget?" ────────────────
+        if _p69_session.get("awaiting_gift_budget"):
+            _budget = extract_budget_amount(text)
+            _p69_session["awaiting_gift_budget"] = False
+            if _budget is not None:
+                picks = filter_recommended_products(
+                    products, max_price=_budget, is_service_business=_is_service_biz,
+                )
+                if not picks:
+                    _write_state_data(phone, business_id, {"session": _p69_session})
+                    return (
+                        f"😔 I don't have anything within {_currency_sym}{_budget:.0f} right now.\n\n"
+                        "Type *menu* to see everything we have."
+                    )
+                _p69_session["last_shown_products"] = [
+                    {"name": p["name"], "price": float(p["price"]), "id": p.get("id")} for p in picks
+                ]
+                _write_state_data(phone, business_id, {"session": _p69_session})
+                lines = [f"• *{p['name']}* — {_currency_sym}{float(p['price']):.2f}" for p in picks]
+                return (
+                    f"Great, here's what fits a {_currency_sym}{_budget:.0f} budget 😊\n\n" +
+                    "\n".join(lines) +
+                    f"\n\n_Just tell me which one, e.g. \"{picks[0]['name']}\"._"
+                )
+            # Couldn't read a number from the reply — don't get stuck asking
+            # forever; clear the flag and let the rest of the pipeline handle
+            # whatever they actually said.
+            _write_state_data(phone, business_id, {"session": _p69_session})
+
+        # ── P6.9b: price objection ("that's too expensive") ─────────────────
+        if is_price_objection(text):
+            _anchor = None
+            if cart:
+                try:
+                    _anchor = float(cart[-1].get("price") or 0) or None
+                except (TypeError, ValueError):
+                    _anchor = None
+            elif len(_p69_session.get("last_shown_products") or []) == 1:
+                try:
+                    _anchor = float(_p69_session["last_shown_products"][0].get("price") or 0) or None
+                except (TypeError, ValueError):
+                    _anchor = None
+
+            cheaper = pick_cheaper_alternatives(
+                products, anchor_price=_anchor, is_service_business=_is_service_biz,
+            )
+            if not cheaper:
+                return (
+                    "I understand 😊 Unfortunately I don't have a more affordable option "
+                    "right now.\n\nType *menu* to see everything we have."
+                )
+            _p69_session["last_shown_products"] = [
+                {"name": p["name"], "price": float(p["price"]), "id": p.get("id")} for p in cheaper
+            ]
+            _write_state_data(phone, business_id, {"session": _p69_session})
+            lines = [f"• *{p['name']}* — {_currency_sym}{float(p['price']):.2f}" for p in cheaper]
+            return (
+                "I understand 😊 I can show you some more affordable options.\n\n" +
+                "\n".join(lines) +
+                f"\n\n_Just tell me which one, e.g. \"{cheaper[0]['name']}\"._"
+            )
+
+        # ── P6.9c: complement query ("what goes well with this?") ───────────
+        if is_complement_query(text):
+            _anchor_product = None
+            if cart:
+                _anchor_product = cart[-1]
+            elif len(_p69_session.get("last_shown_products") or []) == 1:
+                _anchor_product = _p69_session["last_shown_products"][0]
+
+            if not _anchor_product:
+                return (
+                    "Happy to suggest a pairing 😊 — which item did you mean? "
+                    "You can name it or add it to your cart first."
+                )
+
+            try:
+                _get_sugg, _, _get_upsell, _fmt = _sales_ai()
+            except Exception:
+                _get_sugg = _get_upsell = _fmt = None
+
+            if _get_sugg:
+                mem = _get_memory(phone, business_id)
+                suggestions = _get_sugg(_anchor_product, cart, products, mem)
+                upsell = _get_upsell(_anchor_product, products, cart) if _get_upsell else None
+                sugg_text = _fmt(suggestions, upsell=upsell, style="detailed") if _fmt else ""
+                if sugg_text:
+                    return sugg_text
+            return (
+                f"I don't have a specific pairing for *{_anchor_product.get('name')}* right now 😊 "
+                "— type *menu* to see everything we have."
+            )
+
+        # ── P6.9d: gift/occasion framing ("I'm buying a birthday gift") ─────
+        if is_gift_occasion_statement(text):
+            _p69_session["awaiting_gift_budget"] = True
+            _write_state_data(phone, business_id, {"session": _p69_session})
+            return "That's lovely 🎁 What's your budget, so I can show you the best options?"
+
+    except Exception as exc:
+        log.debug("sales-conversation check failed (ignored): %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P7 — ADD TO CART (order parser → multi-item → single item)
