@@ -289,6 +289,62 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
     return result
 
 
+def get_messages_since(business_id: int, hours: float = 720.0, limit: int = 4000) -> list[dict]:
+    """
+    Every message (incoming AND outgoing) for a business within the last
+    `hours` hours (default 30 days), oldest first, capped at `limit` rows.
+    Added for Phase 14 (services/conversation_analytics.py) — conversation
+    counting and average-response-time pairing both need both directions
+    ordered together; nothing else in the codebase needed this shape
+    before. Returns [] on any error rather than raising.
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        res = (
+            supabase.table("messages")
+            .select("customer_id, text, direction, sender_type, created_at")
+            .eq("business_id", business_id)
+            .gte("created_at", cutoff)
+            .order("created_at")
+            .limit(limit)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        log.warning("get_messages_since error  biz=%s  exc=%s", business_id, exc)
+        return []
+
+
+def get_incoming_texts_since(business_id: int, hours: float = 720.0, limit: int = 1000) -> list[str]:
+    """
+    Just the text of recent incoming customer messages for a business —
+    used by Phase 14's lazy re-classification (top questions / unknown-
+    intent rate / low-confidence rate). Deliberately returns bare strings,
+    not full rows with customer_id/phone, since the analytics this feeds
+    only ever reports aggregated counts — never a per-customer breakdown —
+    per the "don't expose private customer information unnecessarily"
+    requirement. Returns [] on any error.
+    """
+    from datetime import datetime, timedelta, timezone
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        res = (
+            supabase.table("messages")
+            .select("text")
+            .eq("business_id", business_id)
+            .eq("direction", "incoming")
+            .gte("created_at", cutoff)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [r.get("text", "") for r in (res.data or []) if r.get("text")]
+    except Exception as exc:
+        log.warning("get_incoming_texts_since error  biz=%s  exc=%s", business_id, exc)
+        return []
+
+
 def delete_message(message_id: int, business_id: int) -> bool:
     """
     Delete a single message by id.

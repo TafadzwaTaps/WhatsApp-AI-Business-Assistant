@@ -1086,6 +1086,27 @@ def analytics_stats(user=Depends(require_business)):
         return crud.get_business_stats(user["business_id"])
 
 
+@router.get("/analytics/conversation-insights")
+def analytics_conversation_insights(days: int = 30, user=Depends(require_business)):
+    """
+    Phase 14 — Conversation Analytics. Non-blocking plan check (same
+    pattern as every other feature-gated endpoint in this file): a
+    business below the required plan still gets a 200 with `allowed:
+    False` and an upgrade pointer, rather than a hard 403, so the
+    dashboard can show an upsell card instead of an error.
+    """
+    from core.plan_guard import feature_access
+    access = feature_access("advanced_analytics", user["business_id"])
+    if not access.get("allowed"):
+        return {"allowed": False, "required_tier": access.get("required_tier"),
+                "upgrade_url": access.get("upgrade_url", "/pricing")}
+
+    days = max(1, min(days, 90))
+    from services.conversation_analytics import get_conversation_analytics
+    data = get_conversation_analytics(user["business_id"], hours=days * 24)
+    return {"allowed": True, **data}
+
+
 @router.get("/analytics/top-customers")
 def analytics_top_customers(limit: int = 10, user=Depends(require_business)):
     return crud.get_top_customers(user["business_id"], limit=limit)

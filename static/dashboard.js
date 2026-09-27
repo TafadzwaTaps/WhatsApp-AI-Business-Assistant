@@ -22,6 +22,7 @@ const ROUTES = {
   remindersSend: '/payments/reminders/send',
   analyticsStats:'/analytics/stats',
   analyticsTop:  '/analytics/top-customers',
+  analyticsInsights: '/analytics/conversation-insights',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -3902,9 +3903,82 @@ async function loadAnalyticsCharts() {
   }
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// PHASE 14 — AI CONVERSATION INSIGHTS
+// ════════════════════════════════════════════════════════════════════════════
+
+let _aiInsightsLoading = false;
+async function loadAIInsights() {
+  if (!token) return;
+  if (_aiInsightsLoading) return;
+  _aiInsightsLoading = true;
+  const body = document.getElementById('ai-insights-body');
+  try {
+    const data = await apiFetch(ROUTES.analyticsInsights + '?days=30');
+    if (!body) return;
+
+    if (!data || data.allowed === false) {
+      body.innerHTML = `<div class="empty">
+        📊 Detailed AI conversation insights are available on the
+        <strong>${escHtml(data && data.required_tier || 'Growth')}</strong> plan and above.
+        <a href="${escHtml(data && data.upgrade_url || '/pricing')}" target="_blank">Upgrade →</a>
+      </div>`;
+      return;
+    }
+
+    const pct = (n) => `${Math.round((n || 0) * 1000) / 10}%`;
+    const money = (n) => getCurrencySymbol() + (n || 0).toFixed(2);
+    const avgResp = data.average_response_seconds;
+    const avgRespLabel = avgResp == null ? '—'
+      : avgResp < 60 ? `${Math.round(avgResp)}s`
+      : `${Math.round(avgResp / 60)}m`;
+
+    const statRow = [
+      ['Conversations (30d)', data.conversation_count],
+      ['Human handoff rate', pct(data.human_handoff_rate)],
+      ['AI failed to understand', `${data.failed_conversations} conv.`],
+      ['Unknown intent rate', pct(data.unknown_intent_rate)],
+      ['Low-confidence rate', pct(data.low_confidence_rate)],
+      ['Avg. response time', avgRespLabel],
+      ['Abandoned carts', data.abandoned_carts],
+      ['Booking conversations (30d)', data.booking_conversations],
+      ['AI-generated sales (30d)', `${data.ai_generated_sales_count} · ${money(data.ai_generated_sales_total)}`],
+      ['AI cost (30d)', money(data.ai_cost && data.ai_cost.estimated_cost)],
+    ];
+
+    const statsHtml = statRow.map(([label, val]) => `
+      <div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+        <span style="color:var(--text-dim);font-size:12px;">${escHtml(label)}</span>
+        <span style="font-family:var(--mono);font-weight:600;">${escHtml(String(val))}</span>
+      </div>`).join('');
+
+    const questions = (data.top_customer_questions || []);
+    const products   = (data.top_products_requested || []);
+
+    const listHtml = (title, items, key) => {
+      if (!items.length) return '';
+      return `<div style="margin-top:14px;">
+        <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;">${escHtml(title)}</div>
+        ${items.map(it => `<div style="font-size:13px;padding:3px 0;">💬 "${escHtml(it[key])}" <span style="color:var(--text-dim);">(${it.count}×)</span></div>`).join('')}
+      </div>`;
+    };
+
+    body.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr;gap:0;">${statsHtml}</div>
+      ${listHtml('Customers frequently ask', questions, 'text')}
+      ${listHtml('Customers frequently request', products, 'name')}
+    `;
+  } catch (e) {
+    if (body) body.innerHTML = `<div class="empty">⚠ ${escHtml(e.message || 'Could not load insights')}</div>`;
+  } finally {
+    _aiInsightsLoading = false;
+  }
+}
+
 // Hook analytics load into overview — only when logged in
 document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => { if (token) loadAnalyticsCharts(); }, 500);
+  setTimeout(() => { if (token) loadAIInsights(); }, 600);
   // Fetch public config (Supabase URL/key for image uploads)
   fetch('/config/public').then(r => r.json()).then(cfg => {
     window._SUPABASE_URL      = cfg.supabase_url      || '';

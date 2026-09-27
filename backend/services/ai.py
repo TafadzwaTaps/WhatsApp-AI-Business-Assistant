@@ -385,6 +385,18 @@ def _escalate_to_human(
     except Exception as exc:
         log.debug("smart_handoff: notify_dashboard failed: %s", exc)
 
+    # Phase 14 (Conversation Analytics) — durable, best-effort record of
+    # this escalation for handoff-rate-over-time reporting. Every
+    # automatic trigger and the explicit-request path both funnel through
+    # this one function, so this is the single place that needs to write
+    # it. Never affects the customer-facing flow: insert_handoff_event()
+    # cannot raise.
+    try:
+        from crud.handoff_log import insert_handoff_event
+        insert_handoff_event(business_id, phone, trigger_reason)
+    except Exception as exc:
+        log.debug("smart_handoff: handoff_log write failed (ignored): %s", exc)
+
     log.info(
         "smart_handoff: triggered  phone=%s  biz=%s  reason=%s  ticket=%s",
         phone, business_id, trigger_reason, ticket,

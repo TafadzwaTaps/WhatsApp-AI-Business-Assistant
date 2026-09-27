@@ -167,6 +167,29 @@ def save_cart(phone: str, business_id: int, items: list) -> Optional[dict]:
         return None
 
 
+def get_carts_for_business(business_id: int) -> list[dict]:
+    """
+    All cart rows for a business (phone, items, updated_at, state_data) —
+    added for Phase 14 (services/conversation_analytics.py)'s abandoned-
+    cart count, which needs every cart's idle time, not just one
+    customer's. Reuses the exact same "browsing state + has items + idle
+    past a threshold" definition growth/cart_recovery.py already uses in
+    production, rather than inventing a second one. Returns [] on any
+    error.
+    """
+    try:
+        res = (
+            supabase.table("carts")
+            .select("phone, items, updated_at, state_data")
+            .eq("business_id", business_id)
+            .execute()
+        )
+        return res.data or []
+    except Exception as exc:
+        log.error("get_carts_for_business error  biz=%s  exc=%s", business_id, exc)
+        return []
+
+
 def clear_cart(phone: str, business_id: int) -> None:
     """
     Clear cart items WITHOUT deleting the row.
