@@ -113,7 +113,11 @@ def get_me(user=Depends(require_business)):
         "display_name":   fj.get("display_name",   ""),
         "phone":          fj.get("user_phone",     ""),
         "bio":            fj.get("bio",            ""),
-        "timezone":       fj.get("timezone",       "Africa/Harare"),
+        # Global Rebrand: neutral fallback for a business that hasn't set a
+        # timezone yet — was hardcoded to "Africa/Harare" for every business
+        # regardless of location. Matches booking_service.py's own already-
+        # established "UTC" fallback for this same features_json field.
+        "timezone":       fj.get("timezone",       "UTC"),
         "language":       fj.get("language",       "en"),
         "country":        fj.get("country",        ""),
         "date_format":    fj.get("date_format",    "DD/MM/YYYY"),

@@ -440,9 +440,15 @@ def generate_facebook_copy(
             f"for a fraction of the cost.\n\n"
             f"Comment 'INFO' to learn more. 👇"
         )
-    hashtags = "#WaziBot #WhatsAppBusiness #SmallBusiness #Zimbabwe #Entrepreneur #SideHustle"
+    # Phase (Global Rebrand): these hashtags are generated for EVERY
+    # business on this platform regardless of where it's actually located
+    # (this function has no business/country context to work with — see
+    # generate_facebook_copy()'s signature above), so a hardcoded
+    # "#Zimbabwe"/"#Harare" was being attached to non-Zimbabwe businesses'
+    # own social posts too. Kept universally-applicable instead.
+    hashtags = "#WaziBot #WhatsAppBusiness #SmallBusiness #Entrepreneur #SideHustle"
     if business_type in ("restaurant", "bakery"):
-        hashtags += " #FoodBusiness #Harare"
+        hashtags += " #FoodBusiness"
     elif business_type in ("salon", "barber"):
         hashtags += " #SalonLife #BeautyBusiness"
     return {

@@ -101,7 +101,7 @@ def _base_template(title: str, body_html: str) -> str:
       <a href="{_BASE_URL}">wazibot.com</a> &nbsp;·&nbsp;
       <a href="{_BASE_URL}/privacy">Privacy</a> &nbsp;·&nbsp;
       <a href="{_BASE_URL}/terms">Terms</a><br/><br/>
-      © 2026 WaziBot. Built in Zimbabwe 🇿🇼 — serving businesses worldwide.
+      © 2026 WaziBot. The AI employee for WhatsApp businesses 🌍 — built for businesses worldwide.
     </div>
   </div>
 </div>

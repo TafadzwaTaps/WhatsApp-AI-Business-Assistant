@@ -60,7 +60,10 @@ class Step1Request(BaseModel):
     category: str = ""
     currency: str = "USD"
     currency_symbol: str = "$"
-    timezone: str = "Africa/Harare"
+    # Global Rebrand: neutral fallback, not an assumed Zimbabwe timezone —
+    # the frontend's own timezone dropdown always sends a real value; this
+    # only matters if that's ever skipped.
+    timezone: str = "UTC"
 
 class Step2Request(BaseModel):
     tagline: str = ""

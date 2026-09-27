@@ -71,8 +71,16 @@ def _booking_to_gcal_event(booking: dict, business_name: str = "") -> dict:
     return {
         "summary":     f"{svc} — {phone}" if phone else svc,
         "description": f"Booking #{booking.get('id','')} at {business_name}",
-        "start": {"dateTime": f"{d}T{t_s}:00", "timeZone": "Africa/Harare"},
-        "end":   {"dateTime": f"{d}T{t_e}:00", "timeZone": "Africa/Harare"},
+        # Global Rebrand: was hardcoded "Africa/Harare" for every business's
+        # synced Google Calendar event regardless of where that business
+        # actually is — a real correctness bug for non-Zimbabwe businesses,
+        # not just branding. "UTC" matches booking_service.py's own already-
+        # established neutral fallback for a business with no configured
+        # timezone (see check_availability()'s "tz_name = ... or 'UTC'").
+        # A future pass could thread the business's real features_json
+        # timezone through create_event()/sync_booking() for full accuracy.
+        "start": {"dateTime": f"{d}T{t_s}:00", "timeZone": "UTC"},
+        "end":   {"dateTime": f"{d}T{t_e}:00", "timeZone": "UTC"},
         "reminders": {
             "useDefault": False,
             "overrides": [
