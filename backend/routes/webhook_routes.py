@@ -112,11 +112,21 @@ async def receive_message(request: Request):
         # image, document and sticker (the missing-fields check below would
         # then trip on the now-empty `text` and return before STEP 6 ever
         # ran). Fixed 2026-09-24 — see Phase 0 audit.
+        # Phase 13 (Image Understanding): default — only ever set for a
+        # genuine "image" message below.
+        image_media_id = ""
+
         if msg_type == "text":
             text = msg_obj.get("text", {}).get("body", "").strip()
         elif msg_type in ("image", "document", "sticker"):
             media_obj = msg_obj.get(msg_type, {})
             text = media_obj.get("caption", "").strip() or "[image]"
+            # Phase 13 (Image Understanding): only a genuine "image" message
+            # (not a document or decorative sticker) is a candidate for
+            # visual analysis — captured here, alongside the caption, so it
+            # can be threaded down to generate_reply() exactly like
+            # audio's media_id already is for voice notes.
+            image_media_id = media_obj.get("id", "") if msg_type == "image" else ""
         elif msg_type == "audio":
             text = "[voice_note]"
         elif msg_type == "video":
@@ -554,6 +564,77 @@ async def receive_message(request: Request):
             "wa_token":              token or "",
         }
 
+        # ── Phase 13: Image Understanding ────────────────────────────────────
+        # Mirrors the voice-note block above: the async I/O (media
+        # validation + download + the vision-LLM call) happens HERE, in the
+        # webhook's own async context, and only the already-resolved result
+        # is handed to the deterministic engine — generate_reply() itself
+        # stays fully synchronous, exactly like it already receives
+        # voice_transcript as plain resolved text rather than a media id.
+        # Entirely additive: image_analysis defaults to None, and ai.py
+        # only acts on it when it's genuinely present — every other image
+        # message (proof-of-payment, feature off, wrong plan, over quota,
+        # download/analysis failure) behaves exactly as it did before this
+        # phase.
+        image_analysis = None
+        if image_media_id and not is_from_agent:
+            try:
+                from core import plan_guard as _pg_img
+                _img_allowed_plan = _pg_img.feature_access(
+                    "image_understanding", business["id"]
+                ).get("allowed", False)
+            except Exception:
+                _img_allowed_plan = False
+
+            if _img_allowed_plan:
+                try:
+                    from services.image_understanding import (
+                        is_enabled as _img_enabled,
+                        analyze_customer_image,
+                        get_last_call_meta as _img_get_meta,
+                    )
+                    from services import ai_usage_tracker as _img_cost
+                    from services._ai_state import (
+                        _get_session as _img_get_session,
+                        _write_state_data as _img_write_state_data,
+                    )
+
+                    if _img_enabled():
+                        _img_session = _img_get_session(customer_phone, business["id"]) or {}
+                        _img_ok, _img_reason = _img_cost.should_call_llm(business["id"], _img_session)
+                    else:
+                        _img_session, _img_ok, _img_reason = {}, False, "disabled"
+
+                    if _img_ok:
+                        from services.whatsapp_service import download_whatsapp_media
+                        img_bytes, img_mime = await download_whatsapp_media(image_media_id, token)
+
+                        if img_bytes:
+                            _img_caption = "" if text == "[image]" else text
+                            image_analysis = analyze_customer_image(img_bytes, img_mime, _img_caption)
+                            _img_meta = _img_get_meta()
+
+                            if image_analysis is not None:
+                                _img_cost.record_customer_llm_call(_img_session)
+                                _img_write_state_data(customer_phone, business["id"], {"session": _img_session})
+
+                            _img_cost.record_llm_usage(
+                                business_id=business["id"], phone=customer_phone,
+                                conversation_id=_img_cost.make_conversation_id(business["id"], customer_phone),
+                                intent="image_understanding", tier="full",
+                                provider=os.getenv("IMAGE_UNDERSTANDING_PROVIDER", "openai").strip().lower(),
+                                model=os.getenv("IMAGE_UNDERSTANDING_MODEL", "") or "default",
+                                prompt_tokens=_img_meta.get("prompt_tokens", 0),
+                                completion_tokens=_img_meta.get("completion_tokens", 0),
+                                latency_ms=_img_meta.get("latency_ms", 0),
+                                status="ok" if image_analysis is not None else "no_result",
+                            )
+                    else:
+                        log.debug("image understanding skipped — %s", _img_reason)
+                except Exception as exc:
+                    log.debug("image understanding pipeline failed (ignored): %s", exc)
+                    image_analysis = None
+
         reply = generate_reply(
             message=text,
             phone=customer_phone,
@@ -564,6 +645,7 @@ async def receive_message(request: Request):
             message_is_from_agent=is_from_agent,
             voice_transcript=voice_transcript,
             business_config=biz_config,
+            image_analysis=image_analysis,
         )
 
         # ── Multi-language: passive translation wrapper ────────────────────

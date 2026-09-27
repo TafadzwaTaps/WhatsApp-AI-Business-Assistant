@@ -61,6 +61,9 @@ INTENT PRIORITY (do not reorder)
   P6.7  Product substitution ("change the chicken to beef") — Phase 4
   P6.8  Recommendation query ("what do you recommend?") — Phase 4
   P6.9  Sales conversation (price objection, complement, gift budget) — Phase 8
+  P6.95 Image understanding (product-lookup photo / damaged-item photo) —
+        Phase 13, only when the state-specific image flows above (proof of
+        payment, etc.) didn't already claim the message
   P7    Add to cart (order parser → multi-item → single item) — the
         single-item confirmation may be LLM-rephrased here — Phase 10,
         gated by model routing + per-business/per-customer cost
@@ -417,6 +420,7 @@ def _generate_reply_core(
     message_is_from_agent: bool = False,
     voice_transcript: str | None = None,
     business_config: dict | None = None,
+    image_analysis: dict | None = None,
 ) -> str:
     """
     Single entry point called by the webhook for every incoming message.
@@ -429,6 +433,15 @@ def _generate_reply_core(
       category (str)          — e.g. "restaurant", "pharmacy"
       menu_header (str)       — custom text shown above menu items
     All keys optional — missing keys fall back to defaults.
+
+    image_analysis (Phase 13, optional) — already-resolved vision-LLM
+    output from services/image_understanding.analyze_customer_image(),
+    computed by the webhook BEFORE this call (see routes/webhook_routes.py):
+    {"intent": "product_lookup"|"damaged_or_return"|"unclear",
+     "description": str, "certain": bool}, or None whenever the feature is
+    off, the business's plan doesn't include it, a cost safeguard blocked
+    it, or the analysis itself failed — in every one of those cases this
+    function behaves exactly as it did before Phase 13.
     """
     # ── Resolve per-business config ─────────────────────────────────────────
     _cfg                = business_config or {}
@@ -2444,6 +2457,83 @@ def _generate_reply_core(
         log.debug("sales-conversation check failed (ignored): %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P6.95 — IMAGE UNDERSTANDING (Phase 13)
+    # ══════════════════════════════════════════════════════════════════════════
+    # Only reachable here because every state-specific block above —
+    # including P1's awaiting_proof and P2's awaiting_payment, which
+    # already have their OWN, unrelated image handling for payment
+    # screenshots — has already had first refusal and didn't match. An
+    # image reaching this point was sent during ordinary browsing, not as
+    # part of an existing image-handling flow, so this can never hijack
+    # the payment-proof feature.
+    #
+    # image_analysis is already fully resolved by the webhook (see
+    # routes/webhook_routes.py) — this block does no I/O and calls no LLM
+    # itself. It never touches price/stock/order data: the vision model
+    # only ever produced a short description + one of three fixed intent
+    # labels; the ACTUAL catalogue lookup below goes through the exact
+    # same deterministic _find_product() every typed order already uses,
+    # and a match is only ever shown, never auto-added to cart (adding
+    # still requires the customer's own explicit follow-up message,
+    # through the ordinary P7 flow below) — the absolute safety rule
+    # (LLM never directly performs a business action) holds here exactly
+    # as it does for every other AI call site in this project. A
+    # "damaged/return" reading only ever reaches the existing Phase 9
+    # human-handoff machinery, never a database write of its own.
+    if message_has_image and image_analysis:
+        try:
+            _p13_intent      = image_analysis.get("intent")
+            _p13_description = (image_analysis.get("description") or "").strip()
+            _p13_certain     = bool(image_analysis.get("certain"))
+
+            if _p13_intent == "damaged_or_return":
+                _p13_issue = (
+                    "Customer sent a photo suggesting a damaged, defective, "
+                    "or incorrect item."
+                )
+                _p13_ai_summary = (
+                    f"Vision analysis of the customer's photo: {_p13_description or 'no description available'}. "
+                    "Note: the photo itself was not saved/attached — WaziBot does not yet "
+                    "store customer-sent images; only this description was recorded."
+                )
+                return _trigger_smart_handoff(
+                    phone, business_id, business_name, text,
+                    trigger_reason="Damaged/return photo",
+                    issue=_p13_issue,
+                    ai_summary=_p13_ai_summary,
+                    currency_sym=_currency_sym,
+                )
+
+            if _p13_intent == "product_lookup" and _p13_certain and _p13_description:
+                _p13_match = _find_product(_p13_description, products)
+                if _p13_match:
+                    _p13_available = _resolve_stock(_p13_match, _is_service_biz)
+                    _p13_stock_note = (
+                        " (currently out of stock)" if _p13_available == 0 else ""
+                    )
+                    return (
+                        f"📸 Based on your photo, this looks similar to "
+                        f"*{_p13_match['name']}* — {_currency_sym}{float(_p13_match['price']):.2f}"
+                        f"{_p13_stock_note}.\n\n"
+                        f"_Type the item name to add it to your cart, or *menu* to see more._"
+                    )
+                return (
+                    "📸 I looked through our catalogue but couldn't find a close match "
+                    "to your photo 😊\n\n"
+                    "_Type *menu* to browse what we have, or describe the item and I'll help you find it._"
+                )
+
+            # "unclear", or product_lookup without enough certainty — never
+            # claim visual certainty the model itself didn't have.
+            return (
+                "📸 I can see your photo, but I'm not fully sure what you'd like help with.\n\n"
+                "Are you looking for something similar to buy, or is there an issue with "
+                "an item you already received? You can also type *agent* to talk to our team."
+            )
+        except Exception as exc:
+            log.debug("image-understanding reply failed (%s) — falling through", exc)
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P7 — ADD TO CART (order parser → multi-item → single item)
     # ══════════════════════════════════════════════════════════════════════════
     if intent == "order":
@@ -3076,6 +3166,7 @@ def generate_reply(
     message_is_from_agent: bool = False,
     voice_transcript: str | None = None,
     business_config: dict | None = None,
+    image_analysis: dict | None = None,
 ) -> str:
     """
     Public entry point. Runs the full deterministic engine
@@ -3089,6 +3180,7 @@ def generate_reply(
         message_has_image=message_has_image,
         message_is_from_agent=message_is_from_agent,
         voice_transcript=voice_transcript, business_config=business_config,
+        image_analysis=image_analysis,
     )
 
     # Agent-echoed messages and image messages never go through the

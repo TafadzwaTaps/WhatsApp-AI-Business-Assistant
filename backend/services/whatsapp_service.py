@@ -251,3 +251,76 @@ async def transcribe_whatsapp_voice_note(
     except Exception as exc:
         log.warning("transcribe_whatsapp_voice_note failed  media_id=%s  error=%s", media_id, exc)
         return None
+
+
+# ── Image download + validation (Phase 13: Image Understanding) ────────────
+# Same two-hop media-id → CDN pattern as transcribe_whatsapp_voice_note()
+# above, generalized for images and with an explicit "media validation"
+# step (the spec's own diagram names this as a distinct stage): only a
+# small set of real image mime types is accepted, and a hard size cap
+# guards against an oversized file being handed to a vision model or held
+# in memory. Never raises — returns (None, None) for "can't use this
+# image", exactly like the voice-note function returns None for "can't
+# transcribe this".
+_ALLOWED_IMAGE_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
+_MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+async def download_whatsapp_media(media_id: str, wa_token: str):
+    """
+    Resolve a WhatsApp image media id to (bytes, mime_type), or (None,
+    None) if the id is missing, the download fails, the media isn't one
+    of the allowed image types, or it's larger than the size cap.
+    """
+    if not media_id or not wa_token:
+        return None, None
+
+    try:
+        import httpx
+        async with httpx.AsyncClient() as client:
+            # Step 1: resolve media id → downloadable URL + declared mime type
+            meta_resp = await client.get(
+                f"https://graph.facebook.com/v18.0/{media_id}",
+                headers={"Authorization": f"Bearer {wa_token}"},
+                timeout=15,
+            )
+            meta_resp.raise_for_status()
+            meta = meta_resp.json()
+            media_url = meta.get("url", "")
+            mime_type = (meta.get("mime_type") or "").split(";")[0].strip().lower()
+            declared_size = meta.get("file_size")
+
+            if not media_url:
+                log.warning("download_whatsapp_media: no media url  media_id=%s", media_id)
+                return None, None
+
+            # ── Media validation ────────────────────────────────────────────
+            if mime_type not in _ALLOWED_IMAGE_MIME_TYPES:
+                log.info("download_whatsapp_media: rejected mime_type=%r  media_id=%s",
+                          mime_type, media_id)
+                return None, None
+            try:
+                if declared_size is not None and int(declared_size) > _MAX_IMAGE_BYTES:
+                    log.info("download_whatsapp_media: rejected — declared size %s > cap",
+                              declared_size)
+                    return None, None
+            except (TypeError, ValueError):
+                pass
+
+            # Step 2: download the image bytes (same Bearer token required)
+            img_resp = await client.get(
+                media_url,
+                headers={"Authorization": f"Bearer {wa_token}"},
+                timeout=30,
+            )
+            img_resp.raise_for_status()
+            image_bytes = img_resp.content
+
+        if len(image_bytes) > _MAX_IMAGE_BYTES:
+            log.info("download_whatsapp_media: rejected — actual size %d > cap", len(image_bytes))
+            return None, None
+
+        return image_bytes, mime_type
+    except Exception as exc:
+        log.warning("download_whatsapp_media failed  media_id=%s  error=%s", media_id, exc)
+        return None, None

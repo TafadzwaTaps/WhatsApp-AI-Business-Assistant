@@ -347,6 +347,7 @@ GATED_FEATURES = {
     "multi_language":     "GROWTH",
     "ai_website":         "GROWTH",
     "bookings":           "GROWTH",   # native appointment/booking system
+    "image_understanding": "GROWTH", # Phase 13 — real per-call vision-LLM cost
     # Never gated — core product experience
     # "human_handoff"  → free (support is a basic need)
     # "live_inbox"     → free (core dashboard)
