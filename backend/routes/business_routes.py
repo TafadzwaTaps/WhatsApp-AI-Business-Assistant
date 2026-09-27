@@ -883,8 +883,22 @@ def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_bus
         token = crud.get_decrypted_token(business)
     except TokenDecryptionError as exc:
         raise HTTPException(503, "WhatsApp token cannot be decrypted. Re-enter it in Settings.")
-    if not token: raise HTTPException(400, "WhatsApp token not configured.")
-    if not business.get("whatsapp_phone_id"): raise HTTPException(400, "WhatsApp Phone Number ID not configured.")
+
+    # Fall back to WaziBot's shared WhatsApp number when this business
+    # hasn't connected its own dedicated number/token — same fallback
+    # chat_routes.py's send_message() already uses. Previously this route
+    # only ever checked the per-business token/phone_id, so every business
+    # on the shared number (the default, no-Meta-account-needed option
+    # offered at onboarding) got a hard "WhatsApp token not configured"
+    # error and could never use Broadcast at all.
+    phone_number_id = business.get("whatsapp_phone_id")
+    if not (token and phone_number_id):
+        if SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
+            token, phone_number_id = SHARED_WA_TOKEN, SHARED_PHONE_NUMBER_ID
+        elif not token:
+            raise HTTPException(400, "WhatsApp token not configured.")
+        else:
+            raise HTTPException(400, "WhatsApp Phone Number ID not configured.")
 
     all_phones = crud.get_all_customer_phones(bid)
     if not all_phones: return {"sent": 0, "failed": 0, "total": 0, "message": "No customers found"}
@@ -901,7 +915,7 @@ def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_bus
     sent, failed, failed_phones = 0, 0, []
     for phone in phones:
         try:
-            result = send_whatsapp(business["whatsapp_phone_id"], token, phone, body.message)
+            result = send_whatsapp(phone_number_id, token, phone, body.message)
             if "error" in result: raise RuntimeError(result["error"])
             crud.log_message(bid, phone, "out", f"[BROADCAST] {body.message}")
             sent += 1

@@ -1645,6 +1645,24 @@ async function loadSettings() {
     if (translationToggle) {
       translationToggle.checked = !!(b.features_json && b.features_json.translation_enabled);
     }
+    // WhatsApp Connection panel — phone_id is safe to show back; the
+    // access token itself is never returned by the API (GET /me strips
+    // it), so that field is intentionally left blank for the owner to
+    // re-enter only if they're changing it.
+    _setVal('set-wa-phone-id', b.whatsapp_phone_id || '');
+    const waStatusEl = document.getElementById('wa-connection-status');
+    if (waStatusEl) {
+      if (b.whatsapp_phone_id) {
+        waStatusEl.textContent = '● Dedicated number configured';
+        waStatusEl.style.color = 'var(--green)';
+      } else if (b.use_shared_number) {
+        waStatusEl.textContent = '● Using WaziBot shared number';
+        waStatusEl.style.color = 'var(--green)';
+      } else {
+        waStatusEl.textContent = '○ Not configured';
+        waStatusEl.style.color = 'var(--text-dim)';
+      }
+    }
   } catch(e) { console.warn('loadSettings /me:', e.message); }
 
   // Load payment settings
@@ -2132,6 +2150,52 @@ async function savePaymentOptions() {
     refreshAllMoneyDisplays();
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
+}
+
+// ── WHATSAPP CONNECTION (Settings) ─────────────────────────────────────────
+// Fixes a real support issue: the only place these fields were ever
+// collected was the one-time onboarding wizard's "Connect My Own WhatsApp
+// Number" step, with no way to view or correct them afterwards — which is
+// how a mistyped or wrong value (e.g. pasting the webhook VERIFY_TOKEN
+// here instead of the real Meta access token) could go unnoticed until a
+// feature like Broadcast that needs it actually failed. Reuses the
+// existing, already-working PATCH /business/me and GET /business/me/
+// test-whatsapp endpoints — no backend change needed.
+async function saveWhatsAppConnection() {
+  const btn = document.querySelector('[onclick="saveWhatsAppConnection()"]');
+  const resultEl = document.getElementById('wa-connection-result');
+  const phoneId = _getVal('set-wa-phone-id').trim();
+  const token   = _getVal('set-wa-token').trim();
+  if (!phoneId) { toast('Enter your WhatsApp Phone Number ID', true); return; }
+  try {
+    setLoading(btn, true);
+    if (resultEl) resultEl.textContent = '';
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      whatsapp_phone_id: phoneId,
+      whatsapp_token:    token || undefined,   // blank = keep the token already saved
+    })});
+    toast('✅ WhatsApp connection saved');
+    invalidateMeCache();
+    _setVal('set-wa-token', '');   // never leave a token sitting in the input after save
+    await testWhatsAppConnection();
+  } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+async function testWhatsAppConnection() {
+  const resultEl = document.getElementById('wa-connection-result');
+  if (resultEl) resultEl.textContent = 'Testing…';
+  try {
+    const res = await apiFetch('/me/test-whatsapp');
+    if (!resultEl) return;
+    if (res && res.ok) {
+      resultEl.innerHTML = `<span style="color:var(--green)">✅ ${escHtml(res.reason || 'Connected')}</span>`;
+    } else {
+      resultEl.innerHTML = `<span style="color:#ff5252">❌ ${escHtml((res && res.reason) || 'Connection failed')}</span>`;
+    }
+  } catch(e) {
+    if (resultEl) resultEl.innerHTML = `<span style="color:#ff5252">❌ ${escHtml(e.message)}</span>`;
+  }
 }
 
 // ── CURRENCY CONVERSION (Convert My Prices) ───────────────────────────────

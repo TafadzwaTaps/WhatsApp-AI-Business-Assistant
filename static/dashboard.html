@@ -2357,6 +2357,34 @@
         </div>
 
         <div class="panel">
+          <div class="panel-header"><div class="panel-title">📱 WhatsApp Connection</div></div>
+          <div class="panel-body">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+              <span style="font-size:12px;font-family:var(--mono);color:var(--text-dim);">Status:</span>
+              <span id="wa-connection-status" style="font-size:12px;font-family:var(--mono);font-weight:700;">—</span>
+            </div>
+            <div class="form-group">
+              <label>WhatsApp Phone Number ID</label>
+              <input type="text" id="set-wa-phone-id" placeholder="From Meta Developer Portal"/>
+            </div>
+            <div class="form-group">
+              <label>WhatsApp Access Token</label>
+              <input type="password" id="set-wa-token" placeholder="EAAxxxxxxx… (leave blank to keep the saved one)"/>
+              <div style="margin-top:6px;font-size:11px;color:var(--text-dim);font-family:var(--mono);line-height:1.6;">
+                This is the permanent <strong>Access Token</strong> from your Meta app (starts with
+                <code>EAA…</code>) — <strong>not</strong> the <code>VERIFY_TOKEN</code> used for the
+                webhook handshake. Get it from Meta's WhatsApp → API Setup page.
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button class="btn btn-primary" onclick="saveWhatsAppConnection()">Save Connection</button>
+              <button class="btn btn-ghost" onclick="testWhatsAppConnection()">Test Connection</button>
+            </div>
+            <div id="wa-connection-result" style="margin-top:10px;font-size:12px;font-family:var(--mono);"></div>
+          </div>
+        </div>
+
+        <div class="panel">
           <div class="panel-header"><div class="panel-title">💵 Cash &amp; Currency</div></div>
           <div class="panel-body">
             <div class="form-row">
