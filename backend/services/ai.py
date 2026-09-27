@@ -62,7 +62,9 @@ INTENT PRIORITY (do not reorder)
   P6.8  Recommendation query ("what do you recommend?") — Phase 4
   P6.9  Sales conversation (price objection, complement, gift budget) — Phase 8
   P7    Add to cart (order parser → multi-item → single item) — the
-        single-item confirmation may be LLM-rephrased here — Phase 10
+        single-item confirmation may be LLM-rephrased here — Phase 10,
+        gated by model routing + per-business/per-customer cost
+        safeguards + usage tracking — Phase 12
   P8    Cart view
   P9    Browse menu
   P10   Order reference lookup
@@ -73,6 +75,23 @@ INTENT PRIORITY (do not reorder)
 Public entry point: generate_reply() (Phase 9 wrapper — repeated-
 misunderstanding / complex-request handoff) around _generate_reply_core()
 (the full chain above).
+
+AI COST OPTIMIZATION (Phase 12)
+────────────────────────────────
+  services/model_routing.py     — classify_route(): "none" / "cheap" /
+                                   "full" tiering for any call site that
+                                   needs a per-message LLM-vs-deterministic
+                                   decision (reusable infra; the one
+                                   existing call site at P7 is hardcoded
+                                   to "cheap" since its nature never
+                                   varies).
+  services/ai_usage_tracker.py  — should_call_llm() (per-business daily
+                                   cap via core.plan_guard + per-customer
+                                   sliding-window cap via session state),
+                                   record_llm_usage() (writes to
+                                   crud/ai_usage.py, best-effort).
+  Neither module ever sees or logs an API key — only token counts, model
+  names, and a cost estimate computed from a fixed local pricing table.
 """
 
 import re
@@ -2566,22 +2585,58 @@ def _generate_reply_core(
             # completely unchanged — see services/llm_response.py.
             confirmation_line = _deterministic_confirmation
             try:
-                from services.llm_response import generate_natural_reply
+                from services.llm_response import generate_natural_reply, get_last_reply_meta, is_enabled as _llm_is_enabled
                 from services.translation_layer import get_customer_language
                 from services.language_commands import _LANGUAGE_LABELS
-                _lang_code  = get_customer_language(phone, business_id)
-                _lang_label = _LANGUAGE_LABELS.get(_lang_code, "English")
-                confirmation_line = generate_natural_reply(
-                    facts={
-                        "product":  product_name,
-                        "price":    float(product["price"]),
-                        "quantity": qty,
-                        "stock":    available,
-                        "action":   f"Added {qty} to cart",
-                    },
-                    fallback_text=_deterministic_confirmation,
-                    customer_language=_lang_label,
-                )
+                from services import ai_usage_tracker as _cost
+
+                # Phase 12 — AI Cost Optimization. This confirmation-rephrase
+                # is inherently the "cheap" tier (a short, low-stakes
+                # rephrase of an already-fully-decided deterministic
+                # message, using the same cheap default model Phase 10
+                # always used) — no per-message classify_route() needed for
+                # a call site whose nature is already fixed. Skip the LLM
+                # entirely, with zero DB round-trips, whenever the feature
+                # is off (unchanged Phase 10 behavior/cost), and otherwise
+                # check the per-business + per-customer safeguards BEFORE
+                # ever attempting a call, so a single abusive customer or a
+                # business past its plan's daily cap can't generate cost.
+                if _llm_is_enabled():
+                    _p12_session = _get_session(phone, business_id) or {}
+                    _p12_allowed, _p12_reason = _cost.should_call_llm(business_id, _p12_session)
+                else:
+                    _p12_allowed, _p12_reason = False, "disabled"
+
+                if _p12_allowed:
+                    _lang_code  = get_customer_language(phone, business_id)
+                    _lang_label = _LANGUAGE_LABELS.get(_lang_code, "English")
+                    confirmation_line = generate_natural_reply(
+                        facts={
+                            "product":  product_name,
+                            "price":    float(product["price"]),
+                            "quantity": qty,
+                            "stock":    available,
+                            "action":   f"Added {qty} to cart",
+                        },
+                        fallback_text=_deterministic_confirmation,
+                        customer_language=_lang_label,
+                    )
+                    _p12_meta = get_last_reply_meta()
+                    if _p12_meta.get("status") == "ok":
+                        _cost.record_customer_llm_call(_p12_session)
+                        _write_state_data(phone, business_id, {"session": _p12_session})
+                    _cost.record_llm_usage(
+                        business_id=business_id, phone=phone,
+                        conversation_id=_cost.make_conversation_id(business_id, phone),
+                        intent="add_to_cart", tier="cheap",
+                        provider=_p12_meta.get("provider", ""), model=_p12_meta.get("model", ""),
+                        prompt_tokens=_p12_meta.get("prompt_tokens", 0),
+                        completion_tokens=_p12_meta.get("completion_tokens", 0),
+                        latency_ms=_p12_meta.get("latency_ms", 0),
+                        status=_p12_meta.get("status", "unknown"),
+                    )
+                else:
+                    log.debug("llm_response skipped — %s", _p12_reason)
             except Exception as exc:
                 log.debug("llm_response skipped (%s) — using deterministic confirmation", exc)
                 confirmation_line = _deterministic_confirmation

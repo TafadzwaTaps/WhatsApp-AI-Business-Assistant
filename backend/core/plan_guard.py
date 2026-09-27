@@ -465,6 +465,78 @@ def check_product_limit(business_id: int) -> dict | None:
         }
     return None
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 12 — AI request cap per plan (cost-optimization safeguard)
+# ─────────────────────────────────────────────────────────────────────────────
+# Prevents one abusive customer (or a runaway feature) from generating
+# unlimited AI cost for a single business. This is a request-count cap,
+# not a feature-access gate — every plan, including FREE, keeps full AI
+# ordering; this only bounds how many of those requests may go to an
+# actual LLM (never how many WhatsApp messages the AI can handle overall,
+# which stays unlimited and free on every plan per the deterministic
+# engine's own cost model).
+PLAN_AI_REQUEST_LIMITS: dict[str, int | None] = {
+    "FREE":    50,     # enough for real evaluation without open-ended cost
+    "STARTER": 200,
+    "GROWTH":  1000,
+    "PRO":     None,   # unlimited
+}
+
+
+def get_ai_daily_limit(business_id: int) -> int | None:
+    """
+    Return the daily LLM-request cap for this business's current plan.
+    None means unlimited. Fails safely — returns None (unlimited) on any
+    error, the same "never block on a plan-lookup error" behavior as
+    get_product_limit().
+    """
+    try:
+        plan_info = _get_business_plan(business_id)
+        effective = _normalise_tier(
+            plan_info["tier"], plan_info["billing_status"], plan_info["trial_ends_at"],
+        )
+        return PLAN_AI_REQUEST_LIMITS.get(effective, 50)
+    except Exception as exc:
+        log.warning("get_ai_daily_limit: error for biz %s: %s — allowing", business_id, exc)
+        return None   # fail open: don't block on plan check errors
+
+
+def check_ai_usage_limit(business_id: int) -> dict | None:
+    """
+    Check if this business has reached its daily AI (LLM) request cap.
+
+    Returns None if the cap is not reached (proceed normally — call the
+    LLM). Returns a structured dict if the cap IS reached, so the caller
+    can skip the LLM call and use the deterministic fallback instead:
+        {"error": "ai_quota", "message": "...", "limit": N, "current": N}
+
+    Fails OPEN on any error (unreadable usage log, DB outage, plan lookup
+    failure) — an observability/tracking problem must never turn into a
+    customer-facing outage; it just means this request isn't capped this
+    time.
+    """
+    limit = get_ai_daily_limit(business_id)
+    if limit is None:
+        return None   # unlimited plan, or a lookup error — no check needed
+
+    try:
+        from crud.ai_usage import count_recent_ai_requests
+        current_count = count_recent_ai_requests(business_id, hours=24.0)
+    except Exception as exc:
+        log.warning("check_ai_usage_limit: usage count failed for biz %s: %s — allowing", business_id, exc)
+        return None   # fail open
+
+    if current_count >= limit:
+        log.info("AI_QUOTA: biz=%s limit=%d current=%d", business_id, limit, current_count)
+        return {
+            "error":   "ai_quota",
+            "message": f"Daily AI usage limit ({limit} requests) reached for this business.",
+            "limit":   limit,
+            "current": current_count,
+        }
+    return None
+
+
 def get_trial_status_response(business_id: int) -> dict:
     """
     Return trial status for the dashboard banner.

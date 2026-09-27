@@ -73,9 +73,18 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from typing import Optional
 
 log = logging.getLogger(__name__)
+
+# Phase 12 (AI Cost Optimization): the most recent call's token usage +
+# latency, so generate_natural_reply() can hand it to the caller for
+# tracking without changing _call_openai()/_call_anthropic()'s own return
+# type (both still return Optional[str], exactly as Phase 10 shipped and
+# as test_phase10_llm_response.py's monkeypatches still expect). Set right
+# before each function returns, read (and reset) via get_last_call_meta().
+_last_call_meta: dict = {}
 
 _DEFAULT_MODELS = {
     "openai":    "gpt-4o-mini",
@@ -195,9 +204,11 @@ def _validate_llm_output(raw: str, facts: dict) -> Optional[str]:
 
 
 def _call_openai(model: str, user_content: str, timeout: float) -> Optional[str]:
+    global _last_call_meta
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     if not api_key:
         return None
+    t0 = time.monotonic()
     try:
         import httpx
         resp = httpx.post(
@@ -216,16 +227,26 @@ def _call_openai(model: str, user_content: str, timeout: float) -> Optional[str]
         )
         resp.raise_for_status()
         data = resp.json()
+        usage = data.get("usage") or {}
+        _last_call_meta = {
+            "prompt_tokens":     usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "latency_ms":        int((time.monotonic() - t0) * 1000),
+        }
         return data["choices"][0]["message"]["content"]
     except Exception as exc:
+        _last_call_meta = {"prompt_tokens": 0, "completion_tokens": 0,
+                            "latency_ms": int((time.monotonic() - t0) * 1000)}
         log.warning("llm_response: openai call failed: %s", exc)
         return None
 
 
 def _call_anthropic(model: str, user_content: str, timeout: float) -> Optional[str]:
+    global _last_call_meta
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not api_key:
         return None
+    t0 = time.monotonic()
     try:
         import httpx
         resp = httpx.post(
@@ -245,13 +266,63 @@ def _call_anthropic(model: str, user_content: str, timeout: float) -> Optional[s
         )
         resp.raise_for_status()
         data = resp.json()
+        usage = data.get("usage") or {}
+        _last_call_meta = {
+            "prompt_tokens":     usage.get("input_tokens", 0),
+            "completion_tokens": usage.get("output_tokens", 0),
+            "latency_ms":        int((time.monotonic() - t0) * 1000),
+        }
         return data["content"][0]["text"]
     except Exception as exc:
+        _last_call_meta = {"prompt_tokens": 0, "completion_tokens": 0,
+                            "latency_ms": int((time.monotonic() - t0) * 1000)}
         log.warning("llm_response: anthropic call failed: %s", exc)
         return None
 
 
+def get_last_call_meta() -> dict:
+    """Returns (and resets) the token-usage + latency metadata from the
+    most recent _call_openai()/_call_anthropic() invocation. Phase 12
+    (AI Cost Optimization) tracking reads this immediately after each
+    generate_natural_reply() call; it is never used for anything that
+    affects the customer-facing reply itself."""
+    global _last_call_meta
+    meta, _last_call_meta = _last_call_meta, {}
+    return meta
+
+
 _PROVIDER_NAMES = ("openai", "anthropic")
+
+# Phase 12 (AI Cost Optimization): a consistent-shape record of the most
+# recent generate_natural_reply() call, set right before every return path
+# (including the ones that never reach a provider at all), so a caller can
+# always call get_last_reply_meta() afterwards and get a usable dict —
+# never has to guess which path was taken. Reset to {} the moment it's
+# read, exactly like _last_call_meta above.
+_last_reply_meta: dict = {}
+
+
+def _set_reply_meta(status: str, provider: str = "", model: str = "",
+                     prompt_tokens: int = 0, completion_tokens: int = 0,
+                     latency_ms: int = 0) -> None:
+    global _last_reply_meta
+    _last_reply_meta = {
+        "status": status, "provider": provider, "model": model,
+        "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+        "latency_ms": latency_ms,
+    }
+
+
+def get_last_reply_meta() -> dict:
+    """Returns (and resets) metadata for the most recent
+    generate_natural_reply() call: {status, provider, model,
+    prompt_tokens, completion_tokens, latency_ms}. `status` is one of
+    "disabled" | "unknown_provider" | "no_content" | "no_key_or_error" |
+    "rejected" | "ok" | "error". Purely for Phase 12 usage tracking —
+    never affects the reply itself."""
+    global _last_reply_meta
+    meta, _last_reply_meta = _last_reply_meta, {}
+    return meta
 
 
 def is_enabled() -> bool:
@@ -273,11 +344,13 @@ def generate_natural_reply(
     feature is off, unconfigured, or anything at all goes wrong.
     """
     if not is_enabled():
+        _set_reply_meta("disabled")
         return fallback_text
 
     provider = os.getenv("AI_RESPONSE_LLM_PROVIDER", "openai").strip().lower()
     if provider not in _PROVIDER_NAMES:
         log.debug("llm_response: unknown provider %r — using fallback", provider)
+        _set_reply_meta("unknown_provider", provider=provider)
         return fallback_text
     # Looked up via the module's own globals (not a dict bound at import
     # time) so tests can monkeypatch services.llm_response._call_openai /
@@ -305,17 +378,36 @@ def generate_natural_reply(
         full_facts = {**safe_facts, "customer_language": customer_language}
         user_content = _facts_to_prompt_block(full_facts)
         if not user_content:
+            _set_reply_meta("no_content", provider=provider, model=model)
             return fallback_text
 
         raw = call_fn(model, user_content, timeout)
+        call_meta = get_last_call_meta()
         if raw is None:
+            _set_reply_meta(
+                "no_key_or_error", provider=provider, model=model,
+                latency_ms=call_meta.get("latency_ms", 0),
+            )
             return fallback_text
 
         validated = _validate_llm_output(raw, facts)
         if validated is None:
+            _set_reply_meta(
+                "rejected", provider=provider, model=model,
+                prompt_tokens=call_meta.get("prompt_tokens", 0),
+                completion_tokens=call_meta.get("completion_tokens", 0),
+                latency_ms=call_meta.get("latency_ms", 0),
+            )
             return fallback_text
 
+        _set_reply_meta(
+            "ok", provider=provider, model=model,
+            prompt_tokens=call_meta.get("prompt_tokens", 0),
+            completion_tokens=call_meta.get("completion_tokens", 0),
+            latency_ms=call_meta.get("latency_ms", 0),
+        )
         return validated
     except Exception as exc:
         log.warning("llm_response: generate_natural_reply failed (%s) — using fallback", exc)
+        _set_reply_meta("error", provider=provider, model=model)
         return fallback_text
