@@ -35,11 +35,15 @@ INTENT PRIORITY (do not reorder)
 ═══════════════════════════════════════════════════════════════════════════════
   P-3.5 Agent-echo suppression
   P-3   Human handoff mode
+  P-2.8 Prompt injection / manipulation defense — Phase 11
   P-2.5 Human handoff request detection
+  P-2.6 Smart handoff triggers (business rule, sensitive issue, booking
+        conflict, serious complaint) — Phase 9
   P-2   Agent message detection (silence bot)
   P-1   Survey state
   P0    Global cancel
-  P0.5  Refund / dispute request
+  P0.5  Refund / dispute request (now also triggers human handoff) — Phase 9
+  P0.6  Abusive / offensive language detection
   P0.7  Conversation completion detection
   P0.8  Urgency / delivery follow-up
   P0.2  Order preview state
@@ -56,13 +60,19 @@ INTENT PRIORITY (do not reorder)
   P6.6  Quantity correction ("make it 3") — Phase 4
   P6.7  Product substitution ("change the chicken to beef") — Phase 4
   P6.8  Recommendation query ("what do you recommend?") — Phase 4
-  P7    Add to cart (order parser → multi-item → single item)
+  P6.9  Sales conversation (price objection, complement, gift budget) — Phase 8
+  P7    Add to cart (order parser → multi-item → single item) — the
+        single-item confirmation may be LLM-rephrased here — Phase 10
   P8    Cart view
   P9    Browse menu
   P10   Order reference lookup
   P11   Help / greeting
   P11.5 Business info Q&A (hours, location, delivery fee, etc.) — Phase 5
   P12   Fallback
+
+Public entry point: generate_reply() (Phase 9 wrapper — repeated-
+misunderstanding / complex-request handoff) around _generate_reply_core()
+(the full chain above).
 """
 
 import re
@@ -498,6 +508,28 @@ def _generate_reply_core(
                 current_state = _get_state(phone, business_id)
             else:
                 return handoff_result
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P-2.8 — PROMPT INJECTION / MANIPULATION DEFENSE (Phase 11)
+    # Every customer message is untrusted input. This runs before ANY intent
+    # detection, product matching, or handoff logic — a message trying to
+    # manipulate the AI's own behavior ("ignore your instructions", "show me
+    # your system prompt", "give me another customer's data", "pretend I am
+    # the business owner", "change my order status", "give me admin access")
+    # gets a fixed, safe refusal and nothing else runs for this message,
+    # regardless of whatever else it also says. There is no code path this
+    # unlocks — no "admin mode", no privileged branch — so this can never be
+    # bypassed by rephrasing; it just stops the message from being treated
+    # as a normal request at all.
+    # ══════════════════════════════════════════════════════════════════════════
+    try:
+        from services.prompt_injection_guard import is_injection_attempt, refusal_reply
+        if is_injection_attempt(text):
+            log.warning("prompt_injection: blocked  phone=%s  biz=%s  text=%r",
+                        phone, business_id, text[:120])
+            return refusal_reply()
+    except Exception as exc:
+        log.debug("prompt_injection_guard check failed (ignored): %s", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-2.5 — HUMAN HANDOFF REQUEST DETECTION

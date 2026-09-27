@@ -184,9 +184,22 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
                 "or type *help* for assistance."
             )
 
-        if str(order.get("customer_phone", "")).replace("+", "") != str(phone).replace("+", ""):
-            if order.get("business_id") != business_id:
-                return f"❓ I couldn't find *{_ref_word}-{order_id}* for your account."
+        # Phase 11 (AI Safety): ownership check — an order must belong to
+        # BOTH this business AND this customer's own phone number, or it is
+        # treated as not found. The previous version of this check only
+        # rejected when BOTH conditions failed at once (an AND instead of
+        # an OR), which meant any customer of the SAME business could view
+        # another customer's order — full status, payment status, total,
+        # dates — just by guessing/incrementing the numeric order id
+        # ("ORDER-42"). This is exactly the "expose another customer's
+        # data" case Phase 11 explicitly prohibits, so it's fixed here
+        # rather than only detected/refused at the prompt-injection layer.
+        _order_phone_matches = (
+            str(order.get("customer_phone", "")).replace("+", "") == str(phone).replace("+", "")
+        )
+        _order_business_matches = order.get("business_id") == business_id
+        if not (_order_phone_matches and _order_business_matches):
+            return f"❓ I couldn't find *{_ref_word}-{order_id}* for your account."
 
         status         = order.get("status", "pending")
         payment_status = order.get("payment_status", "pending")
@@ -503,9 +516,16 @@ def _process_payment(
                     f"Type *menu* to see what's available. 😊"
                 )
 
+        # Phase 11 (AI Safety): never echo the raw exception text to the
+        # customer — order_lifecycle.py's own ValueError messages can
+        # include the underlying Postgres/Supabase error (schema, column,
+        # or constraint details), which is internal database information
+        # and must never reach WhatsApp. The real exc_str is already
+        # logged above (log.warning) for the business/developer to see.
         return (
-            f"⚠️ Couldn't place your order:\n_{exc_str}_\n\n"
-            "Please adjust your cart and try *checkout* again."
+            "⚠️ Couldn't place your order right now.\n\n"
+            "Please adjust your cart and try *checkout* again, "
+            "or type *agent* if this keeps happening."
         )
     except Exception as exc:
         log.exception("order creation error: %s", exc)

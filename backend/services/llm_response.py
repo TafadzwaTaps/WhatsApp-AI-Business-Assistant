@@ -93,6 +93,9 @@ _SUSPICIOUS_OUTPUT_PATTERNS = (
     "system prompt", "as an ai language model", "i am an ai",
     "ignore previous instructions", "ignore the above",
     "my instructions are", "i was instructed to",
+    # Phase 11 (AI Safety): the same categories the prompt-injection guard
+    "api key", "admin access", "database schema", "administrator access",
+    "developer mode", "here is my prompt",
 )
 
 _SYSTEM_PROMPT = (
@@ -289,7 +292,17 @@ def generate_natural_reply(
         timeout = 6.0
 
     try:
-        full_facts = {**facts, "customer_language": customer_language}
+        # Phase 11 (AI Safety): explicit allowlist boundary at this
+        # interface — even though every caller today already only ever
+        # builds a small, known-safe facts dict, this is the "explicit
+        # tool/action boundary" enforced at the model interface itself,
+        # not just by trusting callers to behave. Anything not on the
+        # allowlist (including, hypothetically, a raw customer message or
+        # a secret-shaped string) is dropped before it can reach a prompt.
+        from services.prompt_injection_guard import sanitize_llm_facts
+        safe_facts = sanitize_llm_facts(facts)
+
+        full_facts = {**safe_facts, "customer_language": customer_language}
         user_content = _facts_to_prompt_block(full_facts)
         if not user_content:
             return fallback_text
