@@ -2523,10 +2523,38 @@ def _generate_reply_core(
             log.info("added  %s ×%d  phone=%s", product_name, qty, phone)
 
             qty_label = f" ×{qty}" if qty > 1 else ""
-            msg = (
-                f"👍 Nice choice! Added *{product_name}*{qty_label} to your cart.\n\n"
-                f"{_format_cart(cart, _currency_sym)}"
-            )
+            _deterministic_confirmation = f"👍 Nice choice! Added *{product_name}*{qty_label} to your cart."
+
+            # Phase 10 — AI-Generated Response Layer. Only the single
+            # confirmation SENTENCE is ever handed to an LLM to rephrase —
+            # never the cart listing below it, which stays 100% deterministic
+            # (it's a direct, verified readout of `cart`, the source of
+            # truth). Off by default (AI_RESPONSE_LLM_ENABLED); when off, or
+            # on any error, this returns _deterministic_confirmation
+            # completely unchanged — see services/llm_response.py.
+            confirmation_line = _deterministic_confirmation
+            try:
+                from services.llm_response import generate_natural_reply
+                from services.translation_layer import get_customer_language
+                from services.language_commands import _LANGUAGE_LABELS
+                _lang_code  = get_customer_language(phone, business_id)
+                _lang_label = _LANGUAGE_LABELS.get(_lang_code, "English")
+                confirmation_line = generate_natural_reply(
+                    facts={
+                        "product":  product_name,
+                        "price":    float(product["price"]),
+                        "quantity": qty,
+                        "stock":    available,
+                        "action":   f"Added {qty} to cart",
+                    },
+                    fallback_text=_deterministic_confirmation,
+                    customer_language=_lang_label,
+                )
+            except Exception as exc:
+                log.debug("llm_response skipped (%s) — using deterministic confirmation", exc)
+                confirmation_line = _deterministic_confirmation
+
+            msg = f"{confirmation_line}\n\n{_format_cart(cart, _currency_sym)}"
 
             try:
                 _get_sugg, _, _get_upsell, _fmt = _sales_ai()
