@@ -61,6 +61,17 @@ _SERIOUS_COMPLAINT_PHRASES = (
     "how dare you", "this is a joke", "what a joke", "you people",
     "third time this has happened", "keeps happening", "still not resolved",
     "still hasn't been resolved", "nobody is helping me", "no one is helping me",
+    # Phase 15 (Final AI Quality Audit): plain, low-key complaint phrasing
+    # that real customers actually send but that the more emphatic phrases
+    # above don't catch — a wrong order and a flat "i'm unhappy" are both
+    # genuine complaints, just phrased quietly rather than furiously.
+    # NOTE: "i want a refund" is deliberately NOT in this list — it's
+    # already handled by the more specific _is_refund_request() flow
+    # (services/ai.py, ~line 800), which does a real order lookup before
+    # handing off; adding it here would hijack that richer flow, since
+    # is_serious_complaint() is checked earlier in the priority chain.
+    "my order is wrong", "order is wrong", "order was wrong", "wrong order",
+    "i'm unhappy", "im unhappy", "i am unhappy", "not happy",
 )
 
 

@@ -111,9 +111,34 @@ def _strip_intent_prefix(text: str) -> str:
     return _STRIP_PREFIXES.sub("", text.strip()).strip()
 
 
+# Phase 15: bare acknowledgement words that must never be treated as a
+# product reference, however a fuzzy scorer might rate them against a
+# short product name. Deliberately the same vocabulary services/_ai_intent.
+# py's own _YES_WORDS/_NO_WORDS already use for the same words elsewhere in
+# the pipeline — kept as its own local tuple (not imported) to avoid a new
+# cross-module dependency in this low-level, dependency-free utility.
+_NON_PRODUCT_ACKNOWLEDGEMENTS = frozenset({
+    "yes", "y", "yep", "yeah", "yup", "confirm", "ok", "okay", "sure",
+    "go ahead", "proceed", "no", "n", "nope", "nah", "not yet", "wait",
+    "hold on",
+})
+
+
 def _normalise(text: str) -> str:
-    """Lowercase, strip extra whitespace."""
-    return " ".join(text.lower().split())
+    """Lowercase, strip extra whitespace, and drop trailing sentence
+    punctuation.
+
+    Phase 15 (Final AI Quality Audit) GAP FOUND: a message ending in a
+    period — e.g. the translation layer's own output for "Ndingada huku
+    mbiri." is "i want 2 chicken." — was matching the WRONG product (or
+    nothing) when a leading quantity was also present, because the
+    trailing "." stayed glued to the last word and defeated both the exact
+    name-map lookup and the fuzzy scoring below. No product name legitimately
+    ends in punctuation, so stripping it here can only ever help a match
+    succeed; it can never turn a correct match into a wrong one.
+    """
+    t = " ".join(text.lower().split())
+    return t.rstrip(".,!?;:")
 
 
 def _simple_plural(name: str) -> str:
@@ -188,6 +213,19 @@ def find_product(text: str, products: list) -> Optional[dict]:
     # 1. Exact
     if t in name_map:
         return name_map[t]
+
+    # Phase 15 (Final AI Quality Audit) GAP FOUND: a bare conversational
+    # acknowledgement ("yes", "ok", "sure", "no"...) is short enough that
+    # rapidfuzz/difflib's similarity scoring can spuriously clear the 60%
+    # cutoff against an unrelated short product name (observed: "yes"
+    # scored a confident match against "Fries"), silently adding an item
+    # the customer never named. These words are never product references
+    # (no real product is named "yes"), so they're excluded from fuzzy
+    # scoring entirely — exact/intent-prefix matches above are unaffected,
+    # since a business could in principle name a product exactly "yes" and
+    # still have it found by the exact-match branch.
+    if t in _NON_PRODUCT_ACKNOWLEDGEMENTS:
+        return None
 
     # 2. Strip intent prefix
     cleaned = _normalise(_strip_intent_prefix(t))

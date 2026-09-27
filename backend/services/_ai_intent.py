@@ -411,7 +411,16 @@ def _intent(text: str) -> str:
     ]) or t in ("menu", "list", "catalog"):
         return "browse"
 
-    if (any(w in t for w in ["help", "hi ", "hello", "hey ", "hie", "howzit"])
+    if (any(w in t for w in [
+                "help", "hi ", "hello", "hey ", "hie", "howzit",
+                # Phase 15 (Final AI Quality Audit): plain time-of-day
+                # greetings and a friendly "how are you" opener are
+                # ordinary small talk a WhatsApp customer would actually
+                # send first — they were falling through to the generic
+                # "I didn't understand" fallback, which reads as broken on
+                # the very first message of a conversation.
+                "good morning", "good afternoon", "good evening", "how are you",
+            ])
             or t in ("hi", "hello", "hey", "hie", "yo", "sup", "howzit", "start", "help",
                      "commands", "options", "what can you do", "what can i do",
                      "what can i type", "what do i type", "list commands", "list")):

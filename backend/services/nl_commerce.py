@@ -213,6 +213,12 @@ def filter_recommended_products(
 _CHEAPER_PHRASES = (
     "cheaper one", "the cheap one", "cheaper option", "less expensive one",
     "the cheapest", "cheapest one", "cheapest option",
+    # Phase 15 (Final AI Quality Audit): a bare "anything cheaper?" is one
+    # of the spec's own worked examples and is just as much a comparative
+    # reference to what was just shown as "the cheaper one" — it was
+    # falling through because it doesn't contain the word "one"/"option".
+    "anything cheaper", "something cheaper", "do you have anything cheaper",
+    "got anything cheaper",
 )
 _PRICIER_PHRASES = (
     "more expensive one", "pricier one", "expensive one", "premium one",

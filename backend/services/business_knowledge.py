@@ -81,6 +81,14 @@ _DELIVERY_AREA_PHRASES = (
 _DELIVERY_FEE_PHRASES = (
     "delivery fee", "delivery cost", "delivery charge", "how much is delivery",
     "how much for delivery", "shipping fee", "shipping cost", "cost of delivery",
+    # Phase 15 (Final AI Quality Audit): a bare "do you deliver?" is a very
+    # common first question and was falling through to the generic fallback
+    # because no phrase list contained bare "deliver". Safe to add here
+    # (rather than to _DELIVERY_AREA_PHRASES) because "do you deliver to
+    # <place>" phrases are checked first and already win that match, and a
+    # real delivery_fee answer is more informative than a location-list
+    # non-answer when the business hasn't set areas.
+    "do you deliver", "do you offer delivery", "is delivery available",
 )
 _LOCATION_PHRASES = (
     "where are you", "your location", "where is your", "your address",
@@ -92,6 +100,13 @@ _PAYMENT_METHODS_PHRASES = (
     "what payment methods", "payment methods", "how can i pay", "how do i pay",
     "payment options", "ways to pay", "how do you accept payment",
     "what payments do you accept",
+    # Phase 15 (Final AI Quality Audit): "can I pay by card?" is one of the
+    # spec's own worked examples and was falling through this category
+    # entirely (none of the phrases above match "pay by") — it was then
+    # being fuzzy-matched to an unrelated product and silently added to
+    # the cart instead of getting a real answer.
+    "pay by card", "pay by cash", "can i pay by", "do you accept card",
+    "do you accept cash", "where do i send payment", "where do i pay",
 )
 _RETURN_POLICY_PHRASES = (
     "return policy", "can i return", "how do returns work",

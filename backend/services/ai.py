@@ -64,6 +64,9 @@ INTENT PRIORITY (do not reorder)
   P6.95 Image understanding (product-lookup photo / damaged-item photo) —
         Phase 13, only when the state-specific image flows above (proof of
         payment, etc.) didn't already claim the message
+  P6.96 Product price / availability question ("how much is the chicken?",
+        "do you have beef?") — answered directly, never added to cart —
+        Phase 15
   P7    Add to cart (order parser → multi-item → single item) — the
         single-item confirmation may be LLM-rephrased here — Phase 10,
         gated by model routing + per-business/per-customer cost
@@ -2544,6 +2547,108 @@ def _generate_reply_core(
             )
         except Exception as exc:
             log.debug("image-understanding reply failed (%s) — falling through", exc)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.96 — PRODUCT PRICE / AVAILABILITY QUESTION (Phase 15)
+    # ══════════════════════════════════════════════════════════════════════════
+    # GAP FOUND during the Phase 15 quality audit: _intent() (services/_ai_
+    # intent.py) has no separate bucket for a plain question — anything that
+    # isn't checkout/remove/cart/browse/help falls through to "order", so a
+    # customer asking "how much is the chicken?" or "do you have beef?" was
+    # reaching P7 below and being silently ADDED TO THE CART — a real
+    # business action the customer never asked for, from a message that was
+    # only ever a question. That's a direct violation of "only take actions
+    # the customer actually asked for", so it's fixed here rather than left
+    # as a documented gap.
+    #
+    # Reuses services/intent_engine.py's own already-written phrase lists
+    # (built for exactly this distinction, previously wired only into the
+    # separate lazy analytics classifier — see conversation_analytics.py —
+    # never into the live reply path) so this is additive, not a new
+    # detector: same phrases, same deterministic _find_product() every
+    # other flow here already uses, same real product fields. Never touches
+    # cart or state, so it can only ever prevent an unwanted action, never
+    # cause a regression in the actual ordering flow below it — a message
+    # that also contains a real order intent (a quantity, "add", "I want")
+    # never reaches here because those phrasings don't match the question
+    # phrase lists.
+    if intent == "order":
+        # ── P6.96a: defer to the existing P11.5 business-info Q&A when it
+        # already has a real answer ──────────────────────────────────────
+        # GAP FOUND: the same mis-classification affects ANY business-info
+        # question, not just price/availability — "can I pay by card?" was
+        # observed being silently fuzzy-matched to "Fries" and added to the
+        # cart, because _intent() also has no bucket for a payment/hours/
+        # location/etc. question and P11.5 (business_knowledge.py) only
+        # ever runs AFTER P7 below. Reusing detect_business_info_category()
+        # /build_business_info_answer() here — the exact same pure,
+        # DB-only, never-a-guess functions P11.5 already calls — means a
+        # question this business HAS real data for is answered immediately
+        # and never risks being read as an order. When there's no real data
+        # for the category, nothing is returned here and the message falls
+        # through exactly as it always did, all the way to P11.5's own
+        # "not sure yet" honest fallback further down — so this can only
+        # ever prevent an unwanted cart action, never change what a
+        # genuinely unanswerable question gets back.
+        try:
+            from services.business_knowledge import (
+                detect_business_info_category as _p696_detect_cat,
+                build_business_info_answer as _p696_build_answer,
+            )
+            _p696_category = _p696_detect_cat(text)
+            if _p696_category:
+                try:
+                    _p696_biz_record = crud.get_business_by_id(business_id) or {}
+                except Exception as exc:
+                    log.warning("P6.96a: get_business_by_id failed: %s", exc)
+                    _p696_biz_record = {}
+                _p696_answer = _p696_build_answer(
+                    _p696_category, _p696_biz_record, business_name, _currency_sym,
+                )
+                if _p696_answer:
+                    return _p696_answer
+        except Exception as exc:
+            log.debug("P6.96a business-info pre-check failed (%s) — falling through", exc)
+
+        try:
+            from services.intent_engine import _PRICE_PHRASES, _AVAILABILITY_PHRASES
+            _pq_t = text.lower().strip()
+            _pq_is_price = any(p in _pq_t for p in _PRICE_PHRASES)
+            _pq_is_avail = (not _pq_is_price) and any(p in _pq_t for p in _AVAILABILITY_PHRASES)
+            if _pq_is_price or _pq_is_avail:
+                _pq_stripped = _pq_t
+                for _p in (_PRICE_PHRASES if _pq_is_price else _AVAILABILITY_PHRASES):
+                    _pq_stripped = _pq_stripped.replace(_p, " ")
+                _pq_stripped = _pq_stripped.strip(" ?!.") or _pq_t
+                _pq_match = _find_product(_pq_stripped, products)
+                if _pq_match:
+                    _pq_available = _resolve_stock(_pq_match, _is_service_biz)
+                    if _pq_is_price:
+                        _pq_stock_note = " — currently out of stock" if _pq_available == 0 else ""
+                        return (
+                            f"💰 *{_pq_match['name']}* is {_currency_sym}{float(_pq_match['price']):.2f}"
+                            f"{_pq_stock_note}.\n\n"
+                            f"_Type the item name to add it to your cart._"
+                        )
+                    if _pq_available == 0:
+                        return (
+                            f"😔 *{_pq_match['name']}* is currently out of stock.\n\n"
+                            f"_Type *menu* to see what's available right now._"
+                        )
+                    return (
+                        f"✅ Yes, we have *{_pq_match['name']}* — "
+                        f"{_currency_sym}{float(_pq_match['price']):.2f}.\n\n"
+                        f"_Type the item name to add it to your cart._"
+                    )
+                # No product matched this question — do NOT claim "not
+                # found" and stop here: the phrase might not be about a
+                # product at all ("how much is delivery?" also matches
+                # _PRICE_PHRASES), so let the message fall through to the
+                # rest of the pipeline (P11.5's business Q&A, P12's
+                # fallback, etc.) exactly as it would have before this
+                # block existed. Only a REAL match short-circuits here.
+        except Exception as exc:
+            log.debug("P6.96 product price/availability question check failed (%s) — falling through", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P7 — ADD TO CART (order parser → multi-item → single item)
