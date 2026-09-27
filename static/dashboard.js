@@ -579,7 +579,7 @@ function showSection(name, btn) {
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
-  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); try { loadSatisfactionScore(); } catch(_){} try { showShareStoreBanner(); } catch(_){} }
+  if (name==='overview') { loadCustomerStats(); loadRepeatCustomerStat(); try { loadSatisfactionScore(); } catch(_){} try { showShareStoreBanner(); } catch(_){} try { loadNeedsAttention(); } catch(_){} }
   if (name==='handoff') loadHandoffStats();
   if (name==='broadcast') { loadCustomers(); loadCampaignAudiences(); loadBcCustomerPicker(); updateBcRecipientPreview('all'); }
   if (name==='settings') { loadSettings(); loadTemplates(); }
@@ -587,6 +587,68 @@ function showSection(name, btn) {
   if (name==='reminders') loadReminders();
   if (name==='bookings') loadBookings();
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// NEEDS ATTENTION (UI/UX enhancement) — dashboard overview panel answering
+// "what needs my attention today?". Reuses already-existing endpoints
+// (orders, products, handoff stats, conversations) rather than adding a new
+// aggregating backend route. Each signal is fetched independently so one
+// failing call never blanks the whole panel — it's just left out that time.
+// Per audit rule #62 (no fake data): a signal that fails to load is simply
+// omitted, never shown as a fabricated "0" or "—".
+// ════════════════════════════════════════════════════════════════════════════
+async function loadNeedsAttention() {
+  const panel = document.getElementById('needs-attention-panel');
+  const body  = document.getElementById('needs-attention-body');
+  if (!panel || !body) return;
+
+  const items = [];
+
+  try {
+    const raw = await apiFetch(ROUTES.orders);
+    const orders = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
+    const awaitingPay = orders.filter(o => ['awaiting_payment','payment_review','pending_cash'].includes(o.status)).length;
+    if (awaitingPay > 0) items.push({ icon: '💳', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders' });
+    const toFulfill = orders.filter(o => ['confirmed','preparing','ready'].includes(o.status)).length;
+    if (toFulfill > 0) items.push({ icon: '📦', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders' });
+  } catch (_) { /* omit this signal rather than show a fake number */ }
+
+  try {
+    const raw = await apiFetch(ROUTES.products);
+    const products = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
+    const lowStock = products.filter(p => _isProdOos(p) || _isProdLowStock(p)).length;
+    if (lowStock > 0) items.push({ icon: '⚠️', text: `${lowStock} product${lowStock!==1?'s':''} low or out of stock`, section: 'products' });
+  } catch (_) {}
+
+  try {
+    const hf = await apiFetch('/analytics/handoff-stats');
+    if (hf && hf.active_count > 0) items.push({ icon: '🔴', text: `${hf.active_count} customer${hf.active_count!==1?'s':''} waiting for human help`, section: 'handoff' });
+  } catch (_) {}
+
+  try {
+    const raw = await apiFetch(ROUTES.conversations);
+    const convos = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
+    const unread = convos.reduce((s,c) => s + (c.unread_count||0), 0);
+    if (unread > 0) items.push({ icon: '💬', text: `${unread} unread conversation${unread!==1?'s':''}`, section: 'conversations' });
+  } catch (_) {}
+
+  if (!items.length) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+  body.innerHTML = items.map(i => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;">
+      <span>${i.icon} ${escHtml(i.text)}</span>
+      <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="showSection('${i.section}', null)">Review →</button>
+    </div>`).join('');
+}
+
+// Accessibility: ESC closes the customer/order drawers, wherever the focus is.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const cd = document.getElementById('customer-drawer');
+  const od = document.getElementById('order-drawer');
+  if (cd && cd.classList.contains('open')) closeDrawer();
+  if (od && od.classList.contains('open')) closeOrderDrawer();
+});
 
 // ── TOAST ─────────────────────────────────────────────────
 function toast(msg, isError=false) {
@@ -853,18 +915,23 @@ async function loadOrders() {
 // lifecycle, so the service-business set is intentionally shorter.
 const _ORDER_STATUS_LABELS = {
   all: 'All Statuses', pending: 'Pending', pending_cash: 'Confirmed (Cash)',
+  awaiting_payment: 'Awaiting Payment', payment_review: 'Payment Review',
   confirmed: 'Confirmed', preparing: 'Preparing', ready: 'Ready',
   out_for_delivery: 'Out for Delivery', delivered: 'Delivered',
-  completed: 'Completed', cancelled: 'Cancelled',
+  completed: 'Completed', cancelled: 'Cancelled', refunded: 'Refunded',
 };
 const _ORDER_STATUS_LABELS_SERVICE = {
   all: 'All Statuses', pending: 'Pending', pending_cash: 'Confirmed (Cash)',
-  confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled',
+  awaiting_payment: 'Awaiting Payment', payment_review: 'Payment Review',
+  confirmed: 'Confirmed', completed: 'Completed', cancelled: 'Cancelled', refunded: 'Refunded',
 };
 // Filter option ORDER per business type — product keeps every existing
 // status; service drops the delivery-fulfillment-only steps.
-const _ORDER_STATUS_KEYS_PRODUCT = ['all','pending','pending_cash','confirmed','preparing','ready','out_for_delivery','delivered','completed','cancelled'];
-const _ORDER_STATUS_KEYS_SERVICE = ['all','pending','pending_cash','confirmed','completed','cancelled'];
+// UI/UX audit: previously missing awaiting_payment/payment_review/refunded,
+// which the backend (order_lifecycle.py VALID_STATUSES) already supports —
+// orders in those states rendered with a raw/blank-looking status badge.
+const _ORDER_STATUS_KEYS_PRODUCT = ['all','pending','pending_cash','awaiting_payment','payment_review','confirmed','preparing','ready','out_for_delivery','delivered','completed','cancelled','refunded'];
+const _ORDER_STATUS_KEYS_SERVICE = ['all','pending','pending_cash','awaiting_payment','payment_review','confirmed','completed','cancelled','refunded'];
 
 function _populateOrderStatusFilter() {
   const sel = document.getElementById('order-status-filter');
@@ -888,7 +955,7 @@ function renderOrders(orders, bodyId, showStatus) {
   if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
   tbody.innerHTML=rows.map(o=>{
     const status = o.status || 'pending';
-    return `<tr>
+    return `<tr onclick="openOrderDrawer(${o.id})" style="cursor:pointer;" title="Click to view order details">
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
     <td>${escHtml(o.customer_phone||'—')}</td>
     <td>${escHtml(o.product_name||'—')}</td>
@@ -1001,7 +1068,13 @@ function _isProdOos(p) {
 }
 function _isProdLowStock(p) {
   if (window.IS_SERVICE_BUSINESS) return false;
-  return typeof p.stock === 'number' && p.stock > 0 && p.stock <= 5;
+  // UI/UX audit: the backend already stores a real, configurable
+  // low_stock_threshold per product (default 5) and uses it server-side
+  // (crud.get_low_stock_products) — this used to hardcode "<= 5" for every
+  // product regardless of its own threshold, so a product a business had
+  // deliberately set a higher/lower threshold for showed the wrong badge.
+  const threshold = (typeof p.low_stock_threshold === 'number') ? p.low_stock_threshold : 5;
+  return typeof p.stock === 'number' && p.stock > 0 && p.stock <= threshold;
 }
 function _prodStatusBadge(p) {
   if (_isProdOos(p))         return `<span class="prod-status-oos">● Out of Stock</span>`;
@@ -3081,6 +3154,18 @@ async function init(){
     window.history.replaceState({}, '', window.location.pathname);
   }
 
+  // Deep link from Live Inbox's "Orders" quick action (?openOrdersFor=<phone>)
+  // — jumps straight to that customer's orders instead of the dashboard home.
+  const _openOrdersFor = _urlParams.get('openOrdersFor');
+  if (_openOrdersFor) {
+    window.history.replaceState({}, '', window.location.pathname);
+    setTimeout(() => {
+      showSection('orders', null);
+      const search = document.getElementById('order-search');
+      if (search) { search.value = _openOrdersFor; filterOrdersBySearch(_openOrdersFor); }
+    }, 500);
+  }
+
   // Load currency symbol BEFORE any money rendering, so the first paint of
   // Orders/Products/stats is correct rather than briefly flashing '$' and
   // never refreshing (this was the root cause of currency "not applying
@@ -3088,7 +3173,7 @@ async function init(){
   if (token) { try { await getCachedMe(); } catch (_) {} }
 
   if(userRole==='superadmin'){loadAdminData();}
-  else{loadOrders();loadProducts();loadConversations();loadCustomerStats();}
+  else{loadOrders();loadProducts();loadConversations();loadCustomerStats();try{loadNeedsAttention();}catch(_){}}
   // H4: redirect to Stripe checkout if user just signed up from pricing page
   checkPendingCheckout();
   // Sprint 8: single consolidated post-auth init (replaces scattered DOM listeners)
@@ -3525,9 +3610,25 @@ function closeDrawer() {
   _drawerCustomer = null;
 }
 
+// UI/UX audit: Customer → Orders had no working link at all — this jumps
+// to the Orders section and reuses the search box added there to filter
+// down to just this customer's orders, rather than building a second view.
+function viewOrdersForDrawer() {
+  if (!_drawerCustomer || !_drawerCustomer.phone) return;
+  const phone = _drawerCustomer.phone;
+  closeDrawer();
+  showSection('orders', null);
+  setTimeout(() => {
+    const search = document.getElementById('order-search');
+    if (search) { search.value = phone; filterOrdersBySearch(phone); }
+  }, 300);
+}
+
 function openInboxForDrawer() {
   if (_drawerCustomer && _drawerCustomer.phone) {
-    window.open('/inbox', '_blank');
+    // Deep-link straight to this customer's conversation (inbox.js reads
+    // ?phone= on load) instead of dropping the agent on the inbox home screen.
+    window.open('/inbox?phone=' + encodeURIComponent(_drawerCustomer.phone), '_blank');
   }
   closeDrawer();
 }
@@ -3823,9 +3924,103 @@ function setOrderView(mode) {
 
 function filterOrdersByStatus(status) {
   _orderStatusFilter = status;
-  const filtered = status === 'all' ? _ordersData : _ordersData.filter(o => o.status === status);
+  applyOrderListFilters();
+}
+
+// UI/UX audit: Orders had a status filter but no search box, even though
+// order IDs/phone numbers/product names are already loaded client-side.
+// Combines with the existing status filter rather than replacing it.
+let _orderSearchQuery = '';
+function filterOrdersBySearch(query) {
+  _orderSearchQuery = (query || '').trim().toLowerCase();
+  applyOrderListFilters();
+}
+
+function applyOrderListFilters() {
+  let filtered = _orderStatusFilter === 'all' ? _ordersData : _ordersData.filter(o => o.status === _orderStatusFilter);
+  if (_orderSearchQuery) {
+    const q = _orderSearchQuery;
+    filtered = filtered.filter(o =>
+      String(o.id||'').includes(q) ||
+      (o.customer_phone||'').toLowerCase().includes(q) ||
+      (o.product_name||'').toLowerCase().includes(q)
+    );
+  }
   renderOrders(filtered, 'orders-body', true);
-  if (_ordersView === 'kanban') renderKanban(_ordersData);
+  if (_ordersView === 'kanban') renderKanban(filtered);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ORDER DETAIL DRAWER (UI/UX enhancement) — reuses the customer-drawer CSS
+// component. Clicking any order row opens this instead of navigating away.
+// ════════════════════════════════════════════════════════════════════════════
+let _orderDrawerOrder = null;
+
+function openOrderDrawer(orderId) {
+  const order = _ordersData.find(o => o.id === orderId);
+  if (!order) { toast('Order not found', true); return; }
+  _orderDrawerOrder = order;
+  const status = order.status || 'pending';
+  const labels = window.IS_SERVICE_BUSINESS ? _ORDER_STATUS_LABELS_SERVICE : _ORDER_STATUS_LABELS;
+  const keys   = window.IS_SERVICE_BUSINESS ? _ORDER_STATUS_KEYS_SERVICE  : _ORDER_STATUS_KEYS_PRODUCT;
+
+  document.getElementById('order-drawer-id').textContent        = `ORDER #${order.id}`;
+  document.getElementById('order-drawer-time').textContent      = fmtTime(order.created_at || order.createdAt || order.timestamp) || '—';
+  document.getElementById('order-drawer-customer').textContent  = order.customer_phone || '—';
+  document.getElementById('order-drawer-qty').textContent       = order.quantity || 0;
+  document.getElementById('order-drawer-total').textContent     = getCurrencySymbol() + parseFloat(order.total_price||0).toFixed(2);
+  document.getElementById('order-drawer-status-badge').textContent = labels[status] || status;
+  document.getElementById('order-drawer-item').textContent      = order.product_name || '—';
+
+  const sel = document.getElementById('order-drawer-status-select');
+  sel.innerHTML = keys.filter(k => k !== 'all').map(k => `<option value="${k}">${labels[k]}</option>`).join('');
+  sel.value = keys.includes(status) ? status : keys[0];
+
+  document.getElementById('order-drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+}
+
+function closeOrderDrawer() {
+  const d = document.getElementById('order-drawer');
+  if (d) d.classList.remove('open');
+  if (!document.getElementById('customer-drawer').classList.contains('open')) {
+    document.getElementById('drawer-overlay').classList.remove('open');
+  }
+  _orderDrawerOrder = null;
+}
+
+async function updateOrderStatusFromDrawer() {
+  if (!_orderDrawerOrder) return;
+  const sel = document.getElementById('order-drawer-status-select');
+  const pick = sel.value;
+  if (pick === (_orderDrawerOrder.status || 'pending')) { closeOrderDrawer(); return; }
+  try {
+    await apiFetch(`/orders/${_orderDrawerOrder.id}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
+    toast(`✅ Order #${_orderDrawerOrder.id} → ${pick}`);
+    closeOrderDrawer();
+    await loadOrders();
+  } catch (e) { toast('Update failed: ' + e.message, true); }
+}
+
+function contactCustomerFromOrderDrawer() {
+  if (!_orderDrawerOrder || !_orderDrawerOrder.customer_phone) return;
+  window.open('/inbox?phone=' + encodeURIComponent(_orderDrawerOrder.customer_phone), '_blank');
+}
+
+// Reuses the existing CRM customer drawer rather than building a second one.
+function viewCustomerFromOrderDrawer() {
+  if (!_orderDrawerOrder || !_orderDrawerOrder.customer_phone) return;
+  const phone = _orderDrawerOrder.customer_phone;
+  closeOrderDrawer();
+  showSection('crm', null);
+  const openWhenReady = () => {
+    const match = (_crmTableData || []).find(c => c.phone === phone);
+    if (match) { openCustomerDrawer(match); }
+    else { toast('No CRM record for ' + phone + ' yet', true); }
+  };
+  // loadCrm() (triggered by showSection above) is async — give it a moment,
+  // then fall back to whatever is already cached if it hasn't finished yet.
+  setTimeout(openWhenReady, 400);
 }
 
 const _KANBAN_COLS = [
@@ -5310,6 +5505,8 @@ function openProdEdit(id) {
   document.getElementById('edit-prod-name').value  = p.name  || '';
   document.getElementById('edit-prod-price').value = p.price || '';
   document.getElementById('edit-prod-stock').value = typeof p.stock === 'number' ? p.stock : '';
+  const lowStockEl = document.getElementById('edit-prod-low-stock-threshold');
+  if (lowStockEl) lowStockEl.value = (typeof p.low_stock_threshold === 'number') ? p.low_stock_threshold : '';
   document.getElementById('edit-prod-desc').value  = p.description || '';
   const statusEl = document.getElementById('edit-prod-status');
   if (statusEl) statusEl.value = p.status || 'active';
@@ -5334,6 +5531,9 @@ async function saveProdEdit() {
   const payload = { name, price, status };
   if (desc)           payload.description = desc;
   if (stock !== '')   payload.stock = parseInt(stock, 10);
+  const lowStockEl = document.getElementById('edit-prod-low-stock-threshold');
+  const lowStockVal = lowStockEl ? lowStockEl.value : '';
+  if (lowStockVal !== '') payload.low_stock_threshold = parseInt(lowStockVal, 10);
   // If a new image was selected for editing, upload it first
   if (typeof _pendingEditImgDataUrl !== 'undefined' && _pendingEditImgDataUrl) {
     const editImgUrl = await uploadImageToSupabase(
@@ -5637,6 +5837,7 @@ async function loadHandoffStats() {
           <table class="data-table" style="width:100%;border-collapse:collapse;">
             <thead>
               <tr>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Priority</th>
                 <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Customer</th>
                 <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Ticket</th>
                 <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Reason</th>
@@ -5651,7 +5852,16 @@ async function loadHandoffStats() {
                     : `${p.wait_seconds}s`)
                   : '—';
                 const urgency = p.wait_seconds > 300 ? 'color:#ef4444;font-weight:600' : '';
+                // UI/UX audit: handoff_priority was already stored per-conversation
+                // (set when an agent requests handoff with a reason) but never shown
+                // anywhere in this queue — every row looked equally urgent.
+                const prio = p.priority || 'normal';
+                const prioStyle = prio === 'urgent' ? 'background:rgba(239,68,68,.15);color:#ef4444;'
+                  : prio === 'low' ? 'background:rgba(148,163,184,.15);color:var(--text-muted);'
+                  : 'background:rgba(56,189,248,.15);color:var(--blue);';
+                const prioLabel = prio === 'urgent' ? '🔴 Urgent' : prio === 'low' ? 'Low' : 'Normal';
                 return `<tr style="border-top:1px solid var(--border)">
+                  <td style="padding:10px 12px;font-size:12px;"><span style="${prioStyle}padding:2px 8px;border-radius:6px;font-family:var(--mono);">${prioLabel}</span></td>
                   <td style="padding:10px 12px">
                     <div style="font-weight:600;font-size:13px">${escHtml(p.customer_name || p.phone)}</div>
                     <div style="font-size:11px;color:var(--text-muted)">${escHtml(p.phone)}</div>

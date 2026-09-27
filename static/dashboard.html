@@ -426,6 +426,16 @@
               title="Dismiss">✕</button>
     </div>
 
+    <!-- NEEDS ATTENTION (UI/UX enhancement) — answers "what needs my
+         attention today" using only already-existing, already-computed
+         backend signals (handoff stats, low-stock, order statuses). No new
+         backend endpoint; built by combining calls the dashboard already
+         makes elsewhere. Hidden entirely when there's nothing to flag. -->
+    <div class="panel" id="needs-attention-panel" style="display:none;margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">🔔 Needs Attention</div></div>
+      <div class="panel-body" id="needs-attention-body" style="display:flex;flex-direction:column;gap:6px;padding:12px 16px;"></div>
+    </div>
+
     <div class="stats-grid">
       <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
       <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
@@ -607,7 +617,13 @@
   <div id="section-orders" class="section">
     <div class="topbar">
       <div class="page-title">All <span>Orders</span></div>
-      <div style="display:flex;gap:6px;align-items:center;">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <div style="position:relative;">
+          <input type="text" id="order-search" placeholder="Search orders…" oninput="filterOrdersBySearch(this.value)"
+                 style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:160px;"/>
+          <button onclick="document.getElementById('order-search').value='';filterOrdersBySearch('');" title="Clear search" aria-label="Clear order search"
+                  style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
+        </div>
         <select id="order-status-filter" onchange="filterOrdersByStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
           <option value="all">All Statuses</option>
         </select>
@@ -1095,7 +1111,11 @@
           <button class="prod-qa-btn" onclick="generateCatalog()" title="Generate WhatsApp catalog message">📋 WA Catalog</button>
           <button class="prod-qa-btn" onclick="shareMenuLink()" title="Copy your menu link">🔗 Share Menu</button>
           <button class="prod-qa-btn disabled" title="Coming soon">📱 QR Code</button>
-          <button class="prod-qa-btn disabled" title="Import from CSV — coming soon">⬆ Import</button>
+          <!-- The working CSV import control already lives in the page header
+               (label[for=csv-import-file] above) — this was a second,
+               disabled "coming soon" Import button duplicating it and
+               confusing users into thinking import wasn't available. -->
+          <label class="prod-qa-btn" for="csv-import-file" title="Import products from CSV" style="cursor:pointer;">⬆ Import</label>
         </div>
       </div>
 
@@ -1160,6 +1180,12 @@
               <input type="number" id="edit-prod-stock" min="0" step="1" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
             </div>
             <div class="form-group-inline">
+              <label>Low stock alert at <span style="color:var(--text-dim);font-weight:400;">(units)</span></label>
+              <input type="number" id="edit-prod-low-stock-threshold" min="0" step="1" placeholder="5" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;"/>
+            </div>
+          </div>
+          <div class="form-row" style="margin-top:10px;">
+            <div class="form-group-inline">
               <label>Status</label>
               <select id="edit-prod-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
                 <option value="active">Active</option>
@@ -1202,7 +1228,13 @@
   <!-- CONVERSATIONS -->
   <div id="section-conversations" class="section">
     <div class="topbar">
-      <div class="page-title">Customer <span>Conversations</span></div>
+      <div>
+        <div class="page-title">Customer <span>Conversations</span></div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:2px;">
+          Browse and reply to past conversations. For live, real-time chats and handoffs, use
+          <a href="/inbox" target="_blank" style="color:var(--green);">Live Inbox →</a>
+        </div>
+      </div>
       <button class="panel-action" onclick="loadConversations()">↻ Refresh</button>
     </div>
     <div class="chat-layout">
@@ -3346,6 +3378,7 @@
       </div>
       <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-ghost" style="font-size:12px;flex:1;" onclick="openInboxForDrawer()">💬 Open Chat</button>
+        <button class="btn btn-ghost" style="font-size:12px;flex:1;" onclick="viewOrdersForDrawer()">🛒 View Orders</button>
         <button class="btn btn-ghost" style="font-size:12px;flex:1;color:var(--green);border-color:var(--green-dim);" onclick="quickCampaignDrawer()">📢 Send Message</button>
       </div>
       <div style="margin-top:16px;">
@@ -3354,7 +3387,54 @@
       </div>
     </div>
   </div>
-  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer()"></div>
+  <div class="drawer-overlay" id="drawer-overlay" onclick="closeDrawer();closeOrderDrawer();"></div>
+
+  <!-- ORDER DETAIL DRAWER (UI/UX enhancement) — reuses the same drawer
+       visual language as the customer profile drawer above. -->
+  <div id="order-drawer" class="customer-drawer">
+    <div class="customer-drawer-header">
+      <div>
+        <div class="customer-drawer-title" id="order-drawer-id">ORDER —</div>
+        <div class="customer-drawer-seg" id="order-drawer-time">—</div>
+      </div>
+      <button class="customer-drawer-close" onclick="closeOrderDrawer()" aria-label="Close order details">✕</button>
+    </div>
+    <div class="customer-drawer-body">
+      <div style="margin-bottom:14px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Customer</div>
+        <div id="order-drawer-customer" style="font-family:var(--mono);font-size:13px;color:var(--text);">—</div>
+      </div>
+      <div class="customer-drawer-stats">
+        <div class="drawer-stat">
+          <div class="drawer-stat-val" id="order-drawer-qty">—</div>
+          <div class="drawer-stat-lbl">Qty</div>
+        </div>
+        <div class="drawer-stat">
+          <div class="drawer-stat-val" id="order-drawer-total">—</div>
+          <div class="drawer-stat-lbl">Total</div>
+        </div>
+        <div class="drawer-stat">
+          <div class="drawer-stat-val" id="order-drawer-status-badge">—</div>
+          <div class="drawer-stat-lbl">Status</div>
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Item</div>
+        <div id="order-drawer-item" style="font-family:var(--mono);font-size:13px;color:var(--text);">—</div>
+      </div>
+      <div style="margin-top:16px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Update status</div>
+        <div style="display:flex;gap:8px;">
+          <select id="order-drawer-status-select" style="flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:8px;"></select>
+          <button class="btn btn-primary" style="font-size:12px;padding:8px 14px;" onclick="updateOrderStatusFromDrawer()">Save</button>
+        </div>
+      </div>
+      <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-ghost" style="font-size:12px;flex:1;" onclick="contactCustomerFromOrderDrawer()">💬 Contact Customer</button>
+        <button class="btn btn-ghost" style="font-size:12px;flex:1;" onclick="viewCustomerFromOrderDrawer()">👤 View Customer</button>
+      </div>
+    </div>
+  </div>
 
 </main>
 <div class="toast" id="toast"></div>

@@ -726,11 +726,30 @@ document.addEventListener('DOMContentLoaded', () => {
   try { connectWS(); } catch (e) { console.warn('WS init failed:', e); }
 
   // Initial load
-  loadConversations(true).catch(e => console.warn('Initial load failed:', e));
+  loadConversations(true)
+    .then(() => openChatFromQueryParam())
+    .catch(e => console.warn('Initial load failed:', e));
 
   // Fallback poll every 30s
   setInterval(() => loadConversations(false).catch(() => {}), 30000);
 });
+
+/* ── DEEP LINK: /inbox?phone=+263... opens that customer's chat ──
+   Used by the CRM "Open Chat" action (dashboard.js openInboxForDrawer())
+   so it lands on the right conversation instead of just the inbox home. */
+function openChatFromQueryParam() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const phone = (params.get('phone') || '').trim();
+    if (!phone) return;
+    const match = allConversations.find(c => c.phone === phone);
+    if (match) {
+      openChat(match.customer_id, match.phone, match.last_seen);
+    } else {
+      showToast(`No conversation found yet for ${phone}`);
+    }
+  } catch (e) { /* non-fatal — deep link is a convenience, not required */ }
+}
 
 
 /* ══════════════════════════════════════════════════════════
@@ -897,8 +916,11 @@ async function qaCreateDelivery() {
 
 async function qaViewOrders() {
   if (!currentPhone) return;
-  // Open the dashboard orders page filtered to this phone in a new tab
-  const dashUrl = `/dashboard#orders?phone=${encodeURIComponent(currentPhone)}`;
+  // Open the dashboard's Orders section filtered to this phone in a new tab.
+  // (Previously used a #orders?phone= hash the dashboard never read, so this
+  // silently did nothing beyond opening the dashboard home — dashboard.js
+  // now reads ?openOrdersFor= on load and pre-fills the Orders search box.)
+  const dashUrl = `/dashboard?openOrdersFor=${encodeURIComponent(currentPhone)}`;
   window.open(dashUrl, '_blank');
 }
 
@@ -1053,7 +1075,11 @@ async function loadConvSummary(customerId) {
       : '';
 
     panel.innerHTML = (chips || `<span class="conv-summary-chip">New Customer</span>`) + aiSummaryBlock;
-    panel.classList.toggle('visible', currentHandoffState);
+    // UI/UX audit: this panel (segment, order count, spend, pending payment)
+    // was only ever shown once an agent had taken over via handoff — an
+    // agent chatting normally (AI still handling) had no customer context
+    // at all. It's useful any time a chat is open, not just during handoff.
+    panel.classList.add('visible');
   } catch (_) {
     panel.classList.remove('visible');
   }

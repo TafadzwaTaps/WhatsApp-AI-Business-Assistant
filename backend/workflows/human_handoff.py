@@ -571,6 +571,12 @@ def get_pending_handoffs(business_id: int) -> list[dict]:
                 "handoff_summary": sd.get("handoff_summary", ""),
                 "wait_seconds": wait_seconds,
                 "state":        "human_handoff",
+                # UI/UX audit: handoff_priority was already being written by
+                # the request-with-reason flow but this — the one function
+                # every "pending handoffs" caller (dashboard stats, the
+                # inbox, /chat/handoff/pending) actually reads from — never
+                # surfaced it, so the queue always looked unprioritised.
+                "priority":     sd.get("handoff_priority", "normal"),
             })
         return pending
     except Exception as exc:
