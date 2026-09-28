@@ -34,6 +34,12 @@ class ProductCreate(BaseModel):
     image_url: Optional[str] = None
     stock: int = 0
     low_stock_threshold: int = 5
+    # UI/UX audit: the Add Product form already collects category and
+    # description, but they were silently discarded — this model never
+    # declared them, so create_product() had nothing to read. Optional/None
+    # here so nothing that doesn't send them (e.g. older API callers) breaks.
+    category: Optional[str] = None
+    description: Optional[str] = None
 
 class ProductOut(BaseModel):
     id: int
@@ -42,6 +48,8 @@ class ProductOut(BaseModel):
     image_url: Optional[str] = None
     stock: Optional[int] = 0
     low_stock_threshold: Optional[int] = 5
+    category: Optional[str] = None
+    description: Optional[str] = None
 
     class Config:
         from_attributes = True

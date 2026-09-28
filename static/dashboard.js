@@ -1199,6 +1199,7 @@ function _renderProductTable(products) {
         <div class="prod-action-btn-row">
           <button class="prod-action-btn edit" onclick="openProdEdit(${p.id})" title="Edit">✎</button>
           <button class="prod-action-btn view" onclick="viewProduct(${p.id})" title="View">👁</button>
+          <button class="prod-action-btn" onclick="duplicateProduct(${p.id})" title="Duplicate">⧉</button>
           <button class="prod-action-btn del"  onclick="deleteProduct(${p.id})" title="Delete">✕</button>
         </div>
       </td>
@@ -1226,7 +1227,8 @@ function _renderProductGrid(products) {
         ${window.IS_SERVICE_BUSINESS ? '' : (typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : '')}
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
-          <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();deleteProduct(${p.id})">✕</button>
+          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();duplicateProduct(${p.id})" title="Duplicate">⧉</button>
+          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();deleteProduct(${p.id})" title="Delete">✕</button>
         </div>
       </div>
     </div>`).join('');
@@ -1354,12 +1356,51 @@ async function addProduct() {
   finally { if (btn) { btn.disabled = false; btn.textContent = '+ Add to Menu'; } }
 }
 
-async function deleteProduct(id) {
+// UI/UX audit: this used to delete the product immediately on click, with
+// no confirmation of any kind — one misclick permanently removed a product
+// from the catalog. Reuses the existing bulk-action confirm modal (built
+// for bulk delete/activate/deactivate) rather than building a second one.
+function deleteProduct(id) {
+  const p = _allProducts.find(x => x.id === id);
+  const modal    = document.getElementById('prod-bulk-modal');
+  const titleEl  = document.getElementById('bulk-modal-title');
+  const msgEl    = document.getElementById('bulk-modal-msg');
+  const confirmBtn = document.getElementById('bulk-modal-confirm');
+  if (!modal) { _deleteProductConfirmed(id); return; } // fallback if modal missing
+  if (titleEl) titleEl.textContent = 'Delete Product?';
+  if (msgEl)   msgEl.textContent = `This will remove "${(p && p.name) || 'this product'}" from your catalog. This cannot be undone.`;
+  if (confirmBtn) confirmBtn.onclick = () => { closeBulkModal(); _deleteProductConfirmed(id); };
+  modal.style.display = 'flex';
+}
+
+async function _deleteProductConfirmed(id) {
   try {
     await apiFetch(`${ROUTES.products}/${id}`, { method: 'DELETE' });
-    toast('Product removed');
+    toast('🗑 Product removed');
     loadProducts();
   } catch(e) { toast('Failed to remove product', true); }
+}
+
+// UI/UX audit: no "Duplicate" action existed — useful for near-identical
+// products (size/flavor variants). Reuses the same create endpoint addProduct()
+// already uses, just pre-filled from the existing product.
+async function duplicateProduct(id) {
+  const p = _allProducts.find(x => x.id === id);
+  if (!p) { toast('Product not found', true); return; }
+  const payload = {
+    name: `${p.name || 'Product'} (Copy)`,
+    price: p.price || 0,
+  };
+  if (typeof p.stock === 'number') payload.stock = p.stock;
+  if (typeof p.low_stock_threshold === 'number') payload.low_stock_threshold = p.low_stock_threshold;
+  if (p.description) payload.description = p.description;
+  if (p.category)    payload.category    = p.category;
+  if (p.image_url)   payload.image_url   = p.image_url;
+  try {
+    await apiFetch(ROUTES.products, { method: 'POST', body: JSON.stringify(payload) });
+    toast(`✅ Duplicated "${p.name}"`);
+    loadProducts();
+  } catch (e) { toast('Failed to duplicate: ' + e.message, true); }
 }
 
 // ── CONVERSATIONS ─────────────────────────────────────────
@@ -5590,6 +5631,18 @@ function openProdEdit(id) {
   document.getElementById('edit-prod-desc').value  = p.description || '';
   const statusEl = document.getElementById('edit-prod-status');
   if (statusEl) statusEl.value = p.status || 'active';
+  // UI/UX audit: the edit modal had no category field at all, so a
+  // product's category could only ever be set once, at creation, with no
+  // way to fix or change it afterward. Cloning the Add form's category
+  // list (rather than duplicating ~240 lines of options here) keeps both
+  // selects in sync automatically if that list ever changes.
+  const catEl = document.getElementById('edit-prod-category');
+  const sourceCat = document.getElementById('product-category');
+  if (catEl && sourceCat && catEl.dataset.populated !== '1') {
+    catEl.innerHTML = sourceCat.innerHTML;
+    catEl.dataset.populated = '1';
+  }
+  if (catEl) catEl.value = p.category || '';
   _applyServiceMode(!!window.IS_SERVICE_BUSINESS);
   const modal = document.getElementById('prod-edit-modal');
   if (modal) modal.style.display = 'flex';
@@ -5614,6 +5667,8 @@ async function saveProdEdit() {
   const lowStockEl = document.getElementById('edit-prod-low-stock-threshold');
   const lowStockVal = lowStockEl ? lowStockEl.value : '';
   if (lowStockVal !== '') payload.low_stock_threshold = parseInt(lowStockVal, 10);
+  const catEl = document.getElementById('edit-prod-category');
+  if (catEl) payload.category = catEl.value || null;
   // If a new image was selected for editing, upload it first
   if (typeof _pendingEditImgDataUrl !== 'undefined' && _pendingEditImgDataUrl) {
     const editImgUrl = await uploadImageToSupabase(

@@ -87,6 +87,21 @@ def create_product(business_id: int, product) -> dict:
     if _has_product_col("low_stock_threshold"):
         row["low_stock_threshold"] = int(getattr(product, "low_stock_threshold", 5) or 5)
 
+    # UI/UX audit: category and description were collected by the Add
+    # Product form but never made it into the insert row at all — silently
+    # discarded on every product created. Same safe, schema-probed pattern
+    # as the fields above, so this is a no-op on any deployment whose
+    # products table doesn't have these columns yet.
+    if _has_product_col("category"):
+        category = (getattr(product, "category", None) or "").strip()
+        if category:
+            row["category"] = category
+
+    if _has_product_col("description"):
+        description = (getattr(product, "description", None) or "").strip()
+        if description:
+            row["description"] = description
+
     log.info("create_product  business_id=%s  name=%r  price=%s  columns=%s",
              business_id, name, price, sorted(row.keys()))
 

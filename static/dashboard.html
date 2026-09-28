@@ -1191,6 +1191,15 @@
           </div>
           <div class="form-row" style="margin-top:10px;">
             <div class="form-group-inline">
+              <label>Category</label>
+              <!-- Options are cloned from #product-category (Add Product form)
+                   by openProdEdit() rather than duplicated here, since that
+                   list is large — keeps both selects in sync automatically. -->
+              <select id="edit-prod-category" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
+                <option value="">Select category…</option>
+              </select>
+            </div>
+            <div class="form-group-inline">
               <label>Status</label>
               <select id="edit-prod-status" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;">
                 <option value="active">Active</option>
