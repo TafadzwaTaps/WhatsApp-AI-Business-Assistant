@@ -436,13 +436,16 @@
       <div class="panel-body" id="needs-attention-body" style="display:flex;flex-direction:column;gap:6px;padding:12px 16px;"></div>
     </div>
 
+    <!-- UI/UX audit (Phase 9): these cards were static numbers with no way
+         to jump to the section they summarize — clicking "Total Orders" did
+         nothing. Same showSection() nav call the sidebar itself uses. -->
     <div class="stats-grid">
-      <div class="stat-card"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
-      <div class="stat-card"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
-      <div class="stat-card"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
-      <div class="stat-card"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="showSection('orders',null)" title="View Orders"><div class="stat-label">Total Orders</div><div class="stat-value" id="stat-orders">—</div><div class="stat-sub">All time</div></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="showSection('orders',null)" title="View Orders"><div class="stat-label">Revenue</div><div class="stat-value" id="stat-revenue">—</div><div class="stat-sub">Total USD</div></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="showSection('products',null)" title="View Products"><div class="stat-label">Products</div><div class="stat-value" id="stat-products">—</div><div class="stat-sub">Active items</div></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="showSection('crm',null)" title="View Customers"><div class="stat-label">Customers</div><div class="stat-value" id="stat-customers">—</div><div class="stat-sub">Unique contacts</div></div>
       <!-- Feature 2: Repeat customer metric -->
-      <div class="stat-card"><div class="stat-label">Repeat Rate</div><div class="stat-value" id="stat-repeat-rate">—</div><div class="stat-sub" id="stat-repeat-sub">Customers who reordered</div></div>
+      <div class="stat-card" style="cursor:pointer;" onclick="showSection('crm',null)" title="View Customers"><div class="stat-label">Repeat Rate</div><div class="stat-value" id="stat-repeat-rate">—</div><div class="stat-sub" id="stat-repeat-sub">Customers who reordered</div></div>
       <!-- Sprint 5: Customer satisfaction score -->
       <div class="stat-card"><div class="stat-label">⭐ Satisfaction</div><div class="stat-value" id="stat-satisfaction">—</div><div class="stat-sub" id="stat-satisfaction-sub">Avg customer rating</div></div>
 
@@ -1249,7 +1252,7 @@
           <a href="/inbox" target="_blank" style="color:var(--green);">Live Inbox →</a>
         </div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;">
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
         <div style="position:relative;">
           <input type="text" id="conv-search" placeholder="Search name or phone…" oninput="filterConversations(this.value)"
                  style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:170px;"/>
@@ -1433,7 +1436,13 @@
       <div class="panel-header">
         <div class="panel-title">🔴 Waiting Customers</div>
       </div>
-      <div id="hf-queue-body">
+      <!-- UI/UX audit (Phase 10): .panel has overflow:hidden, and the mobile
+           rule forcing table{min-width:500px} was clipping this table on
+           narrow screens instead of making it scrollable. .panel-body
+           already solves this for the Products table elsewhere
+           (overflow-x:auto) — applied here directly since this container's
+           content is rendered by JS rather than static markup. -->
+      <div id="hf-queue-body" style="overflow-x:auto;">
         <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No active handoffs</div>
       </div>
     </div>
@@ -3379,6 +3388,10 @@
       <div>
         <div class="customer-drawer-title" id="drawer-phone">—</div>
         <div class="customer-drawer-seg" id="drawer-segment">—</div>
+        <!-- UI/UX audit (Phase 9): the drawer had no way to tell an agent was
+             already waiting on this exact customer in the Handoff queue —
+             hidden by default, shown only when a match is found. -->
+        <button id="drawer-handoff-badge" class="btn btn-ghost" style="display:none;margin-top:6px;font-size:10px;padding:3px 8px;color:#ef4444;border-color:#ef4444;" onclick="openInboxForHandoffRow(_drawerCustomer && _drawerCustomer.phone)" title="Open this customer's pending handoff in Live Inbox">🔴 Pending handoff — open chat</button>
       </div>
       <button class="customer-drawer-close" onclick="closeDrawer()">✕</button>
     </div>
@@ -3458,7 +3471,10 @@
       </div>
       <div style="margin-top:14px;">
         <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Item</div>
-        <div id="order-drawer-item" style="font-family:var(--mono);font-size:13px;color:var(--text);">—</div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <div id="order-drawer-item" style="font-family:var(--mono);font-size:13px;color:var(--text);">—</div>
+          <button id="order-drawer-view-product-btn" class="btn btn-ghost" style="font-size:10px;padding:3px 8px;display:none;" onclick="viewProductFromOrderDrawer()" title="Jump to this product">📦 View Product</button>
+        </div>
       </div>
       <div style="margin-top:16px;">
         <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Update status</div>

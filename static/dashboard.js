@@ -1199,6 +1199,7 @@ function _renderProductTable(products) {
         <div class="prod-action-btn-row">
           <button class="prod-action-btn edit" onclick="openProdEdit(${p.id})" title="Edit">✎</button>
           <button class="prod-action-btn view" onclick="viewProduct(${p.id})" title="View">👁</button>
+          <button class="prod-action-btn" onclick="viewOrdersForProduct(${p.id})" title="View orders for this product">🧾</button>
           <button class="prod-action-btn" onclick="duplicateProduct(${p.id})" title="Duplicate">⧉</button>
           <button class="prod-action-btn del"  onclick="deleteProduct(${p.id})" title="Delete">✕</button>
         </div>
@@ -1227,6 +1228,7 @@ function _renderProductGrid(products) {
         ${window.IS_SERVICE_BUSINESS ? '' : (typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : '')}
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
+          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();viewOrdersForProduct(${p.id})" title="View orders for this product">🧾</button>
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();duplicateProduct(${p.id})" title="Duplicate">⧉</button>
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();deleteProduct(${p.id})" title="Delete">✕</button>
         </div>
@@ -1474,12 +1476,19 @@ async function openChat(phone, el) {
 
   const phoneEsc = escHtml(phone).replace(/'/g,"\\'");
   win.innerHTML = `
-    <div class="chat-header" style="display:flex;align-items:center;">
+    <div class="chat-header" style="display:flex;align-items:center;flex-wrap:wrap;row-gap:6px;">
       Chat with <span style="margin-left:6px;">${escHtml(phone)}</span>
       <span id="conv-context-inline" style="margin-left:10px;font-family:var(--mono);font-size:10px;color:var(--text-dim);"></span>
-      <button class="panel-action" style="margin-left:auto;font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
-      <button class="panel-action" style="margin-left:6px;font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
-      <button class="panel-action" style="margin-left:6px;font-size:11px;" onclick="openChat('${phoneEsc}',null)">↻</button>
+      <!-- UI/UX audit (Phase 10): three header buttons plus the phone/context
+           text with no flex-wrap would clip on a narrow mobile chat pane
+           (.chat-layout has overflow:hidden) instead of dropping to a new
+           row — wrap + margin-left:auto keeps them right-aligned on wide
+           screens and lets them fall to their own row on small ones. -->
+      <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="panel-action" style="font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
+        <button class="panel-action" style="font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
+        <button class="panel-action" style="font-size:11px;" onclick="openChat('${phoneEsc}',null)">↻</button>
+      </div>
     </div>
     <div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>
     <div class="chat-reply-bar" id="chat-reply-bar">
@@ -3789,10 +3798,29 @@ function openCustomerDrawer(customer) {
   document.getElementById('drawer-orders-list').innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;">Loading orders…</div>';
   const convEl = document.getElementById('drawer-conversation-list');
   if (convEl) convEl.innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;">Loading…</div>';
+  const handoffBadge = document.getElementById('drawer-handoff-badge');
+  if (handoffBadge) handoffBadge.style.display = 'none';
   document.getElementById('customer-drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
   loadDrawerOrders(phone);
   loadDrawerConversation(phone);
+  loadDrawerHandoffStatus(phone);
+}
+
+// UI/UX audit (Phase 9): reuses the same /analytics/handoff-stats call
+// loadHandoffStats() already makes for the Handoff queue — no new endpoint —
+// just checked here to flag it on the CRM drawer instead. Fails silently:
+// this is a nice-to-have signal, not core drawer content.
+async function loadDrawerHandoffStatus(phone) {
+  const badge = document.getElementById('drawer-handoff-badge');
+  if (!badge) return;
+  try {
+    const data = await apiFetch('/analytics/handoff-stats');
+    if (!_drawerCustomer || _drawerCustomer.phone !== phone) return; // drawer moved on
+    const pending = (data && data.pending_handoffs) || [];
+    const isPending = pending.some(p => p.phone === phone);
+    badge.style.display = isPending ? '' : 'none';
+  } catch (_) { /* non-critical */ }
 }
 
 // UI/UX audit: reuses the same /chat/conversations/{phone} endpoint that
@@ -4249,6 +4277,18 @@ function openOrderDrawer(orderId) {
   document.getElementById('order-drawer-status-badge').textContent = labels[status] || status;
   document.getElementById('order-drawer-item').textContent      = order.product_name || '—';
 
+  // UI/UX audit (Phase 9): the drawer showed the item name as plain text
+  // with no way to jump to that product (e.g. to check current stock).
+  // Matches by name since orders store product_name, not a product_id —
+  // same join key Products' own "View Orders" action (viewOrdersForProduct)
+  // uses in the other direction. Hidden when no match is found rather than
+  // showing a button that would silently no-op.
+  const viewProdBtn = document.getElementById('order-drawer-view-product-btn');
+  if (viewProdBtn) {
+    const matchedProduct = (_allProducts || []).find(p => p.name === order.product_name);
+    viewProdBtn.style.display = matchedProduct ? '' : 'none';
+  }
+
   const sel = document.getElementById('order-drawer-status-select');
   sel.innerHTML = keys.filter(k => k !== 'all').map(k => `<option value="${k}">${labels[k]}</option>`).join('');
   sel.value = keys.includes(status) ? status : keys[0];
@@ -4282,6 +4322,15 @@ async function updateOrderStatusFromDrawer() {
 function contactCustomerFromOrderDrawer() {
   if (!_orderDrawerOrder || !_orderDrawerOrder.customer_phone) return;
   window.open('/inbox?phone=' + encodeURIComponent(_orderDrawerOrder.customer_phone), '_blank');
+}
+
+function viewProductFromOrderDrawer() {
+  if (!_orderDrawerOrder) return;
+  const p = (_allProducts || []).find(pr => pr.name === _orderDrawerOrder.product_name);
+  if (!p) { toast('Product not found — it may have been renamed or deleted', true); return; }
+  closeOrderDrawer();
+  showSection('products', null);
+  setTimeout(() => openProdEdit(p.id), 300);
 }
 
 // Reuses the existing CRM customer drawer rather than building a second one.
@@ -5889,6 +5938,21 @@ function viewProduct(id) {
     p.description ? `📝 ${p.description}` : '',
   ].filter(Boolean).join('\n');
   alert(info); // simple modal-less view for now
+}
+
+// UI/UX audit (Phase 9): Products had no link to the orders containing them
+// at all. Reuses the Orders search box (same pattern as viewOrdersForDrawer/
+// viewOrdersFromChat) — matches by product name since orders store
+// product_name rather than a product_id foreign key, same join key the
+// search box itself already uses (applyOrderListFilters).
+function viewOrdersForProduct(id) {
+  const p = _allProducts.find(x => x.id === id);
+  if (!p) return;
+  showSection('orders', null);
+  setTimeout(() => {
+    const search = document.getElementById('order-search');
+    if (search) { search.value = p.name; filterOrdersBySearch(p.name); }
+  }, 300);
 }
 
 // ── Phase 10: Quick actions ───────────────────────────────
