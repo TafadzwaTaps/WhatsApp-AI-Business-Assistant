@@ -660,6 +660,22 @@ function toast(msg, isError=false) {
   setTimeout(() => t.classList.remove('show'), 3500);
 }
 
+// ── UI/UX audit (Phase 2): shared error+retry block ─────────────────────
+// Every list load's catch block used to dead-end on a raw "⚠ <message>"
+// with no way to recover except reloading the whole page. This produces
+// the same friendly "Couldn't load X" + working [Retry] button everywhere,
+// per the audit spec's Error States section, without changing any of the
+// load functions' actual fetch/render logic.
+function _errorBlock(what, retryFnName) {
+  return `<div class="empty" style="color:var(--red);">
+    ⚠ Couldn't load ${escHtml(what)}. Check your connection and try again.
+    <div style="margin-top:8px;"><button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="${retryFnName}()">↻ Retry</button></div>
+  </div>`;
+}
+function _errorRow(colspan, what, retryFnName) {
+  return `<tr><td colspan="${colspan}">${_errorBlock(what, retryFnName)}</td></tr>`;
+}
+
 // Alias used by sprint-added functions
 const showToast = toast;
 
@@ -900,7 +916,7 @@ async function loadOrders() {
   } catch(e) {
     ['orders-body','recent-orders-body'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+      if (el) el.innerHTML = _errorRow(7, 'orders', 'loadOrders');
     });
   }
 }
@@ -952,7 +968,7 @@ function renderOrders(orders, bodyId, showStatus) {
   const tbody = document.getElementById(bodyId);
   if (!tbody) return;
   const rows = Array.isArray(orders) ? orders : [];
-  if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.</div></td></tr>`;return;}
+  if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.<br><span style="font-size:11px;color:var(--text-dim);">Orders from your WhatsApp customers will appear here.</span></div></td></tr>`;return;}
   tbody.innerHTML=rows.map(o=>{
     const status = o.status || 'pending';
     return `<tr onclick="openOrderDrawer(${o.id})" style="cursor:pointer;" title="Click to view order details">
@@ -1014,7 +1030,7 @@ async function loadProducts() {
     loadProductAnalytics();
   } catch(e) {
     if (skeleton) skeleton.style.display = 'none';
-    if (tbody) tbody.innerHTML = `<tr><td colspan="8"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    if (tbody) tbody.innerHTML = _errorRow(8, 'products', 'loadProducts');
   }
 }
 
@@ -1187,7 +1203,7 @@ function _renderProductGrid(products) {
   const grid = document.getElementById('products-grid');
   if (!grid) return;
   if (!products.length) {
-    grid.innerHTML = '<div class="empty" style="grid-column:1/-1;text-align:center;padding:24px;">📦 No products found</div>';
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1;text-align:center;padding:24px;">📦 No products found<br><span style="font-size:11px;color:var(--text-dim);">Try adjusting your search or filters, or add a new product above.</span></div>';
     return;
   }
   grid.innerHTML = products.map(p => `
@@ -1348,7 +1364,7 @@ async function loadConversations() {
     // stat-customers is now populated from /crm/segments (loadCustomerStats)
     // for consistency with the Customers tab — do not overwrite it here.
     const list = document.getElementById('contact-list');
-    if (!list_data.length){list.innerHTML='<div class="empty">No conversations yet.</div>';return;}
+    if (!list_data.length){list.innerHTML='<div class="empty">No conversations yet.<br><span style="font-size:11px;color:var(--text-dim);">Customers who message your WhatsApp number will show up here.</span></div>';return;}
     list.innerHTML=list_data.map(c=>{
       const phone = c.phone || c.customer_phone || '—';
       const lastMsg = c.last_message || c.message || '';
@@ -1361,7 +1377,7 @@ async function loadConversations() {
       <div class="contact-time">${fmtTime(lastAt)}</div>
     </div>`;
     }).join('');
-  } catch(e){ const _cl=document.getElementById('contact-list'); if(_cl) _cl.innerHTML=`<div class="empty">⚠ ${e.message}</div>`; }
+  } catch(e){ const _cl=document.getElementById('contact-list'); if(_cl) _cl.innerHTML=_errorBlock('conversations', 'loadConversations'); }
 }
 
 async function openChat(phone, el) {
@@ -3448,14 +3464,22 @@ async function loadCrm() {
         if (el) el.textContent = seg[s] ?? '0';
       });
     }
-  } catch (_) {}
+  } catch (_) {
+    // UI/UX audit: these 4 cards used to fail completely silently — no
+    // toast, no dash, nothing — leaving them stuck on whatever they last
+    // showed with no sign anything was wrong.
+    ['vip','loyal','new'].forEach(s => { const el = document.getElementById('crm-count-' + s); if (el) el.textContent = '—'; });
+  }
 
   // Load inactive count (30d) for the 4th card
   try {
     const inactive = await apiFetch(ROUTES.crmInactive + '?days=30');
     const el = document.getElementById('crm-count-inactive');
     if (el) el.textContent = Array.isArray(inactive) ? inactive.length : '—';
-  } catch (_) {}
+  } catch (_) {
+    const el = document.getElementById('crm-count-inactive');
+    if (el) el.textContent = '—';
+  }
 
   // Load simple customer list
   const tbody = document.getElementById('crm-table-body');
@@ -3466,7 +3490,7 @@ async function loadCrm() {
     const data = Array.isArray(rows) ? rows : [];
     _crmTableData = data;   // cache for openCustomerDrawer(index) — avoids unsafe JSON-in-HTML-attribute
     if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="6"><div class="empty">No customers yet.</div></td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6"><div class="empty">No customers yet.<br>Customers who message you on WhatsApp will appear here.</div></td></tr>';
       return;
     }
     tbody.innerHTML = data.map((c, i) => {
@@ -3481,7 +3505,7 @@ async function loadCrm() {
       </tr>`;
     }).join('');
   } catch (e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="6"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    if (tbody) tbody.innerHTML = _errorRow(6, 'customers', 'loadCrm');
   }
 }
 
@@ -3670,6 +3694,7 @@ let _allBookings = [];
 async function loadBookings() {
   const wrap = document.getElementById('bookings-content');
   if (!wrap) return;
+  if (!_allBookings.length) wrap.innerHTML = '<div class="panel full"><div class="empty">Loading…</div></div>';
   try {
     const data = await apiFetch('/bookings?upcoming_only=false');
     if (!data) {
@@ -3697,7 +3722,7 @@ async function loadBookings() {
     wrap.style.display = '';
     loadBookingSettings();
   } catch (e) {
-    wrap.innerHTML = `<div class="panel full"><div class="empty">⚠ ${e.message}</div></div>`;
+    wrap.innerHTML = `<div class="panel full">${_errorBlock('bookings', 'loadBookings')}</div>`;
   }
 }
 
@@ -3881,7 +3906,7 @@ async function loadReminders() {
       </tr>`;
     }).join('');
   } catch (e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+    if (tbody) tbody.innerHTML = _errorRow(7, 'reminders', 'loadReminders');
   }
 }
 
@@ -4078,6 +4103,11 @@ async function updateOrderStatus(orderId) {
 // Phase 5 — patch loadOrders to also store _ordersData (IIFE avoids TDZ)
 loadOrders = (function(_prev5) {
   return async function() {
+  // UI/UX audit: Orders previously showed nothing while the fetch was in
+  // flight (stale content lingers until the response arrives) — this gives
+  // an immediate, honest "Loading…" row instead of an apparently-frozen UI.
+  const _ob = document.getElementById('orders-body');
+  if (_ob && !_ordersData.length) _ob.innerHTML = '<tr><td colspan="7"><div class="empty">Loading…</div></td></tr>';
   try {
     const raw = await apiFetch(ROUTES.orders);
     if (!raw) return;
@@ -4094,7 +4124,7 @@ loadOrders = (function(_prev5) {
   } catch(e) {
     ['orders-body','recent-orders-body'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.innerHTML=`<tr><td colspan="7"><div class="empty">⚠ ${e.message}</div></td></tr>`;
+      if (el) el.innerHTML = _errorRow(7, 'orders', 'loadOrders');
     });
   }
   };
@@ -5798,6 +5828,8 @@ async function loadCustomerStats() {
 /* ── #12 HANDOFF DASHBOARD ─────────────────────────────────────────────────── */
 
 async function loadHandoffStats() {
+  const _qEl = document.getElementById('hf-queue-body');
+  if (_qEl) _qEl.innerHTML = '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">Loading…</div>';
   try {
     const data = await apiFetch('/analytics/handoff-stats');
     if (!data) return;
@@ -5906,6 +5938,11 @@ async function loadHandoffStats() {
     }
   } catch (e) {
     console.error('loadHandoffStats error:', e);
+    // UI/UX audit: this used to fail completely silently (console-only) —
+    // the Handoff tab would just sit there stale/blank with no sign anything
+    // was wrong and no way to recover except reloading the whole page.
+    const queueEl = document.getElementById('hf-queue-body');
+    if (queueEl) queueEl.innerHTML = _errorBlock('handoff data', 'loadHandoffStats');
   }
 }
 
