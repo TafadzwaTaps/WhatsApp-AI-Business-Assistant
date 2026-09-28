@@ -1249,7 +1249,15 @@
           <a href="/inbox" target="_blank" style="color:var(--green);">Live Inbox →</a>
         </div>
       </div>
-      <button class="panel-action" onclick="loadConversations()">↻ Refresh</button>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <div style="position:relative;">
+          <input type="text" id="conv-search" placeholder="Search name or phone…" oninput="filterConversations(this.value)"
+                 style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:170px;"/>
+          <button onclick="document.getElementById('conv-search').value='';filterConversations('');" title="Clear search" aria-label="Clear conversation search"
+                  style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
+        </div>
+        <button class="panel-action" onclick="loadConversations()">↻ Refresh</button>
+      </div>
     </div>
     <div class="chat-layout">
       <div class="contact-list" id="contact-list"><div class="empty">Loading...</div></div>

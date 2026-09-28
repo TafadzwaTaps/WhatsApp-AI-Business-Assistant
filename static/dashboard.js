@@ -1404,28 +1404,63 @@ async function duplicateProduct(id) {
 }
 
 // ── CONVERSATIONS ─────────────────────────────────────────
+// UI/UX audit: the conversation list had no search at all and the backend
+// /chat/conversations endpoint returns everything with no `search` param,
+// so this filters client-side over the already-loaded list — same pattern
+// as filterOrdersBySearch/filterCrmTable, no backend change needed.
+let _convListData  = [];
+let _convVisible    = [];
+let _convSearchQuery = '';
+
 async function loadConversations() {
   try {
     const convos = await apiFetch(ROUTES.conversations);
     if (!convos) return;
-    const list_data = Array.isArray(convos) ? convos : (convos.data || []);
+    _convListData = Array.isArray(convos) ? convos : (convos.data || []);
     // stat-customers is now populated from /crm/segments (loadCustomerStats)
     // for consistency with the Customers tab — do not overwrite it here.
-    const list = document.getElementById('contact-list');
-    if (!list_data.length){list.innerHTML='<div class="empty">No conversations yet.<br><span style="font-size:11px;color:var(--text-dim);">Customers who message your WhatsApp number will show up here.</span></div>';return;}
-    list.innerHTML=list_data.map(c=>{
-      const phone = c.phone || c.customer_phone || '—';
-      const lastMsg = c.last_message || c.message || '';
-      const lastDir = c.last_direction || c.direction || '';
-      const lastAt = c.last_message_at || c.created_at || c.timestamp || null;
-      const unread = c.unread_count || 0;
-      return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${escHtml(phone)}',this)">
-      <div class="contact-phone">${escHtml(phone)}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
-      <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(lastMsg)}</div>
-      <div class="contact-time">${fmtTime(lastAt)}</div>
-    </div>`;
-    }).join('');
+    _renderConversationList(_applyConvFilter());
   } catch(e){ const _cl=document.getElementById('contact-list'); if(_cl) _cl.innerHTML=_errorBlock('conversations', 'loadConversations'); }
+}
+
+function _applyConvFilter() {
+  if (!_convSearchQuery) return _convListData;
+  const q = _convSearchQuery;
+  return _convListData.filter(c => {
+    const phone = (c.phone || c.customer_phone || '').toLowerCase();
+    const name  = (c.customer_name || c.name || '').toLowerCase();
+    return phone.includes(q) || name.includes(q);
+  });
+}
+
+function filterConversations(query) {
+  _convSearchQuery = (query || '').trim().toLowerCase();
+  _renderConversationList(_applyConvFilter());
+}
+
+function _renderConversationList(list_data) {
+  _convVisible = list_data;
+  const list = document.getElementById('contact-list');
+  if (!list) return;
+  if (!list_data.length) {
+    const msg = _convSearchQuery
+      ? 'No conversations match this search.'
+      : 'No conversations yet.<br><span style="font-size:11px;color:var(--text-dim);">Customers who message your WhatsApp number will show up here.</span>';
+    list.innerHTML = `<div class="empty">${msg}</div>`;
+    return;
+  }
+  list.innerHTML=list_data.map(c=>{
+    const phone = c.phone || c.customer_phone || '—';
+    const lastMsg = c.last_message || c.message || '';
+    const lastDir = c.last_direction || c.direction || '';
+    const lastAt = c.last_message_at || c.created_at || c.timestamp || null;
+    const unread = c.unread_count || 0;
+    return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${escHtml(phone)}',this)">
+    <div class="contact-phone">${escHtml(phone)}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
+    <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(lastMsg)}</div>
+    <div class="contact-time">${fmtTime(lastAt)}</div>
+  </div>`;
+  }).join('');
 }
 
 async function openChat(phone, el) {
@@ -1437,10 +1472,14 @@ async function openChat(phone, el) {
   const win = document.getElementById('chat-window');
   if (!win) return;
 
+  const phoneEsc = escHtml(phone).replace(/'/g,"\\'");
   win.innerHTML = `
     <div class="chat-header" style="display:flex;align-items:center;">
       Chat with <span style="margin-left:6px;">${escHtml(phone)}</span>
-      <button class="panel-action" style="margin-left:auto;font-size:11px;" onclick="openChat('${escHtml(phone).replace(/'/g,"\\'")}',null)">↻</button>
+      <span id="conv-context-inline" style="margin-left:10px;font-family:var(--mono);font-size:10px;color:var(--text-dim);"></span>
+      <button class="panel-action" style="margin-left:auto;font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
+      <button class="panel-action" style="margin-left:6px;font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
+      <button class="panel-action" style="margin-left:6px;font-size:11px;" onclick="openChat('${phoneEsc}',null)">↻</button>
     </div>
     <div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>
     <div class="chat-reply-bar" id="chat-reply-bar">
@@ -1457,6 +1496,55 @@ async function openChat(phone, el) {
 
   win.dataset.activePhone = phone;
   await loadChatMessages(phone);
+  loadConvContextInline(phone);
+}
+
+// UI/UX audit: Conversations had no customer-context info and no link back
+// to CRM/Orders at all — this small inline summary + the two header buttons
+// close that gap. Looks up the customer from whatever CRM data is already
+// cached (populated by the Customers tab) rather than issuing a parallel
+// fetch on every chat open; if it's not cached yet, fetches /chat/customers
+// once, same endpoint sendFromDashboard() already relies on.
+async function loadConvContextInline(phone) {
+  const el = document.getElementById('conv-context-inline');
+  if (!el) return;
+  try {
+    let match = (_crmTableData || []).find(c => c.phone === phone);
+    if (!match) {
+      const customers = await apiFetch('/chat/customers');
+      match = (Array.isArray(customers) ? customers : []).find(c => c.phone === phone);
+    }
+    if (document.getElementById('conv-context-inline') !== el) return; // chat switched while awaiting
+    if (!match) { el.textContent = ''; return; }
+    const seg = getSegmentLabel(match.order_count, match.total_spent);
+    el.textContent = `${seg.label} · ${match.order_count || 0} orders · ${getCurrencySymbol()}${parseFloat(match.total_spent || 0).toFixed(2)}`;
+  } catch (e) { /* non-critical context line — fail silently */ }
+}
+
+// Reuses the existing CRM customer drawer rather than building a second one.
+function viewCustomerFromChat() {
+  const win = document.getElementById('chat-window');
+  const phone = win && win.dataset.activePhone;
+  if (!phone) return;
+  showSection('crm', null);
+  const openWhenReady = () => {
+    const match = (_crmTableData || []).find(c => c.phone === phone);
+    if (match) { openCustomerDrawer(match); }
+    else { toast('No CRM record for ' + phone + ' yet', true); }
+  };
+  setTimeout(openWhenReady, 400);
+}
+
+// Reuses the Orders search box (same pattern as viewOrdersForDrawer).
+function viewOrdersFromChat() {
+  const win = document.getElementById('chat-window');
+  const phone = win && win.dataset.activePhone;
+  if (!phone) return;
+  showSection('orders', null);
+  setTimeout(() => {
+    const search = document.getElementById('order-search');
+    if (search) { search.value = phone; filterOrdersBySearch(phone); }
+  }, 300);
 }
 
 async function loadChatMessages(phone) {
