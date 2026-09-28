@@ -924,6 +924,16 @@ async function qaViewOrders() {
   window.open(dashUrl, '_blank');
 }
 
+// UI/UX audit (Phase 7): Live Inbox could jump to a customer's Orders but
+// not their full CRM record (segment, spend, name-edit) — same gap Phase 6
+// closed for the Conversations tab. Reuses the dashboard's CRM drawer via
+// the same ?openXFor= deep-link pattern qaViewOrders() already established.
+async function qaViewCustomer() {
+  if (!currentPhone) return;
+  const dashUrl = `/dashboard?openCrmFor=${encodeURIComponent(currentPhone)}`;
+  window.open(dashUrl, '_blank');
+}
+
 async function qaGenerateInvoice() {
   if (!currentCustomerId || !currentPhone) return;
 
@@ -1080,9 +1090,38 @@ async function loadConvSummary(customerId) {
     // agent chatting normally (AI still handling) had no customer context
     // at all. It's useful any time a chat is open, not just during handoff.
     panel.classList.add('visible');
+
+    // Phase 7: the summary had order COUNT and total spend but nothing
+    // about the most RECENT order — an agent couldn't tell at a glance
+    // whether it's pending, paid, or already delivered. Fetched separately
+    // (not blocking the panel above) reusing the same /orders endpoint the
+    // Dashboard's CRM/Order drawers already call.
+    if (data.order_count > 0) loadConvLastOrderChip(customerId, data.phone);
   } catch (_) {
     panel.classList.remove('visible');
   }
+}
+
+async function loadConvLastOrderChip(customerId, phone) {
+  const panel = document.getElementById('conv-summary-panel');
+  if (!panel || !phone) return;
+  try {
+    const all = await apiFetch('/orders');
+    const orders = (Array.isArray(all) ? all : (all && all.data ? all.data : []))
+      .filter(o => o.customer_phone === phone);
+    if (!orders.length) return;
+    // Panel may have moved on to a different chat while this was in flight.
+    if (currentCustomerId !== customerId) return;
+    const last = orders.reduce((a, b) => new Date(b.created_at||0) > new Date(a.created_at||0) ? b : a);
+    const statusColors = { pending: 'urgent', awaiting_payment: 'urgent', payment_review: 'urgent' };
+    const cls = statusColors[last.status] ? 'conv-summary-chip urgent' : 'conv-summary-chip';
+    const chip = document.createElement('span');
+    chip.className = cls;
+    chip.title = 'Most recent order';
+    chip.textContent = `📦 #${last.id} · ${(last.status||'pending').replace(/_/g,' ')} · ${formatTime(last.created_at)}`;
+    const aiNote = panel.querySelector('.conv-summary-ai-note');
+    if (aiNote) panel.insertBefore(chip, aiNote); else panel.appendChild(chip);
+  } catch (_) { /* non-critical — panel already shows core context without it */ }
 }
 
 // Patch openChat to also load summary

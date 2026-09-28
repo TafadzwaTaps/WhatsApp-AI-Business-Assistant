@@ -3318,6 +3318,23 @@ async function init(){
     }, 500);
   }
 
+  // Deep link from Live Inbox's "Customer" quick action (?openCrmFor=<phone>)
+  // — Phase 7: Live Inbox previously had no way to jump to the full CRM
+  // record at all, only to Orders. Jumps to Customers and opens that
+  // person's existing drawer, same lookup pattern as viewCustomerFromChat().
+  const _openCrmFor = _urlParams.get('openCrmFor');
+  if (_openCrmFor) {
+    window.history.replaceState({}, '', window.location.pathname);
+    setTimeout(() => {
+      showSection('crm', null);
+      setTimeout(() => {
+        const match = (_crmTableData || []).find(c => c.phone === _openCrmFor);
+        if (match) { openCustomerDrawer(match); }
+        else { toast('No CRM record for ' + _openCrmFor + ' yet', true); }
+      }, 400);
+    }, 500);
+  }
+
   // Load currency symbol BEFORE any money rendering, so the first paint of
   // Orders/Products/stats is correct rather than briefly flashing '$' and
   // never refreshing (this was the root cause of currency "not applying
