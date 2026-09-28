@@ -6155,7 +6155,19 @@ async function loadHandoffStats() {
     // Active handoff queue
     const queueEl = document.getElementById('hf-queue-body');
     if (queueEl) {
-      const pending = data.pending_handoffs || [];
+      // UI/UX audit (Phase 8): rows came back in raw DB order — an urgent
+      // handoff waiting 2 minutes could sit below a normal one waiting an
+      // hour. Sort urgent-first, then longest-waiting-first within each
+      // priority, same ordering the (unused) /chat/handoff/queue endpoint
+      // already computes server-side — done client-side here instead of
+      // switching endpoints, to keep this an additive, response-shape-safe
+      // change against the endpoint the dashboard already calls.
+      const pending = (data.pending_handoffs || []).slice().sort((a, b) => {
+        const aUrgent = (a.priority || 'normal') === 'urgent';
+        const bUrgent = (b.priority || 'normal') === 'urgent';
+        if (aUrgent !== bUrgent) return aUrgent ? -1 : 1;
+        return (b.wait_seconds || 0) - (a.wait_seconds || 0);
+      });
       if (pending.length === 0) {
         queueEl.innerHTML = '<div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">✅ No active handoffs</div>';
       } else {
@@ -6168,6 +6180,7 @@ async function loadHandoffStats() {
                 <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Ticket</th>
                 <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Reason</th>
                 <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Waiting</th>
+                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -6195,6 +6208,10 @@ async function loadHandoffStats() {
                   <td style="padding:10px 12px;font-size:12px;color:var(--text-muted)">${escHtml(p.ticket || '—')}</td>
                   <td style="padding:10px 12px;font-size:12px">${escHtml(p.handoff_reason || 'Manual')}</td>
                   <td style="padding:10px 12px;font-size:12px;${urgency}">${wait}</td>
+                  <td style="padding:10px 12px;white-space:nowrap;">
+                    <button class="btn btn-ghost" style="font-size:11px;padding:3px 7px;" onclick="openInboxForHandoffRow('${escHtml(p.phone).replace(/'/g,"\\'")}')" title="Open this chat in Live Inbox">💬 Open</button>
+                    <button class="btn btn-ghost" style="font-size:11px;padding:3px 7px;margin-left:4px;" onclick="viewCrmForHandoffRow('${escHtml(p.phone).replace(/'/g,"\\'")}')" title="View CRM record">👤 CRM</button>
+                  </td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -6238,6 +6255,27 @@ async function loadHandoffStats() {
     const queueEl = document.getElementById('hf-queue-body');
     if (queueEl) queueEl.innerHTML = _errorBlock('handoff data', 'loadHandoffStats');
   }
+}
+
+// UI/UX audit (Phase 8): the queue had no way to act on a row at all — an
+// agent had to separately open Live Inbox and search for the customer by
+// hand. Deep-links to the same chat, same pattern openInboxForDrawer() and
+// qaViewOrders() already use elsewhere.
+function openInboxForHandoffRow(phone) {
+  if (!phone) return;
+  window.open('/inbox?phone=' + encodeURIComponent(phone), '_blank');
+}
+
+// Reuses the CRM drawer directly rather than round-tripping through the
+// ?openCrmFor= deep link, since this row is already inside the dashboard.
+function viewCrmForHandoffRow(phone) {
+  if (!phone) return;
+  showSection('crm', null);
+  setTimeout(() => {
+    const match = (_crmTableData || []).find(c => c.phone === phone);
+    if (match) { openCustomerDrawer(match); }
+    else { toast('No CRM record for ' + phone + ' yet', true); }
+  }, 400);
 }
 
 

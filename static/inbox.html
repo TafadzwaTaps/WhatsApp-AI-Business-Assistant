@@ -230,6 +230,14 @@
     <div class="handoff-reason-title">Why are you taking over this chat?</div>
     <div class="handoff-reason-grid" id="reason-chips"></div>
     <div style="margin-bottom:14px;"><input id="reason-custom" style="width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 12px;color:var(--text);font-family:var(--mono);font-size:12px;box-sizing:border-box;" placeholder="Custom reason…"></div>
+    <!-- UI/UX audit (Phase 8): priority was fully supported end-to-end
+         (backend field, queue sort, dashboard badges) but every handoff
+         request always sent priority:'normal' — there was no way to pick
+         one here. -->
+    <div style="margin-bottom:14px;">
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Priority</div>
+      <div class="handoff-reason-grid" id="priority-chips"></div>
+    </div>
     <div class="handoff-reason-actions">
       <button class="btn-handoff-cancel" onclick="closeHandoffReasonModal()">Cancel</button>
       <button class="btn-handoff-confirm" onclick="confirmHandoffWithReason()">Take Over →</button>

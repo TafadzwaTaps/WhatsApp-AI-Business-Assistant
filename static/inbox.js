@@ -993,12 +993,23 @@ const HANDOFF_REASONS = [
   'Payment Issue', 'Refund Request', 'Delivery Problem',
   'Complaint', 'Complex Order', 'Product Question', 'Technical Issue', 'Other'
 ];
+// UI/UX audit (Phase 8): labels/values kept separate so the chip can show
+// a friendly label while still sending the exact 'urgent'/'normal'/'low'
+// strings the backend (handoff_priority) and the Dashboard queue badges
+// already expect (dashboard.js's prioStyle/prioLabel switch on these exact
+// values — see loadHandoffStats).
+const HANDOFF_PRIORITIES = [
+  { value: 'urgent', label: '🔴 Urgent' },
+  { value: 'normal', label: '🔵 Normal' },
+  { value: 'low',    label: '⚪ Low' },
+];
 let _selectedReason = 'Other';
 let _handoffPriority = 'normal';
 
 function openHandoffReasonModal() {
   const modal = document.getElementById('handoff-reason-modal');
   const grid  = document.getElementById('reason-chips');
+  const prioGrid = document.getElementById('priority-chips');
   if (!modal || !grid) return;
 
   grid.innerHTML = HANDOFF_REASONS.map(r =>
@@ -1006,8 +1017,26 @@ function openHandoffReasonModal() {
           onclick="selectReason('${r}')">${r}</div>`
   ).join('');
 
+  // Reset to 'normal' each time the modal opens, same as the reason grid
+  // resets to its default — a leftover 'urgent' from a previous handoff
+  // must never silently carry over to the next one.
+  _handoffPriority = 'normal';
+  if (prioGrid) {
+    prioGrid.innerHTML = HANDOFF_PRIORITIES.map(p =>
+      `<div class="reason-chip ${p.value === _handoffPriority ? 'selected' : ''}"
+            onclick="selectPriority('${p.value}')" data-priority="${p.value}">${p.label}</div>`
+    ).join('');
+  }
+
   document.getElementById('reason-custom').value = '';
   modal.classList.add('open');
+}
+
+function selectPriority(p) {
+  _handoffPriority = p;
+  document.querySelectorAll('#priority-chips .reason-chip').forEach(c => {
+    c.classList.toggle('selected', c.dataset.priority === p);
+  });
 }
 
 function closeHandoffReasonModal() {
@@ -1017,7 +1046,10 @@ function closeHandoffReasonModal() {
 
 function selectReason(r) {
   _selectedReason = r;
-  document.querySelectorAll('.reason-chip').forEach(c => {
+  // Scoped to #reason-chips only — the priority grid below reuses the same
+  // .reason-chip class for visual consistency, and an unscoped selector here
+  // would wipe the priority chip's "selected" highlight on every reason pick.
+  document.querySelectorAll('#reason-chips .reason-chip').forEach(c => {
     c.classList.toggle('selected', c.textContent === r);
   });
 }
