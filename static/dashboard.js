@@ -3536,22 +3536,10 @@ async function loadCrm() {
   try {
     const rows = await apiFetch(ROUTES.crmSegments + '/all');
     const data = Array.isArray(rows) ? rows : [];
-    _crmTableData = data;   // cache for openCustomerDrawer(index) — avoids unsafe JSON-in-HTML-attribute
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="6"><div class="empty">No customers yet.<br>Customers who message you on WhatsApp will appear here.</div></td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.map((c, i) => {
-      const seg = getSegmentLabel(c.order_count || 0, c.total_spent || 0);
-      return `<tr>
-        <td style="font-family:var(--mono);font-size:12px;">${escHtml(c.phone || '—')}</td>
-        <td>${escHtml(c.customer_name || '—')}</td>
-        <td>${c.order_count || 0}</td>
-        <td style="color:var(--green);">${getCurrencySymbol()}${parseFloat(c.total_spent || 0).toFixed(2)}</td>
-        <td style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
-        <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="openCustomerDrawer(_crmTableData[${i}])">View</button></td>
-      </tr>`;
-    }).join('');
+    _crmTableData = data;   // full, unfiltered — the source of truth for filters below
+    // Re-apply whatever search/segment filter was active before this reload
+    // (e.g. a background refresh) rather than silently dropping it.
+    _renderCrmTable(_applyCrmFilters());
   } catch (e) {
     if (tbody) tbody.innerHTML = _errorRow(6, 'customers', 'loadCrm');
   }
@@ -3561,6 +3549,76 @@ async function loadCrm() {
 async function loadCrmSegment(segment) {
   showSection('crm', null);
   loadCrm();
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// UI/UX audit: the 4 segment stat cards (VIP/Loyal/New/Haven't ordered) were
+// static numbers with no way to actually see who was in a segment, and the
+// customer table had no search at all. Both are additive — _crmTableData
+// (the full unfiltered list) stays the source of truth; _crmVisibleRows is
+// only what's currently rendered, so the "View" button's index always
+// matches what's on screen even after filtering.
+// ════════════════════════════════════════════════════════════════════════════
+let _crmVisibleRows   = [];
+let _crmSearchQuery   = '';
+let _crmSegmentFilter = 'all';
+
+function _applyCrmFilters() {
+  let rows = _crmTableData;
+  if (_crmSegmentFilter !== 'all') {
+    rows = rows.filter(c => {
+      if (_crmSegmentFilter === 'inactive') return (c.order_count || 0) === 0 || !c.last_seen;
+      return getSegmentLabel(c.order_count || 0, c.total_spent || 0).label.toLowerCase().includes(_crmSegmentFilter);
+    });
+  }
+  if (_crmSearchQuery) {
+    const q = _crmSearchQuery;
+    rows = rows.filter(c => (c.phone||'').toLowerCase().includes(q) || (c.customer_name||'').toLowerCase().includes(q));
+  }
+  return rows;
+}
+
+function filterCrmTable(query) {
+  _crmSearchQuery = (query || '').trim().toLowerCase();
+  _renderCrmTable(_applyCrmFilters());
+}
+
+const _CRM_SEGMENT_LABELS = { vip: '⭐ VIP', loyal: '💚 Loyal', new: '👋 New', inactive: "😴 Haven't ordered" };
+function filterCrmBySegment(segment) {
+  _crmSegmentFilter = segment;
+  ['vip','loyal','new','inactive'].forEach(s => {
+    const card = document.getElementById('crm-seg-card-' + s);
+    if (card) card.style.outline = (s === segment) ? '2px solid var(--green)' : 'none';
+  });
+  const chip = document.getElementById('crm-active-filter-chip');
+  if (chip) {
+    if (segment === 'all') { chip.style.display = 'none'; }
+    else { chip.style.display = ''; chip.textContent = `${_CRM_SEGMENT_LABELS[segment]} ✕`; }
+  }
+  _renderCrmTable(_applyCrmFilters());
+}
+
+function _renderCrmTable(rows) {
+  _crmVisibleRows = rows;
+  const tbody = document.getElementById('crm-table-body');
+  if (!tbody) return;
+  if (!rows.length) {
+    const msg = (_crmSearchQuery || _crmSegmentFilter !== 'all')
+      ? 'No customers match this filter.'
+      : "No customers yet.<br>Customers who message you on WhatsApp will appear here.";
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">${msg}</div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = rows.map((c, i) => {
+    return `<tr>
+      <td style="font-family:var(--mono);font-size:12px;">${escHtml(c.phone || '—')}</td>
+      <td>${escHtml(c.customer_name || '—')}</td>
+      <td>${c.order_count || 0}</td>
+      <td style="color:var(--green);">${getCurrencySymbol()}${parseFloat(c.total_spent || 0).toFixed(2)}</td>
+      <td style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${c.last_seen ? fmtTime(c.last_seen) : '—'}</td>
+      <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="openCustomerDrawer(_crmVisibleRows[${i}])">View</button></td>
+    </tr>`;
+  }).join('');
 }
 
 function getSegmentLabel(orders, spent) {
@@ -3624,9 +3682,35 @@ function openCustomerDrawer(customer) {
   const nameInput = document.getElementById('drawer-name-input');
   if (nameInput) nameInput.value = customer.customer_name || '';
   document.getElementById('drawer-orders-list').innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;">Loading orders…</div>';
+  const convEl = document.getElementById('drawer-conversation-list');
+  if (convEl) convEl.innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;">Loading…</div>';
   document.getElementById('customer-drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
   loadDrawerOrders(phone);
+  loadDrawerConversation(phone);
+}
+
+// UI/UX audit: reuses the same /chat/conversations/{phone} endpoint that
+// powers Live Inbox — read-only preview, last 5 messages, oldest at top.
+async function loadDrawerConversation(phone) {
+  const list = document.getElementById('drawer-conversation-list');
+  if (!list) return;
+  try {
+    const raw = await apiFetch(`${ROUTES.conversations}/${encodeURIComponent(phone)}`);
+    const msgs = (Array.isArray(raw) ? raw : (Array.isArray(raw?.messages) ? raw.messages : [])).slice(-5);
+    if (!msgs.length) { list.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">No messages yet.</div>'; return; }
+    list.innerHTML = msgs.map(m => {
+      const text  = m.message || m.text || '';
+      const isOut = (m.direction||'') === 'outgoing' || (m.direction||'') === 'out';
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:11px;">
+        <span style="color:${isOut?'var(--green)':'var(--text-dim)'};">${isOut?'You':'Them'}:</span>
+        <span style="color:var(--text);">${escHtml(text.length > 80 ? text.slice(0,80)+'…' : text)}</span>
+        <div style="color:var(--text-dim);font-size:10px;margin-top:2px;">${fmtTime(m.created_at || m.createdAt || m.timestamp)}</div>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">No conversation yet.</div>`;
+  }
 }
 
 async function saveDrawerName() {

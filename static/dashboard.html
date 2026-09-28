@@ -3192,26 +3192,34 @@
   <div id="section-crm" class="section">
     <div class="topbar">
       <div class="page-title">👥 <span>Customers</span></div>
+      <div style="position:relative;">
+        <input type="text" id="crm-search" placeholder="Search name or phone…" oninput="filterCrmTable(this.value)"
+               style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:180px;"/>
+        <button onclick="document.getElementById('crm-search').value='';filterCrmTable('');" title="Clear search" aria-label="Clear customer search"
+                style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
+      </div>
     </div>
 
-    <!-- 4 simple stat cards -->
+    <!-- 4 simple stat cards — UI/UX audit: these used to be static counts
+         with no way to actually see who's in a segment; they're now
+         clickable filters for the table below. -->
     <div class="stats-grid" style="margin-bottom:16px;">
-      <div class="stat-card" style="border-color:rgba(245,158,11,0.35);">
+      <div class="stat-card" style="border-color:rgba(245,158,11,0.35);cursor:pointer;" id="crm-seg-card-vip" onclick="filterCrmBySegment('vip')" title="Show VIP customers">
         <div class="stat-label">⭐ VIP</div>
         <div class="stat-value" id="crm-count-vip" style="color:var(--amber);">—</div>
         <div class="stat-sub">Your best customers</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" style="cursor:pointer;" id="crm-seg-card-loyal" onclick="filterCrmBySegment('loyal')" title="Show Loyal customers">
         <div class="stat-label">💚 Loyal</div>
         <div class="stat-value" id="crm-count-loyal">—</div>
         <div class="stat-sub">Keep coming back</div>
       </div>
-      <div class="stat-card">
+      <div class="stat-card" style="cursor:pointer;" id="crm-seg-card-new" onclick="filterCrmBySegment('new')" title="Show new customers">
         <div class="stat-label">👋 New</div>
         <div class="stat-value" id="crm-count-new">—</div>
         <div class="stat-sub">First-time buyers</div>
       </div>
-      <div class="stat-card" style="border-color:rgba(239,68,68,0.25);">
+      <div class="stat-card" style="border-color:rgba(239,68,68,0.25);cursor:pointer;" id="crm-seg-card-inactive" onclick="filterCrmBySegment('inactive')" title="Show customers who haven't ordered in 30 days">
         <div class="stat-label">😴 Haven't ordered</div>
         <div class="stat-value" id="crm-count-inactive" style="color:var(--text-dim);">—</div>
         <div class="stat-sub">In the last 30 days</div>
@@ -3222,7 +3230,8 @@
     <div class="panel full">
       <div class="panel-header">
         <div class="panel-title">All Customers</div>
-        <div style="display:flex;gap:8px;">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span id="crm-active-filter-chip" style="display:none;font-size:11px;font-family:var(--mono);color:var(--green);background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.3);border-radius:6px;padding:4px 10px;cursor:pointer;" onclick="filterCrmBySegment('all')" title="Clear filter"></span>
           <button class="panel-action" onclick="backfillCrm()" title="Sync customers from WhatsApp conversations that don't have orders yet">⚡ Sync from Chats</button>
           <button class="panel-action" onclick="loadCrm()">↻ Refresh</button>
         </div>
@@ -3398,6 +3407,13 @@
       <div style="margin-top:16px;">
         <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Recent Orders</div>
         <div id="drawer-orders-list"></div>
+      </div>
+      <!-- UI/UX audit: the drawer had no conversation history at all — this
+           reuses the same /chat/conversations/{phone} endpoint Live Inbox
+           already uses, just showing the last few messages read-only. -->
+      <div style="margin-top:16px;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;">Recent Conversation</div>
+        <div id="drawer-conversation-list"></div>
       </div>
     </div>
   </div>
