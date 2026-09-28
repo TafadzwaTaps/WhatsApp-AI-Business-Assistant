@@ -964,14 +964,21 @@ function _populateOrderStatusFilter() {
 }
 
 function renderOrders(orders, bodyId, showStatus) {
-  const cols = showStatus ? 7 : 6;
+  // Bulk-select checkboxes only make sense on the full Orders list, not the
+  // 5-row "Recent Orders" widget on the dashboard overview.
+  const withCheckbox = bodyId === 'orders-body';
+  const cols = (showStatus ? 7 : 6) + (withCheckbox ? 1 : 0);
   const tbody = document.getElementById(bodyId);
   if (!tbody) return;
   const rows = Array.isArray(orders) ? orders : [];
   if (!rows.length){tbody.innerHTML=`<tr><td colspan="${cols}"><div class="empty">No orders yet.<br><span style="font-size:11px;color:var(--text-dim);">Orders from your WhatsApp customers will appear here.</span></div></td></tr>`;return;}
   tbody.innerHTML=rows.map(o=>{
     const status = o.status || 'pending';
+    const checkboxCell = withCheckbox
+      ? `<td onclick="event.stopPropagation();"><input type="checkbox" class="order-checkbox" data-id="${o.id}" ${_selectedOrderIds.has(o.id)?'checked':''} onchange="toggleOrderSelect(${o.id})" aria-label="Select order #${o.id}"/></td>`
+      : '';
     return `<tr onclick="openOrderDrawer(${o.id})" style="cursor:pointer;" title="Click to view order details">
+    ${checkboxCell}
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
     <td>${escHtml(o.customer_phone||'—')}</td>
     <td>${escHtml(o.product_name||'—')}</td>
@@ -3961,8 +3968,23 @@ function filterOrdersBySearch(query) {
   applyOrderListFilters();
 }
 
+// UI/UX audit: this filter existed once before (renderOrderFilters()/
+// applyOrderFilters() below) but the bar that held it was never actually
+// attached to the page — it targeted #orders-section/[data-section="orders"]
+// which don't exist, so it silently never rendered. Payment-status filtering
+// is real, useful, and not covered by the search box above, so it's folded
+// into the working toolbar instead of reviving a second, disconnected bar.
+let _orderPaymentFilter = 'all';
+function filterOrdersByPayment(payment) {
+  _orderPaymentFilter = payment;
+  applyOrderListFilters();
+}
+
 function applyOrderListFilters() {
   let filtered = _orderStatusFilter === 'all' ? _ordersData : _ordersData.filter(o => o.status === _orderStatusFilter);
+  if (_orderPaymentFilter !== 'all') {
+    filtered = filtered.filter(o => (o.payment_status || 'pending') === _orderPaymentFilter);
+  }
   if (_orderSearchQuery) {
     const q = _orderSearchQuery;
     filtered = filtered.filter(o =>
@@ -4064,13 +4086,21 @@ function renderKanban(orders) {
   board.innerHTML = _KANBAN_COLS.map(col => {
     const colOrders = orders.filter(o => (o.status||'pending') === col.key);
     const cards = colOrders.length
-      ? colOrders.map(o => `
-        <div class="kanban-card" onclick="updateOrderStatus(${o.id})">
+      ? colOrders.map(o => {
+        // UI/UX audit: kanban cards used to open a raw prompt() to change
+        // status; now opens the same Order Detail Drawer the list view
+        // uses, with a real dropdown, instead of a second status-change UX.
+        const paid = (o.payment_status || 'pending') === 'paid';
+        return `
+        <div class="kanban-card" onclick="openOrderDrawer(${o.id})">
           <div class="kanban-card-id">#${o.id}</div>
           <div class="kanban-card-name">${escHtml(o.customer_phone||'—')}</div>
-          <div class="kanban-card-total">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}</div>
+          <div class="kanban-card-total">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}
+            <span style="font-size:10px;font-family:var(--mono);padding:1px 6px;border-radius:4px;margin-left:4px;${paid?'background:rgba(34,197,94,.15);color:#22c55e;':'background:rgba(245,158,11,.15);color:#f59e0b;'}">${paid?'Paid':'Unpaid'}</span>
+          </div>
           <div class="kanban-card-time">${fmtTime(o.created_at)}</div>
-        </div>`).join('')
+        </div>`;
+        }).join('')
       : '<div class="kanban-empty">—</div>';
     return `
       <div class="kanban-col">
@@ -4679,6 +4709,16 @@ function renderSlaAlert(orders) {
 
 let _selectedOrderIds = new Set();
 
+// UI/UX audit: revives previously dead bulk-selection code (it existed but
+// targeted DOM ids that never existed, so it never ran) — see updateBulkBar().
+function toggleSelectAllOrders(checked) {
+  const visibleIds = Array.from(document.querySelectorAll('.order-checkbox')).map(cb => parseInt(cb.dataset.id, 10));
+  if (checked) visibleIds.forEach(id => _selectedOrderIds.add(id));
+  else visibleIds.forEach(id => _selectedOrderIds.delete(id));
+  document.querySelectorAll('.order-checkbox').forEach(cb => { cb.checked = checked; });
+  updateBulkBar();
+}
+
 function toggleOrderSelect(orderId) {
   if (_selectedOrderIds.has(orderId)) {
     _selectedOrderIds.delete(orderId);
@@ -4694,15 +4734,22 @@ function updateBulkBar() {
     bar = document.createElement('div');
     bar.id = 'bulk-actions-bar';
     bar.className = 'bulk-actions-bar';
+    // UI/UX audit: button labels didn't match the status they actually set
+    // (e.g. "✅ Preparing" set status to "confirmed", not "preparing") and
+    // this bar was never actually appended anywhere — it targeted
+    // #orders-section/[data-section="orders"], neither of which exist (the
+    // real container is #section-orders) — so bulk actions silently never
+    // worked. Fixed both.
     bar.innerHTML = `
       <span id="bulk-count">0 selected</span>
-      <button class="bulk-btn green" onclick="bulkUpdateStatus('confirmed')">✅ Preparing</button>
+      <button class="bulk-btn green" onclick="bulkUpdateStatus('confirmed')">✅ Confirm</button>
+      <button class="bulk-btn amber" onclick="bulkUpdateStatus('preparing')">🍳 Preparing</button>
       <button class="bulk-btn amber" onclick="bulkUpdateStatus('ready')">🎉 Ready</button>
       <button class="bulk-btn green" onclick="bulkUpdateStatus('delivered')">📦 Delivered</button>
       <button class="bulk-btn red"   onclick="bulkUpdateStatus('cancelled')">❌ Cancel</button>
       <button class="bulk-btn-cancel" onclick="clearBulkSelect()">✕ Clear</button>
     `;
-    const ordersSection = document.getElementById('orders-section') || document.querySelector('[data-section="orders"]');
+    const ordersSection = document.getElementById('section-orders');
     if (ordersSection) ordersSection.insertAdjacentElement('afterbegin', bar);
   }
 
@@ -4843,7 +4890,10 @@ function clearOrderFilters() {
   if (typeof _origLoad !== 'function') return;
   window.loadOrders = async function() {
     await _origLoad.apply(this, arguments);
-    renderOrderFilters();
+    // renderOrderFilters() removed from here — it never actually attached
+    // to the page (see comment above filterOrdersByPayment()) and its one
+    // genuinely useful capability, the payment-status filter, now lives in
+    // the real Orders toolbar instead.
     if (_ordersData) renderSlaAlert(_ordersData);
   };
 })();

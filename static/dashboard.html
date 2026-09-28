@@ -627,6 +627,11 @@
         <select id="order-status-filter" onchange="filterOrdersByStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
           <option value="all">All Statuses</option>
         </select>
+        <select id="order-payment-filter" onchange="filterOrdersByPayment(this.value)" title="Filter by payment status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
+          <option value="all">All Payments</option>
+          <option value="paid">Paid</option>
+          <option value="pending">Payment Pending</option>
+        </select>
         <button class="btn btn-ghost" id="orders-view-list" onclick="setOrderView('list')" style="font-size:11px;padding:6px 10px;opacity:1;" title="List view">☰</button>
         <button class="btn btn-ghost" id="orders-view-kanban" onclick="setOrderView('kanban')" style="font-size:11px;padding:6px 10px;opacity:0.4;" title="Kanban view">⬛</button>
       </div>
@@ -635,7 +640,7 @@
     <!-- LIST VIEW -->
     <div id="orders-list-view" class="panel full">
       <div class="panel-header"><div class="panel-title">Order History</div><button class="panel-action" onclick="loadOrders()">↻ Refresh</button></div>
-      <div class="panel-body"><table><thead><tr><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Time</th></tr></thead><tbody id="orders-body"></tbody></table></div>
+      <div class="panel-body"><table><thead><tr><th><input type="checkbox" onchange="toggleSelectAllOrders(this.checked)" aria-label="Select all orders"/></th><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Time</th></tr></thead><tbody id="orders-body"></tbody></table></div>
     </div>
 
     <!-- KANBAN VIEW (Phase 5) -->
