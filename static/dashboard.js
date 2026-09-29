@@ -1476,19 +1476,12 @@ async function openChat(phone, el) {
 
   const phoneEsc = escHtml(phone).replace(/'/g,"\\'");
   win.innerHTML = `
-    <div class="chat-header" style="display:flex;align-items:center;flex-wrap:wrap;row-gap:6px;">
+    <div class="chat-header" style="display:flex;align-items:center;">
       Chat with <span style="margin-left:6px;">${escHtml(phone)}</span>
       <span id="conv-context-inline" style="margin-left:10px;font-family:var(--mono);font-size:10px;color:var(--text-dim);"></span>
-      <!-- UI/UX audit (Phase 10): three header buttons plus the phone/context
-           text with no flex-wrap would clip on a narrow mobile chat pane
-           (.chat-layout has overflow:hidden) instead of dropping to a new
-           row — wrap + margin-left:auto keeps them right-aligned on wide
-           screens and lets them fall to their own row on small ones. -->
-      <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="panel-action" style="font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
-        <button class="panel-action" style="font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
-        <button class="panel-action" style="font-size:11px;" onclick="openChat('${phoneEsc}',null)">↻</button>
-      </div>
+      <button class="panel-action" style="margin-left:auto;font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
+      <button class="panel-action" style="margin-left:6px;font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
+      <button class="panel-action" style="margin-left:6px;font-size:11px;" onclick="openChat('${phoneEsc}',null)">↻</button>
     </div>
     <div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>
     <div class="chat-reply-bar" id="chat-reply-bar">

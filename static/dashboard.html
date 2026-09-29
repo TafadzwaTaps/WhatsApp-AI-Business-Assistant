@@ -1252,7 +1252,7 @@
           <a href="/inbox" target="_blank" style="color:var(--green);">Live Inbox →</a>
         </div>
       </div>
-      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+      <div style="display:flex;gap:6px;align-items:center;">
         <div style="position:relative;">
           <input type="text" id="conv-search" placeholder="Search name or phone…" oninput="filterConversations(this.value)"
                  style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:170px;"/>
@@ -1436,13 +1436,7 @@
       <div class="panel-header">
         <div class="panel-title">🔴 Waiting Customers</div>
       </div>
-      <!-- UI/UX audit (Phase 10): .panel has overflow:hidden, and the mobile
-           rule forcing table{min-width:500px} was clipping this table on
-           narrow screens instead of making it scrollable. .panel-body
-           already solves this for the Products table elsewhere
-           (overflow-x:auto) — applied here directly since this container's
-           content is rendered by JS rather than static markup. -->
-      <div id="hf-queue-body" style="overflow-x:auto;">
+      <div id="hf-queue-body">
         <div class="empty-state" style="padding:24px;text-align:center;color:var(--text-muted)">No active handoffs</div>
       </div>
     </div>
