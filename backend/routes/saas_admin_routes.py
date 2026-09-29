@@ -6,6 +6,9 @@ Endpoints (all require superadmin role):
   GET /admin/saas/tenants     — all business/tenant status
   GET /admin/saas/revenue     — MRR, churn, tier breakdown
   GET /admin/saas/health      — system health snapshot
+  GET /admin/saas/usage/messages — platform message volume + top senders (Phase 4)
+  GET /admin/saas/usage/ai       — platform AI usage/cost + top consumers (Phase 4)
+  GET /admin/saas/usage/limits   — centralized plan limits + who's near them (Phase 4)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -489,3 +492,178 @@ ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS agent_id TEXT;
 """
     return {"sql": sql.strip()}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Phase 4: Message & AI usage analytics
+#
+# Platform-wide message volume and AI cost analytics, aggregated from data
+# that already exists (messages, ai_usage_log) — no new tracking tables.
+# ai_usage_log is optional/best-effort (see crud/ai_usage.py) — if it hasn't
+# been migrated yet, these endpoints report zeros/empty, never fabricated
+# numbers. Everything here is read-only: nothing suspends or throttles a
+# business just because its usage is high (per the spec: "Do NOT
+# automatically suspend legitimate businesses merely because usage is
+# high" — a SuperAdmin decides what, if anything, to do with this data).
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/admin/saas/usage/messages")
+def saas_usage_messages(days: int = 7, user=Depends(require_superadmin)):
+    """
+    Platform-wide message volume for the last `days` days: total,
+    incoming/outgoing split, and a per-business breakdown (top senders).
+    Never loads message *content* — only business_id/direction/created_at.
+    """
+    try:
+        from core.db import supabase
+        import datetime as _dt
+
+        days = max(1, min(days, 90))  # bound the query — avoid unbounded scans
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
+
+        res = (
+            supabase.table("messages")
+            .select("business_id, direction, created_at")
+            .gte("created_at", cutoff)
+            .limit(20000)  # safety cap — a platform-wide dashboard number, not a full export
+            .execute()
+        )
+        rows = res.data or []
+
+        per_business: dict = {}
+        incoming = outgoing = 0
+        for r in rows:
+            bid = r.get("business_id")
+            d   = (r.get("direction") or "").lower()
+            if d == "incoming":
+                incoming += 1
+            elif d == "outgoing":
+                outgoing += 1
+            if bid is not None:
+                per_business[bid] = per_business.get(bid, 0) + 1
+
+        businesses = {b["id"]: b.get("name") for b in (supabase.table("businesses").select("id, name").execute().data or [])}
+        top = sorted(per_business.items(), key=lambda kv: kv[1], reverse=True)[:10]
+        top_businesses = [{"business_id": bid, "name": businesses.get(bid, f"#{bid}"), "messages": count} for bid, count in top]
+
+        return {
+            "window_days":     days,
+            "total_messages":  len(rows),
+            "incoming":        incoming,
+            "outgoing":        outgoing,
+            "top_businesses":  top_businesses,
+            "sample_capped":   len(rows) >= 20000,
+        }
+    except Exception as exc:
+        log.error("saas_usage_messages error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.get("/admin/saas/usage/ai")
+def saas_usage_ai(hours: float = 24.0, user=Depends(require_superadmin)):
+    """
+    Platform-wide AI (LLM) usage & cost, aggregated from ai_usage_log:
+    total requests/tokens/cost, and the top businesses by cost — the
+    "cost control" view. If ai_usage_log hasn't been migrated yet
+    (ai_usage_log_migration.sql), returns zeros with tracking_available=False
+    rather than fabricating numbers.
+    """
+    try:
+        from core.db import supabase
+        import datetime as _dt
+
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours)).isoformat()
+        try:
+            res = (
+                supabase.table("ai_usage_log")
+                .select("business_id, total_tokens, estimated_cost")
+                .gte("created_at", cutoff)
+                .limit(20000)
+                .execute()
+            )
+            rows = res.data or []
+            tracking_available = True
+        except Exception:
+            rows = []
+            tracking_available = False
+
+        per_business: dict = {}
+        total_tokens = 0
+        total_cost = 0.0
+        for r in rows:
+            bid = r.get("business_id")
+            tokens = int(r.get("total_tokens") or 0)
+            cost   = float(r.get("estimated_cost") or 0)
+            total_tokens += tokens
+            total_cost   += cost
+            if bid is not None:
+                agg = per_business.setdefault(bid, {"requests": 0, "tokens": 0, "cost": 0.0})
+                agg["requests"] += 1
+                agg["tokens"]   += tokens
+                agg["cost"]     += cost
+
+        businesses = {b["id"]: b.get("name") for b in (supabase.table("businesses").select("id, name").execute().data or [])}
+        top = sorted(per_business.items(), key=lambda kv: kv[1]["cost"], reverse=True)[:10]
+        top_businesses = [
+            {"business_id": bid, "name": businesses.get(bid, f"#{bid}"),
+             "requests": agg["requests"], "tokens": agg["tokens"], "estimated_cost": round(agg["cost"], 4)}
+            for bid, agg in top
+        ]
+
+        return {
+            "window_hours":        hours,
+            "tracking_available":  tracking_available,
+            "total_requests":      len(rows),
+            "total_tokens":        total_tokens,
+            "total_estimated_cost": round(total_cost, 4),
+            "top_businesses":      top_businesses,
+            "note": None if tracking_available else "AI usage tracking table not available yet — run ai_usage_log_migration.sql",
+        }
+    except Exception as exc:
+        log.error("saas_usage_ai error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.get("/admin/saas/usage/limits")
+def saas_usage_limits(user=Depends(require_superadmin)):
+    """
+    Centralized, plan-based usage limits (never hardcoded per-endpoint —
+    these are the same PLAN_PRODUCT_LIMITS / PLAN_AI_REQUEST_LIMITS dicts
+    core/plan_guard.py already enforces against). Also shows, per active
+    business, current usage vs. its cap so a SuperAdmin can see who's
+    close to a limit — this is informational only, nothing here changes
+    any business's access.
+    """
+    try:
+        from core.db import supabase
+        from core.plan_guard import (
+            PLAN_PRODUCT_LIMITS, PLAN_AI_REQUEST_LIMITS,
+            get_product_limit, get_ai_daily_limit,
+        )
+        from crud.ai_usage import count_recent_ai_requests
+
+        businesses = (supabase.table("businesses").select("id, name, subscription_tier, is_active").execute().data or [])
+
+        near_limit = []
+        for b in businesses:
+            if not b.get("is_active"):
+                continue
+            bid = b["id"]
+            ai_limit = get_ai_daily_limit(bid)
+            if ai_limit is not None:
+                current = count_recent_ai_requests(bid, hours=24.0)
+                if current >= ai_limit * 0.8:  # flag when within 80% of the cap
+                    near_limit.append({
+                        "business_id": bid, "name": b.get("name"),
+                        "ai_requests_today": current, "ai_daily_limit": ai_limit,
+                    })
+
+        return {
+            "plan_product_limits":    PLAN_PRODUCT_LIMITS,
+            "plan_ai_request_limits": PLAN_AI_REQUEST_LIMITS,
+            "businesses_near_ai_limit": near_limit,
+            "note": "Informational only — SuperAdmin decides whether to act; nothing here throttles or suspends automatically.",
+        }
+    except Exception as exc:
+        log.error("saas_usage_limits error: %s", exc)
+        raise HTTPException(500, str(exc))

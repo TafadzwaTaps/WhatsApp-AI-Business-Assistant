@@ -28,6 +28,9 @@ const ROUTES = {
   auditLogs:     '/admin/saas/audit-logs',
   riskFlags:     '/admin/saas/risk-flags',
   abuseScan:     '/admin/saas/abuse/scan',
+  usageMessages: '/admin/saas/usage/messages',
+  usageAI:       '/admin/saas/usage/ai',
+  usageLimits:   '/admin/saas/usage/limits',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -816,6 +819,67 @@ async function loadAdminData() {
     renderBizTable(_adminBizList, 'sa-biz-overview', false);
     applyAdminBizFilters();
   } catch(e) { toast('Failed to load admin data: ' + e.message, true); }
+
+  loadAdminUsage();
+}
+
+// SuperAdmin 2.0 Phase 4 — message volume + AI usage/cost, loaded
+// separately from the core stats so a slow/missing usage table never
+// blocks the rest of the Overview from rendering.
+async function loadAdminUsage() {
+  const msgSummary = document.getElementById('sa-msg-summary');
+  const msgTop      = document.getElementById('sa-msg-top');
+  const aiSummary   = document.getElementById('sa-ai-summary');
+  const aiTop       = document.getElementById('sa-ai-top');
+  const aiNearLimit = document.getElementById('sa-ai-near-limit');
+
+  try {
+    const msg = await apiFetch(`${ROUTES.usageMessages}?days=7`);
+    if (msgSummary) msgSummary.innerHTML =
+      `<strong style="color:var(--text);">${msg.total_messages ?? 0}</strong> messages —
+       ${msg.incoming ?? 0} in / ${msg.outgoing ?? 0} out${msg.sample_capped ? ' (capped sample)' : ''}`;
+    if (msgTop) {
+      const top = msg.top_businesses || [];
+      msgTop.innerHTML = top.length
+        ? top.map(b => `<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;">
+            <span>${escHtml(b.name||('#'+b.business_id))}</span><span style="color:var(--text-dim);">${b.messages}</span>
+          </div>`).join('')
+        : `<div class="empty" style="padding:4px 0;">No message activity in this window.</div>`;
+    }
+  } catch (e) {
+    if (msgSummary) msgSummary.textContent = 'Unavailable — ' + e.message;
+  }
+
+  try {
+    const [ai, limits] = await Promise.all([
+      apiFetch(`${ROUTES.usageAI}?hours=24`),
+      apiFetch(ROUTES.usageLimits),
+    ]);
+    if (aiSummary) aiSummary.innerHTML = ai.tracking_available
+      ? `<strong style="color:var(--text);">${ai.total_requests ?? 0}</strong> AI requests —
+         ${(ai.total_tokens||0).toLocaleString()} tokens — $${(ai.total_estimated_cost||0).toFixed(4)} est. cost`
+      : `<span style="color:var(--amber);">⚠️ ${escHtml(ai.note || 'AI usage tracking not available yet')}</span>`;
+    if (aiTop) {
+      const top = ai.top_businesses || [];
+      aiTop.innerHTML = top.length
+        ? top.map(b => `<div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;">
+            <span>${escHtml(b.name||('#'+b.business_id))}</span>
+            <span style="color:var(--text-dim);">${b.requests} req · $${(b.estimated_cost||0).toFixed(4)}</span>
+          </div>`).join('')
+        : `<div class="empty" style="padding:4px 0;">No AI usage in this window.</div>`;
+    }
+    if (aiNearLimit) {
+      const near = (limits && limits.businesses_near_ai_limit) || [];
+      aiNearLimit.innerHTML = near.length
+        ? `<div style="font-family:var(--mono);font-size:11px;color:var(--amber);margin-bottom:4px;">⚠️ Near daily AI limit:</div>` +
+          near.map(b => `<div style="font-family:var(--mono);font-size:11px;display:flex;justify-content:space-between;">
+            <span>${escHtml(b.name||('#'+b.business_id))}</span><span>${b.ai_requests_today}/${b.ai_daily_limit}</span>
+          </div>`).join('')
+        : '';
+    }
+  } catch (e) {
+    if (aiSummary) aiSummary.textContent = 'Unavailable — ' + e.message;
+  }
 }
 
 function applyAdminBizFilters() {
