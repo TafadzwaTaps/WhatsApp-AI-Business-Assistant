@@ -1237,6 +1237,7 @@ function _renderProductTable(products) {
           <button class="prod-action-btn edit" onclick="openProdEdit(${p.id})" title="Edit">✎</button>
           <button class="prod-action-btn view" onclick="viewProduct(${p.id})" title="View">👁</button>
           <button class="prod-action-btn" onclick="viewOrdersForProduct(${p.id})" title="View orders for this product">🧾</button>
+          <button class="prod-action-btn" onclick="viewCustomersForProduct(${p.id})" title="See who bought this">👥</button>
           <button class="prod-action-btn" onclick="duplicateProduct(${p.id})" title="Duplicate">⧉</button>
           <button class="prod-action-btn del"  onclick="deleteProduct(${p.id})" title="Delete">✕</button>
         </div>
@@ -1266,6 +1267,7 @@ function _renderProductGrid(products) {
         <div style="display:flex;gap:6px;margin-top:8px;">
           <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();viewOrdersForProduct(${p.id})" title="View orders for this product">🧾</button>
+          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();viewCustomersForProduct(${p.id})" title="See who bought this">👥</button>
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();duplicateProduct(${p.id})" title="Duplicate">⧉</button>
           <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();deleteProduct(${p.id})" title="Delete">✕</button>
         </div>
@@ -1823,15 +1825,28 @@ This will send a WhatsApp message to each selected recipient.`)) return;
     if (!data) return;
     const ok = data.failed === 0;
 
+    // UI/UX audit — Phase 9 recommendation ("Broadcast -> reached
+    // customers"): the successfully-reached phones were known client-side
+    // (the selection minus whatever failed_numbers came back) but never
+    // linked anywhere. Filters CRM down to just those phones via the new
+    // filterCrmByPhoneSet(), reusing the existing CRM table/filter-chip UI
+    // rather than building a second customer list.
+    const failedSet  = new Set((data.failed_numbers || []));
+    const reachedPhones = phones.filter(p => !failedSet.has(p));
+    const viewReachedBtn = reachedPhones.length
+      ? `<div style="margin-top:8px;"><button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick='filterCrmByPhoneSet(${JSON.stringify(reachedPhones)}, "Reached by last broadcast")'>👥 View these ${reachedPhones.length} customer${reachedPhones.length!==1?'s':''}</button></div>`
+      : '';
+
     if (result) {
       result.style.display = 'block';
       result.className = 'broadcast-result ' + (ok ? 'success' : 'error');
-      result.innerHTML = ok
+      result.innerHTML = (ok
         ? `✅ Sent to <strong>${data.sent}</strong> customer${data.sent !== 1 ? 's' : ''}!`
         : `Sent: <strong>${data.sent}</strong>  |  Failed: <strong>${data.failed}</strong>` +
           (data.failed_numbers && data.failed_numbers.length
             ? `<div style="font-size:10px;margin-top:6px;opacity:0.7;">Failed: ${data.failed_numbers.slice(0,5).join(', ')}${data.failed_numbers.length > 5 ? '…' : ''}</div>`
-            : '');
+            : '')
+      ) + viewReachedBtn;
     }
 
     if (ok) {
@@ -3717,9 +3732,18 @@ async function loadCrmSegment(segment) {
 let _crmVisibleRows   = [];
 let _crmSearchQuery   = '';
 let _crmSegmentFilter = 'all';
+// UI/UX audit — Phase 9 recommendation ("Broadcast -> reached customers"),
+// originally flagged as needing a new CRM multi-phone filter and left for a
+// follow-up. null means no phone-set filter active; otherwise a Set of
+// phone numbers to restrict the table to (e.g. everyone a broadcast reached).
+let _crmPhoneSetFilter = null;
+let _crmPhoneSetLabel  = '';
 
 function _applyCrmFilters() {
   let rows = _crmTableData;
+  if (_crmPhoneSetFilter) {
+    rows = rows.filter(c => _crmPhoneSetFilter.has(c.phone));
+  }
   if (_crmSegmentFilter !== 'all') {
     rows = rows.filter(c => {
       if (_crmSegmentFilter === 'inactive') return (c.order_count || 0) === 0 || !c.last_seen;
@@ -3747,12 +3771,44 @@ function filterCrmBySegment(segment) {
     const card = document.getElementById('crm-seg-card-' + s);
     if (card) card.style.outline = (s === segment) ? '2px solid var(--green)' : 'none';
   });
-  const chip = document.getElementById('crm-active-filter-chip');
-  if (chip) {
-    if (segment === 'all') { chip.style.display = 'none'; }
-    else { chip.style.display = ''; chip.textContent = `${_CRM_SEGMENT_LABELS[segment]} ✕`; }
-  }
+  // Picking a segment clears any active phone-set filter (e.g. from a
+  // broadcast) — the two are mutually exclusive views of the table.
+  _crmPhoneSetFilter = null;
+  _crmPhoneSetLabel  = '';
+  _updateCrmFilterChip(segment !== 'all' ? _CRM_SEGMENT_LABELS[segment] : null);
   _renderCrmTable(_applyCrmFilters());
+}
+
+// Restricts the CRM table to a specific set of phone numbers — e.g. "View
+// these N customers" after a broadcast send. Clears any active segment
+// filter for the same reason filterCrmBySegment() clears the phone set.
+function filterCrmByPhoneSet(phones, label) {
+  _crmPhoneSetFilter = new Set(phones);
+  _crmPhoneSetLabel  = label || `${phones.length} customer${phones.length!==1?'s':''}`;
+  _crmSegmentFilter  = 'all';
+  ['vip','loyal','new','inactive'].forEach(s => {
+    const card = document.getElementById('crm-seg-card-' + s);
+    if (card) card.style.outline = 'none';
+  });
+  _updateCrmFilterChip(_crmPhoneSetLabel);
+  showSection('crm', null);
+  _renderCrmTable(_applyCrmFilters());
+}
+
+function clearCrmPhoneSetFilter() {
+  _crmPhoneSetFilter = null;
+  _crmPhoneSetLabel  = '';
+  _updateCrmFilterChip(null);
+  _renderCrmTable(_applyCrmFilters());
+}
+
+function _updateCrmFilterChip(text) {
+  const chip = document.getElementById('crm-active-filter-chip');
+  if (!chip) return;
+  if (!text) { chip.style.display = 'none'; return; }
+  chip.style.display = '';
+  chip.textContent = `${text} ✕`;
+  chip.onclick = _crmPhoneSetFilter ? clearCrmPhoneSetFilter : (() => filterCrmBySegment('all'));
 }
 
 function _renderCrmTable(rows) {
@@ -6000,6 +6056,56 @@ function viewOrdersForProduct(id) {
     const search = document.getElementById('order-search');
     if (search) { search.value = p.name; filterOrdersBySearch(p.name); }
   }, 300);
+}
+
+// UI/UX audit — Phase 9 recommendation ("Products -> Customers: who bought
+// this?"), originally flagged as needing a new backend query and left for a
+// follow-up. Calls the new read-only GET /products/{id}/customers endpoint,
+// added specifically for this, and lists results in a small modal reusing
+// the existing .prod-modal-* CSS (same component the Edit Product and Bulk
+// Confirm modals already use) rather than a fourth modal styling system.
+// Each row links to that customer's CRM drawer via the existing lookup
+// pattern (viewCustomerFromChat/viewCrmForHandoffRow use the same shape).
+async function viewCustomersForProduct(id) {
+  const p = _allProducts.find(x => x.id === id);
+  if (!p) return;
+  const modal = document.getElementById('prod-customers-modal');
+  const title = document.getElementById('prod-customers-modal-title');
+  const body  = document.getElementById('prod-customers-modal-body');
+  if (!modal || !body) return;
+  title.textContent = `Customers — ${p.name}`;
+  body.innerHTML = '<div style="color:var(--text-dim);font-family:var(--mono);font-size:11px;padding:8px 0;">Loading…</div>';
+  modal.style.display = 'flex';
+
+  try {
+    const res = await apiFetch(`/products/${id}/customers`);
+    const rows = (res && res.customers) || [];
+    if (!rows.length) {
+      body.innerHTML = '<div class="empty">No orders for this product yet.</div>';
+      return;
+    }
+    body.innerHTML = rows.map(c => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);">
+        <div>
+          <div style="font-size:13px;font-weight:600;">${escHtml(c.customer_name || c.phone)}</div>
+          <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${escHtml(c.phone)} · ${c.order_count} order${c.order_count!==1?'s':''} · ${getCurrencySymbol()}${parseFloat(c.total_spent||0).toFixed(2)}</div>
+        </div>
+        <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="viewCrmForHandoffRow('${escHtml(c.phone).replace(/'/g,"\\'")}');closeProductCustomersModal();" title="View CRM record">👤 CRM</button>
+      </div>`).join('');
+  } catch (e) {
+    // Same visual pattern as _errorBlock(), but that helper calls its retry
+    // function by bare name (no args) — this retry needs the product id, so
+    // it's inlined here rather than stretching _errorBlock's contract.
+    body.innerHTML = `<div class="empty" style="color:var(--red);">
+      ⚠ Couldn't load customers for this product. Check your connection and try again.
+      <div style="margin-top:8px;"><button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="viewCustomersForProduct(${id})">↻ Retry</button></div>
+    </div>`;
+  }
+}
+
+function closeProductCustomersModal() {
+  const modal = document.getElementById('prod-customers-modal');
+  if (modal) modal.style.display = 'none';
 }
 
 // ── Phase 10: Quick actions ───────────────────────────────

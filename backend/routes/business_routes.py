@@ -660,6 +660,35 @@ def delete_product(product_id: int, user=Depends(require_business)):
     return {"deleted": product_id, "name": p.get("name", "")}
 
 
+# UI/UX audit — Phase 9 recommendation ("Products -> Customers: who bought
+# this?"), previously flagged as needing new backend work and left for a
+# follow-up. Additive, read-only endpoint — no changes to any existing
+# /products route above.
+@router.get("/products/{product_id}/customers")
+def get_customers_for_product_route(product_id: int, user=Depends(require_business)):
+    bid = user["business_id"]
+    product = crud.get_product_by_id(product_id, bid)
+    if not product:
+        raise HTTPException(404, f"Product {product_id} not found")
+
+    rows = crud.get_customers_for_product(bid, product.get("name", ""))
+
+    # Best-effort enrichment with CRM name/last_seen for phones we recognize —
+    # never blocks the core phone/order_count/total_spent data above.
+    if rows:
+        try:
+            crm_by_phone = {c["phone"]: c for c in crud.get_customers_for_business(bid)}
+            for r in rows:
+                crm = crm_by_phone.get(r["phone"])
+                if crm:
+                    r["customer_name"] = crm.get("customer_name")
+                    r["last_seen"] = crm.get("last_seen")
+        except Exception as exc:
+            log.warning("customer enrichment for product %s failed: %s", product_id, exc)
+
+    return {"product_id": product_id, "product_name": product.get("name", ""), "customers": rows}
+
+
 # ── Currency conversion (preview + confirm-and-apply) ──────────────────────────
 # Changing a business's currency in Settings only ever relabelled the symbol
 # (19.50 USD became "19.50 zł" instead of the real ~80 PLN). These two

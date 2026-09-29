@@ -58,6 +58,7 @@ from crud.orders import (  # noqa: F401
     update_order_payment,
     get_order_by_paypal_id,
     get_dashboard_stats,
+    get_customers_for_product,
 )
 
 # ── Customers, Carts, Memory ──────────────────────────────────────────────────

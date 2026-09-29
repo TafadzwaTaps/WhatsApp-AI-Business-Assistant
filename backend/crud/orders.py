@@ -57,6 +57,51 @@ def get_orders(business_id: int) -> list[dict]:
     return res.data or []
 
 
+def get_customers_for_product(business_id: int, product_name: str) -> list[dict]:
+    """
+    UI/UX audit — Phase 9 recommendation ("Products -> Customers: who bought
+    this?"), flagged then as needing a new backend query and left for a
+    follow-up. Aggregates the orders table by customer for a single product.
+
+    Matches order.product_name case-insensitively — orders store the product
+    name as text, not a product_id foreign key, the same join key the
+    existing Products<->Orders cross-links (viewOrdersForProduct /
+    viewProductFromOrderDrawer) already use in both directions. Read-only,
+    additive — no new table, no schema change, existing get_orders()/
+    get_product_by_id() behavior untouched.
+    """
+    if not product_name:
+        return []
+    try:
+        res = (
+            supabase.table("orders")
+            .select("customer_phone,total_price,created_at")
+            .eq("business_id", business_id)
+            .ilike("product_name", product_name)
+            .execute()
+        )
+        rows = res.data or []
+    except Exception as exc:
+        log.warning("get_customers_for_product query failed: %s", exc)
+        return []
+
+    agg: dict[str, dict] = {}
+    for r in rows:
+        phone = r.get("customer_phone")
+        if not phone:
+            continue
+        entry = agg.setdefault(phone, {
+            "phone": phone, "order_count": 0, "total_spent": 0.0, "last_order_at": None,
+        })
+        entry["order_count"] += 1
+        entry["total_spent"] += float(r.get("total_price") or 0)
+        created = r.get("created_at")
+        if created and (not entry["last_order_at"] or str(created) > str(entry["last_order_at"])):
+            entry["last_order_at"] = created
+
+    return sorted(agg.values(), key=lambda x: x["order_count"], reverse=True)
+
+
 def get_order_by_id(order_id: int, business_id: int) -> Optional[dict]:
     res = (
         supabase.table("orders")
