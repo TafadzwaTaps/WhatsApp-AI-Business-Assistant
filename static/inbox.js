@@ -1030,7 +1030,22 @@ function openHandoffReasonModal() {
 
   document.getElementById('reason-custom').value = '';
   modal.classList.add('open');
+  // UI/UX audit (Phase 11): this modal had no Esc-to-close and no focus
+  // management at all — the only other modals/panels in this file that
+  // handle Esc are the sidebar and help panel. Moves focus onto the custom-
+  // reason field (a safe, always-present focusable element) and restores it
+  // to whatever triggered the modal (the "Take Over" handoff button) on close.
+  _lastFocusedBeforeHandoffModal = document.activeElement;
+  setTimeout(() => document.getElementById('reason-custom')?.focus(), 0);
 }
+
+let _lastFocusedBeforeHandoffModal = null;
+
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  const modal = document.getElementById('handoff-reason-modal');
+  if (modal && modal.classList.contains('open')) closeHandoffReasonModal();
+});
 
 function selectPriority(p) {
   _handoffPriority = p;
@@ -1042,6 +1057,10 @@ function selectPriority(p) {
 function closeHandoffReasonModal() {
   const modal = document.getElementById('handoff-reason-modal');
   if (modal) modal.classList.remove('open');
+  if (_lastFocusedBeforeHandoffModal && typeof _lastFocusedBeforeHandoffModal.focus === 'function') {
+    _lastFocusedBeforeHandoffModal.focus();
+  }
+  _lastFocusedBeforeHandoffModal = null;
 }
 
 function selectReason(r) {

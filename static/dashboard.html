@@ -523,7 +523,7 @@
     <div class="panel full" style="margin-bottom:0;">
       <div class="panel-header">
         <div class="panel-title">📊 Top Customers by Orders</div>
-        <button class="panel-action" onclick="loadAnalyticsCharts()">↻</button>
+        <button class="panel-action" onclick="loadAnalyticsCharts()" aria-label="Refresh analytics" title="Refresh">↻</button>
       </div>
       <div class="panel-body">
         <div id="analytics-top-customers" style="padding:4px 0;">
@@ -535,7 +535,7 @@
     <div class="panel full" style="margin-bottom:16px;">
       <div class="panel-header">
         <div class="panel-title">🤖 AI Conversation Insights</div>
-        <button class="panel-action" onclick="loadAIInsights()">↻</button>
+        <button class="panel-action" onclick="loadAIInsights()" aria-label="Refresh AI conversation insights" title="Refresh">↻</button>
       </div>
       <div class="panel-body" id="ai-insights-body">
         <div class="empty">Loading insights…</div>
@@ -622,15 +622,15 @@
       <div class="page-title">All <span>Orders</span></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
         <div style="position:relative;">
-          <input type="text" id="order-search" placeholder="Search orders…" oninput="filterOrdersBySearch(this.value)"
+          <input type="text" id="order-search" placeholder="Search orders…" aria-label="Search orders by ID, phone, or product" oninput="filterOrdersBySearch(this.value)"
                  style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:160px;"/>
           <button onclick="document.getElementById('order-search').value='';filterOrdersBySearch('');" title="Clear search" aria-label="Clear order search"
                   style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
         </div>
-        <select id="order-status-filter" onchange="filterOrdersByStatus(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
+        <select id="order-status-filter" onchange="filterOrdersByStatus(this.value)" aria-label="Filter orders by status" title="Filter by status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
           <option value="all">All Statuses</option>
         </select>
-        <select id="order-payment-filter" onchange="filterOrdersByPayment(this.value)" title="Filter by payment status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
+        <select id="order-payment-filter" onchange="filterOrdersByPayment(this.value)" title="Filter by payment status" aria-label="Filter orders by payment status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
           <option value="all">All Payments</option>
           <option value="paid">Paid</option>
           <option value="pending">Payment Pending</option>
@@ -643,7 +643,7 @@
     <!-- LIST VIEW -->
     <div id="orders-list-view" class="panel full">
       <div class="panel-header"><div class="panel-title">Order History</div><button class="panel-action" onclick="loadOrders()">↻ Refresh</button></div>
-      <div class="panel-body"><table><thead><tr><th><input type="checkbox" onchange="toggleSelectAllOrders(this.checked)" aria-label="Select all orders"/></th><th>ID</th><th>Customer</th><th>Product</th><th>Qty</th><th>Total</th><th>Status</th><th>Time</th></tr></thead><tbody id="orders-body"></tbody></table></div>
+      <div class="panel-body"><table><thead><tr><th scope="col"><input type="checkbox" onchange="toggleSelectAllOrders(this.checked)" aria-label="Select all orders"/></th><th scope="col">ID</th><th scope="col">Customer</th><th scope="col">Product</th><th scope="col">Qty</th><th scope="col">Total</th><th scope="col">Status</th><th scope="col">Time</th></tr></thead><tbody id="orders-body"></tbody></table></div>
     </div>
 
     <!-- KANBAN VIEW (Phase 5) -->
@@ -1046,7 +1046,7 @@
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
             <button class="panel-action" id="view-table-btn" onclick="setProductView('table')" style="opacity:1;">≡ List</button>
             <button class="panel-action" id="view-grid-btn" onclick="setProductView('grid')" style="opacity:0.5;">⊞ Grid</button>
-            <button class="panel-action" onclick="loadProducts()">↻</button>
+            <button class="panel-action" onclick="loadProducts()" aria-label="Refresh products" title="Refresh">↻</button>
           </div>
         </div>
 
@@ -1096,14 +1096,14 @@
             <thead>
               <tr>
                 <!-- Phase 9: select-all checkbox -->
-                <th style="width:36px;"><input type="checkbox" id="prod-select-all" onchange="toggleSelectAllProducts(this.checked)" style="accent-color:var(--green);cursor:pointer;"/></th>
-                <th></th>
-                <th>Product</th>
-                <th>Category</th>
-                <th>Price</th>
-                <th>Stock</th>
-                <th>Status</th>
-                <th>Actions</th>
+                <th scope="col" style="width:36px;"><input type="checkbox" id="prod-select-all" onchange="toggleSelectAllProducts(this.checked)" aria-label="Select all products" style="accent-color:var(--green);cursor:pointer;"/></th>
+                <th scope="col"></th>
+                <th scope="col">Product</th>
+                <th scope="col">Category</th>
+                <th scope="col">Price</th>
+                <th scope="col">Stock</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
               </tr>
             </thead>
             <tbody id="products-body"></tbody>
@@ -1168,7 +1168,7 @@
       <div class="prod-modal-box">
         <div class="prod-modal-header">
           <strong>Edit Product</strong>
-          <button onclick="closeProdEdit()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;">✕</button>
+          <button onclick="closeProdEdit()" aria-label="Close edit product dialog" title="Close" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;">✕</button>
         </div>
         <div class="prod-modal-body">
           <input type="hidden" id="edit-prod-id"/>
@@ -1228,7 +1228,7 @@
       <div class="prod-modal-box" style="max-width:380px;">
         <div class="prod-modal-header">
           <strong id="bulk-modal-title">Confirm Action</strong>
-          <button onclick="closeBulkModal()" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;">✕</button>
+          <button onclick="closeBulkModal()" aria-label="Close confirmation dialog" title="Close" style="background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer;">✕</button>
         </div>
         <div class="prod-modal-body">
           <p id="bulk-modal-msg" style="font-size:13px;color:var(--text-dim);line-height:1.6;"></p>
@@ -1254,7 +1254,7 @@
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
         <div style="position:relative;">
-          <input type="text" id="conv-search" placeholder="Search name or phone…" oninput="filterConversations(this.value)"
+          <input type="text" id="conv-search" placeholder="Search name or phone…" aria-label="Search conversations by name or phone" oninput="filterConversations(this.value)"
                  style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:170px;"/>
           <button onclick="document.getElementById('conv-search').value='';filterConversations('');" title="Clear search" aria-label="Clear conversation search"
                   style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
@@ -3210,7 +3210,7 @@
     <div class="topbar">
       <div class="page-title">👥 <span>Customers</span></div>
       <div style="position:relative;">
-        <input type="text" id="crm-search" placeholder="Search name or phone…" oninput="filterCrmTable(this.value)"
+        <input type="text" id="crm-search" placeholder="Search name or phone…" aria-label="Search customers by name or phone" oninput="filterCrmTable(this.value)"
                style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:180px;"/>
         <button onclick="document.getElementById('crm-search').value='';filterCrmTable('');" title="Clear search" aria-label="Clear customer search"
                 style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
@@ -3257,12 +3257,12 @@
         <table>
           <thead>
             <tr>
-              <th>Phone</th>
-              <th>Name</th>
-              <th>Orders</th>
-              <th>Total Spent</th>
-              <th>Last Seen</th>
-              <th></th>
+              <th scope="col">Phone</th>
+              <th scope="col">Name</th>
+              <th scope="col">Orders</th>
+              <th scope="col">Total Spent</th>
+              <th scope="col">Last Seen</th>
+              <th scope="col"></th>
             </tr>
           </thead>
           <tbody id="crm-table-body"></tbody>
@@ -3295,7 +3295,7 @@
         <div class="panel-header"><div class="panel-title">All Bookings</div><button class="panel-action" onclick="loadBookings()">↻ Refresh</button></div>
         <div class="panel-body">
           <table>
-            <thead><tr><th>Date / Time</th><th>Customer</th><th>Service</th><th>Status</th><th>Notes</th><th>Actions</th></tr></thead>
+            <thead><tr><th scope="col">Date / Time</th><th scope="col">Customer</th><th scope="col">Service</th><th scope="col">Status</th><th scope="col">Notes</th><th scope="col">Actions</th></tr></thead>
             <tbody id="bookings-table-body"></tbody>
           </table>
         </div>
@@ -3393,7 +3393,7 @@
              hidden by default, shown only when a match is found. -->
         <button id="drawer-handoff-badge" class="btn btn-ghost" style="display:none;margin-top:6px;font-size:10px;padding:3px 8px;color:#ef4444;border-color:#ef4444;" onclick="openInboxForHandoffRow(_drawerCustomer && _drawerCustomer.phone)" title="Open this customer's pending handoff in Live Inbox">🔴 Pending handoff — open chat</button>
       </div>
-      <button class="customer-drawer-close" onclick="closeDrawer()">✕</button>
+      <button class="customer-drawer-close" onclick="closeDrawer()" aria-label="Close customer details" title="Close">✕</button>
     </div>
     <div class="customer-drawer-body">
       <!-- Editable name — phone numbers alone make customers hard to recognise -->

@@ -650,6 +650,28 @@ document.addEventListener('keydown', e => {
   if (od && od.classList.contains('open')) closeOrderDrawer();
 });
 
+// ── UI/UX audit (Phase 11): drawer focus management ──────────────────────
+// Opening a drawer only toggled a CSS class — focus stayed wherever it was
+// (often back on the page behind an overlay), and closing never returned it
+// to whatever triggered the drawer. A keyboard/screen-reader user opening a
+// drawer got no indication focus had moved anywhere at all.
+let _lastFocusedBeforeDrawer = null;
+
+function _focusIntoDrawer(drawerId) {
+  _lastFocusedBeforeDrawer = document.activeElement;
+  const drawer = document.getElementById(drawerId);
+  if (!drawer) return;
+  const closeBtn = drawer.querySelector('.customer-drawer-close, [onclick*="close"]');
+  if (closeBtn) closeBtn.focus();
+}
+
+function _restoreFocusFromDrawer() {
+  if (_lastFocusedBeforeDrawer && typeof _lastFocusedBeforeDrawer.focus === 'function') {
+    _lastFocusedBeforeDrawer.focus();
+  }
+  _lastFocusedBeforeDrawer = null;
+}
+
 // ── TOAST ─────────────────────────────────────────────────
 function toast(msg, isError=false) {
   const t = document.getElementById('toast');
@@ -658,6 +680,21 @@ function toast(msg, isError=false) {
   t.style.color = isError ? 'var(--red)' : 'var(--green)';
   t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+// ── UI/UX audit (Phase 11): shared debounce helper ───────────────────────
+// filterOrdersBySearch/filterCrmTable/filterConversations each re-render
+// their full list on every keystroke (a full array filter + innerHTML
+// rebuild). Harmless at today's data sizes but wasteful, and would visibly
+// lag on a business with a large order/customer history. This wraps a
+// function so it only actually runs after typing pauses, without changing
+// any of the three functions' own filtering/rendering logic.
+function _debounce(fn, wait) {
+  let t = null;
+  return function(...args) {
+    clearTimeout(t);
+    t = setTimeout(() => fn.apply(this, args), wait);
+  };
 }
 
 // ── UI/UX audit (Phase 2): shared error+retry block ─────────────────────
@@ -1435,10 +1472,14 @@ function _applyConvFilter() {
   });
 }
 
-function filterConversations(query) {
+// Debounced: this only ever runs from the search box's oninput (see
+// _debounce's comment above) — no other code calls it expecting an
+// immediate render, unlike filterOrdersBySearch which deep-links from
+// several places and must stay synchronous.
+const filterConversations = _debounce(function(query) {
   _convSearchQuery = (query || '').trim().toLowerCase();
   _renderConversationList(_applyConvFilter());
-}
+}, 150);
 
 function _renderConversationList(list_data) {
   _convVisible = list_data;
@@ -1487,7 +1528,7 @@ async function openChat(phone, el) {
       <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
         <button class="panel-action" style="font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
         <button class="panel-action" style="font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
-        <button class="panel-action" style="font-size:11px;" onclick="openChat('${phoneEsc}',null)">↻</button>
+        <button class="panel-action" style="font-size:11px;" onclick="openChat('${phoneEsc}',null)" aria-label="Refresh conversation" title="Refresh">↻</button>
       </div>
     </div>
     <div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>
@@ -3692,10 +3733,12 @@ function _applyCrmFilters() {
   return rows;
 }
 
-function filterCrmTable(query) {
+// Debounced — only ever triggered by the search box's own oninput/clear,
+// same reasoning as filterConversations above.
+const filterCrmTable = _debounce(function(query) {
   _crmSearchQuery = (query || '').trim().toLowerCase();
   _renderCrmTable(_applyCrmFilters());
-}
+}, 150);
 
 const _CRM_SEGMENT_LABELS = { vip: '⭐ VIP', loyal: '💚 Loyal', new: '👋 New', inactive: "😴 Haven't ordered" };
 function filterCrmBySegment(segment) {
@@ -3802,6 +3845,7 @@ function openCustomerDrawer(customer) {
   if (handoffBadge) handoffBadge.style.display = 'none';
   document.getElementById('customer-drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
+  _focusIntoDrawer('customer-drawer');
   loadDrawerOrders(phone);
   loadDrawerConversation(phone);
   loadDrawerHandoffStatus(phone);
@@ -3897,6 +3941,7 @@ function closeDrawer() {
   document.getElementById('customer-drawer').classList.remove('open');
   document.getElementById('drawer-overlay').classList.remove('open');
   _drawerCustomer = null;
+  _restoreFocusFromDrawer();
 }
 
 // UI/UX audit: Customer → Orders had no working link at all — this jumps
@@ -4295,6 +4340,7 @@ function openOrderDrawer(orderId) {
 
   document.getElementById('order-drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
+  _focusIntoDrawer('order-drawer');
 }
 
 function closeOrderDrawer() {
@@ -4304,6 +4350,7 @@ function closeOrderDrawer() {
     document.getElementById('drawer-overlay').classList.remove('open');
   }
   _orderDrawerOrder = null;
+  _restoreFocusFromDrawer();
 }
 
 async function updateOrderStatusFromDrawer() {
@@ -5432,11 +5479,11 @@ function injectDashboardHelp() {
   panel.innerHTML = `
     <div class="help-panel-header">
       💬 Ask WaziBot
-      <button class="help-panel-close" onclick="closeDashHelp()">✕</button>
+      <button class="help-panel-close" onclick="closeDashHelp()" aria-label="Close help panel" title="Close">✕</button>
     </div>
     <div class="help-panel-input-row">
-      <input class="help-panel-input" id="dash-help-input" placeholder="How do I…?" onkeydown="if(event.key==='Enter')askDashHelp()">
-      <button class="help-panel-send" onclick="askDashHelp()">→</button>
+      <input class="help-panel-input" id="dash-help-input" placeholder="How do I…?" aria-label="Ask WaziBot a question" onkeydown="if(event.key==='Enter')askDashHelp()">
+      <button class="help-panel-send" onclick="askDashHelp()" aria-label="Send question" title="Send">→</button>
     </div>
     <div class="help-panel-body" id="dash-help-body">
       <div class="help-quick-links">
@@ -6239,12 +6286,12 @@ async function loadHandoffStats() {
           <table class="data-table" style="width:100%;border-collapse:collapse;">
             <thead>
               <tr>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Priority</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Customer</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Ticket</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Reason</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Waiting</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Action</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Priority</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Customer</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Ticket</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Reason</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Waiting</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -6294,9 +6341,9 @@ async function loadHandoffStats() {
           <table class="data-table" style="width:100%;border-collapse:collapse;">
             <thead>
               <tr>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Agent</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Messages Today</th>
-                <th style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Last Reply</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Agent</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Messages Today</th>
+                <th scope="col" style="text-align:left;padding:8px 12px;color:var(--text-muted);font-size:11px;">Last Reply</th>
               </tr>
             </thead>
             <tbody>
