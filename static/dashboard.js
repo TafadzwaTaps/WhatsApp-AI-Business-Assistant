@@ -1602,6 +1602,19 @@ function viewOrdersFromChat() {
 async function loadChatMessages(phone) {
   const msgsEl = document.getElementById('chat-msgs');
   if (!msgsEl) return;
+
+  // This function fully re-renders the message list on every call,
+  // including the periodic background refresh added above — so a user
+  // who scrolled up to read older messages must not get yanked back to
+  // the bottom every 30s. Capture where they were first; only force the
+  // scroll back down if they were already at/near the bottom (i.e. they
+  // were following the live conversation, not reading history).
+  const wasNearBottom =
+    (msgsEl.scrollHeight - msgsEl.scrollTop - msgsEl.clientHeight) < 120;
+  const prevScrollTop    = msgsEl.scrollTop;
+  const prevScrollHeight = msgsEl.scrollHeight;
+  const hadContent       = msgsEl.dataset.loaded === '1';
+
   try {
     const raw = await apiFetch(`${ROUTES.conversations}/${encodeURIComponent(phone)}`);
     if (!raw) return;
@@ -1616,7 +1629,17 @@ async function loadChatMessages(phone) {
       const txt   = isBc ? '📢 ' + escHtml(text.replace('[BROADCAST] ', '')) : escHtml(text);
       return `<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at || m.createdAt || m.timestamp)}</div></div>`;
     }).join('');
-    msgsEl.scrollTop = msgsEl.scrollHeight;
+    msgsEl.dataset.loaded = '1';
+
+    if (!hadContent || wasNearBottom) {
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    } else {
+      // New messages (if any) were appended at the end, so the growth in
+      // scrollHeight is content added below the user's current view —
+      // hold their position steady relative to the top, same compensation
+      // used for the Live Inbox's older-message pagination.
+      msgsEl.scrollTop = prevScrollTop + (msgsEl.scrollHeight - prevScrollHeight);
+    }
   } catch(e) {
     const el = document.getElementById('chat-msgs');
     if (el) el.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
@@ -3483,6 +3506,21 @@ setInterval(() => {
     loadOrders().catch(()=>{});
   }
   checkStatus().catch(()=>{});
+
+  // UI/UX bugfix: the Conversations tab previously had NO live-update
+  // mechanism at all — a new WhatsApp message would only appear after a
+  // manual tab switch or full page reload. Reusing this existing 30s
+  // cadence (rather than adding a new, faster interval, which the spec
+  // this fix follows explicitly warns against) keeps the list's ordering
+  // and unread counts fresh, and refreshes the open chat's messages too,
+  // without doing anything on tabs the agent isn't even looking at.
+  const convSection = document.getElementById('section-conversations');
+  if (convSection && convSection.classList.contains('active')) {
+    loadConversations().catch(() => {});
+    const win = document.getElementById('chat-window');
+    const openPhone = win && win.dataset.activePhone;
+    if (openPhone) loadChatMessages(openPhone).catch(() => {});
+  }
 }, 30000);  // 30s — reduced from 15s to cut Supabase request volume
 
 function setLoading(el, state=true) {

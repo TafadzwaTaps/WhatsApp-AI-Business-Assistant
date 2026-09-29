@@ -153,15 +153,33 @@ def get_messages_by_customer(
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
+    """
+    Return a page of messages for a customer, in chronological order
+    (oldest first) — the natural order for rendering a chat history.
+
+    `offset` counts back from the MOST RECENT message: offset=0 is the
+    newest page (the latest `limit` messages), offset=limit is the page
+    just before that, and so on. This mirrors how the inbox actually
+    scrolls — "load older messages" pages backward in time from "now" —
+    rather than paging forward from the start of the conversation.
+
+    Fixed 2026-09: previously ordered ascending and ranged from offset 0,
+    which returned the OLDEST messages first on a fresh open (see
+    get_recent_messages() below, which already had the correct pattern
+    and documented this exact bug in its own docstring). Reusing that
+    same desc-then-reverse pattern here so opening a conversation shows
+    its latest activity instead of the beginning of its history.
+    """
     res = (
         supabase.table("messages")
         .select("*")
         .eq("customer_id", customer_id)
-        .order("created_at")
+        .order("created_at", desc=True)
         .range(offset, offset + limit - 1)
         .execute()
     )
-    return res.data or []
+    rows = res.data or []
+    return list(reversed(rows))
 
 
 def get_recent_messages(customer_id: int, limit: int = 6) -> list[dict]:
@@ -235,22 +253,50 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
 
     customer_ids = [c["id"] for c in customers]
 
-    msgs_res = (
-        supabase.table("messages")
-        .select("*")
-        .eq("business_id", business_id)
-        .in_("customer_id", customer_ids)
-        .order("id", desc=True)
-        .limit(len(customer_ids) * 5)
-        .execute()
-    )
-    msgs = msgs_res.data or []
-
+    # Fetch the latest message per customer_id. A single capped query
+    # (`.limit(len(customer_ids) * 5)`) can starve low-volume customers
+    # when a few customers have a recent burst of messages — e.g. 3
+    # customers with 20 messages each would fill the whole cap for a
+    # 10-customer list, leaving the other 7 with no "latest message" at
+    # all even though they each have one somewhere further back. To
+    # avoid that, page through in bounded chunks, removing customer_ids
+    # from the search as soon as their latest message is found, and
+    # stop once every customer has a hit or a hard page cap is reached
+    # (so this can never turn into an unbounded full-table scan).
     latest: dict[int, dict] = {}
-    for m in msgs:
-        cid = m["customer_id"]
-        if cid not in latest:
-            latest[cid] = m
+    remaining_ids = list(customer_ids)
+    page_size = max(len(customer_ids) * 5, 50)
+    max_pages = 10
+    for _ in range(max_pages):
+        if not remaining_ids:
+            break
+        # Re-querying with IN restricted to the still-unresolved customers
+        # (rather than advancing an offset) means each pass's top page_size
+        # rows are no longer crowded out by customers already resolved in
+        # an earlier pass — so this converges in a bounded number of passes
+        # instead of needing to page deep into a single huge result set.
+        msgs_res = (
+            supabase.table("messages")
+            .select("*")
+            .eq("business_id", business_id)
+            .in_("customer_id", remaining_ids)
+            .order("id", desc=True)
+            .limit(page_size)
+            .execute()
+        )
+        msgs = msgs_res.data or []
+        if not msgs:
+            break
+        for m in msgs:
+            cid = m["customer_id"]
+            if cid not in latest:
+                latest[cid] = m
+        still_missing = [cid for cid in remaining_ids if cid not in latest]
+        if len(still_missing) == len(remaining_ids):
+            # This pass found nothing new for anyone still missing —
+            # further passes over the same data would just repeat it.
+            break
+        remaining_ids = still_missing
 
     # Look up which phones are currently in human_handoff state
     # so the inbox can show the 🔴 Handoff filter and badge correctly.
@@ -286,6 +332,16 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
             "in_handoff":      phone in handoff_phones,
             "handoff_state":   "human_handoff" if phone in handoff_phones else None,
         })
+
+    # Sort by REAL last activity, most recent first. `last_message_at`
+    # (computed above from the messages table) is the true activity
+    # signal — it moves on incoming AND outgoing/AI messages alike.
+    # `last_seen` (falls back here for customers with no messages at
+    # all, which shouldn't normally happen but is a safe fallback) only
+    # moves on INCOMING messages, so sorting by it alone — the previous
+    # behavior — put conversations in the wrong order whenever the
+    # business/AI sent the most recent reply.
+    result.sort(key=lambda r: r.get("last_message_at") or r.get("last_seen") or "", reverse=True)
     return result
 
 

@@ -185,6 +185,11 @@
         </button>
       </div>
 
+      <!-- "N new messages" indicator — shown instead of force-scrolling when
+           the user has scrolled up to read older messages; click jumps down. -->
+      <div class="new-msg-indicator" id="new-msg-indicator" style="display:none"
+           onclick="scrollToBottomAndClearIndicator()">↓ New messages</div>
+
       <!-- Typing indicator -->
       <div class="typing-indicator" id="typing-indicator" aria-live="polite">
         <div class="typing-dot"></div>

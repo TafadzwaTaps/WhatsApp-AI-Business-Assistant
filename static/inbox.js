@@ -151,15 +151,42 @@ function connectWS() {
       if (payload.event === 'new_message') {
         const { customer_id, message } = payload;
 
-        // If this conversation is currently open, append bubble
-        if (customer_id === currentCustomerId && message) {
-          appendBubble(message);
-          scrollToBottom();
+        // Realtime channels can redeliver the same event more than once.
+        // Dedup once, here, by the stable message id — shared by BOTH the
+        // chat-bubble path and the sidebar-preview/unread-count path below,
+        // so a redelivered event can't double-render a bubble OR
+        // double-increment an unread badge.
+        const isDupe = _isDuplicateRealtimeMsg(message);
+
+        // If this conversation is currently open, merge the message in.
+        if (customer_id === currentCustomerId && message && !isDupe) {
+          const container = document.getElementById('chat-messages');
+          const wasNearBottom = _isNearBottom(container);
+
+          if (!_reconcileOptimisticBubble(message)) {
+            appendBubble(message);
+          }
+
+          if (wasNearBottom) {
+            scrollToBottomAndClearIndicator();
+          } else {
+            _pendingNewMsgCount += 1;
+            _showNewMessageIndicator(_pendingNewMsgCount);
+          }
+
           if (message.direction === 'incoming') markRead().catch(() => {});
         }
 
-        // Always refresh sidebar to update preview + unread badge
-        loadConversations(false).catch(() => {});
+        // Update this conversation's row in-place and move it to the top
+        // of the sidebar — no full reload/refetch needed for the common
+        // case, so the list doesn't flicker or lose scroll position on
+        // every incoming message. Falls back to a real reload only when
+        // this is a brand-new conversation we don't have locally yet.
+        if (message && !isDupe) {
+          _applyRealtimeUpdateToSidebar(customer_id, message);
+        } else if (!message) {
+          loadConversations(false).catch(() => {});
+        }
       }
     } catch (err) {
       console.warn('WS parse error:', err);
@@ -167,6 +194,40 @@ function connectWS() {
   };
 
   wsConn.onerror = () => wsConn.close();
+}
+
+// Realtime/WebSocket delivery can redeliver the same event more than
+// once (reconnect-replay, at-least-once delivery, etc). Track recently
+// seen message ids so a redelivered "new_message" event is recognized
+// as a duplicate everywhere it matters — both the open chat's bubble
+// list and the sidebar's preview/unread count — not just wherever the
+// DOM happens to still show the earlier render. Deliberately keyed by
+// the message's own id (a stable identifier), never by text content:
+// two genuinely different messages can legitimately have identical text.
+const _seenRealtimeMsgIds = new Set();
+const _SEEN_MSG_ID_CAP = 500;
+
+function _isDuplicateRealtimeMsg(message) {
+  if (!message || message.id == null) return false; // no stable id -> can't dedupe safely
+  const key = String(message.id);
+
+  // Belt-and-braces: also check the live DOM, since a normal REST fetch
+  // (e.g. loadMessages() running moments before this WS event arrives)
+  // can render a message this Set never saw come through the socket.
+  const inDom = document.querySelector(`#chat-messages [data-msg-id="${CSS.escape(key)}"]`);
+
+  if (_seenRealtimeMsgIds.has(key) || inDom) {
+    _seenRealtimeMsgIds.add(key); // cheap to catch next time even without a DOM query
+    return true;
+  }
+
+  _seenRealtimeMsgIds.add(key);
+  if (_seenRealtimeMsgIds.size > _SEEN_MSG_ID_CAP) {
+    // Evict oldest (Set preserves insertion order) — bounded memory,
+    // no unbounded growth over a long-running inbox session.
+    _seenRealtimeMsgIds.delete(_seenRealtimeMsgIds.values().next().value);
+  }
+  return false;
 }
 
 function setWsStatus(cls, label) {
@@ -296,6 +357,42 @@ function renderContacts(convos) {
   list.appendChild(frag);
 }
 
+// Applies a realtime "new_message" event directly to the in-memory
+// conversation list — updates the preview/timestamp/unread count for the
+// affected conversation and moves it to the top, then re-renders from
+// local state. This is what lets the sidebar reorder instantly on every
+// message without a network round-trip or reloading/flickering the
+// whole list. Falls back to a real fetch only for a conversation we
+// don't know about yet (a brand-new customer).
+function _applyRealtimeUpdateToSidebar(customerId, message) {
+  const idx = allConversations.findIndex(c => c.customer_id === customerId);
+  if (idx === -1) {
+    loadConversations(false).catch(() => {});
+    return;
+  }
+
+  const conv = allConversations[idx];
+  conv.last_message    = message.text || conv.last_message;
+  conv.last_direction   = message.direction || conv.last_direction;
+  conv.last_message_at  = message.created_at || new Date().toISOString();
+  conv.last_status      = message.status || conv.last_status;
+
+  // Unread only increments for genuinely-new incoming messages on a
+  // conversation the user isn't currently looking at — opening a
+  // conversation (markRead) is what resets it, never just receiving one.
+  if (message.direction === 'incoming' && customerId !== currentCustomerId) {
+    conv.unread_count = (conv.unread_count || 0) + 1;
+  }
+
+  // Move to top — matches the backend's own "latest activity first" sort,
+  // so this stays consistent with what a fresh loadConversations() would
+  // return.
+  allConversations.splice(idx, 1);
+  allConversations.unshift(conv);
+
+  renderContacts(allConversations);
+}
+
 function filterContacts(val) { renderContacts(allConversations); }
 
 function setFilter(f) {
@@ -349,6 +446,11 @@ async function openChat(customerId, phone, lastSeen) {
 
   const lmBtn = document.getElementById('load-more-btn');
   if (lmBtn) lmBtn.style.display = 'none';
+
+  // Fresh conversation view: no pending "new message" backlog, and make
+  // sure the scroll listener that drives it is attached (idempotent).
+  _hideNewMessageIndicator();
+  _attachScrollListener();
 
   await loadMessages(customerId, true);
   await markRead();
@@ -454,11 +556,19 @@ async function deleteConversation(customerId) {
 /* ── LOAD MESSAGES ──────────────────────────────────────── */
 async function loadMessages(customerId, reset = false) {
   if (reset) msgOffset = 0;
+
+  const container = document.getElementById('chat-messages');
+  // Preserve scroll position when prepending OLDER messages (pagination):
+  // capture height/scrollTop before the DOM changes, then restore the
+  // user's visual anchor after — otherwise inserting content above the
+  // current scroll position silently yanks the view down by that height.
+  const prevScrollHeight = (!reset && container) ? container.scrollHeight : 0;
+  const prevScrollTop    = (!reset && container) ? container.scrollTop    : 0;
+
   try {
     const data = await apiFetch(`/chat/messages/${customerId}?limit=${msgLimit}&offset=${msgOffset}`);
     const msgs = (data && Array.isArray(data.messages)) ? data.messages : [];
 
-    const container = document.getElementById('chat-messages');
     if (!container) return;
 
     const lmBtn = document.getElementById('load-more-btn');
@@ -491,10 +601,16 @@ async function loadMessages(customerId, reset = false) {
     hasMoreMessages = msgs.length === msgLimit;
     if (lmBtn) lmBtn.style.display = hasMoreMessages ? 'block' : 'none';
 
-    if (reset) scrollToBottom();
+    if (reset) {
+      scrollToBottom();
+    } else if (container) {
+      // Restore the pre-load anchor: new content was inserted above the
+      // old scrollTop, so grow scrollTop by exactly however much taller
+      // the container just became.
+      container.scrollTop = prevScrollTop + (container.scrollHeight - prevScrollHeight);
+    }
 
   } catch (e) {
-    const container = document.getElementById('chat-messages');
     if (container) {
       container.innerHTML =
         `<div style="text-align:center;padding:20px;font-family:var(--mono);font-size:12px;color:var(--red)">⚠ ${escHtml(e.message)}</div>`;
@@ -558,8 +674,10 @@ function createBubble(msg) {
 
 function appendBubble(msg) {
   const container = document.getElementById('chat-messages');
-  if (!container) return;
-  container.appendChild(createBubble(msg));
+  if (!container) return null;
+  const el = createBubble(msg);
+  container.appendChild(el);
+  return el;
 }
 
 /* ── SEND MESSAGE ───────────────────────────────────────── */
@@ -580,7 +698,7 @@ async function sendMessage() {
   // Use the real logged-in agent's name (persisted at login) instead of "You",
   // so it matches what's stored server-side and what the customer sees attributed.
   const _myAgentName = localStorage.getItem('wazibot_username') || 'Agent';
-  appendBubble({
+  const _optimisticEl = appendBubble({
     id: null,
     text,
     direction:   'outgoing',
@@ -589,7 +707,10 @@ async function sendMessage() {
     status: 'sent',
     created_at: new Date().toISOString(),
   });
-  scrollToBottom();
+  // Remember this bubble so the realtime echo of this same send can
+  // patch it in place instead of rendering as a duplicate message.
+  _lastOptimisticMsg = { text, ts: Date.now(), el: _optimisticEl };
+  scrollToBottomAndClearIndicator();
   showTyping(900);
 
   try {
@@ -649,6 +770,83 @@ function scrollToBottom() {
   const c = document.getElementById('chat-messages');
   if (!c) return;
   requestAnimationFrame(() => { if (c) c.scrollTop = c.scrollHeight; });
+}
+
+// "Near the bottom" = within `threshold`px of the true bottom. Used to
+// decide whether a newly-arrived message should auto-scroll the view
+// (user is already following along) or leave the user's position alone
+// and surface the "↓ N new messages" indicator instead (user scrolled
+// up on purpose to read older messages).
+function _isNearBottom(el, threshold = 120) {
+  if (!el) return true;
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) < threshold;
+}
+
+let _pendingNewMsgCount = 0;
+
+function _showNewMessageIndicator(count) {
+  const el = document.getElementById('new-msg-indicator');
+  if (!el) return;
+  el.textContent = `↓ ${count} new message${count === 1 ? '' : 's'}`;
+  el.style.display = 'flex';
+}
+
+function _hideNewMessageIndicator() {
+  _pendingNewMsgCount = 0;
+  const el = document.getElementById('new-msg-indicator');
+  if (el) el.style.display = 'none';
+}
+
+function scrollToBottomAndClearIndicator() {
+  scrollToBottom();
+  _hideNewMessageIndicator();
+}
+
+// Once the user scrolls down to the bottom themselves (without clicking
+// the indicator), the indicator has served its purpose — clear it rather
+// than leaving a stale "↓ 3 new messages" pill sitting over content
+// they've already seen.
+let _scrollListenerAttached = false;
+function _attachScrollListener() {
+  if (_scrollListenerAttached) return;
+  const c = document.getElementById('chat-messages');
+  if (!c) return;
+  c.addEventListener('scroll', () => {
+    if (_pendingNewMsgCount > 0 && _isNearBottom(c)) {
+      _hideNewMessageIndicator();
+    }
+  });
+  _scrollListenerAttached = true;
+}
+
+/* ── OPTIMISTIC-SEND / REALTIME-ECHO RECONCILIATION ────────
+   sendMessage() below renders the agent's own outgoint message
+   immediately (before the server confirms it), so the UI feels instant.
+   When the realtime event for that same message arrives moments later
+   it must not render as a second, duplicate bubble. Rather than
+   dedupe-by-text broadly (two genuinely identical messages can happen
+   legitimately), this narrowly matches the single most recent
+   optimistic bubble against the realtime echo — same direction, same
+   sender, same text, arriving within a few seconds — and patches its
+   id/status in place instead of appending a new bubble. */
+let _lastOptimisticMsg = null; // { text, ts, el }
+
+function _reconcileOptimisticBubble(message) {
+  if (!_lastOptimisticMsg) return false;
+  if (message.direction !== 'outgoing') return false;
+  if ((message.text || '') !== _lastOptimisticMsg.text) return false;
+  if (Date.now() - _lastOptimisticMsg.ts > 15000) return false;
+
+  const el = _lastOptimisticMsg.el;
+  _lastOptimisticMsg = null;
+  if (!el || !el.isConnected) return false;
+
+  if (message.id != null) el.dataset.msgId = String(message.id);
+  const statusEl = el.querySelector('.msg-status');
+  if (statusEl && message.status) {
+    statusEl.className = 'msg-status ' + message.status;
+  }
+  return true;
 }
 
 /* ── UTILS ──────────────────────────────────────────────── */

@@ -495,6 +495,38 @@ body {
   flex: 1;
   min-height: 0;    /* desktop fix: needed at every level of flex column chain */
   overflow: hidden;
+  position: relative;   /* anchor for .new-msg-indicator overlay */
+}
+
+/* "↓ N new messages" pill — shown when a message arrives while the user has
+   scrolled up in the history, instead of forcibly yanking them to the
+   bottom. Floats above the composer (never over it), click scrolls down. */
+.new-msg-indicator {
+  position: absolute;
+  left: 50%;
+  bottom: 78px;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  background: var(--green);
+  color: #06210f;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: var(--shadow-md, 0 4px 14px rgba(0,0,0,0.25));
+  animation: new-msg-pop 0.18s var(--ease, ease-out);
+}
+
+.new-msg-indicator:hover { filter: brightness(1.05); }
+
+@keyframes new-msg-pop {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
 }
 
 /* No-selection placeholder */
@@ -928,6 +960,7 @@ body {
   .chat-header { padding: 10px 12px; gap: 8px; }
   .chat-messages { padding: 12px 10px; }
   .send-box { padding: 8px 10px; gap: 6px; }
+  .new-msg-indicator { bottom: 68px; font-size: 11px; padding: 6px 12px; }
 }
 
 
