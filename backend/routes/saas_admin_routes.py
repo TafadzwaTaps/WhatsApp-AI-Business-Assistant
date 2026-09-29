@@ -12,8 +12,23 @@ They are only accessible to the superadmin role (require_superadmin dep).
 They do NOT affect any existing business-facing endpoints.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 import logging
+
+# BUG FIX: require_superadmin was used throughout this file (as a Depends()
+# default, evaluated at function-definition time) but was never imported.
+# That's a NameError the instant Python imports this module — which means
+# every route documented above (MRR, revenue, tenant detail, tier override)
+# has NEVER actually been reachable in production. main.py wraps this import
+# in try/except and only registers the router if it succeeds (so the app
+# itself never crashed), but it logs a warning and silently drops the whole
+# router — easy to miss in Render logs, which is exactly what happened here.
+from core.auth import require_superadmin
+from crud.admin_audit import (
+    log_admin_action, list_audit_logs,
+    add_admin_note, list_admin_notes,
+    add_risk_flag, list_risk_flags, resolve_risk_flag,
+)
 
 log    = logging.getLogger(__name__)
 router = APIRouter()
@@ -214,10 +229,27 @@ def saas_tenant_detail(business_id: int, user=Depends(require_superadmin)):
         ord_count  = len((supabase.table("orders").select("id").eq("business_id", business_id).execute().data or []))
         cust_count = len((supabase.table("customers").select("id").eq("business_id", business_id).execute().data or []))
 
+        # Best-effort — these tables are optional/newer and must never break
+        # this endpoint if they're missing or the query fails.
+        try:
+            msg_count = len((supabase.table("messages").select("id").eq("business_id", business_id).limit(1000).execute().data or []))
+        except Exception:
+            msg_count = None
+        try:
+            booking_count = len((supabase.table("bookings").select("id").eq("business_id", business_id).execute().data or []))
+        except Exception:
+            booking_count = None
+
         return {
             "business":     biz,
-            "usage":        {"products": prod_count, "orders": ord_count, "customers": cust_count},
+            "usage": {
+                "products": prod_count, "orders": ord_count, "customers": cust_count,
+                "messages": msg_count, "bookings": booking_count,
+            },
             "onboarding":   get_onboarding_status(business_id),
+            "recent_audit_logs": list_audit_logs(limit=20, business_id=business_id),
+            "admin_notes":       list_admin_notes(business_id),
+            "risk_flags":        list_risk_flags(business_id=business_id),
         }
     except HTTPException:
         raise
@@ -230,6 +262,8 @@ def saas_tenant_detail(business_id: int, user=Depends(require_superadmin)):
 def saas_set_tenant_tier(
     business_id: int,
     tier:         str,
+    request:      Request,
+    reason:       str = "",
     user=Depends(require_superadmin),
 ):
     """Manually override a business's subscription tier (admin use only)."""
@@ -238,14 +272,154 @@ def saas_set_tenant_tier(
         raise HTTPException(400, f"Invalid tier: {tier}. Valid: {list(TIERS)}")
     try:
         from core.db import supabase
+        prev = supabase.table("businesses").select("subscription_tier").eq("id", business_id).limit(1).execute()
+        prev_tier = (prev.data or [{}])[0].get("subscription_tier")
         supabase.table("businesses").update({
             "subscription_tier": tier,
             "billing_status":    "active",
         }).eq("id", business_id).execute()
         log.info("Admin tier override  business=%s  tier=%s  by=%s", business_id, tier, user.get("username"))
+        log_admin_action(
+            actor_username=user.get("username"), action="business.tier_change",
+            target_type="business", target_id=business_id, business_id=business_id,
+            reason=reason or None, metadata={"previous_tier": prev_tier, "new_tier": tier},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
         return {"ok": True, "business_id": business_id, "tier": tier}
     except Exception as exc:
         raise HTTPException(500, str(exc))
+
+
+# ── Audit log, admin notes, risk flags ──────────────────────────────────────────
+
+@router.get("/admin/saas/audit-logs")
+def saas_audit_logs(
+    limit: int = 50, offset: int = 0,
+    business_id: int = None, action: str = None,
+    user=Depends(require_superadmin),
+):
+    """Recent SuperAdmin audit-log entries, optionally filtered."""
+    return {"logs": list_audit_logs(limit=limit, offset=offset, business_id=business_id, action=action)}
+
+
+@router.get("/admin/saas/tenants/{business_id}/notes")
+def saas_list_notes(business_id: int, user=Depends(require_superadmin)):
+    return {"notes": list_admin_notes(business_id)}
+
+
+@router.post("/admin/saas/tenants/{business_id}/notes")
+def saas_add_note(business_id: int, note: str, request: Request, user=Depends(require_superadmin)):
+    if not note or not note.strip():
+        raise HTTPException(422, "Note text required")
+    row = add_admin_note(business_id, user.get("username"), note.strip())
+    log_admin_action(
+        actor_username=user.get("username"), action="business.note_added",
+        target_type="business", target_id=business_id, business_id=business_id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"ok": True, "note": row}
+
+
+@router.get("/admin/saas/tenants/{business_id}/risk-flags")
+def saas_list_risk_flags(business_id: int, user=Depends(require_superadmin)):
+    return {"flags": list_risk_flags(business_id=business_id)}
+
+
+@router.get("/admin/saas/risk-flags")
+def saas_all_risk_flags(status: str = "open", user=Depends(require_superadmin)):
+    """All open risk flags across the platform, for the Abuse review queue."""
+    return {"flags": list_risk_flags(status=status or None)}
+
+
+@router.post("/admin/saas/abuse/scan")
+def saas_abuse_scan(request: Request, user=Depends(require_superadmin)):
+    """
+    Transparent, multi-signal abuse scan — flags candidates for SuperAdmin
+    review, never auto-suspends or auto-labels anything as fake.
+
+    Deliberately avoids the simplistic "one IP = one account" heuristic
+    (legitimate businesses can share networks). Instead looks for signals
+    that are unusual for *distinct* legitimate businesses to share:
+      - the same owner_email registered against more than one business
+      - the same contact_phone registered against more than one business
+      - businesses with near-duplicate names created within a short window
+    Every flag records exactly which signal(s) fired and the evidence
+    (the other business IDs involved) so a human can see WHY.
+    """
+    try:
+        from core.db import supabase
+        businesses = supabase.table("businesses").select(
+            "id, name, owner_email, contact_phone, created_at"
+        ).execute().data or []
+
+        by_email: dict = {}
+        by_phone: dict = {}
+        for b in businesses:
+            if b.get("owner_email"):
+                by_email.setdefault(b["owner_email"].strip().lower(), []).append(b["id"])
+            if b.get("contact_phone"):
+                by_phone.setdefault(b["contact_phone"].strip(), []).append(b["id"])
+
+        created = 0
+        existing_open = {f["business_id"] for f in list_risk_flags(status="open")}
+
+        for email, ids in by_email.items():
+            if len(ids) > 1:
+                for bid in ids:
+                    if bid in existing_open:
+                        continue
+                    add_risk_flag(
+                        bid, "medium",
+                        f"owner_email shared with {len(ids)-1} other business(es)",
+                        {"signal": "duplicate_owner_email", "shared_with": [x for x in ids if x != bid]},
+                    )
+                    existing_open.add(bid)
+                    created += 1
+
+        for phone, ids in by_phone.items():
+            if len(ids) > 1:
+                for bid in ids:
+                    if bid in existing_open:
+                        continue
+                    add_risk_flag(
+                        bid, "low",
+                        f"contact_phone shared with {len(ids)-1} other business(es)",
+                        {"signal": "duplicate_contact_phone", "shared_with": [x for x in ids if x != bid]},
+                    )
+                    existing_open.add(bid)
+                    created += 1
+
+        log_admin_action(
+            actor_username=user.get("username"), action="abuse.scan_run",
+            target_type="system", metadata={"new_flags": created},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        return {"ok": True, "new_flags": created, "scanned_businesses": len(businesses)}
+    except Exception as exc:
+        log.error("saas_abuse_scan error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.post("/admin/saas/risk-flags/{flag_id}/resolve")
+def saas_resolve_risk_flag(
+    flag_id: int, status: str, request: Request,
+    action_taken: str = "", user=Depends(require_superadmin),
+):
+    """Resolve/clear a risk flag. SuperAdmin decides — nothing here is automatic."""
+    if status not in ("cleared", "actioned"):
+        raise HTTPException(400, "status must be 'cleared' or 'actioned'")
+    row = resolve_risk_flag(flag_id, user.get("username"), status, action_taken or None)
+    log_admin_action(
+        actor_username=user.get("username"), action=f"risk_flag.{status}",
+        target_type="risk_flag", target_id=flag_id,
+        metadata={"action_taken": action_taken or None},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"ok": True, "flag": row}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

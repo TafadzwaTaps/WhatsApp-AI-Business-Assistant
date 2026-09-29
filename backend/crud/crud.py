@@ -866,18 +866,16 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
     return result
 
 
-# ── Admin stats ───────────────────────────────────────────────────────────────
-
-def get_admin_stats() -> dict:
-    businesses = get_all_businesses()
-    orders_res = supabase.table("orders").select("total_price").execute()
-    orders = orders_res.data or []
-    return {
-        "businesses":        len(businesses),
-        "active_businesses": sum(1 for b in businesses if b.get("is_active")),
-        "total_orders":      len(orders),
-        "total_revenue":     round(sum(float(o.get("total_price") or 0) for o in orders), 2),
-    }
+# NOTE: get_admin_stats() used to be defined here too, but crud/__init__.py
+# never imports this module (crud/crud.py) at all — it imports
+# get_admin_stats from crud/analytics.py, which is the one that actually
+# runs in production. Having two definitions of the same function in two
+# different files, only one of which is ever wired up, is exactly the kind
+# of silent-dead-code trap that caused the routes/saas_admin_routes.py
+# missing-import bug elsewhere in this codebase. The real implementation
+# (with trialing_count/paid_count/expired_trial_count/dedicated_number_count/
+# shared_number_count/expiring_soon/by_category/by_currency) now lives
+# solely in crud/analytics.py::get_admin_stats() — see that file.
 
 
 # ── CARTS ─────────────────────────────────────────────────────────────────────

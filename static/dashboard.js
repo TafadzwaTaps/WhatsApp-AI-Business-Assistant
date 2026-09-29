@@ -23,6 +23,11 @@ const ROUTES = {
   analyticsStats:'/analytics/stats',
   analyticsTop:  '/analytics/top-customers',
   analyticsInsights: '/analytics/conversation-insights',
+  // SuperAdmin 2.0 — Platform Control Center
+  saasTenant:    '/admin/saas/tenants',     // + /{id}
+  auditLogs:     '/admin/saas/audit-logs',
+  riskFlags:     '/admin/saas/risk-flags',
+  abuseScan:     '/admin/saas/abuse/scan',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -528,7 +533,8 @@ function buildSidebar() {
     nav.innerHTML = `
       <div class="nav-section">Platform</div>
       <button class="nav-item admin-item active" onclick="showSection('admin-overview',this);closeSidebar()"><span class="icon">🌐</span> Overview <span class="status-dot"></span></button>
-      <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon">🏢</span> Businesses</button>`;
+      <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon">🏢</span> Businesses</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon">🛡️</span> Audit & Abuse</button>`;
   } else {
     const _rl2=document.getElementById('sidebar-role-label'); if(_rl2) _rl2.textContent=bizName||'Business';
     const _rb2=document.getElementById('sidebar-role-badge'); if(_rb2) _rb2.innerHTML='<span class="badge badge-green">BUSINESS</span>';
@@ -576,6 +582,7 @@ function showSection(name, btn) {
   document.getElementById('section-' + name).classList.add('active');
   if (btn) btn.classList.add('active');
   if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
+  if (name==='admin-audit') loadAdminAudit();
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
@@ -893,11 +900,134 @@ function openAdminBizDetail(id) {
 
   const modal = document.getElementById('sa-biz-detail-modal');
   if (modal) modal.classList.add('open');
+
+  // SuperAdmin 2.0 — Business 360: fetch the richer tenant-detail endpoint
+  // (usage, admin notes, risk flags, recent audit log for this business)
+  // without blocking the modal from opening with what we already have.
+  _saCurrentDetailId = id;
+  loadAdminBizDetailExtra(id);
+}
+
+let _saCurrentDetailId = null;
+
+async function loadAdminBizDetailExtra(id) {
+  const usageEl = document.getElementById('sa-detail-usage');
+  const flagsEl = document.getElementById('sa-detail-flags');
+  const notesEl = document.getElementById('sa-detail-notes');
+  const auditEl = document.getElementById('sa-detail-audit');
+  [usageEl, flagsEl, notesEl, auditEl].forEach(el => { if (el) el.textContent = ''; });
+  try {
+    const detail = await apiFetch(`${ROUTES.saasTenant}/${id}`);
+    if (!detail || _saCurrentDetailId !== id) return; // stale response, modal moved on
+
+    const u = detail.usage || {};
+    if (usageEl) usageEl.innerHTML =
+      `<div style="display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11px;color:var(--text-dim);">
+        <span>📦 ${u.products ?? '—'} products</span>
+        <span>🛒 ${u.orders ?? '—'} orders</span>
+        <span>👥 ${u.customers ?? '—'} customers</span>
+        <span>💬 ${u.messages ?? '—'} messages</span>
+        <span>🗓️ ${u.bookings ?? '—'} bookings</span>
+      </div>`;
+
+    const flags = detail.risk_flags || [];
+    if (flagsEl) flagsEl.innerHTML = flags.length
+      ? flags.map(f => `<div style="display:flex;justify-content:space-between;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);">
+          <span><span class="badge ${f.risk_level==='high'?'badge-red':f.risk_level==='medium'?'badge-amber':'badge-blue'}">${escHtml(f.risk_level)}</span> ${escHtml(f.reason||'')} <span style="color:var(--text-dim);">(${escHtml(f.status||'open')})</span></span>
+          ${f.status==='open' ? `<button class="btn btn-ghost" style="padding:2px 8px;font-size:10px;" onclick="resolveRiskFlag(${f.id})">Resolve</button>` : ''}
+        </div>`).join('')
+      : `<div class="empty" style="padding:4px 0;">No risk flags on this business.</div>`;
+
+    const notes = detail.admin_notes || [];
+    if (notesEl) notesEl.innerHTML = notes.length
+      ? notes.map(n => `<div style="padding:4px 0;border-bottom:1px solid var(--border);">
+          <span style="color:var(--text-dim);">${fmtTime(n.created_at)} — @${escHtml(n.author_username||'—')}:</span> ${escHtml(n.note)}
+        </div>`).join('')
+      : `<div class="empty" style="padding:4px 0;">No notes yet.</div>`;
+
+    const logs = detail.recent_audit_logs || [];
+    if (auditEl) auditEl.innerHTML = logs.length
+      ? logs.map(l => `<div style="padding:3px 0;color:var(--text-dim);">${fmtTime(l.created_at)} — @${escHtml(l.actor_username||'—')} <strong style="color:var(--text);">${escHtml(l.action||'')}</strong>${l.reason?' — '+escHtml(l.reason):''}</div>`).join('')
+      : `<div class="empty" style="padding:4px 0;">No admin actions recorded yet.</div>`;
+  } catch (e) {
+    if (usageEl) usageEl.innerHTML = `<div class="empty">Usage/audit data unavailable — ${escHtml(e.message||'')}</div>`;
+    if (flagsEl) flagsEl.textContent = '—';
+    if (notesEl) notesEl.textContent = '—';
+    if (auditEl) auditEl.textContent = '—';
+  }
+}
+
+async function addAdminNote() {
+  const input = document.getElementById('sa-note-input');
+  const note  = (input?.value || '').trim();
+  if (!note) { toast('Enter a note first', true); return; }
+  if (!_saCurrentDetailId) return;
+  try {
+    await apiFetch(`${ROUTES.saasTenant}/${_saCurrentDetailId}/notes?note=${encodeURIComponent(note)}`, { method: 'POST' });
+    if (input) input.value = '';
+    toast('Note added');
+    loadAdminBizDetailExtra(_saCurrentDetailId);
+  } catch (e) { toast('Failed to add note: ' + e.message, true); }
+}
+
+async function resolveRiskFlag(flagId) {
+  try {
+    await apiFetch(`${ROUTES.riskFlags}/${flagId}/resolve?status=cleared`, { method: 'POST' });
+    toast('Flag cleared');
+    if (_saCurrentDetailId) loadAdminBizDetailExtra(_saCurrentDetailId);
+    loadAdminAudit();
+  } catch (e) { toast('Failed to resolve flag: ' + e.message, true); }
 }
 
 function closeAdminBizDetail() {
   const modal = document.getElementById('sa-biz-detail-modal');
   if (modal) modal.classList.remove('open');
+  _saCurrentDetailId = null;
+}
+
+// ── SuperAdmin 2.0 — Audit & Abuse section ──────────────────────────────────
+
+async function loadAdminAudit() {
+  const flagsTbody = document.getElementById('sa-risk-flags-table');
+  const auditTbody = document.getElementById('sa-audit-log-table');
+  try {
+    const [flagsRes, logsRes] = await Promise.all([
+      apiFetch(`${ROUTES.riskFlags}?status=open`),
+      apiFetch(`${ROUTES.auditLogs}?limit=50`),
+    ]);
+    const flags = (flagsRes && flagsRes.flags) || [];
+    const logs  = (logsRes && logsRes.logs) || [];
+
+    if (flagsTbody) {
+      flagsTbody.innerHTML = flags.length ? flags.map(f => `<tr>
+          <td><span class="badge badge-purple">#${f.business_id}</span></td>
+          <td><span class="badge ${f.risk_level==='high'?'badge-red':f.risk_level==='medium'?'badge-amber':'badge-blue'}">${escHtml(f.risk_level)}</span></td>
+          <td>${escHtml(f.reason||'')}</td>
+          <td style="color:var(--text-dim);font-size:11px;">${escHtml(JSON.stringify(f.evidence||{}))}</td>
+          <td>${fmtTime(f.created_at)}</td>
+          <td><button class="btn btn-ghost" onclick="resolveRiskFlag(${f.id})">Resolve</button></td>
+        </tr>`).join('') : `<tr><td colspan="6"><div class="empty">No open risk flags. Run a scan to check for new ones.</div></td></tr>`;
+    }
+    if (auditTbody) {
+      auditTbody.innerHTML = logs.length ? logs.map(l => `<tr>
+          <td style="color:var(--text-dim);font-size:11px;">${fmtTime(l.created_at)}</td>
+          <td>@${escHtml(l.actor_username||'—')}</td>
+          <td><span class="badge badge-purple">${escHtml(l.action||'')}</span></td>
+          <td>${l.business_id!=null?'#'+l.business_id:'—'}</td>
+          <td style="color:var(--text-dim);">${escHtml(l.reason||'—')}</td>
+        </tr>`).join('') : `<tr><td colspan="5"><div class="empty">No admin actions recorded yet.</div></td></tr>`;
+    }
+  } catch (e) {
+    toast('Failed to load audit/abuse data: ' + e.message, true);
+  }
+}
+
+async function runAbuseScan() {
+  try {
+    const res = await apiFetch(ROUTES.abuseScan, { method: 'POST' });
+    toast(`Scan complete — ${res.new_flags} new flag(s) from ${res.scanned_businesses} businesses`);
+    loadAdminAudit();
+  } catch (e) { toast('Abuse scan failed: ' + e.message, true); }
 }
 
 function openModal() { document.getElementById('add-business-modal').classList.add('open'); }

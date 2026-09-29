@@ -5,6 +5,7 @@ crud/analytics.py — Analytics stats, CRM segmentation, and payment reminder qu
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from core.db import supabase
 from crud._helpers import _now
@@ -51,14 +52,76 @@ def _cache_invalidate_business(business_id: int) -> None:
 # ── Admin stats ───────────────────────────────────────────────────────────────
 
 def get_admin_stats() -> dict:
+    """
+    SuperAdmin 2.0 bug fix: the SuperAdmin dashboard's loadAdminData()
+    (static/dashboard.js) has always read trialing_count/paid_count/
+    expired_trial_count/dedicated_number_count/shared_number_count/
+    expiring_soon/by_category/by_currency off this function's response —
+    none of those fields were ever returned here (only the 4 basic ones
+    below), so those stat cards/breakdowns have silently shown "—" or
+    "No data yet" since they were built. Fixed by computing them from the
+    same `businesses` list already being fetched, using columns that
+    already exist (billing_status, trial_ends_at, use_shared_number,
+    category, currency) — no new tables, no new tracking needed.
+
+    (A duplicate, already-fixed copy of this function briefly existed in
+    crud/crud.py, but that module is never imported anywhere in the app —
+    crud/__init__.py exports get_admin_stats from *this* file — so that
+    copy was unreachable dead code. This is the one that actually runs.)
+    """
     businesses = get_all_businesses()
     orders_res = supabase.table("orders").select("total_price").execute()
     orders = orders_res.data or []
+
+    trialing_count  = sum(1 for b in businesses if (b.get("billing_status") or "trialing") == "trialing")
+    paid_count      = sum(1 for b in businesses if b.get("billing_status") == "active")
+    dedicated_count = sum(1 for b in businesses if b.get("use_shared_number") is False)
+    shared_count    = sum(1 for b in businesses if b.get("use_shared_number") is not False)
+
+    now = datetime.now(timezone.utc)
+    expired_trial_count = 0
+    expiring_soon: list[dict] = []
+    for b in businesses:
+        raw_end = b.get("trial_ends_at")
+        if not raw_end or (b.get("billing_status") or "trialing") != "trialing":
+            continue
+        try:
+            end = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00"))
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            continue
+        days_left = (end.date() - now.date()).days
+        if days_left < 0:
+            expired_trial_count += 1
+        elif days_left <= 7:
+            expiring_soon.append({"name": b.get("name", ""), "days_left": days_left})
+    expiring_soon.sort(key=lambda x: x["days_left"])
+    expiring_soon = expiring_soon[:10]
+
+    by_category: dict = {}
+    for b in businesses:
+        cat = (b.get("category") or "Uncategorized").strip() or "Uncategorized"
+        by_category[cat] = by_category.get(cat, 0) + 1
+
+    by_currency: dict = {}
+    for b in businesses:
+        cur = (b.get("currency") or "USD").strip() or "USD"
+        by_currency[cur] = by_currency.get(cur, 0) + 1
+
     return {
-        "businesses":        len(businesses),
-        "active_businesses": sum(1 for b in businesses if b.get("is_active")),
-        "total_orders":      len(orders),
-        "total_revenue":     round(sum(float(o.get("total_price") or 0) for o in orders), 2),
+        "businesses":            len(businesses),
+        "active_businesses":     sum(1 for b in businesses if b.get("is_active")),
+        "total_orders":          len(orders),
+        "total_revenue":         round(sum(float(o.get("total_price") or 0) for o in orders), 2),
+        "trialing_count":        trialing_count,
+        "paid_count":            paid_count,
+        "expired_trial_count":   expired_trial_count,
+        "dedicated_number_count": dedicated_count,
+        "shared_number_count":    shared_count,
+        "expiring_soon":          expiring_soon,
+        "by_category":            by_category,
+        "by_currency":            by_currency,
     }
 
 

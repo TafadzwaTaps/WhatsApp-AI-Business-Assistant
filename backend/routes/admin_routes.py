@@ -18,6 +18,7 @@ from core.auth import (
     require_superadmin, require_business, get_current_user,
 )
 from core.crypto import TokenDecryptionError
+from crud.admin_audit import log_admin_action
 from workflows.order_lifecycle import (
     update_order_status_supabase, get_order,
     format_order_status, get_progress_bar, next_order_stage,
@@ -222,18 +223,32 @@ def list_businesses(_=Depends(require_superadmin)):
 
 
 @router.patch("/admin/businesses/{business_id}")
-def admin_update_business(business_id: int, data: dict, _=Depends(require_superadmin)):
+def admin_update_business(business_id: int, data: dict, request: Request, _=Depends(require_superadmin)):
     class _D:
         def dict(self, **_): return data
     b = crud.update_business(business_id, _D())
     if not b: raise HTTPException(404, "Business not found")
+    log_admin_action(
+        actor_username=_.get("username"), action="business.update",
+        target_type="business", target_id=business_id, business_id=business_id,
+        metadata={"fields": list(data.keys())},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return b
 
 
 @router.delete("/admin/businesses/{business_id}")
-def admin_delete_business(business_id: int, _=Depends(require_superadmin)):
+def admin_delete_business(business_id: int, request: Request, _=Depends(require_superadmin)):
     b = crud.delete_business(business_id)
     if not b: raise HTTPException(404, "Business not found")
+    log_admin_action(
+        actor_username=_.get("username"), action="business.delete",
+        target_type="business", target_id=business_id, business_id=business_id,
+        metadata={"name": b.get("name")},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"deleted": business_id}
 
 
@@ -480,7 +495,7 @@ class BusinessStatusUpdate(BaseModel):
 
 
 @router.patch("/platform/businesses/{business_id}")
-def platform_update_business(business_id: int, data: BusinessStatusUpdate, user=Depends(require_superadmin)):
+def platform_update_business(business_id: int, data: BusinessStatusUpdate, request: Request, user=Depends(require_superadmin)):
     biz = crud.get_business_by_id(business_id)
     if not biz: raise HTTPException(404, f"Business {business_id} not found")
     updates: dict = {}
@@ -492,26 +507,47 @@ def platform_update_business(business_id: int, data: BusinessStatusUpdate, user=
     class _D:
         def dict(self, **_): return updates
     crud.update_business(business_id, _D())
+    log_admin_action(
+        actor_username=user.get("username"), action="business.update",
+        target_type="business", target_id=business_id, business_id=business_id,
+        metadata={"updates": updates},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"ok": True, "business_id": business_id, "updates": updates}
 
 
 @router.post("/platform/businesses/{business_id}/suspend")
-def platform_suspend_business(business_id: int, user=Depends(require_superadmin)):
+def platform_suspend_business(business_id: int, request: Request, reason: str = "", user=Depends(require_superadmin)):
     biz = crud.get_business_by_id(business_id)
     if not biz: raise HTTPException(404, f"Business {business_id} not found")
     class _D:
         def dict(self, **_): return {"is_active": False}
     crud.update_business(business_id, _D())
+    log_admin_action(
+        actor_username=user.get("username"), action="business.suspend",
+        target_type="business", target_id=business_id, business_id=business_id,
+        reason=reason or None, metadata={"previous_is_active": biz.get("is_active")},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"ok": True, "message": f"Business {business_id} suspended."}
 
 
 @router.post("/platform/businesses/{business_id}/activate")
-def platform_activate_business(business_id: int, user=Depends(require_superadmin)):
+def platform_activate_business(business_id: int, request: Request, user=Depends(require_superadmin)):
     biz = crud.get_business_by_id(business_id)
     if not biz: raise HTTPException(404, f"Business {business_id} not found")
     class _D:
         def dict(self, **_): return {"is_active": True}
     crud.update_business(business_id, _D())
+    log_admin_action(
+        actor_username=user.get("username"), action="business.activate",
+        target_type="business", target_id=business_id, business_id=business_id,
+        metadata={"previous_is_active": biz.get("is_active")},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     return {"ok": True, "message": f"Business {business_id} activated."}
 
 

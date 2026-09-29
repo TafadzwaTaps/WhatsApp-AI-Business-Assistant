@@ -334,11 +334,63 @@
     </div>
   </div>
 
+  <!-- SUPERADMIN AUDIT & ABUSE (SuperAdmin 2.0) -->
+  <div id="section-admin-audit" class="section">
+    <div class="topbar">
+      <div class="page-title">Audit <span class="purple">& Abuse</span></div>
+      <button class="btn btn-purple" onclick="runAbuseScan()">🔍 Run Abuse Scan</button>
+    </div>
+    <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:14px;">
+      Transparent, multi-signal review only — nothing here auto-suspends or auto-labels a business as fake.
+      Every flag shows exactly which signal fired and the evidence; a SuperAdmin decides what happens next.
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">⚠️ Open Risk Flags</div><button class="panel-action" onclick="loadAdminAudit()">↻ Refresh</button></div>
+      <div class="panel-body">
+        <table><thead><tr><th>Business</th><th>Risk</th><th>Reason</th><th>Evidence</th><th>Flagged</th><th>Actions</th></tr></thead>
+        <tbody id="sa-risk-flags-table"><tr><td colspan="6"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title">📜 Recent Admin Actions (Audit Log)</div><button class="panel-action" onclick="loadAdminAudit()">↻ Refresh</button></div>
+      <div class="panel-body">
+        <table><thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Business</th><th>Reason</th></tr></thead>
+        <tbody id="sa-audit-log-table"><tr><td colspan="5"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+
   <!-- New: Business detail modal — click any row for full info -->
   <div class="modal-overlay" id="sa-biz-detail-modal">
-    <div class="modal" style="max-width:520px;">
+    <div class="modal" style="max-width:560px;max-height:85vh;overflow-y:auto;">
       <div class="modal-title" id="sa-detail-title">Business Details</div>
       <div id="sa-detail-body" style="font-family:var(--mono);font-size:12px;line-height:2;"></div>
+
+      <div id="sa-detail-usage" style="margin-top:10px;"></div>
+
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:6px;">⚠️ Risk Flags</div>
+        <div id="sa-detail-flags" style="font-family:var(--mono);font-size:11px;">Loading…</div>
+      </div>
+
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:6px;">📝 Private Admin Notes</div>
+        <div id="sa-detail-notes" style="font-family:var(--mono);font-size:11px;margin-bottom:8px;">Loading…</div>
+        <div style="display:flex;gap:6px;">
+          <input type="text" id="sa-note-input" placeholder="Add a private note (never shown to the business)…"
+                 style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                        padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;"/>
+          <button class="btn btn-ghost" onclick="addAdminNote()">Add</button>
+        </div>
+      </div>
+
+      <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;">
+        <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);margin-bottom:6px;">📜 Recent Admin Actions</div>
+        <div id="sa-detail-audit" style="font-family:var(--mono);font-size:11px;">Loading…</div>
+      </div>
+
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeAdminBizDetail()">Close</button>
       </div>
