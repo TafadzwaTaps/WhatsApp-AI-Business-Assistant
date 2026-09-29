@@ -24,6 +24,14 @@ qrcode[pil]>=7.4.2
 # this is ever missing, so it's safe even before the next deploy picks it up.
 langdetect>=1.0.9
 
+# Site Generator dynamic-content translation (Argos Translate) is
+# DELIBERATELY NOT listed here — see backend/requirements-translation.txt
+# for why (short version: its dependency chain is ~1.5GB+ and would risk
+# breaking every Render deploy if installed by default). It's an opt-in
+# extra; services/translation_service.py works, and the app starts
+# normally, with or without it.
+
 # ── Testing (dev only — not required at runtime, safe to include) ──────────
 pytest>=8.0.0
 pytest-mock>=3.14.0
+argostranslate>=1.9.0

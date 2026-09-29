@@ -80,6 +80,15 @@ class BookingCreate(BaseModel):
     duration_hrs:   float = 1.0
     service_name:   str   = ""
     notes:          str   = ""
+    # Additive — create_booking() has supported these since the booking-fix
+    # pass, but this dashboard-facing model never exposed them, so a
+    # manually-created booking always came back with a blank customer name/
+    # price/payment_status even though the DB columns and service function
+    # both already existed for them.
+    customer_name:    Optional[str]   = None
+    customer_email:   Optional[str]   = None
+    price:             Optional[float] = None
+    payment_status:    Optional[str]   = None
 
     @validator("booking_date")
     def date_valid(cls, v):
@@ -97,16 +106,77 @@ class BookingCreate(BaseModel):
 @router.get("/bookings")
 def list_bookings(
     upcoming_only: bool = True,
-    date:          Optional[str] = None,   # filter by date YYYY-MM-DD
+    date:          Optional[str] = None,   # filter by exact date YYYY-MM-DD (kept for backward compat)
+    date_from:     Optional[str] = None,
+    date_to:       Optional[str] = None,
+    status:        Optional[str] = None,
+    service:       Optional[str] = None,
+    customer:      Optional[str] = None,
+    payment_status: Optional[str] = None,
     user=Depends(require_business),
     _plan=Depends(require_plan("GROWTH")),
 ):
-    """List all bookings for this business."""
+    """
+    List all bookings for this business, with optional server-side filters.
+
+    Bug fix: previously returned `[]` on ANY database error (a missing
+    column, a missing table, a transient Supabase hiccup) with a 200 OK
+    and no error field at all — completely indistinguishable in the
+    dashboard from "this business genuinely has zero bookings". That was
+    the actual root cause of bookings silently "not loading" with no
+    console/network error visible anywhere. Now a real failure surfaces
+    as a proper 500 with a clear message instead of a fake empty list.
+    """
     from services.booking_service import get_bookings
-    bookings = get_bookings(user["business_id"], upcoming_only=upcoming_only)
+    bookings, error = get_bookings(
+        user["business_id"], upcoming_only=upcoming_only,
+        date_from=date_from, date_to=date_to, status=status,
+        service=service, customer=customer, payment_status=payment_status,
+    )
+    if error is not None:
+        raise HTTPException(500, f"Could not load bookings: {error}")
     if date:
         bookings = [b for b in bookings if b.get("booking_date") == date]
     return {"count": len(bookings), "bookings": bookings}
+
+
+@router.get("/bookings/export")
+def export_bookings_csv(
+    upcoming_only: bool = False,
+    date_from:     Optional[str] = None,
+    date_to:       Optional[str] = None,
+    status:        Optional[str] = None,
+    user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
+):
+    """CSV export of this business's own bookings only — tenant-scoped
+    exactly like every other bookings endpoint (require_business supplies
+    the business_id; nothing here accepts a caller-supplied business id)."""
+    import csv, io
+    from fastapi.responses import StreamingResponse
+    from services.booking_service import get_bookings
+
+    bookings, error = get_bookings(
+        user["business_id"], upcoming_only=upcoming_only,
+        date_from=date_from, date_to=date_to, status=status,
+    )
+    if error is not None:
+        raise HTTPException(500, f"Could not export bookings: {error}")
+
+    buf = io.StringIO()
+    fields = ["id", "booking_date", "start_time", "end_time", "duration_hrs",
+              "service_name", "customer_name", "customer_phone", "customer_email",
+              "status", "price", "payment_status", "notes", "created_at"]
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for b in bookings:
+        writer.writerow(b)
+    buf.seek(0)
+    return StreamingResponse(
+        iter([buf.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=bookings.csv"},
+    )
 
 
 @router.post("/bookings", status_code=201)
@@ -130,6 +200,8 @@ def create_booking_api(data: BookingCreate, request: Request, user=Depends(requi
         booking_date=data.booking_date, start_time=data.start_time,
         duration_hrs=data.duration_hrs, service_name=data.service_name,
         notes=data.notes,
+        customer_name=data.customer_name, customer_email=data.customer_email,
+        price=data.price, payment_status=data.payment_status,
     )
     if not booking:
         # create_booking() returns None both on a genuine DB error AND when
@@ -237,6 +309,108 @@ def check_slot_availability(
     _rate_check("booking", request)
     from services.booking_service import check_availability
     return check_availability(user["business_id"], booking_date, start_time, duration_hrs)
+
+
+# NOTE ON ROUTE ORDER: the three routes below use a `{booking_id}` path
+# parameter and are deliberately placed AFTER every literal-path /bookings/*
+# route above (export, availability, reminders/run) — FastAPI/Starlette
+# matches routes in registration order, and `{booking_id}` (typed as int
+# only via the Python parameter, not the path pattern itself) would
+# otherwise greedily match a literal segment like "availability" or
+# "export" before Starlette ever reached the real, more specific route,
+# turning e.g. GET /bookings/availability into a 422 trying to parse
+# "availability" as an int. Keep any FUTURE /bookings/<literal> route
+# above this comment, not below it.
+
+@router.get("/bookings/{booking_id}")
+def get_booking_detail(
+    booking_id: int,
+    user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
+):
+    """Single-booking detail view — tenant-scoped (a business can never
+    fetch another business's booking, even by guessing its id)."""
+    from services.booking_service import get_booking_by_id
+    booking = get_booking_by_id(booking_id, user["business_id"])
+    if not booking:
+        raise HTTPException(404, "Booking not found")
+    return {"ok": True, "booking": booking}
+
+
+class BookingUpdate(BaseModel):
+    customer_phone: Optional[str]   = None
+    customer_name:  Optional[str]   = None
+    customer_email: Optional[str]   = None
+    service_name:   Optional[str]   = None
+    booking_date:   Optional[str]   = None
+    start_time:     Optional[str]   = None
+    duration_hrs:   Optional[float] = None
+    notes:          Optional[str]   = None
+    price:          Optional[float] = None
+    payment_status: Optional[str]   = None
+
+
+@router.patch("/bookings/{booking_id}")
+def update_booking_api(
+    booking_id: int,
+    data: BookingUpdate,
+    user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
+):
+    """
+    General booking edit — customer/service/date/time/duration/notes/
+    price/payment_status. Distinct from PATCH /bookings/{id}/status
+    (status-only, kept unchanged for backward compatibility) and from
+    POST /bookings/{id}/reschedule (date/time only, marks status
+    "rescheduled"). Re-validates availability if date/time/duration
+    changes, excluding this booking's own current slot.
+    """
+    from services.booking_service import update_booking
+    result = update_booking(booking_id, user["business_id"], data.dict(exclude_unset=True))
+    if not result.get("ok"):
+        reason = result.get("reason", "Could not update booking")
+        code = 404 if reason == "Booking not found" else 409
+        raise HTTPException(code, reason)
+    return result
+
+
+class RescheduleRequest(BaseModel):
+    new_date:     str
+    new_time:     str
+    duration_hrs: Optional[float] = None
+
+    @validator("new_date")
+    def date_valid(cls, v):
+        try: datetime.strptime(v, "%Y-%m-%d")
+        except: raise ValueError("new_date must be YYYY-MM-DD")
+        return v
+
+
+@router.post("/bookings/{booking_id}/reschedule")
+def reschedule_booking_api(
+    booking_id: int,
+    data: RescheduleRequest,
+    request: Request,
+    user=Depends(require_business),
+    _plan=Depends(require_plan("GROWTH")),
+):
+    """Move an existing booking to a new date/time. Rejects a conflicting
+    slot rather than trusting the frontend's own availability display."""
+    _rate_check("booking", request)
+    from services.booking_service import get_booking_by_id, reschedule_booking
+
+    existing = get_booking_by_id(booking_id, user["business_id"])
+    if not existing:
+        raise HTTPException(404, "Booking not found")
+
+    duration = data.duration_hrs or existing.get("duration_hrs") or 1.0
+    updated = reschedule_booking(
+        booking_id, user["business_id"], data.new_date, data.new_time,
+        duration_hrs=float(duration),
+    )
+    if not updated:
+        raise HTTPException(409, "Sorry, that time is not available. Please choose another.")
+    return {"ok": True, "booking": updated}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

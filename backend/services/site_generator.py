@@ -30,13 +30,81 @@ Phases implemented:
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import html as _html_escape
 import json
 import re
+from typing import Optional
 from urllib.parse import quote
 
 log = logging.getLogger("wazibot")
+
+
+# ── Dynamic-content translation registry ────────────────────────────────────
+# Translation fix (site-generator half): the static SITE_I18N dict below only
+# ever covered ~21 fixed UI chrome labels (nav/buttons/section titles) — real
+# business-supplied content (the About description, product/service
+# descriptions) was ALWAYS rendered once in whatever language it was typed
+# in and never touched by the language switcher. That's the main reason the
+# audit found "only a few labels translate".
+#
+# Fix: section-builder functions that touch business-supplied free text call
+# `_register_dynamic_text(key, raw_text, business_id)` and place `key` on a
+# `data-i18n-dyn="key"` span around the (still server-rendered, still in the
+# source language) text. `generate_site_html()` brackets one page's
+# generation with `_dyn_i18n_start()` / `_dyn_i18n_collect_and_translate()`;
+# the latter runs every registered string through
+# services.translation_service (Argos Translate, lazy/optional — see that
+# module) for every supported language and returns a
+# `{lang: {key: translated_text}}` blob that gets embedded as
+# `WZ_I18N_DYNAMIC` alongside the existing `WZ_I18N`, with the client-side
+# switcher in `_i18n_script()` extended to also swap `[data-i18n-dyn]`
+# elements from it. A `contextvars.ContextVar` (not a plain module dict) is
+# used deliberately — this module's render function can be invoked
+# concurrently for different businesses on different request threads, and a
+# shared mutable dict would let one business's registered strings leak into
+# another's translation pass.
+_dyn_i18n_ctx: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("dyn_i18n", default=None)
+
+
+def _dyn_i18n_start() -> None:
+    _dyn_i18n_ctx.set({})
+
+
+def _register_dynamic_text(key: str, text: str, business_id, source_lang: str = "en") -> None:
+    """Register a piece of business-supplied text for translation. No-op
+    (never raises) if called outside a _dyn_i18n_start()..collect() bracket,
+    or with empty text — callers don't need to guard for that themselves."""
+    reg = _dyn_i18n_ctx.get()
+    if reg is None or not text or not text.strip():
+        return
+    reg[key] = {"text": text, "business_id": business_id, "source_lang": source_lang}
+
+
+def _dyn_i18n_collect_and_translate() -> dict:
+    """End-of-render: translate every registered string into every
+    supported site language (services.translation_service handles caching
+    and gracefully no-ops to the original text if Argos Translate isn't
+    installed — see that module's docstring). Returns the
+    {lang: {key: text}} shape _i18n_script() embeds as WZ_I18N_DYNAMIC."""
+    reg = _dyn_i18n_ctx.get() or {}
+    out: dict = {}
+    if reg:
+        try:
+            from services.translation_service import translate_for_all_languages
+            for key, meta in reg.items():
+                translations = translate_for_all_languages(
+                    meta["text"], source_lang=meta["source_lang"], business_id=meta["business_id"],
+                )
+                for lang, translated in translations.items():
+                    out.setdefault(lang, {})[key] = translated
+        except Exception as exc:
+            # Never let a translation-layer failure break site generation —
+            # the page still renders correctly in its original language.
+            log.warning("site_generator: dynamic translation pass failed: %s", exc)
+    _dyn_i18n_ctx.set(None)
+    return out
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -498,7 +566,14 @@ SITE_I18N = {
     "total": "Total",
     "pay_securely": "Pay Securely",
     "powered_by": "Powered by",
-    "contact_below": "Contact us on WhatsApp below."
+    "contact_below": "Contact us on WhatsApp below.",
+    "fast_delivery": "Fast Delivery",
+    "trusted_secure": "Trusted & Secure",
+    "redirecting_stripe": "Redirecting to Stripe…",
+    "checkout_unavailable": "Checkout unavailable",
+    "checkout_connect_error": "Could not connect to checkout. Please use WhatsApp to order.",
+    "chat_whatsapp": "Chat on WhatsApp",
+    "order_on_whatsapp": "Order on WhatsApp"
   },
   "pl": {
     "nav_home": "Strona główna",
@@ -528,7 +603,14 @@ SITE_I18N = {
     "total": "Razem",
     "pay_securely": "Zapłać Bezpiecznie",
     "powered_by": "Obsługiwane przez",
-    "contact_below": "Skontaktuj się z nami przez WhatsApp poniżej."
+    "contact_below": "Skontaktuj się z nami przez WhatsApp poniżej.",
+    "fast_delivery": "Szybka Dostawa",
+    "trusted_secure": "Zaufane i Bezpieczne",
+    "redirecting_stripe": "Przekierowywanie do Stripe…",
+    "checkout_unavailable": "Płatność niedostępna",
+    "checkout_connect_error": "Nie można połączyć się z płatnością. Skorzystaj z WhatsApp, aby złożyć zamówienie.",
+    "chat_whatsapp": "Czat na WhatsApp",
+    "order_on_whatsapp": "Zamów przez WhatsApp"
   },
   "fr": {
     "nav_home": "Accueil",
@@ -558,7 +640,14 @@ SITE_I18N = {
     "total": "Total",
     "pay_securely": "Payer en Sécurité",
     "powered_by": "Propulsé par",
-    "contact_below": "Contactez-nous sur WhatsApp ci-dessous."
+    "contact_below": "Contactez-nous sur WhatsApp ci-dessous.",
+    "fast_delivery": "Livraison Rapide",
+    "trusted_secure": "Fiable et Sécurisé",
+    "redirecting_stripe": "Redirection vers Stripe…",
+    "checkout_unavailable": "Paiement indisponible",
+    "checkout_connect_error": "Impossible de se connecter au paiement. Veuillez commander via WhatsApp.",
+    "chat_whatsapp": "Discuter sur WhatsApp",
+    "order_on_whatsapp": "Commander sur WhatsApp"
   },
   "pt": {
     "nav_home": "Início",
@@ -588,7 +677,14 @@ SITE_I18N = {
     "total": "Total",
     "pay_securely": "Pagar com Segurança",
     "powered_by": "Desenvolvido por",
-    "contact_below": "Fale conosco pelo WhatsApp abaixo."
+    "contact_below": "Fale conosco pelo WhatsApp abaixo.",
+    "fast_delivery": "Entrega Rápida",
+    "trusted_secure": "Confiável e Seguro",
+    "redirecting_stripe": "Redirecionando para o Stripe…",
+    "checkout_unavailable": "Checkout indisponível",
+    "checkout_connect_error": "Não foi possível conectar ao checkout. Por favor, peça pelo WhatsApp.",
+    "chat_whatsapp": "Conversar no WhatsApp",
+    "order_on_whatsapp": "Pedir pelo WhatsApp"
   },
   "es": {
     "nav_home": "Inicio",
@@ -618,14 +714,102 @@ SITE_I18N = {
     "total": "Total",
     "pay_securely": "Pagar de Forma Segura",
     "powered_by": "Desarrollado por",
-    "contact_below": "Contáctanos por WhatsApp abajo."
+    "contact_below": "Contáctanos por WhatsApp abajo.",
+    "fast_delivery": "Entrega Rápida",
+    "trusted_secure": "Confiable y Seguro",
+    "redirecting_stripe": "Redirigiendo a Stripe…",
+    "checkout_unavailable": "Pago no disponible",
+    "checkout_connect_error": "No se pudo conectar con el pago. Por favor pide por WhatsApp.",
+    "chat_whatsapp": "Chatear por WhatsApp",
+    "order_on_whatsapp": "Pedir por WhatsApp"
+  },
+  "de": {
+    "nav_home": "Startseite",
+    "nav_products": "Produkte",
+    "nav_about": "Über uns",
+    "nav_reviews": "Bewertungen",
+    "nav_gallery": "Galerie",
+    "nav_contact": "Kontakt",
+    "hero_cta": "Über WhatsApp bestellen",
+    "our_products": "Unsere Produkte",
+    "our_services": "Unsere Dienstleistungen",
+    "our_menu": "Unsere Speisekarte",
+    "available": "Verfügbar",
+    "out_of_stock": "Nicht vorrätig",
+    "order_btn": "Bestellen",
+    "book_btn": "Buchen",
+    "buy_now": "Jetzt Kaufen",
+    "pay_btn": "Bezahlen",
+    "products_soon": "Produkte bald verfügbar. Kontaktieren Sie uns über WhatsApp!",
+    "services_soon": "Dienstleistungen bald verfügbar. Kontaktieren Sie uns über WhatsApp!",
+    "about_us": "Über Uns",
+    "whatsapp_ordering": "Bestellung über WhatsApp",
+    "customer_reviews": "Kundenbewertungen",
+    "get_in_touch": "Kontaktieren Sie Uns",
+    "message_us": "Schreiben Sie uns auf WhatsApp",
+    "checkout": "Kasse",
+    "total": "Gesamt",
+    "pay_securely": "Sicher Bezahlen",
+    "powered_by": "Bereitgestellt von",
+    "contact_below": "Kontaktieren Sie uns unten über WhatsApp.",
+    "fast_delivery": "Schnelle Lieferung",
+    "trusted_secure": "Vertrauenswürdig & Sicher",
+    "redirecting_stripe": "Weiterleitung zu Stripe…",
+    "checkout_unavailable": "Kasse nicht verfügbar",
+    "checkout_connect_error": "Verbindung zur Kasse fehlgeschlagen. Bitte über WhatsApp bestellen.",
+    "chat_whatsapp": "Auf WhatsApp chatten",
+    "order_on_whatsapp": "Über WhatsApp bestellen"
+  },
+  "ar": {
+    "nav_home": "الرئيسية",
+    "nav_products": "المنتجات",
+    "nav_about": "من نحن",
+    "nav_reviews": "التقييمات",
+    "nav_gallery": "المعرض",
+    "nav_contact": "اتصل بنا",
+    "hero_cta": "اطلب عبر واتساب",
+    "our_products": "منتجاتنا",
+    "our_services": "خدماتنا",
+    "our_menu": "قائمتنا",
+    "available": "متوفر",
+    "out_of_stock": "غير متوفر",
+    "order_btn": "اطلب",
+    "book_btn": "احجز",
+    "buy_now": "اشترِ الآن",
+    "pay_btn": "ادفع",
+    "products_soon": "المنتجات قريبًا. تواصل معنا عبر واتساب!",
+    "services_soon": "الخدمات قريبًا. تواصل معنا عبر واتساب!",
+    "about_us": "من نحن",
+    "whatsapp_ordering": "الطلب عبر واتساب",
+    "customer_reviews": "آراء العملاء",
+    "get_in_touch": "تواصل معنا",
+    "message_us": "راسلنا على واتساب",
+    "checkout": "الدفع",
+    "total": "الإجمالي",
+    "pay_securely": "ادفع بأمان",
+    "powered_by": "مدعوم من",
+    "contact_below": "تواصل معنا عبر واتساب أدناه.",
+    "fast_delivery": "توصيل سريع",
+    "trusted_secure": "موثوق وآمن",
+    "redirecting_stripe": "جارٍ التحويل إلى Stripe…",
+    "checkout_unavailable": "الدفع غير متاح",
+    "checkout_connect_error": "تعذر الاتصال بالدفع. يرجى الطلب عبر واتساب.",
+    "chat_whatsapp": "تحدث عبر واتساب",
+    "order_on_whatsapp": "اطلب عبر واتساب"
   }
 }
 
+# code, flag, display-name, rtl — SITE_I18N_LANGS is the single source of
+# truth for which languages the site switcher offers; kept in sync with
+# services.translation_service.SUPPORTED_SITE_LANGS by hand (both lists are
+# short and reviewed together — see that module's own comment).
 SITE_I18N_LANGS = [
     ("en", "🇬🇧", "English"), ("pl", "🇵🇱", "Polski"), ("fr", "🇫🇷", "Français"),
-    ("pt", "🇵🇹", "Português"), ("es", "🇪🇸", "Español"),
+    ("pt", "🇵🇹", "Português"), ("es", "🇪🇸", "Español"), ("de", "🇩🇪", "Deutsch"),
+    ("ar", "🇸🇦", "العربية"),
 ]
+
+SITE_I18N_RTL_LANGS = {"ar"}
 
 
 def _i18n_switcher_html() -> str:
@@ -638,38 +822,84 @@ def _i18n_switcher_html() -> str:
         for code, flag, name in SITE_I18N_LANGS
     )
     return f'''<select id="wz-lang-switch" class="i18n-switch" onchange="_wzSetLang(this.value)"
-        aria-label="Language / Język / Langue / Idioma">{options}</select>'''
+        aria-label="Language / Język / Langue / Idioma / Sprache / اللغة">{options}</select>'''
 
 
-def _i18n_script() -> str:
+def _i18n_script(dynamic_i18n: Optional[dict] = None) -> str:
     """
     Vanilla-JS language switcher. Swaps the textContent of every
     [data-i18n] element using the SITE_I18N dict embedded in the page as
     JSON — no external library, no network request, works offline.
     Remembers the visitor's choice in localStorage; otherwise tries to
     match their browser language, falling back to English.
+
+    Extended (translation fix): also swaps
+      - [data-i18n-dyn]   — business-supplied dynamic content (About
+        description, product/service descriptions), translated server-side
+        via services.translation_service/Argos Translate and passed in as
+        `dynamic_i18n` ({lang: {key: text}}, see _dyn_i18n_collect_and_translate).
+      - [data-i18n-aria]  — swaps the `aria-label` attribute (accessibility
+        labels were previously never translated at all).
+      - [data-i18n-title] — swaps the `title` attribute.
+    and sets `dir="rtl"` on <html> for right-to-left languages (Arabic),
+    switching the WHOLE already-rendered page in one JS pass rather than
+    reloading English over translated content or only handling the visible
+    viewport — a full document.querySelectorAll pass covers offscreen
+    content too.
     """
     i18n_json = json.dumps(SITE_I18N, ensure_ascii=False)
+    dyn_json  = json.dumps(dynamic_i18n or {}, ensure_ascii=False)
     supported = json.dumps([c for c, _, _ in SITE_I18N_LANGS])
+    rtl_langs = json.dumps(sorted(SITE_I18N_RTL_LANGS))
     return f'''
 <script>
 const WZ_I18N = {i18n_json};
+const WZ_I18N_DYNAMIC = {dyn_json};
 const WZ_I18N_SUPPORTED = {supported};
+const WZ_I18N_RTL = {rtl_langs};
+var _wzCurrentLang = 'en';
 
 function _wzApplyLang(lang) {{
   const dict = WZ_I18N[lang] || WZ_I18N['en'];
+  const dynDict = WZ_I18N_DYNAMIC[lang] || {{}};
   document.querySelectorAll('[data-i18n]').forEach(el => {{
     const key = el.getAttribute('data-i18n');
     if (dict[key]) el.textContent = dict[key];
   }});
+  document.querySelectorAll('[data-i18n-dyn]').forEach(el => {{
+    const key = el.getAttribute('data-i18n-dyn');
+    // Falls back to whatever's already rendered (the source-language text)
+    // if this key wasn't translated (e.g. Argos not installed) — never
+    // blanks the element.
+    if (dynDict[key]) el.textContent = dynDict[key];
+  }});
+  document.querySelectorAll('[data-i18n-aria]').forEach(el => {{
+    const key = el.getAttribute('data-i18n-aria');
+    if (dict[key]) el.setAttribute('aria-label', dict[key]);
+  }});
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {{
+    const key = el.getAttribute('data-i18n-title');
+    if (dict[key]) el.setAttribute('title', dict[key]);
+  }});
   const sw = document.getElementById('wz-lang-switch');
   if (sw) sw.value = lang;
+  _wzCurrentLang = lang;
   document.documentElement.setAttribute('lang', lang);
+  document.documentElement.setAttribute('dir', WZ_I18N_RTL.includes(lang) ? 'rtl' : 'ltr');
 }}
 
 function _wzSetLang(lang) {{
   try {{ localStorage.setItem('wz_lang', lang); }} catch (e) {{}}
   _wzApplyLang(lang);
+}}
+
+// Small helper so JS-generated strings (checkout button states, alerts —
+// previously hardcoded English, see wzCheckout() below) go through the
+// same dictionary as everything else instead of a second, English-only
+// copy living inside a <script> block.
+function _wzT(key, fallback) {{
+  const dict = WZ_I18N[_wzCurrentLang] || WZ_I18N['en'];
+  return dict[key] || fallback || key;
 }}
 
 (function _wzInitLang() {{
@@ -801,9 +1031,10 @@ def _products_section_html(products: list, currency_sym: str, wa_phone: str = ""
 
 
 def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name: str = "", business_id: int = 0, is_service: bool = False) -> str:
-    name      = _e(p.get("name", "Product"))
+    name      = _e(p.get("name", "Product"))  # NEVER translated — product/service names are protected content
     price     = float(p.get("price") or 0)
-    desc      = _e(p.get("description") or "")
+    raw_desc  = p.get("description") or ""
+    desc      = _e(raw_desc)
     image_url = p.get("image_url", "")
     category  = p.get("category", "") or "other"
     stock     = p.get("stock")
@@ -825,7 +1056,13 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         if image_url else
         '<div class="prod-img-ph">📦</div>'
     )
-    desc_html = f'<p class="prod-desc">{desc}</p>' if desc else ""
+    prod_desc_key = f"prod_desc_{_e(str(p.get('id','')))}"
+    if raw_desc:
+        # Product/service DESCRIPTIONS are free text and get translated —
+        # unlike `name` above (a protected proper noun/brand-ish label,
+        # never touched here).
+        _register_dynamic_text(prod_desc_key, raw_desc, business_id)
+    desc_html = f'<p class="prod-desc" data-i18n-dyn="{prod_desc_key}">{desc}</p>' if desc else ""
     _verb = "book" if is_service else "order"
     order_text = f"Hi! I'd like to {_verb} {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to {_verb} {p.get('name','')}"
 
@@ -871,19 +1108,30 @@ def _category_filter_html(products: list) -> str:
 def _about_html(biz: dict, settings: dict) -> str:
     name     = biz.get("name", "Our Business")
     category = biz.get("category", "")
-    desc     = settings.get("description", "").strip()
-    if not desc:
-        # Tasteful auto-generated fallback — no AI required
+    custom_desc = settings.get("description", "").strip()
+    if custom_desc:
+        raw_desc = custom_desc
+    else:
+        # Tasteful auto-generated fallback — no AI required. Still English
+        # source text, so it still goes through the same translation path
+        # below rather than being treated as "already localized".
         cat_phrase = f"high-quality {category.lower()}" if category else "exceptional products and services"
-        desc = (
-            f"{_e(name)} is dedicated to delivering {cat_phrase} "
+        raw_desc = (
+            f"{name} is dedicated to delivering {cat_phrase} "
             f"with a focus on customer satisfaction. "
             f"We make it easy to order directly on WhatsApp — "
             f"no app downloads, no complicated checkout. "
             f"Just message us and we'll take care of the rest."
         )
-    else:
-        desc = _e(desc)
+    desc = _e(raw_desc)
+
+    # Translation fix: this "About" description is the single biggest
+    # untranslated block the audit found (a free-text paragraph, not a
+    # fixed UI label — SITE_I18N never covered it). Registered here for
+    # server-side translation into every supported language; the client
+    # switcher swaps it via data-i18n-dyn (see _i18n_script()).
+    about_key = f"about_desc_{biz.get('id','x')}"
+    _register_dynamic_text(about_key, raw_desc, biz.get("id"))
 
     location_html = ""
     if settings["show_location"] and settings["location"]:
@@ -897,14 +1145,14 @@ def _about_html(biz: dict, settings: dict) -> str:
     <div class="section-inner about-grid">
       <div class="about-text">
         <h2 class="section-title"><span data-i18n="about_us">About Us</span></h2>
-        <p class="about-desc">{desc}</p>
+        <p class="about-desc" data-i18n-dyn="{about_key}">{desc}</p>
         {location_html}
         {hours_html}
       </div>
       <div class="about-visual">
         <div class="about-stat"><span class="stat-num">💬</span><span class="stat-label" data-i18n="whatsapp_ordering">WhatsApp Ordering</span></div>
-        <div class="about-stat"><span class="stat-num">⚡</span><span class="stat-label">Fast Delivery</span></div>
-        <div class="about-stat"><span class="stat-num">🛡</span><span class="stat-label">Trusted & Secure</span></div>
+        <div class="about-stat"><span class="stat-num">⚡</span><span class="stat-label" data-i18n="fast_delivery">Fast Delivery</span></div>
+        <div class="about-stat"><span class="stat-num">🛡</span><span class="stat-label" data-i18n="trusted_secure">Trusted & Secure</span></div>
       </div>
     </div>
   </section>"""
@@ -1030,7 +1278,11 @@ def _sticky_wa_btn(wa_phone: str, biz_name: str, slug: str = "") -> str:
     href = f"/go/{_e(slug)}" if slug else _wa_url(wa_phone, f"Hi {biz_name}! I'd like to order.")
     return (
         f'<a class="wa-sticky" href="{href}" rel="noopener" '
-        f'aria-label="Chat on WhatsApp" title="Order on WhatsApp">💬</a>'
+        # Accessibility labels were previously hardcoded English and never
+        # translated at all — data-i18n-aria/-title (handled in
+        # _i18n_script()) swap these attributes along with everything else.
+        f'data-i18n-aria="chat_whatsapp" aria-label="{SITE_I18N["en"]["chat_whatsapp"]}" '
+        f'data-i18n-title="order_on_whatsapp" title="{SITE_I18N["en"]["order_on_whatsapp"]}">💬</a>'
     )
 
 
@@ -1316,7 +1568,11 @@ function _wzShowCart(sym) {{
 
 function wzCheckout() {{
   var btn = document.getElementById('wz-checkout-btn');
-  if (btn) {{ btn.disabled = true; btn.textContent = 'Redirecting to Stripe…'; }}
+  // Dynamic JS-generated text (was previously hardcoded English —
+  // see _wzT()/WZ_I18N above) now follows whatever language the visitor
+  // has selected, same as every other label on the page.
+  var payLabel = '💳 ' + _wzT('pay_securely', 'Pay Securely');
+  if (btn) {{ btn.disabled = true; btn.textContent = _wzT('redirecting_stripe', 'Redirecting to Stripe…'); }}
   fetch('/billing/product-checkout', {{
     method: 'POST',
     headers: {{ 'Content-Type': 'application/json' }},
@@ -1331,13 +1587,16 @@ function wzCheckout() {{
     if (data.url) {{
       window.location.href = data.url;
     }} else {{
-      alert('Checkout unavailable: ' + (data.detail || data.error || 'Please try WhatsApp ordering instead.'));
-      if (btn) {{ btn.disabled = false; btn.textContent = '💳 Pay Securely'; }}
+      // data.detail/data.error come straight from our own backend, already
+      // in English (API error strings, not customer-facing site copy) — not
+      // translated, matching the rest of this dashboard's error handling.
+      alert(_wzT('checkout_unavailable', 'Checkout unavailable') + ': ' + (data.detail || data.error || _wzT('checkout_connect_error')));
+      if (btn) {{ btn.disabled = false; btn.textContent = payLabel; }}
     }}
   }})
   .catch(function() {{
-    alert('Could not connect to checkout. Please use WhatsApp to order.');
-    if (btn) {{ btn.disabled = false; btn.textContent = '💳 Pay Securely'; }}
+    alert(_wzT('checkout_connect_error', 'Could not connect to checkout. Please use WhatsApp to order.'));
+    if (btn) {{ btn.disabled = false; btn.textContent = payLabel; }}
   }});
 }}
 </script>
@@ -1420,6 +1679,12 @@ def generate_site_html(slug: str) -> str:
     if not biz:
         return _fallback_html(slug)
 
+    # Brackets this page's generation for the dynamic-content translation
+    # registry (About description, product/service descriptions) — see the
+    # module-level comment above _dyn_i18n_ctx for why a ContextVar and not
+    # a plain module dict.
+    _dyn_i18n_start()
+
     name         = biz.get("name", "Our Business")
     category     = biz.get("category", "")
     tagline      = biz.get("tagline") or f"Order {category or 'products'} on WhatsApp"
@@ -1488,6 +1753,10 @@ def generate_site_html(slug: str) -> str:
         )
     ) if settings["show_ordering"] else ""
 
+    # Every _register_dynamic_text() call made by the section builders
+    # above (about description, product/service descriptions) gets
+    # translated here, once, into every supported language.
+    dynamic_i18n = _dyn_i18n_collect_and_translate()
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1515,7 +1784,7 @@ def generate_site_html(slug: str) -> str:
   </footer>
 {wa_sticky}
 {_JS}
-{_i18n_script()}
+{_i18n_script(dynamic_i18n)}
 </body>
 </html>"""
 

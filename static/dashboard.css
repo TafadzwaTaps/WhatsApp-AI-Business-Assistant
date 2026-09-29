@@ -2241,3 +2241,43 @@ html[data-theme="light"] .modal-overlay {
 html[data-theme="light"] ::-webkit-scrollbar-thumb {
   background: var(--border);
 }
+
+/* ── Bookings calendar (additive — reuses existing tokens/panel styling,
+   no new visual language) ───────────────────────────────────────────── */
+.bk-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.bk-cal-grid-header { margin-bottom: 4px; }
+.bk-cal-dow { font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; text-align: center; padding: 4px 0; }
+.bk-cal-cell {
+  background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+  min-height: 84px; padding: 6px; cursor: pointer; transition: border-color 0.15s;
+  display: flex; flex-direction: column; gap: 4px; overflow: hidden;
+}
+.bk-cal-cell:hover { border-color: var(--green-dim, var(--green)); }
+.bk-cal-cell.bk-cal-other-month { opacity: 0.45; }
+.bk-cal-cell.bk-cal-today { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
+.bk-cal-daynum { font-family: var(--mono); font-size: 11px; color: var(--text-dim); font-weight: 700; }
+.bk-cal-chips { display: flex; flex-direction: column; gap: 3px; overflow: hidden; }
+.bk-cal-chip {
+  font-family: var(--mono); font-size: 10px; padding: 2px 5px; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+  border: 1px solid transparent;
+}
+.bk-cal-chip-badge-green   { background: var(--green-glow); color: var(--green); border-color: var(--green-dim); }
+.bk-cal-chip-badge-amber   { background: rgba(245, 158, 11, 0.12); color: var(--amber); border-color: rgba(245, 158, 11, 0.35); }
+.bk-cal-chip-badge-red     { background: rgba(239, 68, 68, 0.12); color: var(--red); border-color: rgba(239, 68, 68, 0.35); }
+.bk-cal-chip-badge-purple  { background: rgba(167, 139, 250, 0.12); color: var(--purple); border-color: rgba(167, 139, 250, 0.35); }
+.bk-cal-more { font-family: var(--mono); font-size: 9px; color: var(--text-dim); }
+.bk-cal-agenda-day { border-bottom: 1px solid var(--border); padding: 10px 2px; }
+.bk-cal-agenda-day:last-child { border-bottom: none; }
+.bk-cal-agenda-date { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* A full 7-column month grid is too cramped under ~600px — collapse to a
+   horizontally-scrollable grid rather than redesigning the layout, matching
+   the responsive pattern already used elsewhere in this dashboard (e.g. the
+   orders table wrapping on mobile). Agenda view (already narrow, single
+   column) is unaffected and remains the recommended mobile default. */
+@media (max-width: 600px) {
+  .bk-cal-grid-month, .bk-cal-grid-week { grid-auto-flow: column; grid-auto-columns: minmax(120px, 1fr); overflow-x: auto; padding-bottom: 4px; }
+  .bk-cal-grid-header { display: none; }
+  .bk-cal-cell { min-height: 96px; }
+}

@@ -3292,7 +3292,37 @@
   <div id="section-bookings" class="section">
     <div class="topbar">
       <div class="page-title">🗓️ <span>Bookings</span></div>
-      <button class="btn btn-primary" onclick="openCreateBookingModal()">➕ New Booking</button>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        <div style="position:relative;">
+          <input type="text" id="bk-search" placeholder="Search name/phone…" aria-label="Search bookings by customer name or phone" oninput="filterBookingsBySearch(this.value)"
+                 style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:150px;"/>
+          <button onclick="document.getElementById('bk-search').value='';filterBookingsBySearch('');" title="Clear search" aria-label="Clear booking search"
+                  style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:11px;padding:2px 4px;">✕</button>
+        </div>
+        <select id="bk-status-filter" onchange="filterBookingsByStatus(this.value)" aria-label="Filter bookings by status" title="Filter by status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
+          <option value="all">All Statuses</option>
+          <option value="pending">Pending</option>
+          <option value="confirmed">Confirmed</option>
+          <option value="completed">Completed</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="no_show">No-show</option>
+          <option value="rescheduled">Rescheduled</option>
+        </select>
+        <select id="bk-payment-filter" onchange="filterBookingsByPayment(this.value)" title="Filter by payment status" aria-label="Filter bookings by payment status" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 10px;border-radius:6px;">
+          <option value="all">All Payments</option>
+          <option value="paid">Paid</option>
+          <option value="pending">Payment Pending</option>
+          <option value="unpaid">Unpaid</option>
+        </select>
+        <input type="date" id="bk-date-from" title="From date" aria-label="Filter bookings from date" onchange="filterBookingsByDateRange()"
+               style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 8px;border-radius:6px;"/>
+        <input type="date" id="bk-date-to" title="To date" aria-label="Filter bookings to date" onchange="filterBookingsByDateRange()"
+               style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 8px;border-radius:6px;"/>
+        <button class="btn btn-ghost" id="bk-view-list" onclick="setBookingsView('list')" style="font-size:11px;padding:6px 10px;opacity:1;" title="List view">☰</button>
+        <button class="btn btn-ghost" id="bk-view-calendar" onclick="setBookingsView('calendar')" style="font-size:11px;padding:6px 10px;opacity:0.4;" title="Calendar view">🗓️</button>
+        <button class="btn btn-ghost" onclick="exportBookingsCsv()" style="font-size:11px;padding:6px 10px;" title="Export bookings to CSV">⬇ Export</button>
+        <button class="btn btn-primary" onclick="openCreateBookingModal()">➕ New Booking</button>
+      </div>
     </div>
 
     <div id="bookings-content">
@@ -3308,13 +3338,32 @@
         <div class="panel-body" style="padding:14px 16px;font-family:var(--mono);font-size:13px;color:var(--text-dim);" id="bk-next-appt">—</div>
       </div>
 
-      <div class="panel full" style="margin-bottom:16px;">
+      <!-- LIST VIEW -->
+      <div id="bookings-list-view" class="panel full" style="margin-bottom:16px;">
         <div class="panel-header"><div class="panel-title">All Bookings</div><button class="panel-action" onclick="loadBookings()">↻ Refresh</button></div>
         <div class="panel-body">
           <table>
             <thead><tr><th scope="col">Date / Time</th><th scope="col">Customer</th><th scope="col">Service</th><th scope="col">Status</th><th scope="col">Notes</th><th scope="col">Actions</th></tr></thead>
             <tbody id="bookings-table-body"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- CALENDAR VIEW -->
+      <div id="bookings-calendar-view" class="panel full" style="margin-bottom:16px;display:none;">
+        <div class="panel-header">
+          <div class="panel-title" id="bk-cal-title">Calendar</div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <button class="btn btn-ghost" id="bk-cal-mode-month" onclick="setBookingsCalMode('month')" style="font-size:11px;padding:5px 9px;">Month</button>
+            <button class="btn btn-ghost" id="bk-cal-mode-week" onclick="setBookingsCalMode('week')" style="font-size:11px;padding:5px 9px;">Week</button>
+            <button class="btn btn-ghost" id="bk-cal-mode-agenda" onclick="setBookingsCalMode('agenda')" style="font-size:11px;padding:5px 9px;">Agenda</button>
+            <button class="btn btn-ghost" onclick="bkCalNav(-1)" style="font-size:11px;padding:5px 9px;" title="Previous">←</button>
+            <button class="btn btn-ghost" onclick="bkCalNav(0)" style="font-size:11px;padding:5px 9px;" title="Today">Today</button>
+            <button class="btn btn-ghost" onclick="bkCalNav(1)" style="font-size:11px;padding:5px 9px;" title="Next">→</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="bk-calendar-body"></div>
         </div>
       </div>
 
@@ -3338,6 +3387,7 @@
     <div class="modal">
       <div class="modal-title">New Booking</div>
       <div class="form-group"><label>Customer Phone</label><input type="text" id="bk-new-phone" placeholder="+263771234567"/></div>
+      <div class="form-group"><label>Customer Name (optional)</label><input type="text" id="bk-new-name" placeholder="e.g. Tendai Moyo"/></div>
       <div class="form-group"><label>Service (optional)</label><input type="text" id="bk-new-service" placeholder="e.g. Haircut"/></div>
       <div style="display:flex;gap:10px;">
         <div class="form-group" style="flex:1;"><label>Date</label><input type="date" id="bk-new-date"/></div>
@@ -3348,6 +3398,54 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" onclick="closeCreateBookingModal()">Cancel</button>
         <button class="btn btn-primary" onclick="submitCreateBooking()">Create Booking</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Booking Detail / Edit modal -->
+  <div class="modal-overlay" id="booking-detail-modal">
+    <div class="modal">
+      <div class="modal-title">Booking Details</div>
+      <input type="hidden" id="bk-edit-id"/>
+      <div class="form-group"><label>Customer Phone</label><input type="text" id="bk-edit-phone"/></div>
+      <div class="form-group"><label>Customer Name</label><input type="text" id="bk-edit-name"/></div>
+      <div class="form-group"><label>Service</label><input type="text" id="bk-edit-service"/></div>
+      <div style="display:flex;gap:10px;">
+        <div class="form-group" style="flex:1;"><label>Date</label><input type="date" id="bk-edit-date"/></div>
+        <div class="form-group" style="flex:1;"><label>Time</label><input type="time" id="bk-edit-time"/></div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <div class="form-group" style="flex:1;"><label>Duration (hours)</label><input type="number" id="bk-edit-duration" min="0.25" step="0.25"/></div>
+        <div class="form-group" style="flex:1;">
+          <label>Status</label>
+          <select id="bk-edit-status">
+            <option value="pending">Pending</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="no_show">No-show</option>
+            <option value="rescheduled">Rescheduled</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <div class="form-group" style="flex:1;"><label>Price</label><input type="number" id="bk-edit-price" min="0" step="0.01"/></div>
+        <div class="form-group" style="flex:1;">
+          <label>Payment Status</label>
+          <select id="bk-edit-payment-status">
+            <option value="">—</option>
+            <option value="paid">Paid</option>
+            <option value="pending">Pending</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group"><label>Notes</label><input type="text" id="bk-edit-notes"/></div>
+      <div id="bk-edit-error" style="color:var(--red);font-family:var(--mono);font-size:11px;margin-bottom:8px;display:none;"></div>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" style="color:var(--red);" onclick="_bkCancelFromDetail()">✕ Cancel Booking</button>
+        <button class="btn btn-ghost" onclick="closeBookingDetailModal()">Close</button>
+        <button class="btn btn-primary" onclick="submitBookingEdit()">💾 Save Changes</button>
       </div>
     </div>
   </div>

@@ -4113,11 +4113,38 @@ async function quickCampaignDrawer() {
 // lightweight in-page fallback for Starter users landing here directly.
 // ═══════════════════════════════════════════════════════════════════════════
 let _allBookings = [];
+let _bkView = 'list';           // 'list' | 'calendar'
+let _bkCalMode = 'month';       // 'month' | 'week' | 'agenda'
+let _bkCalDate = new Date();    // date currently focused in the calendar
+let _bkFilters = { status: 'all', payment: 'all', search: '', dateFrom: '', dateTo: '' };
 
+// Bookings list is small enough per-tenant to load in full (same assumption
+// the original loadBookings() already made with upcoming_only=false) —
+// filters below run client-side over _allBookings rather than re-fetching
+// on every keystroke. The backend's GET /bookings still accepts the same
+// filters as real query params (date_from/date_to/status/service/customer/
+// payment_status) for any caller that needs server-side filtering at scale
+// (e.g. a future paginated view); this dashboard doesn't need it yet.
 async function loadBookings() {
   const wrap = document.getElementById('bookings-content');
   if (!wrap) return;
-  if (!_allBookings.length) wrap.innerHTML = '<div class="panel full"><div class="empty">Loading…</div></div>';
+  // BUG FIX: this used to do `wrap.innerHTML = '<div class="panel full">…Loading…</div>'`
+  // on first load, which replaced the ENTIRE bookings panel structure (stat
+  // cards, table, calendar, settings — everything with the ids the render
+  // functions below look up by getElementById). Once the fetch resolved,
+  // nothing ever put the real structure back, so `_renderBookingsSummary()`
+  // /`_renderBookingsTable()` silently no-op'd (every lookup is `if (el)`
+  // guarded) and the section was stuck on "Loading…" forever — on exactly
+  // the first visit per page session, since after that `_allBookings.length`
+  // is already > 0 and the wipe doesn't re-trigger. This reproduces the
+  // reported "bookings not loading" symptom on the frontend independently
+  // of the backend error-visibility bug fixed in booking_service.py. Fixed
+  // by only touching the table body for the loading placeholder, never the
+  // panel structure itself.
+  if (!_allBookings.length) {
+    const tbody0 = document.getElementById('bookings-table-body');
+    if (tbody0) tbody0.innerHTML = '<tr><td colspan="6"><div class="empty">Loading…</div></td></tr>';
+  }
   try {
     const data = await apiFetch('/bookings?upcoming_only=false');
     if (!data) {
@@ -4140,8 +4167,7 @@ async function loadBookings() {
       return;
     }
     _allBookings = data.bookings || [];
-    _renderBookingsSummary(_allBookings);
-    _renderBookingsTable(_allBookings);
+    applyBookingFilters();
     wrap.style.display = '';
     loadBookingSettings();
   } catch (e) {
@@ -4187,26 +4213,218 @@ function _renderBookingsTable(bookings) {
   if (!tbody) return;
   const sorted = [...bookings].sort((a, b) => (b.booking_date + b.start_time).localeCompare(a.booking_date + a.start_time));
   if (!sorted.length) {
-    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">No bookings yet. Click "New Booking" to create one, or share your booking link.</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6"><div class="empty">No bookings match these filters.</div></td></tr>`;
     return;
   }
   tbody.innerHTML = sorted.map(b => `
-    <tr>
+    <tr style="cursor:pointer;" onclick="openBookingDetail(${b.id})" title="Click to view/edit">
       <td>${escHtml(b.booking_date || '')}<br/><span style="color:var(--text-dim);font-size:11px;">${escHtml(b.start_time || '')}</span></td>
-      <td>${escHtml(b.customer_phone || '—')}</td>
+      <td>${escHtml(b.customer_name || b.customer_phone || '—')}${b.customer_name ? `<br/><span style="color:var(--text-dim);font-size:11px;">${escHtml(b.customer_phone || '')}</span>` : ''}</td>
       <td>${escHtml(b.service_name || '—')}</td>
       <td><span class="badge ${_BK_STATUS_BADGE[b.status] || 'badge-amber'}">${escHtml((b.status||'pending').replace('_',' '))}</span></td>
       <td style="color:var(--text-dim);font-size:11px;">${escHtml(b.notes || '')}</td>
       <td>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;" onclick="event.stopPropagation()">
           ${b.status !== 'completed' && b.status !== 'cancelled' ? `
             <button class="btn btn-ghost" style="color:var(--green);" onclick="_bkSetStatus(${b.id},'completed')">✓ Done</button>
             <button class="btn btn-ghost" style="color:var(--amber);" onclick="_bkSetStatus(${b.id},'no_show')">No-show</button>
             <button class="btn btn-ghost" onclick="_bkCancel(${b.id})">✕ Cancel</button>
           ` : ''}
+          <button class="btn btn-ghost" onclick="openBookingDetail(${b.id})">✎ Edit</button>
         </div>
       </td>
     </tr>`).join('');
+}
+
+// ── Filters (client-side over the already-fully-loaded _allBookings; see
+//    loadBookings() note above on why this doesn't hit the server per
+//    keystroke) ─────────────────────────────────────────────────────────
+function filterBookingsByStatus(v)  { _bkFilters.status  = v; applyBookingFilters(); }
+function filterBookingsByPayment(v) { _bkFilters.payment = v; applyBookingFilters(); }
+function filterBookingsBySearch(v)  { _bkFilters.search  = (v || '').trim().toLowerCase(); applyBookingFilters(); }
+function filterBookingsByDateRange() {
+  _bkFilters.dateFrom = document.getElementById('bk-date-from')?.value || '';
+  _bkFilters.dateTo   = document.getElementById('bk-date-to')?.value || '';
+  applyBookingFilters();
+}
+
+function _bookingMatchesFilters(b) {
+  const f = _bkFilters;
+  if (f.status !== 'all' && (b.status || 'pending') !== f.status) return false;
+  if (f.payment !== 'all' && (b.payment_status || '') !== f.payment) return false;
+  if (f.dateFrom && (b.booking_date || '') < f.dateFrom) return false;
+  if (f.dateTo && (b.booking_date || '') > f.dateTo) return false;
+  if (f.search) {
+    const hay = `${b.customer_name || ''} ${b.customer_phone || ''}`.toLowerCase();
+    if (!hay.includes(f.search)) return false;
+  }
+  return true;
+}
+
+// Stats/"Next Appointment" always reflect ALL of this business's bookings
+// (matches the original, pre-filter behavior); only the table and calendar
+// narrow down to the active filters.
+function applyBookingFilters() {
+  _renderBookingsSummary(_allBookings);
+  const filtered = _allBookings.filter(_bookingMatchesFilters);
+  _renderBookingsTable(filtered);
+  if (_bkView === 'calendar') _renderBookingsCalendar(filtered);
+}
+
+// ── List / Calendar view toggle ──────────────────────────────────────────
+function setBookingsView(mode) {
+  _bkView = mode;
+  const listV = document.getElementById('bookings-list-view');
+  const calV  = document.getElementById('bookings-calendar-view');
+  const listBtn = document.getElementById('bk-view-list');
+  const calBtn  = document.getElementById('bk-view-calendar');
+  if (listV) listV.style.display = mode === 'list' ? '' : 'none';
+  if (calV)  calV.style.display  = mode === 'calendar' ? '' : 'none';
+  if (listBtn) listBtn.style.opacity = mode === 'list' ? '1' : '0.4';
+  if (calBtn)  calBtn.style.opacity  = mode === 'calendar' ? '1' : '0.4';
+  if (mode === 'calendar') _renderBookingsCalendar(_allBookings.filter(_bookingMatchesFilters));
+}
+
+// ── Calendar (Month / Week / Agenda) ─────────────────────────────────────
+// Additive to the existing panel styling — reuses .panel/.badge/.btn-ghost
+// classes rather than introducing a new visual language. Drag/resize was
+// evaluated and skipped: this codebase has no existing drag-and-drop
+// infrastructure anywhere in the dashboard, so wiring it up safely (pointer
+// events, backend re-validation, touch support down to 360px) would be a
+// substantial net-new subsystem rather than an incremental addition — per
+// the spec's own instruction ("If drag/resize would require a major
+// rewrite, do not implement it"), booking moves go through the existing
+// click → edit-modal → save flow instead, which already re-validates
+// availability server-side via update_booking()/reschedule_booking().
+function setBookingsCalMode(mode) {
+  _bkCalMode = mode;
+  ['month', 'week', 'agenda'].forEach(m => {
+    const btn = document.getElementById(`bk-cal-mode-${m}`);
+    if (btn) btn.style.opacity = m === mode ? '1' : '0.5';
+  });
+  _renderBookingsCalendar(_allBookings.filter(_bookingMatchesFilters));
+}
+
+function bkCalNav(dir) {
+  if (dir === 0) {
+    _bkCalDate = new Date();
+  } else if (_bkCalMode === 'month') {
+    _bkCalDate = new Date(_bkCalDate.getFullYear(), _bkCalDate.getMonth() + dir, 1);
+  } else if (_bkCalMode === 'week') {
+    _bkCalDate = new Date(_bkCalDate.getTime() + dir * 7 * 86400000);
+  } else {
+    _bkCalDate = new Date(_bkCalDate.getTime() + dir * 86400000);
+  }
+  _renderBookingsCalendar(_allBookings.filter(_bookingMatchesFilters));
+}
+
+function _bkDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+
+function _renderBookingsCalendar(bookings) {
+  const body = document.getElementById('bk-calendar-body');
+  const title = document.getElementById('bk-cal-title');
+  if (!body) return;
+
+  const byDate = {};
+  for (const b of bookings) {
+    const d = b.booking_date;
+    if (!d) continue;
+    (byDate[d] = byDate[d] || []).push(b);
+  }
+  for (const d in byDate) byDate[d].sort((a, b) => (a.start_time || '').localeCompare(b.start_time || ''));
+
+  const todayStr = _bkDateStr(new Date());
+
+  const chip = (b) => `
+    <div class="bk-cal-chip bk-cal-chip-${_BK_STATUS_BADGE[b.status] || 'badge-amber'}"
+         onclick="event.stopPropagation();openBookingDetail(${b.id})"
+         title="${escHtml((b.customer_name || b.customer_phone || 'Booking'))} — ${escHtml(b.service_name || '')}">
+      ${escHtml(b.start_time || '')} ${escHtml(b.customer_name || b.customer_phone || 'Booking')}
+    </div>`;
+
+  if (_bkCalMode === 'agenda') {
+    if (title) title.textContent = 'Agenda — upcoming bookings';
+    const days = Object.keys(byDate).filter(d => d >= todayStr).sort();
+    body.innerHTML = days.length ? days.map(d => `
+      <div class="bk-cal-agenda-day">
+        <div class="bk-cal-agenda-date">${d === todayStr ? 'Today · ' : ''}${escHtml(d)}</div>
+        <div>${byDate[d].map(chip).join('')}</div>
+      </div>`).join('') : '<div class="empty">No upcoming bookings.</div>';
+    return;
+  }
+
+  if (_bkCalMode === 'week') {
+    const start = new Date(_bkCalDate);
+    start.setDate(start.getDate() - start.getDay());
+    const days = [...Array(7)].map((_, i) => new Date(start.getTime() + i * 86400000));
+    if (title) title.textContent = `Week of ${_bkDateStr(days[0])}`;
+    body.innerHTML = `<div class="bk-cal-grid bk-cal-grid-week">` + days.map(d => {
+      const ds = _bkDateStr(d);
+      const items = byDate[ds] || [];
+      return `<div class="bk-cal-cell ${ds === todayStr ? 'bk-cal-today' : ''}" onclick="_bkCalEmptyClick('${ds}')">
+        <div class="bk-cal-daynum">${d.toLocaleDateString(undefined,{weekday:'short'})} ${d.getDate()}</div>
+        <div class="bk-cal-chips">${items.map(chip).join('') || ''}</div>
+      </div>`;
+    }).join('') + `</div>`;
+    return;
+  }
+
+  // month (default)
+  const first = new Date(_bkCalDate.getFullYear(), _bkCalDate.getMonth(), 1);
+  const gridStart = new Date(first);
+  gridStart.setDate(gridStart.getDate() - gridStart.getDay());
+  if (title) title.textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const cells = [...Array(42)].map((_, i) => new Date(gridStart.getTime() + i * 86400000));
+  const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  body.innerHTML = `
+    <div class="bk-cal-grid bk-cal-grid-header">${dow.map(d => `<div class="bk-cal-dow">${d}</div>`).join('')}</div>
+    <div class="bk-cal-grid bk-cal-grid-month">` + cells.map(d => {
+      const ds = _bkDateStr(d);
+      const items = byDate[ds] || [];
+      const otherMonth = d.getMonth() !== first.getMonth();
+      const shown = items.slice(0, 3);
+      const more = items.length - shown.length;
+      return `<div class="bk-cal-cell ${otherMonth ? 'bk-cal-other-month' : ''} ${ds === todayStr ? 'bk-cal-today' : ''}" onclick="_bkCalEmptyClick('${ds}')">
+        <div class="bk-cal-daynum">${d.getDate()}</div>
+        <div class="bk-cal-chips">${shown.map(chip).join('')}${more > 0 ? `<div class="bk-cal-more">+${more} more</div>` : ''}</div>
+      </div>`;
+    }).join('') + `</div>`;
+}
+
+// Clicking an empty calendar slot opens the create-booking modal prefilled
+// with that date, per the spec ("click empty slot → create").
+function _bkCalEmptyClick(dateStr) {
+  openCreateBookingModal();
+  const dateInput = document.getElementById('bk-new-date');
+  if (dateInput) dateInput.value = dateStr;
+}
+
+// ── CSV export ────────────────────────────────────────────────────────
+async function exportBookingsCsv() {
+  try {
+    const params = new URLSearchParams({ upcoming_only: 'false' });
+    if (_bkFilters.status !== 'all') params.set('status', _bkFilters.status);
+    if (_bkFilters.dateFrom) params.set('date_from', _bkFilters.dateFrom);
+    if (_bkFilters.dateTo) params.set('date_to', _bkFilters.dateTo);
+    const res = await fetch(`${API}/bookings/export?${params.toString()}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      let msg = res.statusText;
+      try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+    const a    = Object.assign(document.createElement('a'), { href: url, download: 'bookings.csv' });
+    a.click();
+    URL.revokeObjectURL(url);
+    toast('📥 Bookings exported as CSV');
+  } catch (e) {
+    toast('Failed to export bookings: ' + e.message, true);
+  }
 }
 
 async function _bkSetStatus(id, status) {
@@ -4237,6 +4455,7 @@ function closeCreateBookingModal() {
 
 async function submitCreateBooking() {
   const phone = document.getElementById('bk-new-phone')?.value.trim();
+  const name  = document.getElementById('bk-new-name')?.value.trim() || '';
   const date  = document.getElementById('bk-new-date')?.value;
   const time  = document.getElementById('bk-new-time')?.value;
   const dur   = parseFloat(document.getElementById('bk-new-duration')?.value || '1');
@@ -4249,7 +4468,8 @@ async function submitCreateBooking() {
     await apiFetch('/bookings', {
       method: 'POST',
       body: JSON.stringify({
-        customer_phone: phone, booking_date: date, start_time: time,
+        customer_phone: phone, customer_name: name || undefined,
+        booking_date: date, start_time: time,
         duration_hrs: dur, service_name: svc, notes: notes,
       }),
     });
@@ -4261,6 +4481,104 @@ async function submitCreateBooking() {
     // just taken by someone else — surfaced as-is rather than a generic error.
     toast(e.message || 'Failed to create booking', true);
   }
+}
+
+// ── Booking Detail / Edit modal ──────────────────────────────────────────
+let _bkDetailId = null;
+
+function openBookingDetail(id) {
+  const b = _allBookings.find(x => x.id === id);
+  if (!b) { toast('Booking not found', true); return; }
+  _bkDetailId = id;
+  const _v = (elId, val) => { const el = document.getElementById(elId); if (el) el.value = val ?? ''; };
+  _v('bk-edit-id', b.id);
+  _v('bk-edit-phone', b.customer_phone);
+  _v('bk-edit-name', b.customer_name);
+  _v('bk-edit-service', b.service_name);
+  _v('bk-edit-date', b.booking_date);
+  _v('bk-edit-time', b.start_time);
+  _v('bk-edit-duration', b.duration_hrs ?? 1);
+  _v('bk-edit-status', b.status || 'pending');
+  _v('bk-edit-price', b.price);
+  _v('bk-edit-payment-status', b.payment_status || '');
+  _v('bk-edit-notes', b.notes);
+  const errEl = document.getElementById('bk-edit-error');
+  if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+  const modal = document.getElementById('booking-detail-modal');
+  if (modal) modal.classList.add('open');
+}
+
+function closeBookingDetailModal() {
+  const modal = document.getElementById('booking-detail-modal');
+  if (modal) modal.classList.remove('open');
+  _bkDetailId = null;
+}
+
+async function submitBookingEdit() {
+  if (!_bkDetailId) return;
+  const errEl = document.getElementById('bk-edit-error');
+  const setErr = (msg) => { if (errEl) { errEl.textContent = msg; errEl.style.display = msg ? '' : 'none'; } };
+  setErr('');
+
+  const original = _allBookings.find(x => x.id === _bkDetailId) || {};
+  const payload = {
+    customer_phone: document.getElementById('bk-edit-phone')?.value.trim(),
+    customer_name:  document.getElementById('bk-edit-name')?.value.trim() || null,
+    service_name:   document.getElementById('bk-edit-service')?.value.trim(),
+    booking_date:   document.getElementById('bk-edit-date')?.value,
+    start_time:     document.getElementById('bk-edit-time')?.value,
+    duration_hrs:   parseFloat(document.getElementById('bk-edit-duration')?.value || '1'),
+    notes:          document.getElementById('bk-edit-notes')?.value.trim() || '',
+    price:          document.getElementById('bk-edit-price')?.value ? parseFloat(document.getElementById('bk-edit-price').value) : null,
+    payment_status: document.getElementById('bk-edit-payment-status')?.value || null,
+  };
+  const newStatus = document.getElementById('bk-edit-status')?.value;
+
+  try {
+    // Date/time changed → go through the reschedule endpoint so the new
+    // slot gets the same availability re-check WhatsApp reschedules get
+    // (excluding this booking's own current row from the conflict check).
+    const dateOrTimeChanged = payload.booking_date !== original.booking_date || payload.start_time !== original.start_time
+      || payload.duration_hrs !== (original.duration_hrs ?? 1);
+    if (dateOrTimeChanged) {
+      await apiFetch(`/bookings/${_bkDetailId}/reschedule`, {
+        method: 'POST',
+        body: JSON.stringify({
+          new_date: payload.booking_date, new_time: payload.start_time, duration_hrs: payload.duration_hrs,
+        }),
+      });
+    }
+    // Field edits (customer/service/notes/price/payment_status) go through
+    // the general PATCH. Status is a SEPARATE existing endpoint
+    // (PATCH /bookings/{id}/status?status=…) — the general BookingUpdate
+    // model deliberately has no `status` field (kept backward-compatible
+    // with the pre-existing status-only route, see update_booking_api()'s
+    // own docstring), so it's called on its own, only when changed.
+    const { booking_date, start_time, duration_hrs, ...rest } = payload;
+    await apiFetch(`/bookings/${_bkDetailId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(rest),
+    });
+    if (newStatus && newStatus !== (original.status || 'pending')) {
+      await apiFetch(`/bookings/${_bkDetailId}/status?status=${encodeURIComponent(newStatus)}`, { method: 'PATCH' });
+    }
+    toast('✅ Booking updated');
+    closeBookingDetailModal();
+    loadBookings();
+  } catch (e) {
+    setErr(e.message || 'Failed to save changes — the new time may already be booked.');
+  }
+}
+
+async function _bkCancelFromDetail() {
+  if (!_bkDetailId) return;
+  if (!confirm('Cancel this booking?')) return;
+  try {
+    await apiFetch(`/bookings/${_bkDetailId}`, { method: 'DELETE' });
+    toast('Booking cancelled');
+    closeBookingDetailModal();
+    loadBookings();
+  } catch (e) { toast('Failed to cancel booking: ' + e.message, true); }
 }
 
 async function loadBookingSettings() {

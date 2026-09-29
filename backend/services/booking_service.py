@@ -502,6 +502,7 @@ def check_availability(
     duration_hrs: float = 1.0,
     _biz_config: dict = None,
     _existing_bookings: list = None,
+    exclude_booking_id: Optional[int] = None,
 ) -> dict:
     """
     Check if a slot is available. Validates, in order:
@@ -519,6 +520,14 @@ def check_availability(
     Production booking systems must fail closed: a DB hiccup during the
     availability check is exactly the moment a double-booking could slip
     through undetected if this returned "available" by default.
+
+    `exclude_booking_id`: when checking availability for a RESCHEDULE
+    (moving an existing booking to a new date/time), that booking's own
+    current row must not count as a conflict against itself. Without
+    this, rescheduling a booking to overlap its own existing slot — or
+    simply re-validating the same slot it's already in — would always
+    report "unavailable", since the booking's own row is still sitting
+    in the conflict query.
     """
     try:
         from datetime import datetime, date as _date_cls
@@ -611,6 +620,9 @@ def check_availability(
                 .execute()
             )
             existing = res.data or []
+
+        if exclude_booking_id is not None:
+            existing = [b for b in existing if b.get("id") != exclude_booking_id]
 
         conflicts = []
         for b in existing:
@@ -722,6 +734,10 @@ def create_booking(
     service_name:  str   = "",
     notes:         str   = "",
     order_id:      int   = None,
+    customer_name:  Optional[str]   = None,
+    customer_email: Optional[str]   = None,
+    price:          Optional[float] = None,
+    payment_status: Optional[str]   = None,
 ) -> Optional[dict]:
     """
     Create a booking record. Returns the created row or None on error/conflict.
@@ -775,6 +791,10 @@ def create_booking(
                 "p_duration_hrs":   duration_hrs,
                 "p_service_name":   service_name or "",
                 "p_notes":          notes or "",
+                "p_customer_name":  customer_name,
+                "p_customer_email": customer_email,
+                "p_price":          price,
+                "p_payment_status": payment_status,
             }).execute()
 
             row = (res.data or [{}])[0] if res.data else {}
@@ -820,7 +840,25 @@ def create_booking(
                 }
                 if order_id:
                     _insert_row["order_id"] = order_id
-                res = supabase.table("bookings").insert(_insert_row).execute()
+                # These four columns are additive (migrations/0001_...sql) —
+                # on an environment where that migration hasn't run yet,
+                # inserting them would fail outright, so they're only added
+                # to the row when actually provided, and the insert itself
+                # retries once without them if the DB still rejects it (e.g.
+                # only SOME of the new columns exist).
+                _optional = {
+                    "customer_name":  customer_name,
+                    "customer_email": customer_email,
+                    "price":          price,
+                    "payment_status": payment_status,
+                }
+                _insert_row.update({k: v for k, v in _optional.items() if v is not None})
+                try:
+                    res = supabase.table("bookings").insert(_insert_row).execute()
+                except Exception:
+                    for k in _optional:
+                        _insert_row.pop(k, None)
+                    res = supabase.table("bookings").insert(_insert_row).execute()
                 booking = res.data[0] if res.data else None
                 if booking:
                     log.info("booking created (fallback, non-atomic)  id=%s  biz=%s",
@@ -834,8 +872,35 @@ def create_booking(
         return None
 
 
-def get_bookings(business_id: int, upcoming_only: bool = True) -> list[dict]:
-    """Return bookings for a business, ordered by date/time."""
+def get_bookings(
+    business_id: int,
+    upcoming_only: bool = True,
+    date_from: Optional[str] = None,
+    date_to:   Optional[str] = None,
+    status:    Optional[str] = None,
+    service:   Optional[str] = None,
+    customer:  Optional[str] = None,
+    payment_status: Optional[str] = None,
+) -> tuple[list[dict], Optional[str]]:
+    """
+    Return bookings for a business, ordered by date/time.
+
+    Returns (rows, error) rather than following this module's usual
+    "never raises, swallow to []" pattern — this is the one booking
+    function the dashboard's whole "Bookings" list depends on, and
+    swallowing a genuine DB error into an empty list here is exactly
+    what made "bookings not loading" indistinguishable from "you
+    genuinely have zero bookings": both rendered as a 200 OK with an
+    empty array and no visible error anywhere (see the audit this fix
+    is based on). `error` is None on success (including a legitimately
+    empty result) and a short, safe-to-display string on failure — the
+    route layer turns that into a real error response instead of a
+    silent empty state. get_bookings_for_customer() below, used by the
+    WhatsApp/AI flow, intentionally keeps the old never-raises contract
+    unchanged — that caller genuinely wants "no bookings" and "error"
+    treated the same way (fail gracefully mid-conversation), so it was
+    left alone.
+    """
     try:
         from core.db import supabase
         today = _today().isoformat()
@@ -848,10 +913,35 @@ def get_bookings(business_id: int, upcoming_only: bool = True) -> list[dict]:
         )
         if upcoming_only:
             q = q.gte("booking_date", today)
-        return q.execute().data or []
+        if date_from:
+            q = q.gte("booking_date", date_from)
+        if date_to:
+            q = q.lte("booking_date", date_to)
+        if status:
+            q = q.eq("status", status)
+        if payment_status:
+            q = q.eq("payment_status", payment_status)
+        rows = q.execute().data or []
+
+        # service/customer are substring matches across a couple of
+        # fields — simplest done in Python since Supabase's query
+        # builder doesn't give a clean OR-across-columns ilike here, and
+        # a business's whole booking list is not large enough for this
+        # to be a real cost.
+        if service:
+            s = service.lower()
+            rows = [r for r in rows if s in (r.get("service_name") or "").lower()]
+        if customer:
+            c = customer.lower()
+            rows = [
+                r for r in rows
+                if c in (r.get("customer_phone") or "").lower()
+                or c in (r.get("customer_name") or "").lower()
+            ]
+        return rows, None
     except Exception as exc:
         log.warning("get_bookings error: %s", exc)
-        return []
+        return [], str(exc)
 
 
 def get_bookings_for_customer(business_id: int, customer_phone: str) -> list[dict]:
@@ -909,30 +999,167 @@ def cancel_booking(booking_id: int, business_id: int) -> Optional[dict]:
         return None
 
 
+def _update_bookings_row(booking_id: int, business_id: int, fields: dict, with_updated_at: bool = True) -> Optional[dict]:
+    """
+    Shared update helper. Tries to also stamp `updated_at` (added by
+    migrations/0001_bookings_schema_and_atomic_rpc.sql), but falls back
+    to updating without it if that migration hasn't been applied to this
+    environment yet — PostgREST/Supabase rejects an update referencing a
+    column that doesn't exist, and this function's whole job is to keep
+    booking edits working whether or not that specific migration has run,
+    the same "don't hard-fail on an optional migration" approach
+    create_booking() already uses for create_booking_atomic().
+    """
+    from core.db import supabase
+    payload = dict(fields)
+    if with_updated_at:
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    try:
+        res = (
+            supabase.table("bookings").update(payload)
+            .eq("id", booking_id).eq("business_id", business_id)
+            .execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as exc:
+        if with_updated_at:
+            log.debug("_update_bookings_row: retrying without updated_at (migration 0001 likely not applied yet): %s", exc)
+            payload.pop("updated_at", None)
+            res = (
+                supabase.table("bookings").update(payload)
+                .eq("id", booking_id).eq("business_id", business_id)
+                .execute()
+            )
+            return res.data[0] if res.data else None
+        raise
+
+
+def get_booking_by_id(booking_id: int, business_id: int) -> Optional[dict]:
+    """Return a single booking, scoped to the requesting business — never
+    lets one business look up another's booking by guessing an id."""
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("bookings").select("*")
+            .eq("id", booking_id).eq("business_id", business_id)
+            .limit(1).execute()
+        )
+        return res.data[0] if res.data else None
+    except Exception as exc:
+        log.warning("get_booking_by_id error: %s", exc)
+        return None
+
+
+def update_booking(
+    booking_id:  int,
+    business_id: int,
+    changes:     dict,
+) -> dict:
+    """
+    General-purpose partial update for a booking — customer info, service,
+    notes, price/payment_status, and (if date/time/duration are among the
+    changes) a full availability re-check excluding this booking's own
+    current slot, exactly like reschedule_booking(). This is the backing
+    function for the dashboard's "edit booking" UI, distinct from:
+      - update_booking_status's route (status-only, unchanged)
+      - reschedule_booking() (date/time only, sets status="rescheduled")
+    A plain edit — e.g. fixing a typo in customer_name, or changing notes
+    — should NOT flip the status to "rescheduled"; only changing when the
+    appointment actually happens should.
+
+    Returns {"ok": True, "booking": {...}} or {"ok": False, "reason": "..."}
+    — an explicit shape (unlike reschedule_booking's Optional[dict]) since
+    this is a brand-new function with no existing caller depending on the
+    old truthy/falsy contract, and the route layer needs to tell apart
+    "not found" from "conflict" from "nothing to update".
+    """
+    ALLOWED = {
+        "customer_phone", "customer_name", "customer_email",
+        "service_name", "booking_date", "start_time", "duration_hrs",
+        "notes", "price", "payment_status",
+    }
+    fields = {k: v for k, v in (changes or {}).items() if k in ALLOWED and v is not None}
+    if not fields:
+        return {"ok": False, "reason": "No valid fields to update"}
+
+    existing = get_booking_by_id(booking_id, business_id)
+    if not existing:
+        return {"ok": False, "reason": "Booking not found"}
+
+    changing_time = any(k in fields for k in ("booking_date", "start_time", "duration_hrs"))
+    if changing_time:
+        new_date     = fields.get("booking_date", existing.get("booking_date"))
+        new_time     = fields.get("start_time",   existing.get("start_time"))
+        new_duration = fields.get("duration_hrs", existing.get("duration_hrs") or 1.0)
+        avail = check_availability(
+            business_id, new_date, new_time, float(new_duration),
+            exclude_booking_id=booking_id,
+        )
+        if not avail.get("available"):
+            return {"ok": False, "reason": avail.get("reason", "That time is not available")}
+        fields["end_time"] = _add_time(new_time, float(new_duration))
+
+    try:
+        updated = _update_bookings_row(booking_id, business_id, fields, with_updated_at=True)
+        if not updated:
+            return {"ok": False, "reason": "Booking not found"}
+        return {"ok": True, "booking": updated}
+    except Exception as exc:
+        log.error("update_booking error: %s", exc)
+        return {"ok": False, "reason": "Could not update booking"}
+
+
 def reschedule_booking(
     booking_id:   int,
     business_id:  int,
     new_date:     str,
     new_time:     str,
     duration_hrs: float = 1.0,
+    skip_availability_check: bool = False,
 ) -> Optional[dict]:
-    """Update date/time of a booking, set status to rescheduled."""
+    """
+    Update date/time of a booking, set status to rescheduled.
+
+    Bug fix: this previously updated the row directly with no
+    availability check at all, so it was possible to reschedule a
+    booking straight into another confirmed booking's slot — exactly
+    the double-booking this whole module otherwise goes out of its way
+    to prevent on the CREATE path. Now re-validates the new slot first,
+    excluding this booking's own current row from the conflict check
+    (otherwise re-validating would always fail: the booking's own row is
+    still sitting in the DB against the old time until this update
+    lands). `skip_availability_check` exists only for callers (like the
+    WhatsApp flow in ai.py) that already ran their own check_availability()
+    moments earlier and want to avoid re-querying — it does NOT skip the
+    conflict protection, just the redundant duplicate query; the WhatsApp
+    flow's own pre-check still uses the same exclude-aware logic once
+    that caller is updated to pass exclude_booking_id too.
+
+    Returns the updated booking row on success, or None on any failure
+    (not found, conflict, or DB error) — kept as a single Optional[dict]
+    return, not an {"ok": ...} shape, because existing callers (e.g.
+    ai.py's `if updated:` check) already depend on a plain
+    truthy-dict-or-None contract.
+    """
     try:
-        from core.db import supabase
+        if not skip_availability_check:
+            avail = check_availability(
+                business_id, new_date, new_time, duration_hrs,
+                exclude_booking_id=booking_id,
+            )
+            if not avail.get("available"):
+                log.info("reschedule_booking: rejected by check_availability  booking=%s  biz=%s  reason=%s",
+                          booking_id, business_id, avail.get("reason"))
+                return None
+
         end_time = _add_time(new_time, duration_hrs)
-        res = (
-            supabase.table("bookings")
-            .update({
-                "booking_date": new_date,
-                "start_time":   new_time,
-                "end_time":     end_time,
-                "status":       "rescheduled",
-            })
-            .eq("id", booking_id)
-            .eq("business_id", business_id)
-            .execute()
-        )
-        return res.data[0] if res.data else None
+        update_fields = {
+            "booking_date": new_date,
+            "start_time":   new_time,
+            "end_time":     end_time,
+            "status":       "rescheduled",
+        }
+        return _update_bookings_row(booking_id, business_id, update_fields, with_updated_at=True)
     except Exception as exc:
         log.error("reschedule_booking error: %s", exc)
         return None
