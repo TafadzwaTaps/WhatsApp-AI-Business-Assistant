@@ -344,7 +344,7 @@ function renderContacts(convos) {
       <div class="contact-avatar">${isHandoff ? '🔴' : '👤'}</div>
       <div class="contact-info">
         <div class="contact-phone">${displayPhone}</div>
-        <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(safeText(c.last_message))}</div>
+        <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(formatMessagePreview(c.last_message))}</div>
       </div>
       <div class="contact-meta">
         <div class="contact-time">${formatTime(c.last_message_at)}</div>
@@ -853,6 +853,26 @@ function _reconcileOptimisticBubble(message) {
 function safeText(val) {
   if (val === null || val === undefined) return '';
   return String(val);
+}
+
+// Non-text WhatsApp messages are stored as a fixed placeholder token
+// (see backend/routes/webhook_routes.py) rather than real text — the
+// conversation-row preview showed that raw token verbatim ("[image]",
+// "[voice_note]", …) instead of a readable label. Maps only the exact
+// tokens the backend actually writes; anything else (including a
+// genuine customer message that happens to contain brackets) passes
+// through unchanged rather than being reinterpreted.
+const _MEDIA_PREVIEW_LABELS = {
+  '[image]':        '📷 Image',
+  '[video]':        '🎥 Video',
+  '[voice_note]':   '🎤 Voice message',
+  '[location]':     '📍 Location',
+  '[contact_card]': '👤 Contact',
+};
+
+function formatMessagePreview(text) {
+  const t = safeText(text);
+  return _MEDIA_PREVIEW_LABELS[t] || t;
 }
 
 function escHtml(s) {

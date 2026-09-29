@@ -328,6 +328,7 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
             "last_message":    last.get("text", ""),
             "last_direction":  last.get("direction", ""),
             "last_message_at": last.get("created_at"),
+            "last_message_id": last.get("id"),
             "last_status":     last.get("status", "sent"),
             "in_handoff":      phone in handoff_phones,
             "handoff_state":   "human_handoff" if phone in handoff_phones else None,
@@ -341,7 +342,19 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
     # moves on INCOMING messages, so sorting by it alone — the previous
     # behavior — put conversations in the wrong order whenever the
     # business/AI sent the most recent reply.
-    result.sort(key=lambda r: r.get("last_message_at") or r.get("last_seen") or "", reverse=True)
+    #
+    # Secondary key: `last_message_id`. Two messages landing within the
+    # same timestamp tick (a customer message + an AI reply seconds or
+    # even the same second apart is routine) would otherwise tie on
+    # last_message_at, and a plain stable sort would then fall back to
+    # silently keep the ORIGINAL (customers-query) order for that tie —
+    # not real recency. Message ids are monotonically increasing, so
+    # they're a reliable tiebreaker for "which of these actually
+    # happened most recently."
+    result.sort(
+        key=lambda r: (r.get("last_message_at") or r.get("last_seen") or "", r.get("last_message_id") or 0),
+        reverse=True,
+    )
     return result
 
 

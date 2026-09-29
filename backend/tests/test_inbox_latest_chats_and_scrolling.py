@@ -226,3 +226,116 @@ def test_filter_unread_still_works(patch_supabase):
 
     result = messages_mod.get_chat_conversations(business_id=9, filter_unread=True)
     assert [r["customer_id"] for r in result] == [2]
+
+
+# ── AI / agent replies also count as latest activity (Phase 22, tests 3-4) ─
+
+def test_outgoing_ai_reply_updates_latest_activity_and_ordering(patch_supabase):
+    customers = [
+        {"id": 1, "phone": "+1A", "business_id": 1, "last_seen": "2026-01-01T10:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+        {"id": 2, "phone": "+1B", "business_id": 1, "last_seen": "2026-01-01T09:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+    ]
+    msgs = [
+        {"id": 1, "customer_id": 1, "business_id": 1, "text": "Do you have black shoes?",
+         "created_at": "2026-01-01T10:00:00Z", "direction": "incoming"},
+        {"id": 2, "customer_id": 2, "business_id": 1, "text": "hi", "created_at": "2026-01-01T09:00:00Z", "direction": "incoming"},
+        # AI reply to customer 2, sent AFTER customer 1's message -> 2 should
+        # now be the most recently active, even though it's an outgoing/AI
+        # message and customer 1's own last_seen is still more recent.
+        {"id": 3, "customer_id": 2, "business_id": 1, "text": "Yes, we currently have black shoes available.",
+         "created_at": "2026-01-01T10:05:00Z", "direction": "outgoing", "sender_type": "ai"},
+    ]
+    patch_supabase({"customers": customers, "messages": msgs, "carts": []})
+
+    result = messages_mod.get_chat_conversations(business_id=1)
+    assert [r["customer_id"] for r in result] == [2, 1]
+    assert result[0]["last_message"] == "Yes, we currently have black shoes available."
+
+
+def test_human_agent_reply_updates_latest_activity_and_ordering(patch_supabase):
+    customers = [
+        {"id": 1, "phone": "+1A", "business_id": 1, "last_seen": "2026-01-01T10:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+        {"id": 2, "phone": "+1B", "business_id": 1, "last_seen": "2026-01-01T09:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+    ]
+    msgs = [
+        {"id": 1, "customer_id": 1, "business_id": 1, "text": "Do you have black shoes?",
+         "created_at": "2026-01-01T10:00:00Z", "direction": "incoming"},
+        {"id": 2, "customer_id": 2, "business_id": 1, "text": "hi", "created_at": "2026-01-01T09:00:00Z", "direction": "incoming"},
+        # Human agent reply (post-handoff), same idea as the AI case above.
+        {"id": 3, "customer_id": 2, "business_id": 1, "text": "Hi, I'm checking that for you now.",
+         "created_at": "2026-01-01T10:05:00Z", "direction": "outgoing", "sender_type": "agent"},
+    ]
+    patch_supabase({"customers": customers, "messages": msgs, "carts": []})
+
+    result = messages_mod.get_chat_conversations(business_id=1)
+    assert [r["customer_id"] for r in result] == [2, 1]
+    assert result[0]["last_message"] == "Hi, I'm checking that for you now."
+
+
+# ── Rapid / same-timestamp messages (Phase 13 + Phase 22 test 16) ─────────
+
+def test_same_timestamp_messages_break_ties_by_message_id(patch_supabase):
+    # Two customers whose latest message landed in the exact same second —
+    # entirely plausible for messages seconds apart on a coarse timestamp
+    # column. Customer 2's message has the higher id (arrived after), so it
+    # must sort first even though the timestamp string alone is a tie.
+    customers = [
+        {"id": 1, "phone": "+1A", "business_id": 1, "last_seen": "2026-01-01T00:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+        {"id": 2, "phone": "+1B", "business_id": 1, "last_seen": "2026-01-01T00:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+    ]
+    msgs = [
+        {"id": 10, "customer_id": 1, "business_id": 1, "text": "from A",
+         "created_at": "2026-01-01T12:00:00Z", "direction": "incoming"},
+        {"id": 11, "customer_id": 2, "business_id": 1, "text": "from B",
+         "created_at": "2026-01-01T12:00:00Z", "direction": "incoming"},
+    ]
+    patch_supabase({"customers": customers, "messages": msgs, "carts": []})
+
+    result = messages_mod.get_chat_conversations(business_id=1)
+    assert [r["customer_id"] for r in result] == [2, 1]
+
+
+def test_rapid_messages_across_three_conversations_sort_correctly(patch_supabase):
+    customers = [
+        {"id": cid, "phone": f"+1{cid}", "business_id": 1, "last_seen": "2026-01-01T00:00:00Z",
+         "unread_count": 0, "created_at": "2025-01-01"} for cid in (1, 2, 3)
+    ]
+    # Same second for all three, arriving in id order 1 -> 2 -> 3, i.e.
+    # customer 3's message is the most recent.
+    msgs = [
+        {"id": i, "customer_id": i, "business_id": 1, "text": f"msg{i}",
+         "created_at": "2026-01-01T12:00:00Z", "direction": "incoming"}
+        for i in (1, 2, 3)
+    ]
+    patch_supabase({"customers": customers, "messages": msgs, "carts": []})
+
+    result = messages_mod.get_chat_conversations(business_id=1)
+    assert [r["customer_id"] for r in result] == [3, 2, 1]
+
+
+# ── Handoff state survives the sort (Phase 18 / 22 test 15) ───────────────
+
+def test_handoff_state_preserved_through_sorting(patch_supabase):
+    customers = [
+        {"id": 1, "phone": "+15550001", "business_id": 1, "last_seen": "2026-01-01T09:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+        {"id": 2, "phone": "+15550002", "business_id": 1, "last_seen": "2026-01-01T08:00:00Z", "unread_count": 0, "created_at": "2025-01-01"},
+    ]
+    msgs = [
+        {"id": 1, "customer_id": 1, "business_id": 1, "text": "hi",
+         "created_at": "2026-01-01T09:00:00Z", "direction": "incoming"},
+        # Customer 2 is in handoff and just sent another message -> must
+        # move to the top AND keep showing as in_handoff.
+        {"id": 2, "customer_id": 2, "business_id": 1, "text": "still waiting for a human",
+         "created_at": "2026-01-01T09:30:00Z", "direction": "incoming"},
+    ]
+    carts = [
+        {"phone": "+15550002", "business_id": 1, "state_data": {"state": "human_handoff"}},
+    ]
+    patch_supabase({"customers": customers, "messages": msgs, "carts": carts})
+
+    result = messages_mod.get_chat_conversations(business_id=1)
+    assert [r["customer_id"] for r in result] == [2, 1]
+    by_id = {r["customer_id"]: r for r in result}
+    assert by_id[2]["in_handoff"] is True
+    assert by_id[2]["handoff_state"] == "human_handoff"
+    assert by_id[1]["in_handoff"] is False

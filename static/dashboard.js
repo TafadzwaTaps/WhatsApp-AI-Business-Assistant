@@ -1502,7 +1502,7 @@ function _renderConversationList(list_data) {
     const unread = c.unread_count || 0;
     return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${escHtml(phone)}',this)">
     <div class="contact-phone">${escHtml(phone)}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
-    <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(lastMsg)}</div>
+    <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(formatMessagePreview(lastMsg))}</div>
     <div class="contact-time">${fmtTime(lastAt)}</div>
   </div>`;
   }).join('');
@@ -2836,6 +2836,25 @@ function escHtml(s){
     .replace(/</g,'&lt;')
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
+}
+
+// Non-text WhatsApp messages are stored as a fixed placeholder token
+// (see backend/routes/webhook_routes.py) rather than real text — the
+// conversation-row preview showed that raw token verbatim ("[image]",
+// "[voice_note]", …) instead of a readable label. Maps only the exact
+// tokens the backend actually writes; anything else passes through
+// unchanged. Mirrors the same map in inbox.js (Live Inbox) so both
+// conversation views describe media messages the same way.
+const _MEDIA_PREVIEW_LABELS = {
+  '[image]':        '📷 Image',
+  '[video]':        '🎥 Video',
+  '[voice_note]':   '🎤 Voice message',
+  '[location]':     '📍 Location',
+  '[contact_card]': '👤 Contact',
+};
+function formatMessagePreview(text) {
+  const t = (text === null || text === undefined) ? '' : String(text);
+  return _MEDIA_PREVIEW_LABELS[t] || t;
 }
 
 // H4: After signup with a pre-selected plan, redirect to Stripe checkout once.
