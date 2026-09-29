@@ -233,12 +233,12 @@ def test_generate_site_html_embeds_dynamic_translations_and_new_languages(monkey
         "id": 77, "name": "Test Cafe", "category": "Cafe",
         "tagline": "Great coffee", "currency_symbol": "$",
         "use_shared_number": True, "contact_phone": "", "features_json": {},
-        "is_service_business": False,
+        "is_service_business": True,  # so the "Book an Appointment" CTA renders too
     }
     fake_products = [
         {"id": 5, "name": "Latte", "price": 3.5,
          "description": "Smooth espresso with steamed milk.",
-         "image_url": "", "category": "Drinks", "stock": 10},
+         "image_url": "https://example.com/latte.jpg", "category": "Drinks", "stock": 10},
     ]
     monkeypatch.setattr(sg, "_get_business_and_products", lambda slug: (fake_biz, fake_products))
     monkeypatch.setattr(sg, "_get_reviews", lambda biz_id: [])
@@ -271,6 +271,20 @@ def test_generate_site_html_embeds_dynamic_translations_and_new_languages(monkey
     # Product NAME must never be registered for translation (protected
     # content) — only its description.
     assert "prod_desc_5" in html
+
+    # Regression coverage for a real-world gap found after shipping: the
+    # hero tagline and category badge are business-supplied free text (not
+    # fixed UI chrome) and were being rendered once, never touched by the
+    # language switcher — same class of bug as the About description, just
+    # in a different section. Likewise the hero's secondary "Book an
+    # Appointment" CTA and the Gallery section heading were hardcoded
+    # English strings with no data-i18n hook at all.
+    assert 'data-i18n-dyn="hero_tagline_77"' in html
+    assert 'data-i18n-dyn="hero_category_77"' in html
+    assert 'data-i18n="book_appointment"' in html
+    assert 'data-i18n="gallery"' in html
+    assert '<h2 class="section-title">📸 Gallery</h2>' not in html  # was hardcoded, unwrapped
+    assert '🗓️ Book an Appointment</a>' not in html  # was hardcoded, unwrapped
     assert "prod_name_5" not in html
 
     # RTL support wired up for Arabic.

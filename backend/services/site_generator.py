@@ -573,7 +573,9 @@ SITE_I18N = {
     "checkout_unavailable": "Checkout unavailable",
     "checkout_connect_error": "Could not connect to checkout. Please use WhatsApp to order.",
     "chat_whatsapp": "Chat on WhatsApp",
-    "order_on_whatsapp": "Order on WhatsApp"
+    "order_on_whatsapp": "Order on WhatsApp",
+    "book_appointment": "Book an Appointment",
+    "gallery": "Gallery"
   },
   "pl": {
     "nav_home": "Strona główna",
@@ -610,7 +612,9 @@ SITE_I18N = {
     "checkout_unavailable": "Płatność niedostępna",
     "checkout_connect_error": "Nie można połączyć się z płatnością. Skorzystaj z WhatsApp, aby złożyć zamówienie.",
     "chat_whatsapp": "Czat na WhatsApp",
-    "order_on_whatsapp": "Zamów przez WhatsApp"
+    "order_on_whatsapp": "Zamów przez WhatsApp",
+    "book_appointment": "Umów Wizytę",
+    "gallery": "Galeria"
   },
   "fr": {
     "nav_home": "Accueil",
@@ -647,7 +651,9 @@ SITE_I18N = {
     "checkout_unavailable": "Paiement indisponible",
     "checkout_connect_error": "Impossible de se connecter au paiement. Veuillez commander via WhatsApp.",
     "chat_whatsapp": "Discuter sur WhatsApp",
-    "order_on_whatsapp": "Commander sur WhatsApp"
+    "order_on_whatsapp": "Commander sur WhatsApp",
+    "book_appointment": "Prendre Rendez-vous",
+    "gallery": "Galerie"
   },
   "pt": {
     "nav_home": "Início",
@@ -684,7 +690,9 @@ SITE_I18N = {
     "checkout_unavailable": "Checkout indisponível",
     "checkout_connect_error": "Não foi possível conectar ao checkout. Por favor, peça pelo WhatsApp.",
     "chat_whatsapp": "Conversar no WhatsApp",
-    "order_on_whatsapp": "Pedir pelo WhatsApp"
+    "order_on_whatsapp": "Pedir pelo WhatsApp",
+    "book_appointment": "Marcar um Horário",
+    "gallery": "Galeria"
   },
   "es": {
     "nav_home": "Inicio",
@@ -721,7 +729,9 @@ SITE_I18N = {
     "checkout_unavailable": "Pago no disponible",
     "checkout_connect_error": "No se pudo conectar con el pago. Por favor pide por WhatsApp.",
     "chat_whatsapp": "Chatear por WhatsApp",
-    "order_on_whatsapp": "Pedir por WhatsApp"
+    "order_on_whatsapp": "Pedir por WhatsApp",
+    "book_appointment": "Reservar una Cita",
+    "gallery": "Galería"
   },
   "de": {
     "nav_home": "Startseite",
@@ -758,7 +768,9 @@ SITE_I18N = {
     "checkout_unavailable": "Kasse nicht verfügbar",
     "checkout_connect_error": "Verbindung zur Kasse fehlgeschlagen. Bitte über WhatsApp bestellen.",
     "chat_whatsapp": "Auf WhatsApp chatten",
-    "order_on_whatsapp": "Über WhatsApp bestellen"
+    "order_on_whatsapp": "Über WhatsApp bestellen",
+    "book_appointment": "Termin Buchen",
+    "gallery": "Galerie"
   },
   "ar": {
     "nav_home": "الرئيسية",
@@ -795,7 +807,9 @@ SITE_I18N = {
     "checkout_unavailable": "الدفع غير متاح",
     "checkout_connect_error": "تعذر الاتصال بالدفع. يرجى الطلب عبر واتساب.",
     "chat_whatsapp": "تحدث عبر واتساب",
-    "order_on_whatsapp": "اطلب عبر واتساب"
+    "order_on_whatsapp": "اطلب عبر واتساب",
+    "book_appointment": "احجز موعدًا",
+    "gallery": "المعرض"
   }
 }
 
@@ -949,17 +963,33 @@ def _nav_html(sections: dict, biz_name: str) -> str:
 
 
 def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = False) -> str:
-    name      = _e(biz.get("name", "Our Business"))
-    category  = _e(biz.get("category", ""))
-    tagline   = _e(biz.get("tagline") or settings.get("description") or f"Order {biz.get('category','products')} on WhatsApp")
-    logo_url  = biz.get("logo_url", "")
+    name        = _e(biz.get("name", "Our Business"))  # protected — never translated
+    raw_category= biz.get("category", "") or ""
+    category    = _e(raw_category)
+    raw_tagline = biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
+    tagline     = _e(raw_tagline)
+    logo_url    = biz.get("logo_url", "")
+
+    # Translation fix: the hero tagline ("Order Barbershop on WhatsApp") and
+    # the category badge ("Barbershop") are business-supplied/derived free
+    # text, not fixed UI chrome — they were previously rendered once and
+    # never touched by the language switcher (the most visible gap
+    # reported: everything else on the page translated except these two).
+    # Registered the same way the About description and product
+    # descriptions already are.
+    biz_id = biz.get("id")
+    tagline_key = f"hero_tagline_{biz_id or 'x'}"
+    _register_dynamic_text(tagline_key, raw_tagline, biz_id)
+    category_key = f"hero_category_{biz_id or 'x'}"
+    if raw_category:
+        _register_dynamic_text(category_key, raw_category, biz_id)
 
     logo_html = (
         f'<img src="{_e(logo_url)}" alt="{name}" class="hero-logo">'
         if logo_url else
         f'<div class="hero-logo-placeholder">{name[0].upper() if name else "W"}</div>'
     )
-    cat_badge = f'<span class="cat-badge">{category}</span>' if category else ""
+    cat_badge = f'<span class="cat-badge" data-i18n-dyn="{category_key}">{category}</span>' if category else ""
 
     chips = []
     if settings["show_hours"] and settings["business_hours"]:
@@ -984,7 +1014,7 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     if is_service and _hero_slug:
         cta += (
             f' <a class="hero-cta hero-cta-secondary" href="/book/{_e(_hero_slug)}" rel="noopener">'
-            f'🗓️ Book an Appointment</a>'
+            f'🗓️ <span data-i18n="book_appointment">{SITE_I18N["en"]["book_appointment"]}</span></a>'
         )
 
     return f"""
@@ -993,7 +1023,7 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
       {logo_html}
       {cat_badge}
       <h1 class="hero-title">{name}</h1>
-      <p class="hero-tagline">{tagline}</p>
+      <p class="hero-tagline" data-i18n-dyn="{tagline_key}">{tagline}</p>
       {chips_html}
       {cta}
     </div>
@@ -1219,7 +1249,7 @@ def _gallery_html(products: list) -> str:
     return f"""
   <section class="gallery-section" id="gallery">
     <div class="section-inner">
-      <h2 class="section-title">📸 Gallery</h2>
+      <h2 class="section-title">📸 <span data-i18n="gallery">{SITE_I18N["en"]["gallery"]}</span></h2>
       <div class="gallery-grid">{items}</div>
     </div>
   </section>"""
