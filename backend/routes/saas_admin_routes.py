@@ -18,6 +18,7 @@ Endpoints (all require superadmin role):
   GET /admin/saas/churn                     — churn rate + recent-churn windows (Phase 9)
   GET /admin/saas/usage/campaigns           — platform campaign volume + top senders (Phase 10)
   POST /admin/saas/abuse/scan               — now also flags high campaign volume/frequency (Phase 10)
+  GET /admin/saas/security/history          — persisted security-event trend (Phase 11)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -917,12 +918,12 @@ def saas_usage_limits(user=Depends(require_superadmin)):
 # Surfaces the security counters services/security.py already keeps
 # in-process for enforcement (failed logins, IP/account lockouts, signup
 # abuse, invalid webhook signatures, duplicate-message fingerprints,
-# active rate-limit buckets). Everything here is LIVE/point-in-time —
-# this app has no persisted security-event log or server-side session
-# store (auth is stateless JWT), so "recent history" and "active
-# sessions" are deliberately NOT reported rather than fabricated. A
-# persisted security_events table would be needed for real history and
-# is explicitly deferred, not silently skipped.
+# active rate-limit buckets). This app has no server-side session store
+# (auth is stateless JWT), so "active sessions" is still deliberately NOT
+# reported rather than fabricated. Historical trend — previously also
+# deferred here — is now covered by GET /admin/saas/security/history
+# (Phase 11), built on the new security_events table; this endpoint stays
+# the live, point-in-time snapshot.
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/security")
@@ -935,6 +936,59 @@ def saas_security_dashboard(user=Depends(require_superadmin)):
         return snapshot
     except Exception as exc:
         log.error("saas_security_dashboard error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.get("/admin/saas/security/history")
+def saas_security_history(days: int = 7, user=Depends(require_superadmin)):
+    """
+    Historical security-event counts from the security_events table
+    (Phase 11) — daily counts per event_type, for the last `days` days.
+    Complements, not replaces, the live snapshot above: that's the
+    always-on in-process view; this is what survives a redeploy.
+
+    Returns tracking_since=None (and all-zero daily buckets) rather than a
+    fabricated trend when the table is empty or not migrated yet — the
+    same honesty pattern as /admin/saas/churn (Phase 9).
+    """
+    try:
+        import datetime as _dt
+        from crud.security_events import list_security_events, earliest_event_timestamp, EVENT_TYPES
+
+        days = max(1, min(days, 90))
+        tracking_since = earliest_event_timestamp()
+
+        if not tracking_since:
+            return {
+                "tracking_since": None,
+                "daily_counts": [],
+                "totals_by_type": {t: 0 for t in EVENT_TYPES},
+                "note": "No security events recorded yet — history will populate once a login lockout, flagged IP, invalid webhook signature, or signup-limit hit actually occurs.",
+            }
+
+        now = _dt.datetime.now(_dt.timezone.utc)
+        cutoff = now - _dt.timedelta(days=days)
+        events = list_security_events(since_iso=cutoff.isoformat(), limit=5000)
+
+        daily: dict = {}
+        totals: dict = {t: 0 for t in EVENT_TYPES}
+        for e in events:
+            etype = e.get("event_type") or "unknown"
+            raw   = e.get("created_at") or ""
+            day   = raw[:10] if len(raw) >= 10 else "unknown"
+            bucket = daily.setdefault(day, {"date": day, **{t: 0 for t in EVENT_TYPES}})
+            if etype in bucket:
+                bucket[etype] += 1
+            totals[etype] = totals.get(etype, 0) + 1
+
+        return {
+            "tracking_since":  tracking_since,
+            "window_days":     days,
+            "daily_counts":    sorted(daily.values(), key=lambda d: d["date"]),
+            "totals_by_type":  totals,
+        }
+    except Exception as exc:
+        log.error("saas_security_history error: %s", exc)
         raise HTTPException(500, str(exc))
 
 

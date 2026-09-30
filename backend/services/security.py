@@ -262,6 +262,7 @@ def check_signup_success_limit(request) -> None:
             window.popleft()
         if len(window) >= SIGNUP_MAX_SUCCESSFUL_ACCOUNTS_PER_IP_DAY:
             log.warning("signup_success_limit: EXCEEDED  ip=%s  count=%d", ip, len(window))
+            _persist_security_event("signup_success_limit_exceeded", ip=ip, metadata={"accounts_today": len(window)})
             raise RateLimitExceeded("signup_success", retry_after=_SIGNUP_SUCCESS_WINDOW)
 
 
@@ -397,6 +398,7 @@ def check_ip_login_limit(ip: str) -> None:
         _ip_login_fails[ip] = recent
     if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_IP:
         log.warning("login_ip_limit: EXCEEDED  ip=%s  count=%d", ip, len(recent))
+        _persist_security_event("ip_login_flagged", ip=ip, metadata={"failed_attempts": len(recent)})
         raise RateLimitExceeded("login_ip", retry_after=_IP_LOGIN_WINDOW)
 
 
@@ -428,6 +430,7 @@ def check_account_login_lockout(username: str) -> None:
         _account_login_fails[key] = recent
     if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_ACCOUNT:
         log.warning("login_account_lockout: EXCEEDED  username=%s  count=%d", username, len(recent))
+        _persist_security_event("account_lockout", username=username, metadata={"failed_attempts": len(recent)})
         raise RateLimitExceeded("login_account", retry_after=window)
 
 
@@ -497,6 +500,23 @@ def _record_webhook_sig_failure() -> None:
         cutoff = now - _WEBHOOK_SIG_WINDOW
         while _webhook_sig_failures and _webhook_sig_failures[0] < cutoff:
             _webhook_sig_failures.popleft()
+    _persist_security_event("webhook_invalid_signature")
+
+
+# SuperAdmin 2.0 (Phase 11) — best-effort bridge from these in-process
+# threshold crossings to the durable security_events log (see
+# crud/security_events.py). Deliberately local to this module rather than
+# imported at the top: security.py has no DB dependency today, and a
+# lazy, try/except-wrapped import keeps it that way even if the events
+# table/crud module is ever unavailable — a security CHECK must never be
+# able to fail because its (secondary) persistence step had a problem.
+def _persist_security_event(event_type: str, *, ip: Optional[str] = None,
+                             username: Optional[str] = None, metadata: Optional[dict] = None) -> None:
+    try:
+        from crud.security_events import log_security_event
+        log_security_event(event_type=event_type, ip=ip, username=username, metadata=metadata)
+    except Exception as exc:
+        log.debug("_persist_security_event skipped  type=%s  error=%s", event_type, exc)
 
 
 def verify_meta_signature(

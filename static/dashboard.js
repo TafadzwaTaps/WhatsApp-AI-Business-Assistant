@@ -33,6 +33,7 @@ const ROUTES = {
   usageLimits:   '/admin/saas/usage/limits',
   usageCampaigns: '/admin/saas/usage/campaigns',
   security:      '/admin/saas/security',
+  securityHistory: '/admin/saas/security/history',
   platformControls:    '/admin/saas/platform/controls',
   platformMaintenance: '/admin/saas/platform/maintenance',
   featureFlags:        '/admin/saas/flags',
@@ -1097,11 +1098,13 @@ async function loadAdminAudit() {
   }
 
   loadAdminSecurity();
+  loadSecurityHistory();
 }
 
 // SuperAdmin 2.0 Phase 6 — live security counters snapshot. Explicitly
 // labeled as a point-in-time view (the backend resets these on every
-// redeploy — no persisted history exists yet).
+// redeploy). Phase 11 added a persisted companion — see
+// loadSecurityHistory() below — for what survives a redeploy.
 async function loadAdminSecurity() {
   const summaryEl = document.getElementById('sa-security-summary');
   const detailsEl = document.getElementById('sa-security-details');
@@ -1122,6 +1125,42 @@ async function loadAdminSecurity() {
     if (detailsEl) detailsEl.innerHTML = rows.length ? rows.map(r => `<div>${r}</div>`).join('') : `<div class="empty">No active security concerns right now.</div>`;
   } catch (e) {
     if (summaryEl) summaryEl.textContent = 'Security data unavailable — ' + e.message;
+  }
+}
+
+// SuperAdmin 2.0 Phase 11 — persisted security-event history, on top of
+// the live snapshot above. Says plainly when nothing's tracked yet rather
+// than showing an empty table with no explanation.
+async function loadSecurityHistory() {
+  const summaryEl = document.getElementById('sa-security-history-summary');
+  const tbody     = document.getElementById('sa-security-history-table');
+  try {
+    const res = await apiFetch(`${ROUTES.securityHistory}?days=7`);
+    if (!res.tracking_since) {
+      if (summaryEl) summaryEl.innerHTML = `<span style="color:var(--text-dim);">${escHtml(res.note || 'No security events recorded yet.')}</span>`;
+      if (tbody) tbody.innerHTML = `<tr><td colspan="5"><div class="empty">Nothing tracked yet.</div></td></tr>`;
+      return;
+    }
+    const t = res.totals_by_type || {};
+    if (summaryEl) summaryEl.innerHTML = `
+      Tracking since <strong>${new Date(res.tracking_since).toLocaleDateString()}</strong> ·
+      <strong>${t.ip_login_flagged||0}</strong> IP flags ·
+      <strong>${t.account_lockout||0}</strong> account lockouts ·
+      <strong>${t.webhook_invalid_signature||0}</strong> bad webhook signatures ·
+      <strong>${t.signup_success_limit_exceeded||0}</strong> signup-limit hits
+      (last ${res.window_days} days)`;
+    const rows = res.daily_counts || [];
+    if (tbody) {
+      tbody.innerHTML = rows.length ? rows.map(d => `<tr>
+          <td>${escHtml(d.date)}</td>
+          <td>${d.ip_login_flagged||0}</td>
+          <td>${d.account_lockout||0}</td>
+          <td>${d.webhook_invalid_signature||0}</td>
+          <td>${d.signup_success_limit_exceeded||0}</td>
+        </tr>`).join('') : `<tr><td colspan="5"><div class="empty">No events in this window.</div></td></tr>`;
+    }
+  } catch (e) {
+    if (summaryEl) summaryEl.innerHTML = `<div class="empty">Unavailable — ${escHtml(e.message)}</div>`;
   }
 }
 

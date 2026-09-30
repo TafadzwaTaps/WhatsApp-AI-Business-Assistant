@@ -377,6 +377,18 @@
 
     <div class="panel full" style="margin-bottom:16px;">
       <div class="panel-header">
+        <div class="panel-title">📊 Security History <span style="font-weight:400;color:var(--text-dim);font-size:10px;">— persisted, survives redeploy</span></div>
+        <button class="panel-action" onclick="loadSecurityHistory()">↻ Refresh</button>
+      </div>
+      <div class="panel-body">
+        <div id="sa-security-history-summary" style="font-family:var(--mono);font-size:12px;padding:12px 16px;">Loading…</div>
+        <table><thead><tr><th>Date</th><th>IP Flagged</th><th>Account Lockouts</th><th>Bad Webhook Sig</th><th>Signup Limit</th></tr></thead>
+        <tbody id="sa-security-history-table"><tr><td colspan="5"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header">
         <div class="panel-title">📣 Campaign Volume <span style="font-weight:400;color:var(--text-dim);font-size:10px;">— last 7 days, tracked since Phase 10 deployed</span></div>
         <button class="panel-action" onclick="loadCampaignUsage()">↻ Refresh</button>
       </div>
