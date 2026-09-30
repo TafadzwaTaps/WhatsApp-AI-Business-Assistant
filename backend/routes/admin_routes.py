@@ -487,6 +487,19 @@ def platform_active_businesses():
             for b in businesses]
 
 
+@router.get("/platform/maintenance-status")
+def platform_maintenance_status():
+    """
+    Public, unauthenticated — lets the marketing site / storefront pages
+    show a maintenance banner without needing superadmin auth. Read-only;
+    setting it is superadmin-only (POST /admin/saas/platform/maintenance).
+    Fails open (disabled) on any error, same as every other platform
+    control in core/platform_controls.py.
+    """
+    from core.platform_controls import get_maintenance_mode
+    return get_maintenance_mode()
+
+
 class BusinessStatusUpdate(BaseModel):
     is_active:         Optional[bool] = None
     use_shared_number: Optional[bool] = None

@@ -3291,6 +3291,18 @@ def generate_reply(
     handoff triggers described above. See the module-level comment just
     above this function for the full rationale.
     """
+    # SuperAdmin 2.0 emergency control — platform-wide AI-reply pause.
+    # Single short-circuit at the very top, before any of the existing
+    # logic runs, so this can't interact with anything below it. Fails
+    # open: any error in is_paused() itself already returns False, so a
+    # DB hiccup here means replies keep working, never that they stop.
+    try:
+        from core.platform_controls import is_paused
+        if is_paused("ai_replies"):
+            return "Sorry — our automated replies are temporarily paused. A team member will get back to you shortly."
+    except Exception:
+        pass
+
     reply = _generate_reply_core(
         message=message, phone=phone, business_id=business_id,
         business_name=business_name, products=products,

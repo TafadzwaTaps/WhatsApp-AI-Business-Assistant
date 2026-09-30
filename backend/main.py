@@ -397,6 +397,17 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> di
     """
     import time as _time
 
+    # SuperAdmin 2.0 emergency control — platform-wide outbound-send pause.
+    # Checked before credentials/HTTP work, same fail-open guarantee as
+    # every other pause flag (a DB hiccup here means "not paused").
+    try:
+        from core.platform_controls import is_paused
+        if is_paused("whatsapp_send"):
+            log.warning("send_whatsapp: SKIPPED — whatsapp_send is platform-paused")
+            return {"error": "whatsapp_sending_paused"}
+    except Exception:
+        pass  # never let a controls-check failure block a real send
+
     if not phone_number_id or not token:
         missing = [k for k, v in {"phone_number_id": phone_number_id, "token": token}.items() if not v]
         log.error("send_whatsapp: ABORTED — missing %s", missing)

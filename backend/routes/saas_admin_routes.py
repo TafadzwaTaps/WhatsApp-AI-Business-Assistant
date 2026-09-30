@@ -10,6 +10,10 @@ Endpoints (all require superadmin role):
   GET /admin/saas/usage/ai       — platform AI usage/cost + top consumers (Phase 4)
   GET /admin/saas/usage/limits   — centralized plan limits + who's near them (Phase 4)
   GET /admin/saas/security       — live security counters snapshot (Phase 6)
+  GET/POST /admin/saas/platform/controls    — emergency pause switches (Phase 8)
+  GET/POST /admin/saas/platform/maintenance — maintenance mode flag (Phase 8)
+  GET/POST /admin/saas/flags                — global feature flags (Phase 8)
+  POST /admin/saas/tenants/{id}/features    — per-business feature overrides (Phase 8)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -694,4 +698,152 @@ def saas_security_dashboard(user=Depends(require_superadmin)):
         return snapshot
     except Exception as exc:
         log.error("saas_security_dashboard error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Phase 8: Emergency Platform Controls & Feature Flags
+#
+# Every control here is fail-open by design (core/platform_controls.py) —
+# a DB hiccup means "not paused", never an accidental outage. Turning a
+# control ON (pausing something, or enabling maintenance mode) requires a
+# `reason` — the confirmation dialog itself is a frontend responsibility,
+# but the backend still won't record a pause without one, so there is no
+# code path that silently pauses the platform without a reason on file.
+# Every change is audit-logged with who/when/previous state/new state.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/admin/saas/platform/controls")
+def saas_platform_controls(user=Depends(require_superadmin)):
+    """Current state of every emergency pause switch + maintenance mode."""
+    from core.platform_controls import PAUSE_FLAGS, get_all_pause_states, get_maintenance_mode
+    states = get_all_pause_states()
+    return {
+        "pause_flags": [
+            {"flag": flag, "label": label, "paused": states.get(flag, False)}
+            for flag, label in PAUSE_FLAGS.items()
+        ],
+        "maintenance_mode": get_maintenance_mode(),
+    }
+
+
+@router.post("/admin/saas/platform/controls/{flag}")
+def saas_set_platform_control(
+    flag: str, paused: bool, request: Request,
+    reason: str = "", user=Depends(require_superadmin),
+):
+    """
+    Flip one emergency pause switch. Pausing (paused=true) requires a
+    reason — this is a platform-wide, customer-facing action, not a
+    routine toggle. Un-pausing (recovery) does not require one, so a
+    SuperAdmin is never blocked from reversing a mistake quickly.
+    """
+    from core.platform_controls import PAUSE_FLAGS, is_paused, set_pause
+    if flag not in PAUSE_FLAGS:
+        raise HTTPException(400, f"Unknown flag: {flag}. Valid: {list(PAUSE_FLAGS)}")
+    if paused and not reason.strip():
+        raise HTTPException(422, "A reason is required to pause a platform-wide control.")
+
+    previous = is_paused(flag)
+    ok = set_pause(flag, paused, user.get("username"))
+    if not ok:
+        raise HTTPException(500, "Failed to update platform setting — the platform_settings table may not be migrated yet.")
+
+    log_admin_action(
+        actor_username=user.get("username"),
+        action=f"platform.pause.{flag}" if paused else f"platform.unpause.{flag}",
+        target_type="system", target_id=flag,
+        reason=reason or None,
+        metadata={"flag": flag, "previous_state": previous, "new_state": paused, "label": PAUSE_FLAGS[flag]},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"ok": True, "flag": flag, "paused": paused, "previous": previous}
+
+
+@router.post("/admin/saas/platform/maintenance")
+def saas_set_maintenance_mode(
+    enabled: bool, request: Request,
+    message: str = "", reason: str = "", user=Depends(require_superadmin),
+):
+    """
+    Platform-wide maintenance mode. This ONLY sets and exposes the flag
+    (see the public GET /platform/maintenance-status) — it does not, in
+    this phase, block requests platform-wide via middleware. That's a
+    deliberately separate, more invasive change deferred for its own
+    careful pass rather than bundled in here (see the phase report).
+    """
+    from core.platform_controls import get_maintenance_mode, set_maintenance_mode
+    if enabled and not reason.strip():
+        raise HTTPException(422, "A reason is required to enable maintenance mode.")
+    previous = get_maintenance_mode()
+    ok = set_maintenance_mode(enabled, message, user.get("username"))
+    if not ok:
+        raise HTTPException(500, "Failed to update maintenance mode — the platform_settings table may not be migrated yet.")
+    log_admin_action(
+        actor_username=user.get("username"),
+        action="platform.maintenance_mode",
+        target_type="system", reason=reason or None,
+        metadata={"previous": previous, "new_state": {"enabled": enabled, "message": message}},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"ok": True, "enabled": enabled, "message": message, "previous": previous}
+
+
+@router.get("/admin/saas/flags")
+def saas_list_feature_flags(user=Depends(require_superadmin)):
+    """Every global feature flag that has actually been set — never a
+    fabricated fixed list, since no code in this app is flag-gated yet."""
+    from core.platform_controls import list_feature_flags
+    return {"flags": list_feature_flags()}
+
+
+@router.post("/admin/saas/flags/{name}")
+def saas_set_feature_flag(name: str, enabled: bool, request: Request, reason: str = "", user=Depends(require_superadmin)):
+    from core.platform_controls import is_feature_enabled, set_feature_flag
+    previous = is_feature_enabled(name)
+    ok = set_feature_flag(name, enabled, user.get("username"))
+    if not ok:
+        raise HTTPException(500, "Failed to update feature flag — the platform_settings table may not be migrated yet.")
+    log_admin_action(
+        actor_username=user.get("username"), action="platform.feature_flag",
+        target_type="system", target_id=name,
+        reason=reason or None,
+        metadata={"flag": name, "previous_state": previous, "new_state": enabled},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    return {"ok": True, "name": name, "enabled": enabled, "previous": previous}
+
+
+@router.post("/admin/saas/tenants/{business_id}/features")
+def saas_set_business_features(business_id: int, data: dict, request: Request, user=Depends(require_superadmin)):
+    """
+    Per-business feature overrides — reuses the EXISTING
+    businesses.features_json column (no new table) rather than a second
+    override store. Merges `data` into whatever's already there; every
+    override is audit-logged with the fields changed.
+    """
+    try:
+        from core.db import supabase
+        biz_res = supabase.table("businesses").select("features_json").eq("id", business_id).limit(1).execute()
+        rows = biz_res.data or []
+        if not rows:
+            raise HTTPException(404, "Business not found")
+        current = rows[0].get("features_json") or {}
+        merged = {**current, **data}
+        supabase.table("businesses").update({"features_json": merged}).eq("id", business_id).execute()
+        log_admin_action(
+            actor_username=user.get("username"), action="business.feature_override",
+            target_type="business", target_id=business_id, business_id=business_id,
+            metadata={"fields": list(data.keys()), "previous": current, "new": merged},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        return {"ok": True, "business_id": business_id, "features_json": merged}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("saas_set_business_features error: %s", exc)
         raise HTTPException(500, str(exc))

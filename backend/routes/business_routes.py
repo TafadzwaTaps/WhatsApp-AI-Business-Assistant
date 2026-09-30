@@ -1023,6 +1023,10 @@ class CampaignRequest(BaseModel):
 
 @router.post("/campaigns/send")
 async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted())):
+    # SuperAdmin 2.0 emergency control — platform-wide campaign pause.
+    from core.platform_controls import is_paused
+    if is_paused("campaigns") and not body.dry_run:
+        raise HTTPException(503, "Campaign sending is temporarily paused platform-wide. Please try again shortly.")
     _rate_check("campaign", request)
     from services.campaign_service import CampaignService, AUDIENCE_INFO
     bid = user["business_id"]

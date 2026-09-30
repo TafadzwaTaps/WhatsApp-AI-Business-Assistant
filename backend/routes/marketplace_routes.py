@@ -251,6 +251,23 @@ def api_store(slug: str):
 @router.get("/site/{slug}", response_class=HTMLResponse, include_in_schema=False)
 async def site_page(slug: str):
     """AI-generated website for a business."""
+    # SuperAdmin 2.0 emergency control — platform-wide generated-site pause.
+    # This is the ONLY rendering path for these sites in this codebase, so
+    # this is genuinely the whole "website-gen" kill switch — pausing it
+    # takes every business's generated site offline, not just new ones.
+    # Fails open (is_paused() returns False on any error), and only takes
+    # effect when a SuperAdmin explicitly flips it during an incident.
+    try:
+        from core.platform_controls import is_paused
+        if is_paused("website_gen"):
+            return HTMLResponse(
+                "<html><body style='font-family:sans-serif;text-align:center;padding:60px;'>"
+                "<h2>Temporarily unavailable</h2><p>This site is undergoing brief maintenance. Please check back shortly.</p>"
+                "</body></html>", status_code=503,
+            )
+    except Exception:
+        pass
+
     try:
         from services.site_generator import generate_site_html
         html = generate_site_html(slug)

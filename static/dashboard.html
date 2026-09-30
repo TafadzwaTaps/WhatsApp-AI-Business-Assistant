@@ -392,6 +392,54 @@
     </div>
   </div>
 
+  <!-- SUPERADMIN PLATFORM CONTROLS (SuperAdmin 2.0 Phase 8) -->
+  <div id="section-admin-controls" class="section">
+    <div class="topbar"><div class="page-title">Platform <span class="purple">Controls</span></div></div>
+    <div style="font-family:var(--mono);font-size:11px;color:var(--red);margin-bottom:14px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.06);border-radius:8px;padding:10px 14px;">
+      ⚠️ These are platform-wide emergency switches — pausing one affects <strong>every</strong> business at once. Each pause requires a reason and is permanently audit-logged.
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">🚨 Emergency Pause Switches</div><button class="panel-action" onclick="loadPlatformControls()">↻ Refresh</button></div>
+      <div class="panel-body">
+        <table><thead><tr><th>Control</th><th>Status</th><th>Action</th></tr></thead>
+        <tbody id="sa-pause-flags-table"><tr><td colspan="3"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">🚧 Maintenance Mode</div></div>
+      <div class="panel-body" style="padding:14px 16px;">
+        <div id="sa-maintenance-status" style="font-family:var(--mono);font-size:12px;margin-bottom:10px;">Loading…</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <input type="text" id="sa-maintenance-message" placeholder="Message shown to visitors (optional)…"
+                 style="flex:2;min-width:220px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                        padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;"/>
+          <button class="btn btn-ghost" style="color:var(--red);border-color:rgba(239,68,68,0.3);" onclick="toggleMaintenanceMode(true)">Enable</button>
+          <button class="btn btn-ghost" onclick="toggleMaintenanceMode(false)">Disable</button>
+        </div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:6px;">
+          Note: this sets a flag other pages can read (e.g. a banner) — it does not yet block API traffic platform-wide.
+        </div>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title">🎚️ Feature Flags</div></div>
+      <div class="panel-body" style="padding:14px 16px;">
+        <table><thead><tr><th>Flag</th><th>Status</th><th>Updated</th><th>Action</th></tr></thead>
+        <tbody id="sa-feature-flags-table"><tr><td colspan="4"><div class="empty">Loading…</div></td></tr></tbody></table>
+        <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;">
+          <input type="text" id="sa-new-flag-name" placeholder="new_flag_name…"
+                 style="flex:1;min-width:180px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                        padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;"/>
+          <button class="btn btn-ghost" onclick="setFeatureFlag(document.getElementById('sa-new-flag-name').value, true)">Enable</button>
+          <button class="btn btn-ghost" onclick="setFeatureFlag(document.getElementById('sa-new-flag-name').value, false)">Disable</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- New: Business detail modal — click any row for full info -->
   <div class="modal-overlay" id="sa-biz-detail-modal">
     <div class="modal" style="max-width:560px;max-height:85vh;overflow-y:auto;">

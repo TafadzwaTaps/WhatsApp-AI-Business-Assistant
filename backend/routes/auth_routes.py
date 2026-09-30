@@ -96,6 +96,15 @@ class SignupRequest(BaseModel):
 
 @router.post("/auth/signup")
 def signup(data: SignupRequest, request: Request):
+    # SuperAdmin 2.0 emergency control — checked before any other work
+    # (rate limiting, abuse checks, DB lookups) so a paused platform does
+    # the least possible work per rejected request. Fails open: if this
+    # check itself errors, is_paused() already returns False internally,
+    # so signup proceeds normally rather than being blocked by accident.
+    from core.platform_controls import is_paused
+    if is_paused("signups"):
+        raise HTTPException(503, "New signups are temporarily paused. Please try again shortly.")
+
     _rate_check("signup", request)
     # Layered signup abuse protection — hourly/daily attempt limits per IP,
     # checked before any other work so a scripted client burns nothing but

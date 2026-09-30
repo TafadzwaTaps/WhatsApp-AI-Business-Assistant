@@ -32,6 +32,9 @@ const ROUTES = {
   usageAI:       '/admin/saas/usage/ai',
   usageLimits:   '/admin/saas/usage/limits',
   security:      '/admin/saas/security',
+  platformControls:    '/admin/saas/platform/controls',
+  platformMaintenance: '/admin/saas/platform/maintenance',
+  featureFlags:        '/admin/saas/flags',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -538,7 +541,8 @@ function buildSidebar() {
       <div class="nav-section">Platform</div>
       <button class="nav-item admin-item active" onclick="showSection('admin-overview',this);closeSidebar()"><span class="icon">🌐</span> Overview <span class="status-dot"></span></button>
       <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon">🏢</span> Businesses</button>
-      <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon">🛡️</span> Audit & Abuse</button>`;
+      <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon">🛡️</span> Audit & Abuse</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-controls',this);closeSidebar()"><span class="icon">🚨</span> Platform Controls</button>`;
   } else {
     const _rl2=document.getElementById('sidebar-role-label'); if(_rl2) _rl2.textContent=bizName||'Business';
     const _rb2=document.getElementById('sidebar-role-badge'); if(_rb2) _rb2.innerHTML='<span class="badge badge-green">BUSINESS</span>';
@@ -587,6 +591,7 @@ function showSection(name, btn) {
   if (btn) btn.classList.add('active');
   if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
   if (name==='admin-audit') loadAdminAudit();
+  if (name==='admin-controls') loadPlatformControls();
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
@@ -1121,6 +1126,94 @@ async function runAbuseScan() {
     toast(`Scan complete — ${res.new_flags} new flag(s) from ${res.scanned_businesses} businesses`);
     loadAdminAudit();
   } catch (e) { toast('Abuse scan failed: ' + e.message, true); }
+}
+
+// ── SuperAdmin 2.0 Phase 8 — Emergency Platform Controls & Feature Flags ────
+
+async function loadPlatformControls() {
+  const pauseTbody = document.getElementById('sa-pause-flags-table');
+  const maintEl    = document.getElementById('sa-maintenance-status');
+  const flagsTbody = document.getElementById('sa-feature-flags-table');
+
+  try {
+    const controls = await apiFetch(ROUTES.platformControls);
+    if (pauseTbody) {
+      const flags = controls.pause_flags || [];
+      pauseTbody.innerHTML = flags.map(f => `<tr>
+          <td>${escHtml(f.label)}</td>
+          <td><span class="badge ${f.paused?'badge-red':'badge-green'}">${f.paused?'PAUSED':'Running'}</span></td>
+          <td><button class="btn btn-ghost" style="${f.paused?'':'color:var(--red);border-color:rgba(239,68,68,0.3);'}"
+                onclick="togglePauseFlag('${f.flag}', ${!f.paused}, '${escHtml(f.label)}')">${f.paused?'Resume':'Pause'}</button></td>
+        </tr>`).join('');
+    }
+    if (maintEl) {
+      const m = controls.maintenance_mode || {enabled:false};
+      maintEl.innerHTML = `Status: <span class="badge ${m.enabled?'badge-red':'badge-green'}">${m.enabled?'ENABLED':'Disabled'}</span>` +
+        (m.enabled && m.message ? ` — "${escHtml(m.message)}"` : '');
+    }
+  } catch (e) {
+    if (pauseTbody) pauseTbody.innerHTML = `<tr><td colspan="3"><div class="empty">Unavailable — ${escHtml(e.message)}</div></td></tr>`;
+  }
+
+  try {
+    const res = await apiFetch(ROUTES.featureFlags);
+    const flags = res.flags || [];
+    if (flagsTbody) {
+      flagsTbody.innerHTML = flags.length ? flags.map(f => `<tr>
+          <td>${escHtml(f.name)}</td>
+          <td><span class="badge ${f.enabled?'badge-green':'badge-red'}">${f.enabled?'Enabled':'Disabled'}</span></td>
+          <td style="color:var(--text-dim);font-size:11px;">${f.updated_by?('@'+escHtml(f.updated_by)):'—'}</td>
+          <td><button class="btn btn-ghost" onclick="setFeatureFlag('${escHtml(f.name)}', ${!f.enabled})">${f.enabled?'Disable':'Enable'}</button></td>
+        </tr>`).join('') : `<tr><td colspan="4"><div class="empty">No feature flags set yet.</div></td></tr>`;
+    }
+  } catch (e) {
+    if (flagsTbody) flagsTbody.innerHTML = `<tr><td colspan="4"><div class="empty">Unavailable — ${escHtml(e.message)}</div></td></tr>`;
+  }
+}
+
+async function togglePauseFlag(flag, paused, label) {
+  let reason = '';
+  if (paused) {
+    if (!confirm(`⚠️ This will PAUSE "${label}" platform-wide, for every business, right now.\n\nAre you sure?`)) return;
+    reason = prompt(`Reason for pausing "${label}" (required):`, '');
+    if (!reason || !reason.trim()) { toast('A reason is required to pause a platform control', true); return; }
+  } else {
+    if (!confirm(`Resume "${label}" platform-wide?`)) return;
+  }
+  try {
+    const qs = new URLSearchParams({ paused: String(paused), reason: reason || '' });
+    await apiFetch(`${ROUTES.platformControls}/${flag}?${qs.toString()}`, { method: 'POST' });
+    toast(paused ? `"${label}" paused` : `"${label}" resumed`);
+    loadPlatformControls();
+  } catch (e) { toast('Failed to update control: ' + e.message, true); }
+}
+
+async function toggleMaintenanceMode(enabled) {
+  const message = document.getElementById('sa-maintenance-message')?.value || '';
+  let reason = '';
+  if (enabled) {
+    if (!confirm('⚠️ Enable platform-wide maintenance mode?')) return;
+    reason = prompt('Reason for enabling maintenance mode (required):', '');
+    if (!reason || !reason.trim()) { toast('A reason is required', true); return; }
+  }
+  try {
+    const qs = new URLSearchParams({ enabled: String(enabled), message, reason: reason || '' });
+    await apiFetch(`${ROUTES.platformMaintenance}?${qs.toString()}`, { method: 'POST' });
+    toast(enabled ? 'Maintenance mode enabled' : 'Maintenance mode disabled');
+    loadPlatformControls();
+  } catch (e) { toast('Failed to update maintenance mode: ' + e.message, true); }
+}
+
+async function setFeatureFlag(name, enabled) {
+  name = (name || '').trim();
+  if (!name) { toast('Enter a flag name first', true); return; }
+  try {
+    await apiFetch(`${ROUTES.featureFlags}/${encodeURIComponent(name)}?enabled=${enabled}`, { method: 'POST' });
+    toast(`Flag "${name}" ${enabled ? 'enabled' : 'disabled'}`);
+    const input = document.getElementById('sa-new-flag-name');
+    if (input) input.value = '';
+    loadPlatformControls();
+  } catch (e) { toast('Failed to update flag: ' + e.message, true); }
 }
 
 function openModal() { document.getElementById('add-business-modal').classList.add('open'); }
