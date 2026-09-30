@@ -14,6 +14,8 @@ Endpoints (all require superadmin role):
   GET/POST /admin/saas/platform/maintenance — maintenance mode flag (Phase 8)
   GET/POST /admin/saas/flags                — global feature flags (Phase 8)
   POST /admin/saas/tenants/{id}/features    — per-business feature overrides (Phase 8)
+  GET /admin/saas/cohorts                   — signup-month cohorts by current status (Phase 9)
+  GET /admin/saas/churn                     — churn rate + recent-churn windows (Phase 9)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -165,6 +167,128 @@ def saas_revenue(user=Depends(require_superadmin)):
         raise HTTPException(500, str(exc))
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Phase 9: Cohort & Churn Analytics
+#
+# HONESTY NOTE (read before trusting these numbers as more than they are):
+# businesses.billing_status is a CURRENT-STATE column — there is no
+# cancelled_at, no updated_at, and no history table anywhere in the existing
+# schema. That means:
+#   - /cohorts is a snapshot of each signup month's businesses BY THEIR
+#     CURRENT STATUS TODAY — not a true point-in-time retention curve. A
+#     business that signed up in month M and cancelled is counted as
+#     "cancelled" in M's row regardless of when the cancellation happened.
+#   - /churn's "recent churn" figures come from the NEW subscription_events
+#     table (Phase 9), which only starts recording transitions from the
+#     moment it's deployed — cancellations that happened before that have no
+#     event row and are excluded from time-windowed figures, but ARE still
+#     counted in the overall (all-time) churn rate, which reads current
+#     billing_status directly and needs no history.
+# Both endpoints say so explicitly in their response rather than presenting
+# a synthetic history.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/admin/saas/cohorts")
+def saas_cohorts(user=Depends(require_superadmin)):
+    """
+    Monthly signup cohorts, each broken down by CURRENT billing_status.
+    Grounded entirely in businesses.created_at + businesses.billing_status
+    (both already exist) — no fabricated history.
+    """
+    try:
+        from core.db import supabase
+
+        biz_res = supabase.table("businesses").select(
+            "id, created_at, billing_status, subscription_tier"
+        ).execute()
+        businesses = biz_res.data or []
+
+        cohorts: dict = {}
+        for b in businesses:
+            raw = b.get("created_at") or ""
+            month = raw[:7] if len(raw) >= 7 else "unknown"  # "YYYY-MM"
+            status = b.get("billing_status") or "trialing"
+            c = cohorts.setdefault(month, {
+                "cohort_month": month, "signups": 0,
+                "trialing": 0, "active": 0, "past_due": 0, "cancelled": 0,
+            })
+            c["signups"] += 1
+            if status in ("trialing", "active", "past_due", "cancelled"):
+                c[status] += 1
+
+        cohort_list = sorted(cohorts.values(), key=lambda c: c["cohort_month"])
+        for c in cohort_list:
+            c["still_here_pct"] = round(
+                100.0 * (c["signups"] - c["cancelled"]) / c["signups"], 1
+            ) if c["signups"] else 0.0
+
+        return {
+            "cohorts": cohort_list,
+            "note": (
+                "Composition of each signup month by CURRENT billing_status — "
+                "not a point-in-time retention curve. businesses.billing_status "
+                "has no historical timestamp, so we cannot say WHEN a cancelled "
+                "business in an older cohort actually churned, only that it has."
+            ),
+        }
+    except Exception as exc:
+        log.error("saas_cohorts error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.get("/admin/saas/churn")
+def saas_churn(user=Depends(require_superadmin)):
+    """
+    Churn rate (all-time, from current billing_status — always available)
+    plus recent-churn figures from subscription_events (only available
+    from whenever that table started being populated; see module docstring).
+    """
+    try:
+        from core.db import supabase
+        import datetime as _dt
+        from crud.subscription_history import list_subscription_events, earliest_event_timestamp
+
+        biz_res = supabase.table("businesses").select("subscription_tier, billing_status").execute()
+        businesses = biz_res.data or []
+
+        ever_paid = [b for b in businesses if (b.get("billing_status") or "") in ("active", "past_due", "cancelled")]
+        cancelled = [b for b in ever_paid if b.get("billing_status") == "cancelled"]
+        churn_rate = round(100.0 * len(cancelled) / len(ever_paid), 1) if ever_paid else 0.0
+
+        churn_by_tier: dict = {}
+        for b in cancelled:
+            t = b.get("subscription_tier") or "free"
+            churn_by_tier[t] = churn_by_tier.get(t, 0) + 1
+
+        tracking_since = earliest_event_timestamp()
+        recent_windows: dict = {}
+        if tracking_since:
+            now = _dt.datetime.now(_dt.timezone.utc)
+            for label, days in (("last_7_days", 7), ("last_30_days", 30), ("last_90_days", 90)):
+                cutoff = (now - _dt.timedelta(days=days)).isoformat()
+                events = list_subscription_events(since_iso=cutoff)
+                recent_windows[label] = sum(1 for e in events if e.get("new_status") == "cancelled")
+
+        return {
+            "all_time": {
+                "churn_rate_pct": churn_rate,
+                "cancelled_count": len(cancelled),
+                "ever_paid_count": len(ever_paid),
+                "churn_by_tier": churn_by_tier,
+            },
+            "recent": {
+                "tracking_since": tracking_since,
+                **recent_windows,
+            } if tracking_since else {
+                "tracking_since": None,
+                "note": "No subscription transitions recorded yet — time-windowed churn will populate once the subscription_events table starts receiving billing webhook / admin tier-change events.",
+            },
+        }
+    except Exception as exc:
+        log.error("saas_churn error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/health")
@@ -280,13 +404,23 @@ def saas_set_tenant_tier(
         raise HTTPException(400, f"Invalid tier: {tier}. Valid: {list(TIERS)}")
     try:
         from core.db import supabase
-        prev = supabase.table("businesses").select("subscription_tier").eq("id", business_id).limit(1).execute()
-        prev_tier = (prev.data or [{}])[0].get("subscription_tier")
+        prev = supabase.table("businesses").select("subscription_tier, billing_status").eq("id", business_id).limit(1).execute()
+        prev_row    = (prev.data or [{}])[0]
+        prev_tier   = prev_row.get("subscription_tier")
+        prev_status = prev_row.get("billing_status")
         supabase.table("businesses").update({
             "subscription_tier": tier,
             "billing_status":    "active",
         }).eq("id", business_id).execute()
         log.info("Admin tier override  business=%s  tier=%s  by=%s", business_id, tier, user.get("username"))
+        try:
+            from crud.subscription_history import log_subscription_event
+            log_subscription_event(
+                business_id=business_id, previous_tier=prev_tier, new_tier=tier,
+                previous_status=prev_status, new_status="active", source="admin_override",
+            )
+        except Exception:
+            pass  # never let cohort/churn logging block a real admin action
         log_admin_action(
             actor_username=user.get("username"), action="business.tier_change",
             target_type="business", target_id=business_id, business_id=business_id,

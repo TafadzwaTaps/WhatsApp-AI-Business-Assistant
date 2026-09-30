@@ -35,6 +35,8 @@ const ROUTES = {
   platformControls:    '/admin/saas/platform/controls',
   platformMaintenance: '/admin/saas/platform/maintenance',
   featureFlags:        '/admin/saas/flags',
+  cohorts:             '/admin/saas/cohorts',
+  churn:               '/admin/saas/churn',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -542,7 +544,8 @@ function buildSidebar() {
       <button class="nav-item admin-item active" onclick="showSection('admin-overview',this);closeSidebar()"><span class="icon">🌐</span> Overview <span class="status-dot"></span></button>
       <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon">🏢</span> Businesses</button>
       <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon">🛡️</span> Audit & Abuse</button>
-      <button class="nav-item admin-item" onclick="showSection('admin-controls',this);closeSidebar()"><span class="icon">🚨</span> Platform Controls</button>`;
+      <button class="nav-item admin-item" onclick="showSection('admin-controls',this);closeSidebar()"><span class="icon">🚨</span> Platform Controls</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-cohorts',this);closeSidebar()"><span class="icon">📈</span> Cohorts & Churn</button>`;
   } else {
     const _rl2=document.getElementById('sidebar-role-label'); if(_rl2) _rl2.textContent=bizName||'Business';
     const _rb2=document.getElementById('sidebar-role-badge'); if(_rb2) _rb2.innerHTML='<span class="badge badge-green">BUSINESS</span>';
@@ -592,6 +595,7 @@ function showSection(name, btn) {
   if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
   if (name==='admin-audit') loadAdminAudit();
   if (name==='admin-controls') loadPlatformControls();
+  if (name==='admin-cohorts') loadCohortsChurn();
   if (name==='orders') loadOrders();
   if (name==='products') loadProducts();
   if (name==='conversations') loadConversations();
@@ -1214,6 +1218,56 @@ async function setFeatureFlag(name, enabled) {
     if (input) input.value = '';
     loadPlatformControls();
   } catch (e) { toast('Failed to update flag: ' + e.message, true); }
+}
+
+// ── SuperAdmin 2.0 Phase 9 — Cohorts & Churn ────────────────────────────────
+
+async function loadCohortsChurn() {
+  const cohortsTbody = document.getElementById('sa-cohorts-table');
+  const byTierEl      = document.getElementById('sa-churn-by-tier');
+  const recentNoteEl  = document.getElementById('sa-churn-recent-note');
+
+  try {
+    const churn = await apiFetch(ROUTES.churn);
+    const at = churn.all_time || {};
+    document.getElementById('sa-churn-rate').textContent = `${at.churn_rate_pct ?? 0}%`;
+    document.getElementById('sa-churn-cancelled').textContent = at.cancelled_count ?? 0;
+    document.getElementById('sa-churn-cancelled-sub').textContent = `of ${at.ever_paid_count ?? 0} ever-paid`;
+    document.getElementById('sa-churn-30d').textContent =
+      (churn.recent && churn.recent.last_30_days != null) ? churn.recent.last_30_days : '—';
+
+    if (byTierEl) {
+      const entries = Object.entries(at.churn_by_tier || {});
+      byTierEl.innerHTML = entries.length
+        ? entries.map(([tier,count]) => `<span style="margin-right:18px;">${escHtml(tier)}: <strong>${count}</strong></span>`).join('')
+        : '<span style="color:var(--text-dim);">No cancellations yet.</span>';
+    }
+    if (recentNoteEl) {
+      recentNoteEl.textContent = churn.recent && churn.recent.tracking_since
+        ? `Recent-churn windows track cancellations since ${new Date(churn.recent.tracking_since).toLocaleDateString()}.`
+        : (churn.recent && churn.recent.note) || '';
+    }
+  } catch (e) {
+    if (byTierEl) byTierEl.innerHTML = `<div class="empty">Unavailable — ${escHtml(e.message)}</div>`;
+  }
+
+  try {
+    const res = await apiFetch(ROUTES.cohorts);
+    const cohorts = res.cohorts || [];
+    if (cohortsTbody) {
+      cohortsTbody.innerHTML = cohorts.length ? cohorts.map(c => `<tr>
+          <td>${escHtml(c.cohort_month)}</td>
+          <td>${c.signups}</td>
+          <td>${c.trialing}</td>
+          <td style="color:var(--green);">${c.active}</td>
+          <td style="color:var(--amber);">${c.past_due}</td>
+          <td style="color:var(--red);">${c.cancelled}</td>
+          <td>${c.still_here_pct}%</td>
+        </tr>`).join('') : `<tr><td colspan="7"><div class="empty">No businesses yet.</div></td></tr>`;
+    }
+  } catch (e) {
+    if (cohortsTbody) cohortsTbody.innerHTML = `<tr><td colspan="7"><div class="empty">Unavailable — ${escHtml(e.message)}</div></td></tr>`;
+  }
 }
 
 function openModal() { document.getElementById('add-business-modal').classList.add('open'); }

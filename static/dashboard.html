@@ -440,6 +440,38 @@
     </div>
   </div>
 
+  <!-- SUPERADMIN COHORTS & CHURN (SuperAdmin 2.0 Phase 9) -->
+  <div id="section-admin-cohorts" class="section">
+    <div class="topbar"><div class="page-title">Cohorts <span class="purple">& Churn</span></div><button class="panel-action" onclick="loadCohortsChurn()">↻ Refresh</button></div>
+    <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:14px;">
+      Cohort rows show each signup month's businesses by CURRENT status, not a point-in-time retention curve —
+      the schema has no cancellation timestamp for historical churn. Recent-churn windows only cover cancellations
+      recorded since transition tracking started; see the note under each panel.
+    </div>
+
+    <div class="stats-grid" id="sa-churn-kpis" style="margin-bottom:16px;">
+      <div class="stat-card"><div class="stat-label">All-Time Churn Rate</div><div class="stat-value" id="sa-churn-rate" style="color:var(--red);">—</div><div class="stat-sub">Of ever-paid businesses</div></div>
+      <div class="stat-card"><div class="stat-label">Cancelled</div><div class="stat-value" id="sa-churn-cancelled">—</div><div class="stat-sub" id="sa-churn-cancelled-sub">of ever-paid</div></div>
+      <div class="stat-card"><div class="stat-label">Churned — Last 30 Days</div><div class="stat-value" id="sa-churn-30d">—</div><div class="stat-sub">From tracked events</div></div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title">Churn by Tier</div></div>
+      <div class="panel-body" style="padding:14px 16px;">
+        <div id="sa-churn-by-tier" style="font-family:var(--mono);font-size:12px;">Loading…</div>
+        <div id="sa-churn-recent-note" style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title">📅 Signup Cohorts</div></div>
+      <div class="panel-body">
+        <table><thead><tr><th>Signup Month</th><th>Signups</th><th>Trialing</th><th>Active</th><th>Past Due</th><th>Cancelled</th><th>Still Here</th></tr></thead>
+        <tbody id="sa-cohorts-table"><tr><td colspan="7"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+  </div>
+
   <!-- New: Business detail modal — click any row for full info -->
   <div class="modal-overlay" id="sa-biz-detail-modal">
     <div class="modal" style="max-width:560px;max-height:85vh;overflow-y:auto;">

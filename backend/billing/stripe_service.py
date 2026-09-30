@@ -772,6 +772,37 @@ def _patch_biz(bid: int, patch: dict) -> None:
         log.error("_patch_biz error  business=%s  error=%s", bid, exc)
 
 
+def _prev_tier_status(bid: int) -> tuple:
+    """
+    Read a business's tier/status BEFORE a billing patch is applied, so the
+    subscription_events log (SuperAdmin 2.0 Phase 9) captures a real
+    before/after pair rather than "after" on both sides. Best-effort —
+    returns (None, None) on any error, same fail-soft guarantee as every
+    other analytics helper; never blocks the actual billing update.
+    """
+    try:
+        from core.db import supabase
+        res = supabase.table("businesses").select("subscription_tier, billing_status").eq("id", bid).limit(1).execute()
+        row = (res.data or [{}])[0]
+        return row.get("subscription_tier"), row.get("billing_status")
+    except Exception as exc:
+        log.debug("_prev_tier_status failed  business=%s  error=%s", bid, exc)
+        return None, None
+
+
+def _log_subscription_event(bid: int, prev_tier, new_tier, prev_status, new_status) -> None:
+    """Best-effort wrapper so a missing/unmigrated subscription_events table
+    can never affect real billing processing (see crud/subscription_history.py)."""
+    try:
+        from crud.subscription_history import log_subscription_event
+        log_subscription_event(
+            business_id=bid, previous_tier=prev_tier, new_tier=new_tier,
+            previous_status=prev_status, new_status=new_status, source="stripe_webhook",
+        )
+    except Exception as exc:
+        log.debug("_log_subscription_event skipped  business=%s  error=%s", bid, exc)
+
+
 def _on_product_purchase_completed(obj: dict) -> None:
     """
     Handles a completed storefront product/service purchase (the "Pay"
@@ -963,14 +994,25 @@ def _on_subscription_updated(obj: dict) -> None:
         if t:
             patch["subscription_tier"] = t
             break
+
+    # SuperAdmin 2.0 (Phase 9) — record the transition for cohort/churn
+    # analytics BEFORE patching, so we capture the pre-change state. Never
+    # blocks or fails the actual billing update if it errors.
+    prev_tier, prev_status = _prev_tier_status(bid)
     _patch_biz(bid, patch)
+    _log_subscription_event(
+        bid, prev_tier, patch.get("subscription_tier", prev_tier),
+        prev_status, billing_status,
+    )
 
 
 def _on_subscription_deleted(obj: dict) -> None:
     bid = _bid_from_meta(obj)
     if not bid: return
+    prev_tier, prev_status = _prev_tier_status(bid)
     _patch_biz(bid, {"subscription_tier": "free", "billing_status": "cancelled",
                      "stripe_subscription_id": None})
+    _log_subscription_event(bid, prev_tier, "free", prev_status, "cancelled")
     log.info("SUBSCRIPTION CANCELLED → FREE  business=%s", bid)
     # Send cancellation confirmation email — fire-and-forget
     try:
@@ -998,7 +1040,9 @@ def _on_payment_failed(invoice: dict) -> None:
         b   = (res.data or [{}])[0]
         bid = b.get("id")
         if bid:
+            prev_tier, prev_status = _prev_tier_status(bid)
             _patch_biz(bid, {"billing_status": "past_due"})
+            _log_subscription_event(bid, prev_tier, prev_tier, prev_status, "past_due")
             log.warning("PAYMENT FAILED  business=%s  customer=%s", bid, cid)
             # Send payment failed email — fire-and-forget
             try:
