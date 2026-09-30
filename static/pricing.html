@@ -6,8 +6,7 @@
 <title>Pricing — WaziBot</title>
 <meta name="description" content="WaziBot pricing — Starter and Growth plans for WhatsApp business automation, with a 30-day free trial and no credit card required."/>
 <link rel="canonical" href="https://wazibothq.com/pricing"/>
-<link rel="preconnect" href="https://fonts.googleapis.com"/>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="/static/fonts/syne-dm-mono.css" rel="stylesheet"/>
 <style>
 :root{
   --bg:#070d09;--surface:#0d1410;--surface2:#141f18;--surface3:#1a2a1e;
@@ -270,6 +269,9 @@ footer a{color:var(--green);}
     </div>
     <button class="cta cta-outline" onclick="checkout('starter')">Get Started →</button>
     <div class="save-line" id="save-starter"></div>
+    <div class="renewal-note" style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:8px;line-height:1.5;">
+      Renews automatically at the price shown above until cancelled. Cancel anytime from Settings → Payments.
+    </div>
   </div>
 
   <!-- Growth -->
@@ -300,6 +302,9 @@ footer a{color:var(--green);}
     </div>
     <button class="cta cta-green" onclick="checkout('growth')">Start Growth →</button>
     <div class="save-line" id="save-growth"></div>
+    <div class="renewal-note" style="font-size:11px;color:var(--text-dim);text-align:center;margin-top:8px;line-height:1.5;">
+      Renews automatically at the price shown above until cancelled. Cancel anytime from Settings → Payments.
+    </div>
   </div>
 
   <!-- Enterprise -->

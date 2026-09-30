@@ -16,7 +16,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>WaziBot SaaS</title>
 <meta name="robots" content="noindex, nofollow"/>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="/static/fonts/syne-dm-mono.css" rel="stylesheet"/>
 <link rel="stylesheet" href="/static/dashboard.css"/>
 </head>
 <body>
@@ -242,6 +242,14 @@
 <!-- MAIN -->
 <main class="main">
 
+  <!-- SuperAdmin 2.0 Phase 13 — impersonation banner, hidden unless active -->
+  <div id="impersonation-banner" style="display:none;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.4);
+       border-radius:8px;padding:10px 14px;margin-bottom:14px;font-family:var(--mono);font-size:12px;
+       display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <span>🕵️ Viewing as <strong id="impersonation-banner-text">—</strong></span>
+    <button class="btn btn-ghost" onclick="exitImpersonation()">Exit — Return to Admin</button>
+  </div>
+
   <!-- SUPERADMIN OVERVIEW -->
   <div id="section-admin-overview" class="section">
     <div class="topbar"><div class="page-title">Platform <span class="purple">Overview</span></div></div>
@@ -407,11 +415,30 @@
       </div>
     </div>
 
-    <div class="panel full">
+    <div class="panel full" style="margin-bottom:16px;">
       <div class="panel-header"><div class="panel-title">📜 Recent Admin Actions (Audit Log)</div><button class="panel-action" onclick="loadAdminAudit()">↻ Refresh</button></div>
       <div class="panel-body">
         <table><thead><tr><th>When</th><th>Admin</th><th>Action</th><th>Business</th><th>Reason</th></tr></thead>
         <tbody id="sa-audit-log-table"><tr><td colspan="5"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title">📤 Export Data <span style="font-weight:400;color:var(--text-dim);font-size:10px;">— every export is audit-logged above</span></div></div>
+      <div class="panel-body" style="padding:14px 16px;">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <select id="sa-export-dataset" style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+                  padding:8px 10px;color:var(--text);font-family:var(--mono);font-size:11px;outline:none;">
+            <option value="businesses">businesses</option>
+            <option value="audit_logs">audit_logs</option>
+            <option value="risk_flags">risk_flags</option>
+            <option value="subscription_events">subscription_events</option>
+            <option value="campaign_log">campaign_log</option>
+            <option value="security_events">security_events</option>
+          </select>
+          <button class="btn btn-ghost" onclick="exportDataset('csv')">⬇ Download CSV</button>
+          <button class="btn btn-ghost" onclick="exportDataset('json')">⬇ Download JSON</button>
+        </div>
       </div>
     </div>
   </div>
@@ -501,6 +528,13 @@
     <div class="modal" style="max-width:560px;max-height:85vh;overflow-y:auto;">
       <div class="modal-title" id="sa-detail-title">Business Details</div>
       <div id="sa-detail-body" style="font-family:var(--mono);font-size:12px;line-height:2;"></div>
+
+      <div style="margin-top:10px;">
+        <button class="btn btn-ghost" style="color:var(--purple);border-color:rgba(168,85,247,0.35);" onclick="impersonateBusiness(_saCurrentDetailId)">🕵️ View as Business</button>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:4px;">
+          Logs you in as this business for up to 30 minutes. Requires a reason; always audit-logged.
+        </div>
+      </div>
 
       <div id="sa-detail-usage" style="margin-top:10px;"></div>
 

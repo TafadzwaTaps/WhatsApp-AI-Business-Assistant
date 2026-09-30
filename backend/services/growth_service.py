@@ -384,6 +384,7 @@ def record_referral(new_business_id: int, referral_code: str) -> bool:
                     send_referral_credited(
                         to_email=biz_row["owner_email"], business_name=biz_row.get("name",""),
                         amount="$0.20", new_balance=f"${available:.2f}", referrals_to_withdraw=refs_needed,
+                        business_id=referrer_id,
                     )
             except Exception as _re:
                 log.debug("referral credit email error: %s", _re)

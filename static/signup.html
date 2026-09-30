@@ -6,7 +6,7 @@
 <title>WaziBot — Get Started Free</title>
 <meta name="description" content="Create your free WaziBot account and put a 24/7 AI employee on WhatsApp for your business — no credit card required."/>
 <link rel="canonical" href="https://wazibothq.com/signup"/>
-<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="/static/fonts/syne-dm-mono.css" rel="stylesheet"/>
 <style>
   :root{
     --bg:#0a0f0d;--surface:#111a15;--surface2:#172010;
@@ -568,6 +568,15 @@
       </div>
       <div class="ferr" id="ferr-terms" style="margin-bottom:8px;"></div>
 
+      <!-- Age/authority confirmation -->
+      <div style="display:flex;align-items:flex-start;gap:10px;margin:12px 0;">
+        <input type="checkbox" id="s-age" style="width:15px;height:15px;flex-shrink:0;margin-top:2px;accent-color:var(--green);cursor:pointer;"/>
+        <label for="s-age" style="font-size:11px;font-family:var(--mono);color:var(--text-dim);text-transform:none;letter-spacing:0;cursor:pointer;line-height:1.6;">
+          I confirm I am 18 years of age or older and authorized to create this business account.
+        </label>
+      </div>
+      <div class="ferr" id="ferr-age" style="margin-bottom:8px;"></div>
+
       <div class="btn-row" style="margin-top:10px;">
         <button class="btn-back" onclick="goTo(2)">← Back</button>
         <!-- Honeypot: real users never see or fill this -->
@@ -685,6 +694,12 @@ async function submitForm() {
     if (el) el.textContent = 'Please accept the Terms of Service to continue.';
     return;
   }
+  var age = document.getElementById('s-age');
+  if (!age || !age.checked) {
+    var elAge = document.getElementById('ferr-age');
+    if (elAge) elAge.textContent = 'Please confirm you are 18 or older to continue.';
+    return;
+  }
   var btn = document.getElementById('submit-btn');
   btn.disabled = true;
   btn.textContent = 'Creating\u2026';
@@ -695,6 +710,7 @@ async function submitForm() {
     password:          document.getElementById('s-pass').value,
     email:             document.getElementById('s-email').value.trim(),
     category:          document.getElementById('s-category').value || undefined,
+    age_confirmed:     true,
     use_shared_number: true,
     tier:              _selectedPlan !== 'trial' ? _selectedPlan : '',
     billing_period:    _urlPeriod || 'monthly',

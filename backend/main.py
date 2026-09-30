@@ -308,6 +308,8 @@ def signup_page(): return _html("signup.html")
 def privacy_page(): return _html("privacy.html")
 @app.get("/terms")
 def terms_page(): return _html("terms.html")
+@app.get("/dmca")
+def dmca_page(): return _html("dmca.html")
 
 # ── SEO content pages ────────────────────────────────────────────────────────
 @app.get("/what-is-wazibot")

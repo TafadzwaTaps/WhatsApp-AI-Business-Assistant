@@ -257,6 +257,74 @@ function saveSession(data, username) {
   }
 }
 
+// ── SuperAdmin 2.0 Phase 13 — Impersonation ("View as Business") ───────────
+// sessionStorage (not localStorage) holds the stashed admin session and the
+// impersonation marker deliberately: it should not survive opening a new
+// tab as a leftover elevated credential, and it clears itself when the
+// browser tab closes even if "Exit" is never clicked.
+async function impersonateBusiness(businessId) {
+  if (!businessId) { toast('No business selected', true); return; }
+  const reason = prompt('Reason for viewing as this business (required — shown in the audit log):', '');
+  if (!reason || !reason.trim()) { toast('A reason is required to impersonate a business', true); return; }
+  try {
+    const qs = new URLSearchParams({ reason });
+    const res = await apiFetch(`/admin/saas/tenants/${businessId}/impersonate?${qs.toString()}`, { method: 'POST' });
+    if (!res) return;
+
+    sessionStorage.setItem('wazi_admin_token',   token      || '');
+    sessionStorage.setItem('wazi_admin_refresh', refreshTok || '');
+    sessionStorage.setItem('wazi_admin_role',    userRole   || '');
+    sessionStorage.setItem('wazi_admin_user',    userName   || '');
+    sessionStorage.setItem('wazi_impersonating', JSON.stringify({
+      by: res.impersonated_by, business: res.business_name, business_id: res.business_id,
+    }));
+
+    saveSession({
+      access_token: res.access_token, role: 'business',
+      business_id: res.business_id, business_name: res.business_name,
+    }, res.username);
+    // No refresh path for impersonation tokens (core/auth.py) — clear the
+    // stashed admin refresh token from the live session so tryRefresh()
+    // can't silently extend or restore the wrong session.
+    refreshTok = null;
+    localStorage.setItem('wazi_refresh', '');
+
+    toast(`Now viewing as ${res.business_name} (expires in ${res.expires_in_minutes} min)`);
+    location.reload();
+  } catch (e) {
+    toast('Could not start impersonation: ' + e.message, true);
+  }
+}
+
+function exitImpersonation() {
+  const adminToken = sessionStorage.getItem('wazi_admin_token');
+  if (adminToken) {
+    saveSession({
+      access_token:  adminToken,
+      refresh_token: sessionStorage.getItem('wazi_admin_refresh') || '',
+      role:          sessionStorage.getItem('wazi_admin_role') || 'superadmin',
+    }, sessionStorage.getItem('wazi_admin_user') || '');
+  }
+  ['wazi_admin_token', 'wazi_admin_refresh', 'wazi_admin_role', 'wazi_admin_user', 'wazi_impersonating']
+    .forEach(k => sessionStorage.removeItem(k));
+  location.reload();
+}
+
+function showImpersonationBannerIfActive() {
+  const banner = document.getElementById('impersonation-banner');
+  if (!banner) return;
+  const raw = sessionStorage.getItem('wazi_impersonating');
+  if (!raw) { banner.style.display = 'none'; return; }
+  try {
+    const info = JSON.parse(raw);
+    const textEl = document.getElementById('impersonation-banner-text');
+    if (textEl) textEl.textContent = `${info.business || ('#' + info.business_id)} — impersonated by ${info.by}`;
+    banner.style.display = 'flex';
+  } catch (_) {
+    banner.style.display = 'none';
+  }
+}
+
 let _refreshInFlight = false;
 async function tryRefresh() {
   // If there was never a refresh token, user is simply not logged in — don't redirect
@@ -1161,6 +1229,39 @@ async function loadSecurityHistory() {
     }
   } catch (e) {
     if (summaryEl) summaryEl.innerHTML = `<div class="empty">Unavailable — ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── SuperAdmin 2.0 Phase 12 — Controlled Data Export ────────────────────────
+// Bypasses apiFetch() deliberately: apiFetch always parses the response as
+// JSON, which would break the CSV path. Both formats trigger an actual
+// browser file download (Blob + temporary <a>) rather than displaying the
+// data inline, since this is meant to produce a file the SuperAdmin keeps.
+async function exportDataset(format) {
+  const dataset = document.getElementById('sa-export-dataset')?.value;
+  if (!dataset) { toast('Pick a dataset first', true); return; }
+  try {
+    const res = await fetch(`${API}/admin/saas/export/${dataset}?format=${format}`, {
+      headers: { 'Authorization': `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      let msg = res.statusText || 'Export failed';
+      try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      throw new Error(msg);
+    }
+    const blob = format === 'csv' ? await res.blob() : new Blob([JSON.stringify(await res.json(), null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${dataset}.${format}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast(`Exported ${dataset}.${format}`);
+    loadAdminAudit();  // the export itself is audit-logged — refresh so it shows up
+  } catch (e) {
+    toast('Export failed: ' + e.message, true);
   }
 }
 
@@ -3833,6 +3934,7 @@ async function init(){
 
   buildSidebar();
   checkStatus();
+  try { showImpersonationBannerIfActive(); } catch(_) {}
 
   // Handle Stripe Connect return from onboarding
   const _urlParams = new URLSearchParams(window.location.search);

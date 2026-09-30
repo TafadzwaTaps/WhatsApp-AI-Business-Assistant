@@ -1,0 +1,36 @@
+/* instrument-serif-latin-400-normal */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./files/instrument-serif-latin-400-normal.woff2) format('woff2'), url(./files/instrument-serif-latin-400-normal.woff) format('woff');
+}/* instrument-serif-latin-400-italic */
+@font-face {
+  font-family: 'Instrument Serif';
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./files/instrument-serif-latin-400-italic.woff2) format('woff2'), url(./files/instrument-serif-latin-400-italic.woff) format('woff');
+}/* dm-sans-latin-300-normal */
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300;
+  src: url(./files/dm-sans-latin-300-normal.woff2) format('woff2'), url(./files/dm-sans-latin-300-normal.woff) format('woff');
+}/* dm-sans-latin-400-normal */
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(./files/dm-sans-latin-400-normal.woff2) format('woff2'), url(./files/dm-sans-latin-400-normal.woff) format('woff');
+}/* dm-sans-latin-500-normal */
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url(./files/dm-sans-latin-500-normal.woff2) format('woff2'), url(./files/dm-sans-latin-500-normal.woff) format('woff');
+}

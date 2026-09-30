@@ -5,6 +5,7 @@ Routes: POST /auth/signup, POST /auth/login, POST /auth/refresh
 """
 
 from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, validator
 
 import crud
@@ -69,6 +70,14 @@ class SignupRequest(BaseModel):
     # Included in signup response so frontend can redirect to checkout
     tier:              str  = ""   # plan tier selected on pricing page
     billing_period:    str  = "monthly"   # "monthly" | "annual"
+    # Legal/compliance fix: WaziBot is a B2B tool (business owners signing
+    # up to run their own store), not a service directed at children, but
+    # COPPA liability turns on whether a site *knowingly* collects data
+    # from a user under 13 — an unchecked signup form has no way to know
+    # that. Rather than collecting date-of-birth (itself more personal
+    # data to store and protect), this is a simple, low-friction age/
+    # authority attestation: must be explicitly true to sign up at all.
+    age_confirmed:     bool = False
 
     @validator("username")
     def username_valid(cls, v):
@@ -104,6 +113,13 @@ def signup(data: SignupRequest, request: Request):
     from core.platform_controls import is_paused
     if is_paused("signups"):
         raise HTTPException(503, "New signups are temporarily paused. Please try again shortly.")
+
+    if not data.age_confirmed:
+        raise HTTPException(
+            400,
+            "Please confirm you are 18 or older and authorized to create this "
+            "business account before signing up.",
+        )
 
     _rate_check("signup", request)
     # Layered signup abuse protection — hourly/daily attempt limits per IP,
@@ -349,3 +365,48 @@ def refresh_token_endpoint(data: RefreshRequest):
         "role": role,
         **({} if business_id is None else {"business_id": business_id}),
     }
+
+
+# ── Marketing-email unsubscribe (CAN-SPAM 15 U.S.C. § 7704) ───────────────────
+# Public, unauthenticated by design: the link is clicked straight out of an
+# email client, often in a different browser/session than the business ever
+# logged in with. The HMAC token (not the business's login credentials) is
+# what proves the request is legitimate — see email_service._unsubscribe_token.
+@router.get("/email/unsubscribe", response_class=HTMLResponse)
+def email_unsubscribe(business_id: int, token: str):
+    from services.email_service import verify_unsubscribe_token
+    if not verify_unsubscribe_token(business_id, token):
+        raise HTTPException(400, "Invalid or expired unsubscribe link.")
+
+    # Fail-soft: persisting the opt-out must not crash this page even if the
+    # DB write fails — the visible confirmation still renders either way,
+    # matching this codebase's existing fail-open/fail-soft convention.
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("features_json")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        fj = (res.data[0].get("features_json") if res.data else None) or {}
+        fj["marketing_emails_opt_out"] = True
+        supabase.table("businesses").update({"features_json": fj}).eq("id", business_id).execute()
+        log.info("email: business_id=%s unsubscribed from marketing emails", business_id)
+    except Exception as exc:
+        log.warning("email: unsubscribe persist failed business_id=%s: %s", business_id, exc)
+
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
+        "<title>Unsubscribed — WaziBot</title>"
+        "<style>body{font-family:Arial,sans-serif;background:#0a0f0d;color:#e8f5e9;"
+        "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}"
+        ".box{text-align:center;max-width:420px;padding:32px;}"
+        "a{color:#22c55e;}</style></head><body><div class='box'>"
+        "<h2>You're unsubscribed</h2>"
+        "<p>You won't receive promotional emails from WaziBot at this address anymore. "
+        "You'll still get essential account emails (receipts, payment and security notices).</p>"
+        "<p><a href='/'>Return to WaziBot</a></p>"
+        "</div></body></html>"
+    )

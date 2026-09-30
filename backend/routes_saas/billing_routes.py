@@ -387,7 +387,7 @@ def send_trial_warnings(request: Request):
             if days_left < 0:
                 send_trial_expired(email, name); sent += 1
             elif days_left in (1, 3, 7):
-                send_trial_expiry_warning(email, name, days_left); sent += 1
+                send_trial_expiry_warning(email, name, days_left, business_id=biz.get("id")); sent += 1
         except Exception as exc:
             log.warning("trial-warnings: biz=%s err=%s", biz.get("id"), exc)
             errors += 1

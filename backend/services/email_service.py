@@ -26,6 +26,8 @@ Usage (after successful signup):
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 from typing import Optional
@@ -35,6 +37,66 @@ log = logging.getLogger("wazibot.email")
 _RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 _EMAIL_FROM     = os.getenv("EMAIL_FROM", "WaziBot <noreply@wazibothq.com>")
 _BASE_URL       = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
+
+# CAN-SPAM Act (15 U.S.C. § 7704) compliance: every commercial email needs a
+# working unsubscribe mechanism and the sender's valid physical postal
+# address in the body. The address below is a placeholder — set
+# EMAIL_MAILING_ADDRESS in the environment to your actual registered
+# business address before sending real marketing email at scale. This
+# fails soft (a placeholder still renders, email still sends) rather than
+# blocking send, matching this file's existing fail-soft design, but a
+# placeholder address does NOT satisfy the legal requirement — this warning
+# fires on every import until the env var is set for real.
+_MAILING_ADDRESS = os.getenv("EMAIL_MAILING_ADDRESS", "")
+if not _MAILING_ADDRESS:
+    _MAILING_ADDRESS = "WaziBot — postal address not yet configured (set EMAIL_MAILING_ADDRESS)"
+    log.warning(
+        "email: EMAIL_MAILING_ADDRESS is not set — marketing emails are going "
+        "out without a real physical postal address, which CAN-SPAM (15 U.S.C. "
+        "§ 7704) requires. Set EMAIL_MAILING_ADDRESS in Render env vars."
+    )
+
+_UNSUB_SECRET = os.getenv("SECRET_KEY", "") or "wazibot-unsubscribe-fallback-secret"
+
+
+def _unsubscribe_token(business_id: int) -> str:
+    """Short HMAC token — no DB lookup needed to verify an unsubscribe link."""
+    mac = hmac.new(_UNSUB_SECRET.encode(), str(business_id).encode(), hashlib.sha256)
+    return mac.hexdigest()[:16]
+
+
+def verify_unsubscribe_token(business_id: int, token: str) -> bool:
+    return hmac.compare_digest(_unsubscribe_token(business_id), token or "")
+
+
+def unsubscribe_url(business_id: int) -> str:
+    return f"{_BASE_URL}/email/unsubscribe?business_id={business_id}&token={_unsubscribe_token(business_id)}"
+
+
+def _is_opted_out(business_id: Optional[int]) -> bool:
+    """
+    Best-effort marketing opt-out check (features_json.marketing_emails_opt_out).
+    Fails open like the rest of this module — a transient DB error must not
+    silently break trial/referral notifications for everyone; the honored,
+    durable opt-out signal is the unsubscribe link itself, checked here on
+    a best-effort basis as a second layer.
+    """
+    if business_id is None:
+        return False
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("businesses")
+            .select("features_json")
+            .eq("id", business_id)
+            .limit(1)
+            .execute()
+        )
+        fj = (res.data[0].get("features_json") if res.data else None) or {}
+        return bool(fj.get("marketing_emails_opt_out"))
+    except Exception as exc:
+        log.debug("email: opt-out check failed (non-fatal) business_id=%s: %s", business_id, exc)
+        return False
 
 
 def _send(to: str, subject: str, html: str) -> bool:
@@ -69,8 +131,22 @@ def _send(to: str, subject: str, html: str) -> bool:
         return False
 
 
-def _base_template(title: str, body_html: str) -> str:
-    """Minimal branded email shell matching WaziBot's dark-green design language."""
+def _base_template(title: str, body_html: str, business_id: Optional[int] = None) -> str:
+    """
+    Minimal branded email shell matching WaziBot's dark-green design language.
+
+    business_id (optional): when given, the footer gets an "Unsubscribe"
+    link scoped to that business (CAN-SPAM requirement for commercial/
+    marketing email). Transactional sends (receipts, password resets,
+    payment confirmations) can omit it — those aren't "commercial" email
+    under CAN-SPAM and don't need an unsubscribe link, though every send
+    still carries the physical mailing address below.
+    """
+    unsub_html = ""
+    if business_id is not None:
+        unsub_html = (
+            f' &nbsp;·&nbsp; <a href="{unsubscribe_url(business_id)}">Unsubscribe</a>'
+        )
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -100,8 +176,9 @@ def _base_template(title: str, body_html: str) -> str:
     <div class="footer">
       <a href="{_BASE_URL}">wazibot.com</a> &nbsp;·&nbsp;
       <a href="{_BASE_URL}/privacy">Privacy</a> &nbsp;·&nbsp;
-      <a href="{_BASE_URL}/terms">Terms</a><br/><br/>
-      © 2026 WaziBot. The AI employee for WhatsApp businesses 🌍 — built for businesses worldwide.
+      <a href="{_BASE_URL}/terms">Terms</a>{unsub_html}<br/><br/>
+      © 2026 WaziBot. The AI employee for WhatsApp businesses 🌍 — built for businesses worldwide.<br/>
+      {_MAILING_ADDRESS}
     </div>
   </div>
 </div>
@@ -163,11 +240,18 @@ def send_wizard_resume_email(
     to_email: str,
     business_name: str,
     current_step: int,
+    business_id: Optional[int] = None,
 ) -> bool:
     """
     Reminder email when a business hasn't completed the setup wizard.
     Sent by a scheduled job or admin trigger — not on signup.
+
+    business_id (optional): promotional nudge, so when given this honors
+    the business's marketing-email opt-out and adds an unsubscribe link.
     """
+    if _is_opted_out(business_id):
+        log.info("email: skipping wizard-resume send, business_id=%s opted out", business_id)
+        return False
     wizard_url = f"{_BASE_URL}/onboarding"
     step_labels = {
         1: "Business info", 2: "Branding", 3: "Products",
@@ -186,7 +270,7 @@ def send_wizard_resume_email(
     return _send(
         to=to_email,
         subject=f"Finish setting up your WaziBot — you're almost live! 🚀",
-        html=_base_template(f"Resume Setup — {business_name}", body),
+        html=_base_template(f"Resume Setup — {business_name}", body, business_id=business_id),
     )
 
 
@@ -217,11 +301,18 @@ def send_trial_expiry_warning(
     to_email:      str,
     business_name: str,
     days_left:     int,
+    business_id:   Optional[int] = None,
 ) -> bool:
     """
     Warning email sent at 7 days, 3 days, and 1 day before trial ends.
     Called by the scheduled job in growth_service.py.
+
+    business_id (optional): promotional nudge, so when given this honors
+    the business's marketing-email opt-out and adds an unsubscribe link.
     """
+    if _is_opted_out(business_id):
+        log.info("email: skipping trial-expiry send, business_id=%s opted out", business_id)
+        return False
     if days_left <= 1:
         urgency    = "⚠️ Last day"
         subject    = f"⚠️ Your WaziBot trial ends tomorrow — don't lose access"
@@ -271,7 +362,7 @@ def send_trial_expiry_warning(
     return _send(
         to=to_email,
         subject=subject,
-        html=_base_template(headline, body),
+        html=_base_template(headline, body, business_id=business_id),
     )
 
 
@@ -462,8 +553,17 @@ def send_referral_credited(
     amount:        str,           # e.g. "$0.20"
     new_balance:   str,           # e.g. "$2.40"
     referrals_to_withdraw: int,   # how many more to reach $5
+    business_id:   Optional[int] = None,
 ) -> bool:
-    """Notification when a referral earns a credit."""
+    """
+    Notification when a referral earns a credit.
+
+    business_id (optional): promotional nudge, so when given this honors
+    the business's marketing-email opt-out and adds an unsubscribe link.
+    """
+    if _is_opted_out(business_id):
+        log.info("email: skipping referral-credit send, business_id=%s opted out", business_id)
+        return False
     dash_url = f"{_BASE_URL}/static/dashboard.html#settings-referrals"
     body = f"""
 <h1>You earned {amount}! 💸</h1>
@@ -482,5 +582,5 @@ def send_referral_credited(
     return _send(
         to=to_email,
         subject=f"You earned {amount} — referral credit added to your account",
-        html=_base_template("Referral credit", body),
+        html=_base_template("Referral credit", body, business_id=business_id),
     )

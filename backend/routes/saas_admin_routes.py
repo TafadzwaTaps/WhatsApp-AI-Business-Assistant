@@ -19,6 +19,9 @@ Endpoints (all require superadmin role):
   GET /admin/saas/usage/campaigns           — platform campaign volume + top senders (Phase 10)
   POST /admin/saas/abuse/scan               — now also flags high campaign volume/frequency (Phase 10)
   GET /admin/saas/security/history          — persisted security-event trend (Phase 11)
+  GET /admin/saas/export/datasets           — which datasets can be exported (Phase 12)
+  GET /admin/saas/export/{dataset}          — controlled, audit-logged CSV/JSON export (Phase 12)
+  POST /admin/saas/tenants/{id}/impersonate — "View as Business", 30-min token, audit-logged (Phase 13)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -1137,4 +1140,152 @@ def saas_set_business_features(business_id: int, data: dict, request: Request, u
         raise
     except Exception as exc:
         log.error("saas_set_business_features error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Phase 12: Controlled Data Export
+#
+# Every exportable dataset is an explicit, reviewed field allowlist in
+# services/data_export.py — never a generic "dump this table" endpoint.
+# businesses.owner_password and businesses.whatsapp_token are never
+# selected from the DB in the first place, not filtered out afterward.
+# Every export is capped at EXPORT_ROW_LIMIT rows and audit-logged with
+# who exported what, in what format, and how many rows came back — the
+# "controlled" half of "controlled data export": nothing here is a raw,
+# untraceable DB dump.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/admin/saas/export/datasets")
+def saas_export_datasets(user=Depends(require_superadmin)):
+    """Which datasets can be exported, and exactly which fields each one includes."""
+    from services.data_export import list_datasets, EXPORT_ROW_LIMIT
+    return {"datasets": list_datasets(), "row_limit": EXPORT_ROW_LIMIT}
+
+
+@router.get("/admin/saas/export/{dataset}")
+def saas_export_dataset(
+    dataset: str, request: Request,
+    format: str = "csv", limit: int = 1000, reason: str = "",
+    user=Depends(require_superadmin),
+):
+    """
+    Export one allowlisted dataset as CSV or JSON. Always audit-logged
+    (action=data_export, metadata carries dataset/format/row_count) —
+    exporting is a visible, traceable admin action, same as every other
+    action in this file, even though it needs no confirmation reason to
+    run (reading data is far lower-risk than the Phase 8 platform
+    controls, which do require one).
+    """
+    from services.data_export import EXPORT_DATASETS, fetch_dataset, to_csv
+
+    if dataset not in EXPORT_DATASETS:
+        raise HTTPException(400, f"Unknown dataset: {dataset}. Valid: {list(EXPORT_DATASETS)}")
+    if format not in ("csv", "json"):
+        raise HTTPException(400, "format must be 'csv' or 'json'")
+
+    try:
+        rows = fetch_dataset(dataset, limit=limit)
+    except Exception as exc:
+        log.error("saas_export_dataset error  dataset=%s  error=%s", dataset, exc)
+        raise HTTPException(500, str(exc))
+
+    log_admin_action(
+        actor_username=user.get("username"), action="data_export",
+        target_type="system", target_id=dataset,
+        reason=reason or None,
+        metadata={"dataset": dataset, "format": format, "row_count": len(rows)},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+
+    if format == "json":
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"dataset": dataset, "row_count": len(rows), "rows": rows})
+
+    from fastapi.responses import StreamingResponse
+    fields = EXPORT_DATASETS[dataset]["fields"]
+    csv_text = to_csv(rows, fields)
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{dataset}.csv"'},
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Phase 13: Impersonation ("View as Business")
+#
+# SCOPE NOTE: the original spec also asked for "granular role/permission
+# management". This app has exactly ONE admin identity — a single
+# env-var-configured superadmin, not a row in any database — and exactly
+# two roles (core/auth.py: "business", "superadmin"). Real multi-admin
+# RBAC (several admin accounts with different permission sets) would need
+# a genuinely new admin_users/roles table and reworking how every
+# require_superadmin() check works — a real architecture change, which
+# the spec's own ground rules say not to make casually inside a feature
+# phase. That's deliberately NOT bundled in here; this phase ships only
+# impersonation, which fits entirely within the existing two-role model.
+#
+# Every impersonation is audit-logged (start), requires a reason (this is
+# a real support action, not a routine toggle — same bar as a Phase 8
+# platform pause), and issues a token that is a normal role="business"
+# token PLUS a short 30-minute expiry and an "impersonated_by" claim (see
+# core/auth.create_impersonation_token). No new "impersonation session"
+# state is tracked server-side — the token IS the session, same as every
+# other login, so this needed no new auth architecture either.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post("/admin/saas/tenants/{business_id}/impersonate")
+def saas_impersonate_business(
+    business_id: int, request: Request, reason: str = "",
+    user=Depends(require_superadmin),
+):
+    """Mint a short-lived (30 min) token that logs the caller in as this
+    business, for support purposes. Requires a reason; always audit-logged."""
+    if not reason.strip():
+        raise HTTPException(422, "A reason is required to impersonate a business.")
+    try:
+        from core.db import supabase
+        from core.auth import create_impersonation_token, IMPERSONATION_TOKEN_EXPIRE_MINUTES
+
+        biz_res = supabase.table("businesses").select(
+            "id, name, owner_username, is_active, password_changed_at"
+        ).eq("id", business_id).limit(1).execute()
+        rows = biz_res.data or []
+        if not rows:
+            raise HTTPException(404, "Business not found")
+        biz = rows[0]
+        if not biz.get("owner_username"):
+            raise HTTPException(400, "This business has no owner_username to impersonate.")
+
+        token = create_impersonation_token(
+            business_id=business_id,
+            owner_username=biz["owner_username"],
+            impersonated_by=user.get("username"),
+            pwd_ts=biz.get("password_changed_at"),
+        )
+
+        log_admin_action(
+            actor_username=user.get("username"), action="business.impersonate_start",
+            target_type="business", target_id=business_id, business_id=business_id,
+            reason=reason,
+            metadata={"business_name": biz.get("name"), "expires_in_minutes": IMPERSONATION_TOKEN_EXPIRE_MINUTES},
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+
+        return {
+            "access_token":   token,
+            "token_type":     "bearer",
+            "business_id":    business_id,
+            "business_name":  biz.get("name"),
+            "username":       biz["owner_username"],
+            "impersonated_by": user.get("username"),
+            "expires_in_minutes": IMPERSONATION_TOKEN_EXPIRE_MINUTES,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.error("saas_impersonate_business error: %s", exc)
         raise HTTPException(500, str(exc))

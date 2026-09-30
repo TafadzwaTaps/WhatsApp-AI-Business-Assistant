@@ -47,6 +47,12 @@ ALGORITHM   = "HS256"
 
 ACCESS_TOKEN_EXPIRE_MINUTES  = 60 * 8       # 8 hours
 REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+IMPERSONATION_TOKEN_EXPIRE_MINUTES = 30     # SuperAdmin 2.0 Phase 13 — deliberately
+# much shorter than a normal login session: a bounded support-tool window,
+# not a standing session. There is no refresh path for this token type
+# (create_refresh_token is never called for it) — when it expires, a
+# superadmin who still needs access starts a new, freshly audit-logged
+# impersonation rather than silently extending the old one forever.
 
 SUPER_ADMIN_USERNAME = os.getenv("SUPER_ADMIN_USERNAME", "superadmin")
 SUPER_ADMIN_PASSWORD = os.getenv("SUPER_ADMIN_PASSWORD", "superadmin123")
@@ -138,6 +144,36 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def create_impersonation_token(business_id: int, owner_username: str, impersonated_by: str,
+                                pwd_ts: str | None = None) -> str:
+    """
+    SuperAdmin 2.0 (Phase 13) — "View as Business" support tool.
+
+    Issues a normal role="business" token (existing business-scoped routes
+    need no changes to accept it) with two differences from a real login:
+      - a much shorter expiry (IMPERSONATION_TOKEN_EXPIRE_MINUTES, 30 min
+        by default) instead of the usual 8 hours
+      - an "impersonated_by" claim carrying the superadmin's own username,
+        so get_current_user() can surface it to callers/UI and so the
+        token is self-describing evidence of who was acting, even before
+        cross-referencing the audit log entry routes/saas_admin_routes.py
+        writes when this token is minted.
+    pwd_ts is passed through unchanged so the existing password-change
+    session-invalidation check keeps working during impersonation too —
+    if the business owner resets their password while impersonated, that
+    is a reasonable signal to end the impersonation session as well.
+    """
+    payload = {
+        "sub": owner_username, "role": "business", "business_id": business_id,
+        "impersonated_by": impersonated_by,
+    }
+    if pwd_ts:
+        payload["pwd_ts"] = pwd_ts
+    payload["exp"]  = datetime.utcnow() + timedelta(minutes=IMPERSONATION_TOKEN_EXPIRE_MINUTES)
+    payload["type"] = "access"
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
 def decode_token(token: str) -> dict:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -219,7 +255,11 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             _log.warning("AUTH FAILED: reason=password_changed_since_token_issued  business_id=%s", business_id)
             raise HTTPException(status_code=401, detail="Your password was changed. Please log in again.")
 
-    return {"username": username, "role": role, "business_id": business_id}
+    result = {"username": username, "role": role, "business_id": business_id}
+    impersonated_by = payload.get("impersonated_by")
+    if impersonated_by:
+        result["impersonated_by"] = impersonated_by
+    return result
 
 
 def require_superadmin(user: dict = Depends(get_current_user)):
