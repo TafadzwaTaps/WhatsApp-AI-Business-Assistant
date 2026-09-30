@@ -356,12 +356,23 @@
   <!-- SUPERADMIN AUDIT & ABUSE (SuperAdmin 2.0) -->
   <div id="section-admin-audit" class="section">
     <div class="topbar">
-      <div class="page-title">Audit <span class="purple">& Abuse</span></div>
+      <div class="page-title">Audit, Abuse <span class="purple">& Security</span></div>
       <button class="btn btn-purple" onclick="runAbuseScan()">🔍 Run Abuse Scan</button>
     </div>
     <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:14px;">
       Transparent, multi-signal review only — nothing here auto-suspends or auto-labels a business as fake.
       Every flag shows exactly which signal fired and the evidence; a SuperAdmin decides what happens next.
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title">🛡️ Security Dashboard <span style="font-weight:400;color:var(--text-dim);font-size:10px;">— live snapshot, resets on redeploy</span></div>
+        <button class="panel-action" onclick="loadAdminSecurity()">↻ Refresh</button>
+      </div>
+      <div class="panel-body" style="padding:14px 16px;">
+        <div id="sa-security-summary" style="display:flex;gap:16px;flex-wrap:wrap;font-family:var(--mono);font-size:12px;margin-bottom:10px;">Loading…</div>
+        <div id="sa-security-details" style="display:flex;flex-direction:column;gap:6px;font-family:var(--mono);font-size:11px;"></div>
+      </div>
     </div>
 
     <div class="panel full" style="margin-bottom:16px;">

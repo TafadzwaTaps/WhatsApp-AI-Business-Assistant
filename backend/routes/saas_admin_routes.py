@@ -9,6 +9,7 @@ Endpoints (all require superadmin role):
   GET /admin/saas/usage/messages — platform message volume + top senders (Phase 4)
   GET /admin/saas/usage/ai       — platform AI usage/cost + top consumers (Phase 4)
   GET /admin/saas/usage/limits   — centralized plan limits + who's near them (Phase 4)
+  GET /admin/saas/security       — live security counters snapshot (Phase 6)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -666,4 +667,31 @@ def saas_usage_limits(user=Depends(require_superadmin)):
         }
     except Exception as exc:
         log.error("saas_usage_limits error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Phase 6: Security Dashboard
+#
+# Surfaces the security counters services/security.py already keeps
+# in-process for enforcement (failed logins, IP/account lockouts, signup
+# abuse, invalid webhook signatures, duplicate-message fingerprints,
+# active rate-limit buckets). Everything here is LIVE/point-in-time —
+# this app has no persisted security-event log or server-side session
+# store (auth is stateless JWT), so "recent history" and "active
+# sessions" are deliberately NOT reported rather than fabricated. A
+# persisted security_events table would be needed for real history and
+# is explicitly deferred, not silently skipped.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/admin/saas/security")
+def saas_security_dashboard(user=Depends(require_superadmin)):
+    """Live security snapshot for the SuperAdmin Security Dashboard."""
+    try:
+        from services.security import get_security_snapshot
+        snapshot = get_security_snapshot()
+        snapshot["open_risk_flags_count"] = len(list_risk_flags(status="open"))
+        return snapshot
+    except Exception as exc:
+        log.error("saas_security_dashboard error: %s", exc)
         raise HTTPException(500, str(exc))

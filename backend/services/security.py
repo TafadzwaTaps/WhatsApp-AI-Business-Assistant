@@ -479,6 +479,26 @@ def is_duplicate_message(phone: str, business_id: int, text: str) -> bool:
 # WEBHOOK SIGNATURE VERIFICATION (Phase 4)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# SuperAdmin 2.0 Security Dashboard — a lightweight, in-process counter of
+# invalid webhook signatures (missing header, bad format, or a mismatch),
+# so the dashboard can show "possible spoofing attempts" without changing
+# verify_meta_signature's actual behavior at all. Same in-process/resets-
+# on-redeploy tradeoff as the rest of this file — acceptable for a live
+# security snapshot, documented as such wherever it's surfaced.
+_webhook_sig_lock: threading.Lock = threading.Lock()
+_webhook_sig_failures: deque = deque()
+_WEBHOOK_SIG_WINDOW = 24 * 60 * 60  # 24 hours
+
+
+def _record_webhook_sig_failure() -> None:
+    now = time.time()
+    with _webhook_sig_lock:
+        _webhook_sig_failures.append(now)
+        cutoff = now - _WEBHOOK_SIG_WINDOW
+        while _webhook_sig_failures and _webhook_sig_failures[0] < cutoff:
+            _webhook_sig_failures.popleft()
+
+
 def verify_meta_signature(
     payload_bytes: bytes,
     signature_header: str,
@@ -500,10 +520,12 @@ def verify_meta_signature(
 
     if not signature_header:
         log.warning("webhook_signature: X-Hub-Signature-256 header missing")
+        _record_webhook_sig_failure()
         return False
 
     if not signature_header.startswith("sha256="):
         log.warning("webhook_signature: unexpected signature format: %r", signature_header[:20])
+        _record_webhook_sig_failure()
         return False
 
     received_hex = signature_header[7:]   # strip "sha256="
@@ -516,6 +538,7 @@ def verify_meta_signature(
     valid = hmac.compare_digest(expected, received_hex)
     if not valid:
         log.error("webhook_signature: INVALID — possible spoofing attempt")
+        _record_webhook_sig_failure()
     return valid
 
 
@@ -647,3 +670,97 @@ def validate_upload(
 # private name directly; keeping both avoids a churny rename across files
 # that don't need to change for this fix.
 _get_client_ip = get_client_ip
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SuperAdmin 2.0 — Security Dashboard snapshot
+#
+# Everything in this module is in-process and resets on redeploy (see the
+# module docstring) — there is no persisted history to query. This function
+# does not invent one: it's a LIVE snapshot of the counters already kept
+# for enforcement (failed logins, IP/account lockouts, signup-abuse
+# windows, webhook signature failures, duplicate-message fingerprints,
+# active rate-limit buckets), read-only, taken at call time. The
+# SuperAdmin UI must label it as live/point-in-time, not a historical
+# trend. Never raises — a bug in one counter must not take the whole
+# dashboard down.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_security_snapshot() -> dict:
+    now = time.time()
+
+    locked_accounts = []
+    try:
+        with _account_login_lock:
+            for username, times in list(_account_login_fails.items()):
+                window = LOGIN_LOCKOUT_MINUTES * 60
+                recent = [t for t in times if now - t < window]
+                if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_ACCOUNT:
+                    locked_accounts.append({"username": username, "failed_attempts": len(recent)})
+    except Exception as exc:
+        log.debug("get_security_snapshot: locked_accounts failed (%s)", exc)
+
+    flagged_ips = []
+    try:
+        with _ip_login_lock:
+            for ip, times in list(_ip_login_fails.items()):
+                recent = [t for t in times if now - t < _IP_LOGIN_WINDOW]
+                if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_IP:
+                    flagged_ips.append({"ip": ip, "failed_attempts": len(recent)})
+    except Exception as exc:
+        log.debug("get_security_snapshot: flagged_ips failed (%s)", exc)
+
+    active_failed_login_pairs = 0
+    try:
+        with _failed_login_lock:
+            active_failed_login_pairs = sum(1 for v in _failed_logins.values() if v)
+    except Exception as exc:
+        log.debug("get_security_snapshot: failed_login_pairs failed (%s)", exc)
+
+    suspicious_signup_ips = []
+    try:
+        with _rate_lock:
+            for key, times in list(_rate_store.items()):
+                if not key.startswith("signup_hourly:") and not key.startswith("signup_daily:"):
+                    continue
+                if not times:
+                    continue
+                # rate_limit() keys are "limit_name:ip:key_suffix" (key_suffix
+                # is "" here, leaving a trailing ":") — split into exactly 3
+                # parts so the IP itself isn't truncated or left with a
+                # trailing colon.
+                limit_name, ip, _suffix = key.split(":", 2)
+                suspicious_signup_ips.append({"ip": ip, "limit": limit_name, "attempts": len(times)})
+    except Exception as exc:
+        log.debug("get_security_snapshot: suspicious_signup_ips failed (%s)", exc)
+
+    webhook_invalid_signatures_24h = 0
+    try:
+        with _webhook_sig_lock:
+            cutoff = now - _WEBHOOK_SIG_WINDOW
+            webhook_invalid_signatures_24h = sum(1 for t in _webhook_sig_failures if t >= cutoff)
+    except Exception as exc:
+        log.debug("get_security_snapshot: webhook_sig failed (%s)", exc)
+
+    duplicate_message_fingerprints_active = 0
+    active_rate_limit_buckets = 0
+    try:
+        duplicate_message_fingerprints_active = len(_msg_seen)
+    except Exception:
+        pass
+    try:
+        with _rate_lock:
+            active_rate_limit_buckets = sum(1 for v in _rate_store.values() if v)
+    except Exception:
+        pass
+
+    return {
+        "locked_accounts":            locked_accounts,
+        "flagged_login_ips":          flagged_ips,
+        "active_failed_login_pairs":  active_failed_login_pairs,
+        "suspicious_signup_ips":      suspicious_signup_ips,
+        "webhook_invalid_signatures_24h": webhook_invalid_signatures_24h,
+        "duplicate_message_fingerprints_active": duplicate_message_fingerprints_active,
+        "active_rate_limit_buckets":  active_rate_limit_buckets,
+        "note": "Live, in-process snapshot — resets on redeploy. Not a historical log.",
+    }

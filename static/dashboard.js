@@ -31,6 +31,7 @@ const ROUTES = {
   usageMessages: '/admin/saas/usage/messages',
   usageAI:       '/admin/saas/usage/ai',
   usageLimits:   '/admin/saas/usage/limits',
+  security:      '/admin/saas/security',
 };
 
 let token       = localStorage.getItem('wazi_token');
@@ -1083,6 +1084,34 @@ async function loadAdminAudit() {
     }
   } catch (e) {
     toast('Failed to load audit/abuse data: ' + e.message, true);
+  }
+
+  loadAdminSecurity();
+}
+
+// SuperAdmin 2.0 Phase 6 — live security counters snapshot. Explicitly
+// labeled as a point-in-time view (the backend resets these on every
+// redeploy — no persisted history exists yet).
+async function loadAdminSecurity() {
+  const summaryEl = document.getElementById('sa-security-summary');
+  const detailsEl = document.getElementById('sa-security-details');
+  try {
+    const s = await apiFetch(ROUTES.security);
+    if (summaryEl) summaryEl.innerHTML = `
+      <span>🔒 <strong>${(s.locked_accounts||[]).length}</strong> locked accounts</span>
+      <span>🚫 <strong>${(s.flagged_login_ips||[]).length}</strong> flagged IPs</span>
+      <span>📝 <strong>${s.active_failed_login_pairs ?? 0}</strong> recent failed-login pairs</span>
+      <span>🆕 <strong>${(s.suspicious_signup_ips||[]).length}</strong> suspicious signup IPs</span>
+      <span>🪝 <strong>${s.webhook_invalid_signatures_24h ?? 0}</strong> invalid webhook signatures (24h)</span>
+      <span>⚠️ <strong>${s.open_risk_flags_count ?? 0}</strong> open risk flags</span>`;
+
+    const rows = [];
+    (s.locked_accounts||[]).forEach(a => rows.push(`🔒 Account <strong>@${escHtml(a.username)}</strong> locked — ${a.failed_attempts} failed attempts`));
+    (s.flagged_login_ips||[]).forEach(f => rows.push(`🚫 IP <strong>${escHtml(f.ip)}</strong> flagged — ${f.failed_attempts} failed login attempts`));
+    (s.suspicious_signup_ips||[]).forEach(sg => rows.push(`🆕 IP <strong>${escHtml(sg.ip)}</strong> — ${sg.attempts} signup attempts (${escHtml(sg.limit)})`));
+    if (detailsEl) detailsEl.innerHTML = rows.length ? rows.map(r => `<div>${r}</div>`).join('') : `<div class="empty">No active security concerns right now.</div>`;
+  } catch (e) {
+    if (summaryEl) summaryEl.textContent = 'Security data unavailable — ' + e.message;
   }
 }
 
