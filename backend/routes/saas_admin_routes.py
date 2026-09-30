@@ -16,6 +16,8 @@ Endpoints (all require superadmin role):
   POST /admin/saas/tenants/{id}/features    — per-business feature overrides (Phase 8)
   GET /admin/saas/cohorts                   — signup-month cohorts by current status (Phase 9)
   GET /admin/saas/churn                     — churn rate + recent-churn windows (Phase 9)
+  GET /admin/saas/usage/campaigns           — platform campaign volume + top senders (Phase 10)
+  POST /admin/saas/abuse/scan               — now also flags high campaign volume/frequency (Phase 10)
 
 These routes are COMPLETELY SEPARATE from the existing business dashboard.
 They are only accessible to the superadmin role (require_superadmin dep).
@@ -42,6 +44,15 @@ from crud.admin_audit import (
 
 log    = logging.getLogger(__name__)
 router = APIRouter()
+
+# Phase 10 — campaign-abuse thresholds. Starting heuristics, not tuned
+# against real traffic data (none existed before this phase started
+# recording it) — deliberately conservative and easy to adjust here in one
+# place. campaigns/send is already rate-limited to 5/min/IP at the API
+# layer (services/security.py); these are a slower, volume-based signal on
+# top of that, evaluated over a rolling 24h window.
+CAMPAIGN_ABUSE_MAX_RECIPIENTS_24H = 2000   # total recipients across all campaigns
+CAMPAIGN_ABUSE_MAX_SENDS_24H      = 20     # separate campaign sends
 
 
 
@@ -487,8 +498,13 @@ def saas_abuse_scan(request: Request, user=Depends(require_superadmin)):
       - the same owner_email registered against more than one business
       - the same contact_phone registered against more than one business
       - businesses with near-duplicate names created within a short window
+      - (Phase 10) unusually high campaign/broadcast volume in the last 24h
+        — see CAMPAIGN_ABUSE_* constants below for the exact thresholds.
+        Only evaluated when campaign_log has data; contributes zero flags
+        (never an error) if that table isn't migrated yet or is empty.
     Every flag records exactly which signal(s) fired and the evidence
-    (the other business IDs involved) so a human can see WHY.
+    (the other business IDs involved, or the actual volume observed) so a
+    human can see WHY.
     """
     try:
         from core.db import supabase
@@ -532,6 +548,46 @@ def saas_abuse_scan(request: Request, user=Depends(require_superadmin)):
                     )
                     existing_open.add(bid)
                     created += 1
+
+        # Phase 10 — campaign-volume signal. Additive: any failure here
+        # (missing table, empty log) just means zero campaign flags, never
+        # an error for the whole scan.
+        try:
+            import datetime as _dt
+            from crud.campaign_log import list_campaign_sends
+
+            cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
+            recent_sends = list_campaign_sends(since_iso=cutoff)
+            by_business: dict = {}
+            for row in recent_sends:
+                bid = row.get("business_id")
+                if bid is None:
+                    continue
+                agg = by_business.setdefault(bid, {"sends": 0, "recipients": 0})
+                agg["sends"]      += 1
+                agg["recipients"] += int(row.get("recipient_count") or 0)
+
+            for bid, agg in by_business.items():
+                if bid in existing_open:
+                    continue
+                if agg["recipients"] > CAMPAIGN_ABUSE_MAX_RECIPIENTS_24H:
+                    add_risk_flag(
+                        bid, "medium",
+                        f"{agg['recipients']} campaign recipients in the last 24h (threshold {CAMPAIGN_ABUSE_MAX_RECIPIENTS_24H})",
+                        {"signal": "high_campaign_volume", "recipients_24h": agg["recipients"], "sends_24h": agg["sends"]},
+                    )
+                    existing_open.add(bid)
+                    created += 1
+                elif agg["sends"] > CAMPAIGN_ABUSE_MAX_SENDS_24H:
+                    add_risk_flag(
+                        bid, "low",
+                        f"{agg['sends']} separate campaigns sent in the last 24h (threshold {CAMPAIGN_ABUSE_MAX_SENDS_24H})",
+                        {"signal": "high_campaign_frequency", "sends_24h": agg["sends"], "recipients_24h": agg["recipients"]},
+                    )
+                    existing_open.add(bid)
+                    created += 1
+        except Exception as exc:
+            log.debug("saas_abuse_scan campaign-volume signal skipped: %s", exc)
 
         log_admin_action(
             actor_username=user.get("username"), action="abuse.scan_run",
@@ -695,6 +751,53 @@ def saas_usage_messages(days: int = 7, user=Depends(require_superadmin)):
         }
     except Exception as exc:
         log.error("saas_usage_messages error: %s", exc)
+        raise HTTPException(500, str(exc))
+
+
+@router.get("/admin/saas/usage/campaigns")
+def saas_usage_campaigns(days: int = 7, user=Depends(require_superadmin)):
+    """
+    Platform-wide campaign/broadcast volume for the last `days` days: total
+    sends, total recipients, and a per-business breakdown (top senders).
+    Reads from campaign_log (Phase 10) — returns all-zero if that table
+    isn't migrated yet or has no rows, same fail-soft pattern as every
+    other SuperAdmin 2.0 usage endpoint. Tracking starts from deployment,
+    so this cannot show campaign history from before this phase.
+    """
+    try:
+        import datetime as _dt
+        from core.db import supabase
+        from crud.campaign_log import list_campaign_sends
+
+        days = max(1, min(days, 90))
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)).isoformat()
+        rows = list_campaign_sends(since_iso=cutoff, limit=20000)
+
+        per_business: dict = {}
+        total_recipients = 0
+        for r in rows:
+            bid = r.get("business_id")
+            total_recipients += int(r.get("recipient_count") or 0)
+            if bid is not None:
+                agg = per_business.setdefault(bid, {"sends": 0, "recipients": 0})
+                agg["sends"]      += 1
+                agg["recipients"] += int(r.get("recipient_count") or 0)
+
+        businesses = {b["id"]: b.get("name") for b in (supabase.table("businesses").select("id, name").execute().data or [])}
+        top = sorted(per_business.items(), key=lambda kv: kv[1]["recipients"], reverse=True)[:10]
+        top_businesses = [
+            {"business_id": bid, "name": businesses.get(bid, f"#{bid}"), "sends": agg["sends"], "recipients": agg["recipients"]}
+            for bid, agg in top
+        ]
+
+        return {
+            "window_days":      days,
+            "total_sends":      len(rows),
+            "total_recipients": total_recipients,
+            "top_businesses":   top_businesses,
+        }
+    except Exception as exc:
+        log.error("saas_usage_campaigns error: %s", exc)
         raise HTTPException(500, str(exc))
 
 

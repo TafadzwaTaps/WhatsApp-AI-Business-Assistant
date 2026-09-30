@@ -1041,6 +1041,15 @@ async def campaign_send(body: CampaignRequest, request: Request, user=Depends(re
             Events.emit("broadcast_sent", {"business_id": bid, "audience": body.audience,
                                             "sent": result["sent"], "failed": result.get("failed", 0)})
         except Exception: pass
+        # SuperAdmin 2.0 (Phase 10) — persist the send for platform-wide
+        # campaign-abuse detection. Best-effort, never blocks a real send.
+        try:
+            from crud.campaign_log import log_campaign_send
+            log_campaign_send(
+                business_id=bid, audience=body.audience,
+                recipient_count=result["sent"], message_length=len(body.message),
+            )
+        except Exception: pass
     return result
 
 

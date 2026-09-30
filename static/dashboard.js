@@ -31,6 +31,7 @@ const ROUTES = {
   usageMessages: '/admin/saas/usage/messages',
   usageAI:       '/admin/saas/usage/ai',
   usageLimits:   '/admin/saas/usage/limits',
+  usageCampaigns: '/admin/saas/usage/campaigns',
   security:      '/admin/saas/security',
   platformControls:    '/admin/saas/platform/controls',
   platformMaintenance: '/admin/saas/platform/maintenance',
@@ -593,7 +594,7 @@ function showSection(name, btn) {
   document.getElementById('section-' + name).classList.add('active');
   if (btn) btn.classList.add('active');
   if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
-  if (name==='admin-audit') loadAdminAudit();
+  if (name==='admin-audit') { loadAdminAudit(); loadCampaignUsage(); }
   if (name==='admin-controls') loadPlatformControls();
   if (name==='admin-cohorts') loadCohortsChurn();
   if (name==='orders') loadOrders();
@@ -1218,6 +1219,30 @@ async function setFeatureFlag(name, enabled) {
     if (input) input.value = '';
     loadPlatformControls();
   } catch (e) { toast('Failed to update flag: ' + e.message, true); }
+}
+
+// ── SuperAdmin 2.0 Phase 10 — Campaign Volume / Abuse Signal ────────────────
+
+async function loadCampaignUsage() {
+  const summaryEl = document.getElementById('sa-campaign-usage-summary');
+  const tbody     = document.getElementById('sa-campaign-usage-table');
+  try {
+    const res = await apiFetch(`${ROUTES.usageCampaigns}?days=7`);
+    if (summaryEl) {
+      summaryEl.innerHTML = `<strong>${res.total_sends}</strong> campaign send(s) · <strong>${res.total_recipients}</strong> total recipients in the last ${res.window_days} days`;
+    }
+    if (tbody) {
+      const rows = res.top_businesses || [];
+      tbody.innerHTML = rows.length ? rows.map(b => `<tr>
+          <td>${escHtml(b.name || ('#'+b.business_id))}</td>
+          <td>${b.sends}</td>
+          <td>${b.recipients}</td>
+        </tr>`).join('') : `<tr><td colspan="3"><div class="empty">No campaigns sent in this window.</div></td></tr>`;
+    }
+  } catch (e) {
+    if (summaryEl) summaryEl.innerHTML = `<div class="empty">Unavailable — ${escHtml(e.message)}</div>`;
+    if (tbody) tbody.innerHTML = '';
+  }
 }
 
 // ── SuperAdmin 2.0 Phase 9 — Cohorts & Churn ────────────────────────────────

@@ -376,6 +376,18 @@
     </div>
 
     <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title">📣 Campaign Volume <span style="font-weight:400;color:var(--text-dim);font-size:10px;">— last 7 days, tracked since Phase 10 deployed</span></div>
+        <button class="panel-action" onclick="loadCampaignUsage()">↻ Refresh</button>
+      </div>
+      <div class="panel-body">
+        <div id="sa-campaign-usage-summary" style="font-family:var(--mono);font-size:12px;padding:12px 16px;">Loading…</div>
+        <table><thead><tr><th>Business</th><th>Sends</th><th>Recipients</th></tr></thead>
+        <tbody id="sa-campaign-usage-table"><tr><td colspan="3"><div class="empty">Loading…</div></td></tr></tbody></table>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
       <div class="panel-header"><div class="panel-title">⚠️ Open Risk Flags</div><button class="panel-action" onclick="loadAdminAudit()">↻ Refresh</button></div>
       <div class="panel-body">
         <table><thead><tr><th>Business</th><th>Risk</th><th>Reason</th><th>Evidence</th><th>Flagged</th><th>Actions</th></tr></thead>
