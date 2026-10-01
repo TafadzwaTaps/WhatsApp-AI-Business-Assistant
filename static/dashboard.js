@@ -5262,7 +5262,8 @@ async function loadReminders() {
         <td><span style="color:${tierColor[tier]||'var(--text)'};font-family:var(--mono);font-size:11px;font-weight:700;">Tier ${tier}</span></td>
         <td style="font-family:var(--mono);font-size:11px;">${age}h ago</td>
         <td>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="nudgeOrder(${o.order_id})">📨 Nudge</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--green);border-color:rgba(34,197,94,.35);" onclick="confirmReminderPaid(${o.order_id}, ${parseFloat(o.total_price||0)})">✅ Mark Paid</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;margin-left:4px;" onclick="nudgeOrder(${o.order_id})">📨 Nudge</button>
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;margin-left:4px;" onclick="previewReminder(${o.order_id})">👁</button>
         </td>
       </tr>`;
@@ -5278,6 +5279,33 @@ async function nudgeOrder(orderId) {
     toast(r.ok ? '📨 Reminder sent!' : ('Failed: ' + r.error), !r.ok);
     loadReminders();
   } catch (e) { toast(e.message, true); }
+}
+
+// Bug fix: this page (Reminders / "stale payment orders") had a way to
+// nudge a customer who hasn't paid and a way to preview that nudge, but
+// no way to actually acknowledge a payment was received — cash above
+// all, since cash has no automatic webhook confirmation the way PayPal
+// does. An order would sit here forever even after being paid in person,
+// because nothing ever moved it out of awaiting_payment/pending_cash.
+// This reuses the same /payments/manual/confirm endpoint the Live
+// Inbox's "Mark Paid" quick action already uses: it sets payment_status
+// to "paid" and notifies the customer. Once paid, the order no longer
+// matches get_stale_payment_orders()'s pending-status filter, so a
+// refresh of this list clears it automatically — no separate "clear" step.
+async function confirmReminderPaid(orderId, totalPrice) {
+  const amount = parseFloat(totalPrice || 0);
+  if (!confirm(`Mark ORDER-${orderId} (${getCurrencySymbol()}${amount.toFixed(2)}) as PAID?\n\nThe customer will be notified their payment is confirmed.`)) return;
+  try {
+    await apiFetch(`/payments/manual/confirm`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ order_id: orderId, reference: `ORDER-${orderId}`, amount }),
+    });
+    toast(`✅ ORDER-${orderId} marked as paid`);
+    loadReminders();
+  } catch (e) {
+    toast('Failed: ' + e.message, true);
+  }
 }
 
 async function previewReminder(orderId) {
