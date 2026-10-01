@@ -554,6 +554,17 @@ def platform_activate_business(business_id: int, request: Request, user=Depends(
     class _D:
         def dict(self, **_): return {"is_active": True}
     crud.update_business(business_id, _D())
+    # This doubles as "restore a self-deleted account" — if that business
+    # had a pending 90-day deletion queued (services/account_deletion.py),
+    # take it out of the purge queue so it isn't hard-deleted later despite
+    # being reactivated. Best-effort: a business with no pending deletion
+    # is the overwhelmingly common case, and this must never block a plain
+    # suspend/reactivate that has nothing to do with self-deletion.
+    try:
+        import crud.account_deletions as _deletions
+        _deletions.mark_reactivated(business_id)
+    except Exception as exc:
+        log.debug("activate: mark_reactivated skipped (non-fatal): %s", exc)
     log_admin_action(
         actor_username=user.get("username"), action="business.activate",
         target_type="business", target_id=business_id, business_id=business_id,

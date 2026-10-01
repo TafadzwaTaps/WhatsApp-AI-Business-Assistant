@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query, UploadFil
 from pydantic import BaseModel, validator
 
 import crud
-from core.auth import require_business, get_current_user
+from core.auth import require_business, get_current_user, verify_password
 from core.plan_guard import require_plan, require_not_restricted
 from core.crypto import TokenDecryptionError
 from services.ai import generate_reply
@@ -478,6 +478,7 @@ def check_username_availability(body: dict, user=Depends(require_business)):
 
 @router.post("/me/upload-avatar")
 async def upload_avatar(
+    request: Request,
     file: UploadFile = File(...),
     user=Depends(require_business),
 ):
@@ -495,6 +496,16 @@ async def upload_avatar(
     data  = await file.read()
     if len(data) > 3 * 1024 * 1024:
         raise HTTPException(400, "File too large. Maximum 3 MB.")
+
+    from services.content_moderation import screen_upload
+    from services.security import get_client_ip
+    ok, err = screen_upload(
+        data=data, content_type=ct, filename=file.filename or "",
+        business_id=bid, username=user.get("username"), ip=get_client_ip(request),
+        endpoint="/me/upload-avatar",
+    )
+    if not ok:
+        raise HTTPException(422, err)
 
     ext       = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(ct, "jpg")
     safe_name = f"avatars/{bid}_{_uuid.uuid4().hex[:8]}.{ext}"
@@ -522,6 +533,84 @@ async def upload_avatar(
     return {"ok": True, "avatar_url": public_url}
 
 
+# ── Account deletion ─────────────────────────────────────────────────────────
+
+class DeleteAccountRequest(BaseModel):
+    password: str
+    confirm:  str            # must be the literal text "DELETE"
+    reason:   str = ""       # optional exit feedback
+
+
+@router.post("/me/delete-account")
+async def delete_account(payload: DeleteAccountRequest, request: Request, user=Depends(require_business)):
+    """
+    Self-service account deletion.
+
+    - Requires the account password AND typing "DELETE", so this can't be
+      triggered by a stray click or a stolen/active session alone.
+    - Backs up the business's own data (products, orders, customers,
+      messages, profile) to a CSV bundle in storage BEFORE anything is
+      deactivated — see services/account_deletion.py for why that
+      ordering is load-bearing, not incidental.
+    - Deactivates the account immediately and invalidates every existing
+      session (the business is logged out everywhere within ~60s).
+    - The account and its backup are kept for 90 days, then permanently
+      purged by a scheduled job — support can restore the account
+      (POST /platform/businesses/{id}/activate) any time before then,
+      but there is no self-service undo after this call succeeds.
+    """
+    if payload.confirm.strip().upper() != "DELETE":
+        raise HTTPException(400, 'Type "DELETE" to confirm account deletion.')
+
+    bid = user["business_id"]
+    biz = crud.get_business_by_id(bid)
+    if not biz:
+        raise HTTPException(404, "Business not found")
+
+    if not verify_password(payload.password, biz.get("owner_password", "")):
+        raise HTTPException(401, "Incorrect password.")
+
+    from services.security import get_client_ip
+    ip = get_client_ip(request)
+
+    from services.account_deletion import request_deletion, PURGE_AFTER_DAYS
+    try:
+        result = request_deletion(business_id=bid, business_row=biz, reason=payload.reason)
+    except Exception as exc:
+        log.error("account deletion failed for business_id=%s: %s", bid, exc)
+        raise HTTPException(
+            500,
+            "We couldn't complete your account deletion because we couldn't "
+            "safely back up your data first. Nothing has changed — please "
+            "try again, or contact support if this keeps happening.",
+        )
+
+    try:
+        import crud.security_events as _sec_events
+        _sec_events.log_security_event(
+            event_type="account_deletion_requested",
+            ip=ip, username=user.get("username"), business_id=bid,
+            metadata={"reason": payload.reason, "purge_after": result["purge_after"]},
+        )
+    except Exception as exc:
+        log.debug("account deletion: security event log failed (non-fatal): %s", exc)
+
+    log.warning("ACCOUNT DELETION requested  business_id=%s  username=%s  ip=%s",
+                bid, user.get("username"), ip)
+
+    return {
+        "ok": True,
+        "message": (
+            f"Your account has been deactivated. We've kept a backup of your "
+            f"data and will hold it for {PURGE_AFTER_DAYS} days — after that "
+            "it's permanently deleted and cannot be recovered. If you change "
+            "your mind before then, contact support; we can restore your "
+            "account, but you can't undo this yourself."
+        ),
+        "purge_after": result["purge_after"],
+    }
+
+
 @router.get("/me/payment")
 def get_payment_settings_legacy(user=Depends(require_business)):
     return get_payment_settings(user)
@@ -544,6 +633,7 @@ class ProductCreate(BaseModel):
 
 @router.post("/products/upload-image")
 async def upload_product_image(
+    request: Request,
     file:    UploadFile = File(...),
     user=Depends(require_business),
 ):
@@ -566,10 +656,20 @@ async def upload_product_image(
     if len(data) > 5 * 1024 * 1024:
         raise HTTPException(400, "File too large. Maximum size is 5MB.")
 
+    bid = user["business_id"]
+    from services.content_moderation import screen_upload
+    from services.security import get_client_ip
+    ok, err = screen_upload(
+        data=data, content_type=content_type, filename=file.filename or "",
+        business_id=bid, username=user.get("username"), ip=get_client_ip(request),
+        endpoint="/products/upload-image",
+    )
+    if not ok:
+        raise HTTPException(422, err)
+
     # Build storage path: products/{business_id}_{timestamp}.ext
     ext        = mimetypes.guess_extension(content_type) or ".jpg"
     ext        = ext.replace(".jpe", ".jpg")  # normalise
-    bid        = user["business_id"]
     timestamp  = int(__import__("time").time() * 1000)
     safe_name  = f"products/{bid}_{timestamp}{ext}"
 

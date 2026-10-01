@@ -3785,6 +3785,80 @@ function _upSetStatus(el, msg, type) {
   el.className = 'up-status-' + (type || 'ok');
 }
 
+// ── Delete My Account ────────────────────────────────────────────────────────
+// Deliberately NOT using apiFetch() here: a wrong-password attempt returns
+// 401 from this endpoint (same status FastAPI's auth layer uses for an
+// expired token), and apiFetch's generic 401 handler would try to silently
+// refresh the token and retry instead of surfacing "wrong password" — the
+// two meanings of 401 need different handling, so this talks to fetch()
+// directly and reads the response itself.
+function openDeleteAccountModal() {
+  const reasonEl = document.getElementById('da-reason');
+  const passEl   = document.getElementById('da-password');
+  const confEl   = document.getElementById('da-confirm');
+  const statusEl = document.getElementById('da-status');
+  if (reasonEl) reasonEl.value = '';
+  if (passEl)   passEl.value = '';
+  if (confEl)   confEl.value = '';
+  if (statusEl) statusEl.textContent = '';
+  document.getElementById('delete-account-modal')?.classList.add('open');
+}
+
+function closeDeleteAccountModal() {
+  document.getElementById('delete-account-modal')?.classList.remove('open');
+}
+
+async function confirmDeleteAccount() {
+  const reason  = document.getElementById('da-reason')?.value.trim() || '';
+  const password = document.getElementById('da-password')?.value || '';
+  const confirm = document.getElementById('da-confirm')?.value || '';
+  const btn     = document.getElementById('da-confirm-btn');
+  const statusEl = document.getElementById('da-status');
+
+  if (!password) { if (statusEl) statusEl.textContent = 'Enter your current password'; return; }
+  if (confirm.trim().toUpperCase() !== 'DELETE') {
+    if (statusEl) statusEl.textContent = 'Type DELETE (exactly) to confirm';
+    return;
+  }
+
+  if (!window.confirm('This is permanent from your side — your account will be deactivated right now. Continue?')) return;
+
+  if (btn) btn.disabled = true;
+  if (statusEl) { statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Deleting account…'; }
+
+  try {
+    const res = await fetch(API + '/me/delete-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+      body: JSON.stringify({ password, confirm, reason }),
+    });
+    let body = {};
+    try { body = await res.json(); } catch {}
+
+    if (!res.ok) {
+      const msg = body.detail || body.message || 'Could not delete account';
+      if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = '✗ ' + msg; }
+      if (btn) btn.disabled = false;
+      return;
+    }
+
+    // Success — account is deactivated and sessions invalidated server-side.
+    // Clear local session state and send the person to a page that explains
+    // what just happened, rather than back to a login that will now fail.
+    closeDeleteAccountModal();
+    toast('Account deleted — redirecting…');
+    ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id']
+      .forEach(k => localStorage.removeItem(k));
+    const purgeAfter = body.purge_after ? new Date(body.purge_after).toLocaleDateString() : '';
+    setTimeout(() => {
+      window.location.href = '/?account_deleted=1' + (purgeAfter ? '&purge_after=' + encodeURIComponent(purgeAfter) : '');
+    }, 1200);
+  } catch (e) {
+    if (statusEl) { statusEl.style.color = '#ef4444'; statusEl.textContent = '✗ Cannot reach server — try again'; }
+    if (btn) btn.disabled = false;
+  }
+}
+
 // ── Customer Acquisition Analytics ───────────────────────────────────────────
 
 async function loadAcquisitionStats() {

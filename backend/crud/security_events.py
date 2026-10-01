@@ -28,6 +28,8 @@ EVENT_TYPES = (
     "account_lockout",
     "webhook_invalid_signature",
     "signup_success_limit_exceeded",
+    "upload_blocked_content",
+    "account_deletion_requested",
 )
 
 

@@ -145,6 +145,7 @@ def onboarding_step1(body: Step1Request, user=Depends(require_business)):
 
 @router.post("/onboarding/step/2")
 async def onboarding_step2(
+    request: Request,
     tagline: str = "",
     theme_colour: str = "#00c853",
     logo: Optional[UploadFile] = File(None),
@@ -158,6 +159,16 @@ async def onboarding_step2(
         data = await logo.read()
         if len(data) > 5 * 1024 * 1024:
             raise HTTPException(400, "Logo must be under 5 MB")
+
+        from services.content_moderation import screen_upload
+        from services.security import get_client_ip
+        ok, err = screen_upload(
+            data=data, content_type=logo.content_type or "image/jpeg", filename=logo.filename or "",
+            business_id=bid, username=user.get("username"), ip=get_client_ip(request),
+            endpoint="/onboarding/step/2",
+        )
+        if not ok:
+            raise HTTPException(422, err)
         try:
             from core.db import supabase
             import time as _t

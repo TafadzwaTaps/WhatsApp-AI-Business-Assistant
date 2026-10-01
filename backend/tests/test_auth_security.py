@@ -20,6 +20,42 @@ import sys
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _restore_core_auth_module():
+    """
+    Every test below does sys.modules.pop("core.auth") + re-import to force
+    SECRET_KEY/SUPER_ADMIN_LOGIN_DISABLED to recompute — but that swap is
+    never undone, so whichever module object core.auth ends up as when the
+    LAST test here finishes becomes permanent for the rest of the process.
+    That's invisible as long as nothing had already imported routes bound
+    to the pre-reload get_current_user/require_superadmin objects — but if
+    something does (e.g. another test file's `client` fixture importing
+    `main`, which wires every route's Depends() to whatever core.auth
+    objects exist at that moment) before this file runs, later tests that
+    do `import core.auth as auth; ...dependency_overrides[auth.get_current_user]`
+    end up keying off a DIFFERENT function object than the one actually
+    baked into the routes, and the override silently fails (401s instead
+    of the expected response) — purely because of test collection order,
+    not a real bug in any route. Restoring the original module object
+    after each test keeps this file's env-var probing from leaking into
+    everything that runs after it, regardless of order.
+    """
+    original = sys.modules.get("core.auth")
+    yield
+    if original is not None:
+        sys.modules["core.auth"] = original
+        # `import core.auth as auth` (and every `from core.auth import X`)
+        # resolves through the `core` package's own `auth` attribute, not
+        # sys.modules directly — CPython sets that attribute as a side
+        # effect of the submodule import. Reassigning sys.modules alone
+        # leaves that attribute pointing at the reloaded module, so it has
+        # to be restored too or later lookups still see the stale reload.
+        import core as _core_pkg
+        _core_pkg.auth = original
+    else:
+        sys.modules.pop("core.auth", None)
+
+
 def _reload_auth_with_env(monkeypatch, **env):
     """Set env vars, then force-reload core.auth so its module-level
     SECRET_KEY / SUPER_ADMIN_LOGIN_DISABLED are recomputed against them."""

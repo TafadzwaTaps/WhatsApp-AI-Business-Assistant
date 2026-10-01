@@ -437,6 +437,32 @@ def cleanup_orphaned_carts(request: Request):
         log.error("cart-cleanup error: %s", exc)
         raise HTTPException(500, str(exc))
 
+
+@router.post("/billing/purge-deleted-accounts")
+def purge_deleted_accounts(request: Request):
+    """
+    Scheduled endpoint — permanently purge accounts whose 90-day deletion
+    grace period (services/account_deletion.py) has passed: removes the
+    stored backup file and hard-deletes the business row. Call daily from
+    Render cron or an external scheduler. Protected by CRON_SECRET, same
+    fail-closed reasoning as the other scheduled endpoints in this file —
+    a delayed run just means purge happens a bit later, so there's no
+    reason to allow an unauthenticated fallback.
+    """
+    secret = os.getenv("CRON_SECRET", "")
+    if not secret:
+        log.error("🚨 CRON_SECRET not configured — refusing to run this endpoint unauthenticated")
+        raise HTTPException(503, "Cron endpoint not configured")
+    if request.headers.get("x-cron-secret") != secret:
+        raise HTTPException(403, "Forbidden")
+
+    from services.account_deletion import purge_due_accounts
+    result = purge_due_accounts()
+    log.info("account-purge: checked=%d purged=%d errors=%d",
+              result["checked"], result["purged"], result["errors"])
+    return {"ok": True, **result}
+
+
 @router.post("/billing/webhook")
 async def stripe_webhook(request: Request):
     """

@@ -2505,8 +2505,54 @@
           </div>
         </div>
 
+        <!-- ── Danger Zone ──────────────────────────────────── -->
+        <div class="panel" style="border-color:rgba(239,68,68,.35);">
+          <div class="panel-header"><div class="panel-title" style="color:#ef4444;">⚠️ Danger Zone</div></div>
+          <div class="panel-body">
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px;">Delete My Account</div>
+            <div style="font-size:11px;color:var(--text-dim);line-height:1.6;margin-bottom:14px;">
+              This closes your WaziBot account for good. Your login stops working immediately, but
+              nothing is thrown away on the spot — we keep a backup of your account data (profile,
+              products, orders, customers, chat history) for <strong>90 days</strong>, then it is
+              permanently deleted along with your account. You cannot undo this yourself once it's
+              done — within the 90 days, only contacting WaziBot support can restore the account.
+            </div>
+            <button class="btn btn-ghost" style="color:#ef4444;border-color:rgba(239,68,68,.4);" onclick="openDeleteAccountModal()">🗑 Delete My Account</button>
+          </div>
+        </div>
+
       </div>
     </div><!-- /stab-my-profile -->
+
+    <!-- DELETE ACCOUNT MODAL -->
+    <div class="modal-overlay" id="delete-account-modal">
+      <div class="modal" style="max-width:480px;">
+        <div class="modal-title" style="color:#ef4444;">⚠️ Delete My Account</div>
+        <div style="font-size:11px;color:var(--text-dim);line-height:1.6;margin-bottom:16px;background:var(--surface2);border-radius:8px;padding:10px 12px;">
+          Your account will be deactivated <strong>right away</strong> and you won't be able to log
+          back in. A backup of your data (CSV/SQL) is kept for <strong>90 days</strong>, then it and
+          your account are permanently purged. <strong>There is no self-service recovery</strong> —
+          if you change your mind, you must contact WaziBot support before the 90 days are up.
+        </div>
+        <div class="form-group-inline">
+          <label>Why are you leaving? <span style="font-size:9px;color:var(--text-dim);text-transform:none;letter-spacing:0;">(optional, helps us improve)</span></label>
+          <textarea id="da-reason" rows="2" placeholder="Optional — tell us why…" style="resize:vertical;width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;"></textarea>
+        </div>
+        <div class="form-group-inline">
+          <label>Current Password</label>
+          <input type="password" id="da-password" placeholder="••••••••" autocomplete="current-password"/>
+        </div>
+        <div class="form-group-inline">
+          <label>Type <strong>DELETE</strong> to confirm</label>
+          <input type="text" id="da-confirm" placeholder="DELETE" autocapitalize="none"/>
+        </div>
+        <div id="da-status" style="font-size:11px;font-family:var(--mono);margin-top:4px;min-height:16px;color:#ef4444;"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" onclick="closeDeleteAccountModal()">Cancel</button>
+          <button class="btn btn-primary" style="background:#ef4444;border-color:#ef4444;" onclick="confirmDeleteAccount()" id="da-confirm-btn">Permanently Delete Account</button>
+        </div>
+      </div>
+    </div>
 
     <!-- ── PAYMENTS TAB ───────────────────────────────────── -->
     <div class="stab-content" id="stab-payments">
