@@ -280,7 +280,19 @@ function buildCategories() {
   const bar = document.getElementById('category-bar');
   bar.innerHTML = cats.map(c => {
     const label = c === 'All' ? `All (${_all.length})` : `${icon(c)} ${c} (${counts[c]})`;
-    return `<button class="cat-btn${c==='All'?' active':''}" onclick="setCategory('${esc(c)}', this)">${label}</button>`;
+    // Security fix: the category used to be embedded directly inside a
+    // single-quoted JS string literal in the onclick attribute
+    // (onclick="setCategory('${c}', this)"). HTML-escaping a quote
+    // character there does NOT stop the attack — the browser decodes
+    // HTML entities in an attribute's value BEFORE treating it as JS
+    // source, so an escaped quote still becomes a real quote by the time
+    // it reaches the JS parser, letting a category value break out of
+    // the string and run arbitrary JS for every visitor. Passing the
+    // value through a data-* attribute instead avoids that entirely: it
+    // is read back as a plain string at click time, never re-parsed as
+    // code, so no amount of JS-breaking punctuation in a category name
+    // can execute.
+    return `<button class="cat-btn${c==='All'?' active':''}" data-cat="${esc(c)}" onclick="setCategory(this.dataset.cat, this)">${label}</button>`;
   }).join('');
 
   document.getElementById('nav-count').innerHTML =
@@ -339,7 +351,19 @@ function render() {
 }
 
 function esc(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  // Security fix: this previously only escaped &/</>, which is enough
+  // inside normal HTML text content but NOT inside an HTML attribute
+  // value such as onclick="setCategory('${esc(c)}', this)" below — a
+  // business category containing a single quote could break out of that
+  // attribute and inject arbitrary JS, executed for every visitor of this
+  // public marketplace page. Escaping quotes too closes that regardless
+  // of which context esc() is used in.
+  return String(s||'')
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 
 load();

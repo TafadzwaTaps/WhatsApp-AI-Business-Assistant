@@ -16,8 +16,11 @@ Security design:
   - Email enumeration protection: always returns same generic response
   - Rate limiting: 5 requests per IP per hour (enforced in routes)
 
-Passwords are stored plain-text per existing system (hmac.compare_digest).
-We match that pattern here — no hashing added, to preserve login compatibility.
+New passwords set through this flow are bcrypt-hashed via core.auth.
+hash_password() before being stored (see complete_password_reset() below)
+— core.auth.verify_password() only falls back to a plain hmac.compare_
+digest() comparison for legacy accounts whose password was never hashed
+in the first place; this reset flow never writes a new plaintext password.
 """
 from __future__ import annotations
 

@@ -172,7 +172,15 @@ async def onboarding_step2(
         try:
             from core.db import supabase
             import time as _t
-            ext = logo.filename.rsplit(".", 1)[-1].lower()
+            import mimetypes as _mt
+            # Security hardening: derive the extension from the validated
+            # content-type (same pattern as /products/upload-image), not
+            # straight from the user-supplied filename — a filename with
+            # no "." would previously become the ENTIRE filename as the
+            # "extension" and get concatenated straight into the storage
+            # path. Not path-traversal-exploitable via Supabase Storage's
+            # API, but inconsistent with the safer pattern used elsewhere.
+            ext = (_mt.guess_extension(logo.content_type or "") or ".jpg").lstrip(".")
             path = f"logos/{bid}_{int(_t.time())}.{ext}"
             supabase.storage.from_("product-images").upload(
                 path=path, file=data,

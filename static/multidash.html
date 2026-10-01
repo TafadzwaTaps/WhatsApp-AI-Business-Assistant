@@ -350,6 +350,19 @@ const bizId = parseInt(localStorage.getItem('wazi_business_id') || localStorage.
 let currentDays = 7;
 let chartInstances = {};
 
+// Security fix: this page had no HTML-escaping helper at all, and inserted
+// business-entered product names plus order phone/status/payment/date
+// straight into innerHTML below — a product named e.g. <img src=x
+// onerror=alert(1)> would execute for anyone viewing this dashboard.
+// Same escaping convention as dashboard.js / inbox.js's escHtml().
+function escHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
 /* ── THEME ── */
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
@@ -558,7 +571,7 @@ function renderProducts(data) {
   const max = prods[0][1] || 1;
   document.getElementById('product-list').innerHTML = prods.map(([name, count]) => `
     <div class="product-row">
-      <div class="product-name" title="${name}">${name}</div>
+      <div class="product-name" title="${escHtml(name)}">${escHtml(name)}</div>
       <div class="product-bar-track">
         <div class="product-bar-fill" style="width:${Math.round(count/max*100)}%;"></div>
       </div>
@@ -599,12 +612,12 @@ function renderOrdersTable(data) {
       <tbody>
         ${orders.map(o => `
           <tr>
-            <td><strong>#${o.id}</strong></td>
-            <td style="color:var(--text2);">${o.phone || '—'}</td>
+            <td><strong>#${escHtml(o.id)}</strong></td>
+            <td style="color:var(--text2);">${escHtml(o.phone) || '—'}</td>
             <td>$${parseFloat(o.total || 0).toFixed(2)}</td>
-            <td><span class="status-pill ${pillClass(o.status)}">${o.status}</span></td>
-            <td><span class="status-pill ${o.payment === 'paid' ? 'pill-paid' : 'pill-pending'}">${o.payment || 'pending'}</span></td>
-            <td style="color:var(--text3);">${o.date || '—'}</td>
+            <td><span class="status-pill ${pillClass(o.status)}">${escHtml(o.status)}</span></td>
+            <td><span class="status-pill ${o.payment === 'paid' ? 'pill-paid' : 'pill-pending'}">${escHtml(o.payment) || 'pending'}</span></td>
+            <td style="color:var(--text3);">${escHtml(o.date) || '—'}</td>
           </tr>
         `).join('')}
       </tbody>

@@ -310,6 +310,25 @@ def login(data: LoginRequest, request: Request):
     if not biz.get("is_active", True):
         raise HTTPException(403, "Account suspended. Contact support.")
 
+    # Security hardening: core.auth.verify_password() still accepts legacy
+    # plaintext passwords for backward compatibility (any account created
+    # before bcrypt hashing was added). A plaintext match here means this
+    # account's password has been sitting in the DB unhashed ever since —
+    # transparently upgrading it to a bcrypt hash on the very next
+    # successful login (the only moment we legitimately have the plaintext
+    # password in hand) closes that without requiring a forced reset or
+    # changing anything the business sees. Best-effort: never blocks login
+    # if the write fails.
+    stored_pw = biz.get("owner_password", "")
+    if stored_pw and not stored_pw.startswith(("$2b$", "$2a$", "$2y$")):
+        try:
+            # crud.update_business accepts a plain dict (falls back to
+            # dict(data) when the argument has no .dict() method).
+            crud.update_business(biz["id"], {"owner_password": hash_password(data.password)})
+            log.info("login: upgraded legacy plaintext password to bcrypt  business_id=%s", biz["id"])
+        except Exception as exc:
+            log.warning("login: legacy password upgrade failed (non-fatal)  business_id=%s  error=%s", biz["id"], exc)
+
     clear_failed_logins(ip, username)
     clear_account_login_lockout(username)
     log.info("🔑 Login: %s", biz["owner_username"])

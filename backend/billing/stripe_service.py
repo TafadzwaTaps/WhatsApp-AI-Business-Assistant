@@ -733,9 +733,24 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
         log.warning("Stripe webhook verification failed: %s", exc)
         return {"error": "Invalid signature", "status": 400}
 
-    etype = event["type"]
-    data  = event["data"]["object"]
-    log.info("Stripe webhook  type=%s  id=%s", etype, event["id"])
+    etype    = event["type"]
+    event_id = event["id"]
+    data     = event["data"]["object"]
+    log.info("Stripe webhook  type=%s  id=%s", etype, event_id)
+
+    # Idempotency fix: Stripe retries webhook deliveries (network hiccups,
+    # a slow 2xx, etc.), and this handler had no dedup — a retried
+    # checkout.session.completed would call _on_product_purchase_completed
+    # again, creating a second order row and sending a second receipt
+    # email/WhatsApp message for the same purchase. Checking + recording
+    # the event ID closes that. Fails open (see crud/stripe_webhook_events.py)
+    # so a DB hiccup or the migration not having been run yet never blocks
+    # a legitimate webhook from being processed — it just means dedup
+    # isn't enforced until stripe_webhook_events_migration.sql has been run.
+    from crud.stripe_webhook_events import already_processed, mark_processed
+    if already_processed(event_id):
+        log.info("Stripe webhook  type=%s  id=%s  — already processed, skipping", etype, event_id)
+        return {"ok": True, "event": etype, "duplicate": True}
 
     handlers = {
         "checkout.session.completed":     _on_checkout_completed,
@@ -750,6 +765,8 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
             handler(data)
         except Exception as exc:
             log.error("Stripe webhook handler error  type=%s  error=%s", etype, exc)
+
+    mark_processed(event_id, etype)
 
     return {"ok": True, "event": etype}
 

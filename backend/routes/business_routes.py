@@ -1536,6 +1536,15 @@ async def import_products_csv(
         raw_bytes = await file.read()
         if not raw_bytes:
             raise HTTPException(400, "Uploaded file is empty.")
+        # Security fix: this endpoint previously had no size cap at all —
+        # await file.read() would buffer an arbitrarily large upload fully
+        # into memory before any other check ran, a straightforward DoS
+        # vector. 10MB comfortably covers even a very large product
+        # catalog CSV while bounding memory use per request, matching the
+        # size-cap pattern already used by the avatar/product-image upload
+        # endpoints above in this same file.
+        if len(raw_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(400, "File too large. Maximum size is 10MB.")
         text = ""
         for enc in ("utf-8-sig", "utf-8", "latin-1"):
             try:

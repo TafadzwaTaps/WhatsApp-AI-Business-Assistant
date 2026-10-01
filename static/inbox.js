@@ -333,12 +333,21 @@ function renderContacts(convos) {
       isHandoff ? 'handoff-active' : '',
     ].filter(Boolean).join(' ');
 
-    // Highlight search match in phone display
+    // Highlight search match in phone display.
+    // Security fix: this used to run the <mark> replace on the RAW phone
+    // string and only escHtml() the no-match path, leaving the non-
+    // matched portion of rawPhone inserted into innerHTML unescaped
+    // whenever `search` was active. Escaping first and only then adding
+    // the <mark> wrapper (matching within the already-escaped string,
+    // safe here since the search highlight only needs to find the typed
+    // substring, not interpret HTML) closes that gap for any value this
+    // field might ever hold.
     const rawPhone = c.phone || '—';
+    const escapedPhone = escHtml(rawPhone);
     const displayPhone = search
-      ? rawPhone.replace(new RegExp('(' + search.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi'),
+      ? escapedPhone.replace(new RegExp('(' + search.replace(/[.*+?^${}()|[\]\\]/g,'\\$&') + ')', 'gi'),
           '<mark style="background:rgba(34,197,94,0.25);border-radius:2px;color:inherit;">$1</mark>')
-      : escHtml(rawPhone);
+      : escapedPhone;
 
     div.innerHTML = `
       <div class="contact-avatar">${isHandoff ? '🔴' : '👤'}</div>

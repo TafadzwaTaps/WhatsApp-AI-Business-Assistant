@@ -532,10 +532,28 @@ def verify_meta_signature(
     and compare in constant time.
 
     Returns True if valid, False otherwise.
-    If app_secret is not configured, returns True (dev mode — logged as warning).
+    If app_secret is not configured, returns True in local/test environments
+    (dev mode — logged as warning) so nothing here breaks local development
+    or the test suite, which deliberately runs with it unset. On Render,
+    this now fails CLOSED instead: an unset WHATSAPP_APP_SECRET on an
+    actual deployment previously meant anyone could POST a fake,
+    unauthenticated WhatsApp webhook event to /webhook — impersonating
+    customers, injecting fake messages/orders — with main.py's own startup
+    log loudly warning about exactly this ("webhook signature verification
+    is DISABLED") without the request path ever actually enforcing it.
+    `RENDER` is set automatically by Render on every deployed service and
+    never set locally or in CI, so this distinguishes "really in
+    production" from "dev/test" without needing a new env var to configure.
     """
     if not app_secret:
-        log.warning("webhook_signature: WHATSAPP_APP_SECRET not set — skipping signature verification")
+        import os as _os_webhook
+        if _os_webhook.getenv("RENDER"):
+            log.error("webhook_signature: WHATSAPP_APP_SECRET not set — "
+                       "rejecting webhook request in production. Set "
+                       "WHATSAPP_APP_SECRET in Render env vars.")
+            _record_webhook_sig_failure()
+            return False
+        log.warning("webhook_signature: WHATSAPP_APP_SECRET not set — skipping signature verification (dev mode)")
         return True
 
     if not signature_header:

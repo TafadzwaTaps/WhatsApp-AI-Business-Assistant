@@ -25,6 +25,54 @@ SHARED_WA_TOKEN        = ""
 SHARED_PHONE_NUMBER_ID = ""
 
 
+def _shared_number_customer_lookup(customer_id: int, bid: int):
+    """
+    Security fix: the "shared number" fallback below exists so agents at
+    businesses that share WaziBot's common WhatsApp number can see and
+    reply to customers whose rows technically live under a *different*
+    business_id (because the inbound webhook can only resolve the shared
+    phone_number_id to one business per message, not all of them).
+
+    The previous version of this lookup ran for ANY business as soon as
+    SHARED_WA_TOKEN/SHARED_PHONE_NUMBER_ID were configured anywhere on the
+    platform, with no check that either business involved was actually a
+    shared-number tenant — meaning a business with its own dedicated
+    WhatsApp number could read another business's customer by guessing/
+    incrementing customer_id, and send WhatsApp messages or close
+    conversations on that business's behalf. That's a cross-tenant IDOR,
+    not the shared-number feature working as intended.
+
+    Fixed: the fallback now only resolves a customer belonging to another
+    business_id when BOTH businesses have use_shared_number=True. A
+    business running on its own dedicated number never falls through to
+    this lookup, and a shared-number business can only reach customers
+    that belong to other shared-number businesses — not a dedicated one.
+    """
+    if not (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        return None
+    caller_biz = crud.get_business_by_id(bid)
+    if not caller_biz or not caller_biz.get("use_shared_number", False):
+        return None
+    try:
+        from core.db import supabase as _sb
+        res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+        customer = res.data[0] if res.data else None
+    except Exception as exc:
+        log.warning("shared-number cross-tenant lookup failed: %s", exc)
+        return None
+    if not customer:
+        return None
+    target_biz_id = customer.get("business_id")
+    if target_biz_id is None or target_biz_id == bid:
+        return None  # not actually cross-tenant — regular lookup already covers this
+    target_biz = crud.get_business_by_id(target_biz_id)
+    if not target_biz or not target_biz.get("use_shared_number", False):
+        return None
+    log.info("shared-number cross-tenant lookup  customer_id=%s  customer_biz=%s  agent_biz=%s",
+             customer_id, target_biz_id, bid)
+    return customer
+
+
 # ── Chat inbox ────────────────────────────────────────────────────────────────
 
 @router.get("/chat/customers")
@@ -110,17 +158,11 @@ class ChatSendRequest(BaseModel):
 async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(body.customer_id, bid)
-    # Shared number: customer may belong to a different business_id
-    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        try:
-            from core.db import supabase as _sb
-            res = _sb.table("customers").select("*").eq("id", body.customer_id).limit(1).execute()
-            if res.data:
-                customer = res.data[0]
-                log.info("shared-number cross-tenant lookup  customer_id=%s  customer_biz=%s  agent_biz=%s",
-                         body.customer_id, customer.get("business_id"), bid)
-        except Exception as exc:
-            log.warning("cross-tenant lookup failed: %s", exc)
+    # Shared number: customer may belong to a different business_id — only
+    # resolved when BOTH businesses are shared-number tenants, never for a
+    # business on its own dedicated number. See _shared_number_customer_lookup.
+    if not customer:
+        customer = _shared_number_customer_lookup(body.customer_id, bid)
     if not customer:
         raise HTTPException(404, "Customer not found")
 
@@ -701,13 +743,10 @@ async def close_conversation(
     bid      = user["business_id"]
     agent    = user.get("username", "Agent")
     customer = crud.get_customer_by_id(customer_id, bid)
-    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        try:
-            from core.db import supabase as _sb
-            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
-            customer = res.data[0] if res.data else None
-        except Exception:
-            pass
+    # Shared number: only resolved when BOTH businesses are shared-number
+    # tenants — see _shared_number_customer_lookup.
+    if not customer:
+        customer = _shared_number_customer_lookup(customer_id, bid)
     if not customer:
         raise HTTPException(404, "Customer not found")
 
