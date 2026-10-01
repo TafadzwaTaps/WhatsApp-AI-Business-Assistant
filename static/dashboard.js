@@ -697,7 +697,18 @@ async function loadNeedsAttention() {
   try {
     const raw = await apiFetch(ROUTES.orders);
     const orders = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
-    const awaitingPay = orders.filter(o => ['awaiting_payment','payment_review','pending_cash'].includes(o.status)).length;
+    // Bug fix: payment state lives in the order's payment_status column
+    // (that's the field crud.update_order_payment() actually writes during
+    // checkout), not the fulfillment-lifecycle `status` column — status
+    // only happens to equal "pending_cash" for cash orders specifically,
+    // and stays "pending" for an EcoCash/PayPal/BLIK order that's still
+    // awaiting payment. Filtering on `status` here meant this panel missed
+    // every non-cash pending order, while the Reminders/"pending payments"
+    // page (which does read payment_status) defaulted to a status list
+    // that itself excluded "pending_cash" — two different bugs that made
+    // the two screens disagree about the same orders. Both are now fixed
+    // to agree on payment_status as the one source of truth.
+    const awaitingPay = orders.filter(o => ['awaiting_payment','payment_review','pending_cash'].includes(o.payment_status)).length;
     if (awaitingPay > 0) items.push({ icon: '💳', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders' });
     const toFulfill = orders.filter(o => ['confirmed','preparing','ready'].includes(o.status)).length;
     if (toFulfill > 0) items.push({ icon: '📦', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders' });

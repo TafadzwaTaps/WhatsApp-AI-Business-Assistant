@@ -247,14 +247,25 @@ def get_stale_payment_orders(
     statuses: list[str] | None = None,
 ) -> list[dict]:
     """
-    Return orders stuck in awaiting_payment / payment_review longer than
-    `older_than_hours` hours, so the business can send reminder nudges.
-    Never raises — returns [] on any error.
+    Return orders stuck in awaiting_payment / payment_review / pending_cash
+    longer than `older_than_hours` hours, so the business can send reminder
+    nudges. Never raises — returns [] on any error.
+
+    Bug fix: the default status list used to omit "pending_cash", so a cash
+    order never appeared in GET /payments/reminders/pending or the "send
+    reminders" bulk job no matter how long it sat unconfirmed — even though
+    individual per-order nudging (routes/business_routes.py's
+    reminder_nudge()) and payment_reminder.py's own message builder
+    (_cash_reminder()) both already explicitly support cash orders. This is
+    also the root cause behind the dashboard's "Needs Attention" panel
+    showing a cash order as awaiting payment while the Reminders /
+    pending-payments page showed none — the two were reading different
+    status lists for the same thing.
     """
     from datetime import datetime, timezone, timedelta
 
     if statuses is None:
-        statuses = ["awaiting_payment", "payment_review"]
+        statuses = ["awaiting_payment", "payment_review", "pending_cash"]
 
     try:
         res = (
@@ -304,7 +315,7 @@ def get_stale_payment_orders_all_businesses(
     from datetime import datetime, timezone, timedelta
 
     if statuses is None:
-        statuses = ["awaiting_payment", "payment_review"]
+        statuses = ["awaiting_payment", "payment_review", "pending_cash"]
 
     try:
         res = (

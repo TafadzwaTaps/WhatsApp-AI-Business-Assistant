@@ -177,18 +177,6 @@ select option{background:var(--surface2);}
       <div class="hint">Customers will message this number to order</div>
     </div>
     <div class="form-group">
-      <label>EcoCash Number (optional)</label>
-      <input id="f-ecocash" type="text" placeholder="+263 77 123 4567"/>
-    </div>
-    <div class="form-group">
-      <label>EcoCash Account Name (optional)</label>
-      <input id="f-ecocash-name" type="text" placeholder="Name on EcoCash account"/>
-    </div>
-    <div class="form-group">
-      <label>PayPal Email (optional)</label>
-      <input id="f-paypal" type="email" placeholder="payments@example.com"/>
-    </div>
-    <div class="form-group">
       <label>Currency</label>
       <select id="f-currency">
         <option value="USD" selected>USD ($)</option>
@@ -196,7 +184,36 @@ select option{background:var(--surface2);}
         <option value="ZAR">ZAR (R)</option>
         <option value="GBP">GBP (£)</option>
         <option value="EUR">EUR (€)</option>
+        <option value="PLN">PLN (zł)</option>
       </select>
+      <div class="hint">Which payment fields matter below depends on this — pick it first.</div>
+    </div>
+    <!-- The customer-facing payment menu only ever offers a method once it's
+         filled in here (services/payment_service.py::available_methods() —
+         Cash and PayPal are universal, EcoCash/Bank Transfer/BLIK are all
+         opt-in). All four are shown so any business can mix and match, but
+         they're labelled with the region they actually apply to so a
+         Poland-based business isn't nudged toward EcoCash, and a
+         Zimbabwe-based one isn't nudged toward BLIK. -->
+    <div class="form-group">
+      <label>EcoCash Number (optional — Zimbabwe)</label>
+      <input id="f-ecocash" type="text" placeholder="+263 77 123 4567"/>
+    </div>
+    <div class="form-group">
+      <label>EcoCash Account Name (optional)</label>
+      <input id="f-ecocash-name" type="text" placeholder="Name on EcoCash account"/>
+    </div>
+    <div class="form-group">
+      <label>Bank Transfer Details (optional — e.g. Poland/EU)</label>
+      <textarea id="f-banktransfer" rows="3" placeholder="Account name: Your Business&#10;IBAN: PL00 0000 0000 0000 0000 0000 0000&#10;Bank: mBank"></textarea>
+    </div>
+    <div class="form-group">
+      <label>BLIK Number (optional — Poland)</label>
+      <input id="f-blik" type="tel" placeholder="+48 500 000 000"/>
+    </div>
+    <div class="form-group">
+      <label>PayPal Email (optional)</label>
+      <input id="f-paypal" type="email" placeholder="payments@example.com"/>
     </div>
     <div class="btn-row">
       <button class="btn-back" onclick="goStep(1)">← Back</button>
@@ -435,6 +452,25 @@ async function launch() {
           category:        val('f-category') || undefined,
           tagline:         val('f-tagline')  || undefined,
         }),
+      });
+    }
+
+    // Bank Transfer / BLIK — separate dedicated endpoints (not part of the
+    // PATCH /me model above), same as the Settings page uses. Each one
+    // rejects an empty value, so only call it when the field was actually
+    // filled in — these are optional, same as EcoCash/PayPal. Intentionally
+    // NOT nested inside the block above so they save regardless of whether
+    // the AI-config fields (welcome/hours/role) were left blank.
+    if (val('f-banktransfer')) {
+      await safeFetch('/me/payment-settings/banktransfer', {
+        method: 'POST', headers,
+        body: JSON.stringify({ bank_transfer_details: val('f-banktransfer') }),
+      });
+    }
+    if (val('f-blik')) {
+      await safeFetch('/me/payment-settings/blik', {
+        method: 'POST', headers,
+        body: JSON.stringify({ blik_number: val('f-blik') }),
       });
     }
 

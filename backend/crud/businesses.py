@@ -130,28 +130,46 @@ def get_business_payment_settings(business_id: int) -> dict:
     """
     Return all payment settings for a business in a single dict.
     Used by ai.py / payments.py to inject into the order dict before
-    calling gateway functions.
+    calling gateway functions — in particular, routes/business_routes.py's
+    /me endpoint and _ai_products.py's _build_payment_menu() both call this
+    and feed the result straight into services/payment_service.py's
+    available_methods() to decide which payment options a customer sees.
 
     Returns:
       {
-        "ecocash_number":  str,   # e.g. "+263771234567"
-        "ecocash_name":    str,   # e.g. "Flavoury Foods"
-        "paypal_email":    str,   # e.g. "pay@flavoury.com"
-        "payment_number":  str,   # legacy field (same as ecocash_number)
-        "payment_name":    str,   # legacy field (same as ecocash_name)
+        "ecocash_number":         str,   # e.g. "+263771234567"
+        "ecocash_name":           str,   # e.g. "Flavoury Foods"
+        "paypal_email":           str,   # e.g. "pay@flavoury.com"
+        "bank_transfer_details":  str,   # free-text IBAN/account details
+        "blik_number":            str,   # e.g. "+48500000000"
+        "payment_number":         str,   # legacy field (same as ecocash_number)
+        "payment_name":           str,   # legacy field (same as ecocash_name)
       }
     All values are empty strings if not configured.
+
+    Bug fix: this used to omit bank_transfer_details/blik_number entirely,
+    so even a business that had already filled those in via Settings (the
+    dedicated /me/payment-settings/banktransfer and /blik endpoints, which
+    do persist them on the businesses row) would still only ever be
+    offered EcoCash/PayPal/Cash in the actual WhatsApp checkout menu — the
+    two fields were saved but silently never read back out here. This is
+    also why a non-Zimbabwe business (e.g. one set up with Bank
+    Transfer/BLIK for Poland) could never get those options to show
+    instead of EcoCash.
     """
     biz = get_business_by_id(business_id)
     if not biz:
         return {
             "ecocash_number": "", "ecocash_name": "",
-            "paypal_email": "", "payment_number": "", "payment_name": "",
+            "paypal_email": "", "bank_transfer_details": "", "blik_number": "",
+            "payment_number": "", "payment_name": "",
         }
     return {
         "ecocash_number": biz.get("ecocash_number") or biz.get("payment_number") or "",
         "ecocash_name":   biz.get("ecocash_name")   or biz.get("payment_name")  or "",
         "paypal_email":   biz.get("paypal_email")   or "",
+        "bank_transfer_details": biz.get("bank_transfer_details") or "",
+        "blik_number":           biz.get("blik_number") or "",
         # Legacy aliases — kept for backward compatibility with invoice.py
         "payment_number": biz.get("ecocash_number") or biz.get("payment_number") or "",
         "payment_name":   biz.get("ecocash_name")   or biz.get("payment_name")  or "",

@@ -511,6 +511,20 @@ function updateHandoffUI(isHandoff) {
   if (bannerB) bannerB.textContent  = isHandoff ? '▶ Resume AI' : '⏸ Pause AI';
   if (input)   input.style.borderColor  = isHandoff ? 'rgba(245,158,11,0.6)' : '';
   if (sbtn)    sbtn.style.background    = isHandoff ? '#f59e0b' : '';
+
+  // These quick actions send messages to the customer or change payment/
+  // order state directly, bypassing the AI — only safe to use once a human
+  // agent has actually taken over this conversation (handoff on). While
+  // the AI is still handling replies, these stay visible but disabled so
+  // an agent doesn't fire a manual nudge that collides with what the bot
+  // is already saying.
+  document.querySelectorAll('.qa-btn[data-requires-handoff]').forEach(btn => {
+    if (!btn.dataset.originalTitle) btn.dataset.originalTitle = btn.title;
+    btn.disabled = !isHandoff;
+    btn.title = isHandoff
+      ? btn.dataset.originalTitle
+      : `${btn.dataset.originalTitle} — switch to 👤 Agent mode first`;
+  });
 }
 
 async function toggleHandoff() {
@@ -1074,10 +1088,108 @@ const _origOpenChat = typeof openChat === 'function' ? openChat : null;
   window.openChat = async function(customerId, phone, lastSeen) {
     await _orig.call(this, customerId, phone, lastSeen);
     showQuickActions();
+    checkPaymentVerification(phone);
   };
 })();
 
+/* ── Payment proof verification banner ──────────────────────
+   Surfaces "customer submitted a transaction ID / screenshot, go verify
+   it" separately from the normal quick-actions bar — this needs to stay
+   visible and actionable even though regular send-actions are gated
+   behind human handoff (see updateHandoffUI's data-requires-handoff
+   gating above), since the team needs to notice and act on a submitted
+   proof whether or not they've already taken manual control of the chat. */
+async function checkPaymentVerification(phone) {
+  const banner = document.getElementById('payment-verify-banner');
+  if (!banner) return;
+  banner.style.display = 'none';
+  if (!phone) return;
+
+  const orders = await _findCustomerOrders(phone);
+  const order  = orders.find(o => PAYMENT_VERIFICATION_STATUSES.includes(o.payment_status));
+  if (!order) return;
+
+  const method = (order.payment_method || 'payment').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+  const proof  = (order.payment_reference || '').split('|').slice(1).join('|').trim(); // "ORDER-44 | Txn/Proof: ..." → the proof part
+  banner.innerHTML = `
+    <span>🔍 <strong>ORDER-${order.id}</strong> — ${escHtml(method)} payment proof submitted${proof ? `: <em>${escHtml(proof)}</em>` : ' (image)'}. Please verify before confirming.</span>
+    <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;white-space:nowrap;" onclick="verifyAndMarkPaid()">✅ Verify &amp; Mark Paid</button>
+  `;
+  banner.dataset.orderId = order.id;
+  banner.style.display = 'flex';
+}
+
+// Verifying proof is a judgment call a human has to make (checking the
+// screenshot/txn ID actually matches), so — consistent with Mark Paid /
+// Request Payment elsewhere in this bar — it only proceeds once the chat
+// is in human-agent mode. Unlike those buttons, this one is allowed to
+// switch handoff on itself rather than just staying disabled, since the
+// whole point of this banner is "come look at this now".
+async function verifyAndMarkPaid() {
+  if (!currentCustomerId) return;
+  if (!currentHandoffState) {
+    try {
+      await apiFetch(`/chat/handoff/${currentCustomerId}/request`, { method: 'POST' });
+      currentHandoffState = true;
+      updateHandoffUI(true);
+      loadConversations(false).catch(() => {});
+    } catch (e) {
+      showToast('⚠ Could not switch to Agent mode: ' + e.message, true);
+      return;
+    }
+  }
+  await qaMarkPaid();
+  checkPaymentVerification(currentPhone);
+}
+
 // ── Quick action handlers ───────────────────────────────────────────
+
+// Bug fix: these three actions used to look a customer's order up via
+// /payments/reminders/pending, which only returns orders that are already
+// stale (1h+ old — see workflows/payment_reminder.py's FIRST_REMINDER_HOURS).
+// That's the right source for the automated "Reminders" nudge queue, but
+// it meant Request Payment / Mark Paid / Invoice silently found nothing for
+// any order placed within the last hour — even though the Overview's
+// "Needs Attention" panel (loadNeedsAttention() in dashboard.js) flags
+// those same orders immediately, by reading ALL orders. Pressing "Request
+// Payment" would then show the Overview notification but the button
+// itself (and Orders/pending-payments) found nothing to act on. Fixed by
+// reading the same full order list the Needs Attention panel and Orders
+// page already use (GET /orders), so all three agree regardless of how
+// old the order is.
+//
+// Also note: payment state lives in payment_status, not status — status
+// is the fulfillment-lifecycle column (pending/confirmed/preparing/…) and
+// only happens to read "pending_cash" for cash orders specifically; an
+// EcoCash/PayPal/BLIK order awaiting payment stays status="pending" the
+// whole time. payment_status is the column crud.update_order_payment()
+// (the actual checkout code) writes to, so it's the one source of truth
+// used here — matching the same fix applied to loadNeedsAttention().
+const PAYMENT_PENDING_STATUSES = ['awaiting_payment', 'payment_review', 'pending_cash'];
+
+// Proof-of-payment verification (EcoCash / PayPal manual review).
+// services/ai.py sets payment_status="awaiting_confirmation" the moment a
+// customer submits a transaction ID or screenshot while in the
+// awaiting_proof conversation state (see P1 — AWAITING PROOF STATE). Until
+// now nothing surfaced that anywhere for the business: it wasn't in
+// PAYMENT_PENDING_STATUSES above (so Needs Attention / Reminders / Mark
+// Paid never looked for it), and the conversation-summary "pending
+// payment" chip gets cleared the moment proof comes in (state moves on to
+// awaiting_fulfillment/awaiting_address). A submitted proof could sit
+// forever with no one told to go check it. checkPaymentVerification()
+// below surfaces it as its own banner in the open chat.
+const PAYMENT_VERIFICATION_STATUSES = ['awaiting_confirmation'];
+
+async function _findCustomerOrders(phone) {
+  try {
+    const raw = await apiFetch('/orders');
+    const orders = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
+    // /orders is already sorted newest-first (crud.get_orders orders by id desc)
+    return orders.filter(o => o.customer_phone === phone);
+  } catch (_) {
+    return [];
+  }
+}
 
 async function qaRepeatLastOrder() {
   if (!currentCustomerId) return;
@@ -1091,18 +1203,14 @@ async function qaRequestPayment() {
   // Try to find an unpaid order for this customer
   let paymentMsg = "💳 *Payment Reminder*\n\nYou have a pending payment. Please complete your payment to confirm your order.\n\nType *help* if you need the payment details again.";
 
-  try {
-    // Fetch pending reminders for the business (uses existing endpoint)
-    const reminders = await apiFetch('/payments/reminders/pending');
-    const orders    = reminders.orders || [];
-    const match     = orders.find(o => o.customer_phone === currentPhone);
-    if (match) {
-      const ref   = `ORDER-${match.order_id}`;
-      const total = parseFloat(match.total_price || 0).toFixed(2);
-      const method = (match.payment_method || 'EcoCash').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
-      paymentMsg = `💳 *Payment Due*\n\n📦 Order: *${ref}*\n💰 Amount: *$${total}*\n📱 Method: *${method}*\n\nPlease complete your payment to confirm your order. Reply *paid* once done.`;
-    }
-  } catch (_) {}
+  const orders = await _findCustomerOrders(currentPhone);
+  const match  = orders.find(o => PAYMENT_PENDING_STATUSES.includes(o.payment_status));
+  if (match) {
+    const ref   = `ORDER-${match.id}`;
+    const total = parseFloat(match.total_price || 0).toFixed(2);
+    const method = (match.payment_method || 'EcoCash').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+    paymentMsg = `💳 *Payment Due*\n\n📦 Order: *${ref}*\n💰 Amount: *$${total}*\n📱 Method: *${method}*\n\nPlease complete your payment to confirm your order. Reply *paid* once done.`;
+  }
 
   await _qaSend(paymentMsg, 'Payment request sent ✓');
 }
@@ -1110,29 +1218,38 @@ async function qaRequestPayment() {
 async function qaMarkPaid() {
   if (!currentCustomerId || !currentPhone) return;
 
-  // Find the most recent stale order for this customer
-  let orderFound = false;
-  try {
-    const reminders = await apiFetch('/payments/reminders/pending');
-    const orders    = (reminders.orders || []).filter(o => o.customer_phone === currentPhone);
-    if (orders.length > 0) {
-      const order = orders[0];
-      if (!confirm(`Mark ORDER-${order.order_id} ($${parseFloat(order.total_price||0).toFixed(2)}) as PAID?`)) return;
-      await apiFetch(`/payments/reminders/${order.order_id}/nudge?dry_run=false`, { method: 'POST' });
-      // Manually confirm via payment endpoint
-      await apiFetch(`/payments/manual/confirm`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ order_id: order.order_id, reference: `ORDER-${order.order_id}`, amount: parseFloat(order.total_price || 0) }),
-      });
-      showToast(`✅ ORDER-${order.order_id} marked as paid`);
-      orderFound = true;
-    }
-  } catch (e) {
-    showToast('⚠ Could not mark paid: ' + e.message, true);
+  // Matches either "still owes money" (PAYMENT_PENDING_STATUSES) or
+  // "submitted proof, needs verifying" (PAYMENT_VERIFICATION_STATUSES) —
+  // Mark Paid is the same confirm action either way, the only difference
+  // is whether a human needs to eyeball a screenshot first.
+  const orders = (await _findCustomerOrders(currentPhone))
+    .filter(o => PAYMENT_PENDING_STATUSES.includes(o.payment_status)
+              || PAYMENT_VERIFICATION_STATUSES.includes(o.payment_status));
+
+  if (!orders.length) {
+    showToast('ℹ No pending-payment orders found for this customer');
     return;
   }
-  if (!orderFound) showToast('ℹ No pending orders found for this customer');
+
+  const order = orders[0];
+  if (!confirm(`Mark ORDER-${order.id} ($${parseFloat(order.total_price||0).toFixed(2)}) as PAID?`)) return;
+
+  try {
+    // Marking paid only ever confirms — it must never also fire a "please
+    // pay" reminder nudge at the customer in the same action (that was a
+    // real bug here: a reminder nudge used to be sent right before the
+    // confirm call, so a customer could get "please pay" immediately
+    // followed by "payment confirmed" for the same order).
+    await apiFetch(`/payments/manual/confirm`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ order_id: order.id, reference: `ORDER-${order.id}`, amount: parseFloat(order.total_price || 0) }),
+    });
+    showToast(`✅ ORDER-${order.id} marked as paid`);
+    checkPaymentVerification(currentPhone);
+  } catch (e) {
+    showToast('⚠ Could not mark paid: ' + e.message, true);
+  }
 }
 
 async function qaCreateDelivery() {
@@ -1164,19 +1281,19 @@ async function qaViewCustomer() {
 async function qaGenerateInvoice() {
   if (!currentCustomerId || !currentPhone) return;
 
-  // Find the most recent order for this customer to get an order_id
+  // Find the most recent order for this customer, any status — an invoice
+  // is just as valid for a confirmed/paid order as a pending one, so this
+  // (unlike Request Payment / Mark Paid) intentionally does NOT filter to
+  // payment-pending statuses.
   let invoiceSent = false;
-  try {
-    const reminders = await apiFetch('/payments/reminders/pending');
-    const orders    = (reminders.orders || []).filter(o => o.customer_phone === currentPhone);
-    if (orders.length > 0) {
-      const orderId = orders[0].order_id;
-      const invoiceUrl = `${window.location.origin}/invoice/${orderId}`;
-      const msg = `🧾 *Invoice for ORDER-${orderId}*\n\nYou can download your invoice here:\n${invoiceUrl}`;
-      await _qaSend(msg, `Invoice link sent for ORDER-${orderId} ✓`);
-      invoiceSent = true;
-    }
-  } catch (_) {}
+  const orders = await _findCustomerOrders(currentPhone);
+  if (orders.length > 0) {
+    const orderId = orders[0].id;
+    const invoiceUrl = `${window.location.origin}/invoice/${orderId}`;
+    const msg = `🧾 *Invoice for ORDER-${orderId}*\n\nYou can download your invoice here:\n${invoiceUrl}`;
+    await _qaSend(msg, `Invoice link sent for ORDER-${orderId} ✓`);
+    invoiceSent = true;
+  }
 
   if (!invoiceSent) {
     showToast('ℹ No recent orders found for this customer');
