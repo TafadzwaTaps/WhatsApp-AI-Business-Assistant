@@ -518,11 +518,50 @@ async function getCachedMe() {
       _setServiceMode(_isSvc);
       const _chk0 = document.getElementById('set-is-service-business');
       if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc, /*_skipSave=*/true); }
+      applyIndustryProductCategories(result.category);
     }
     return result;
   } catch (e) {
     return _meCache.data || null;
   }
+}
+
+// Product categories used to list EVERY industry group (Retail, Food,
+// Hospitality, Beauty, Healthcare, Automotive…) for every business, so a
+// hair salon had to scroll past hundreds of irrelevant entries. The
+// product category <select> is built from the same grouped list as the
+// store-category select in Settings → Profile, so once the store's
+// category is known we keep only the optgroup that contains it (a hair
+// salon -> "Beauty & Wellness"). Safe fallbacks: if the category is
+// empty, custom ("Other"), or not found in any group, nothing is hidden.
+// The full list is snapshotted once so a later category change in
+// Settings can re-filter from the original, not from an already-filtered list.
+const _prodCatOriginal = {};
+function applyIndustryProductCategories(storeCategory) {
+  // The edit-modal select is cloned from this one on first open (see
+  // openProdEdit) — reset it so the next open re-clones the filtered list.
+  const _editSel = document.getElementById('edit-prod-category');
+  if (_editSel) { _editSel.innerHTML = ''; delete _editSel.dataset.populated; }
+  ['product-category'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    if (!(id in _prodCatOriginal)) _prodCatOriginal[id] = sel.innerHTML;
+    const keep = sel.value;
+    sel.innerHTML = _prodCatOriginal[id];
+    const cat = (storeCategory || '').trim();
+    if (!cat) return;
+    const groups = Array.from(sel.querySelectorAll('optgroup'));
+    const match = groups.find(g => Array.from(g.querySelectorAll('option'))
+      .some(o => (o.value || o.textContent).trim().toLowerCase() === cat.toLowerCase()));
+    if (!match) return;               // custom/unknown category -> show everything
+    groups.forEach(g => { if (g !== match) g.remove(); });
+    if (keep && !Array.from(sel.options).some(o => (o.value || o.textContent) === keep)) {
+      // never lose an already-chosen value that falls outside the group
+      const o = document.createElement('option');
+      o.textContent = keep; sel.appendChild(o);
+    }
+    sel.value = keep;
+  });
 }
 
 function invalidateMeCache() {
@@ -2499,6 +2538,8 @@ async function loadSettings() {
     _setVal('set-hours',         b.business_hours || '');
     _setVal('set-instagram',     b.instagram || '');
     _setVal('set-facebook',      b.facebook || '');
+    const _soc = (b.features_json && b.features_json.social_links) || {};
+    ['tiktok','telegram','x','youtube','linkedin'].forEach(k => _setVal('set-' + k, _soc[k] || ''));
     // Multi-language toggle — restore saved state from features_json
     const translationToggle = document.getElementById('set-translation-enabled');
     if (translationToggle) {
@@ -2595,7 +2636,14 @@ async function saveProfile() {
     // Fix 3: include owner_email — undefined is omitted by JSON.stringify so
     // an empty field sends nothing (no accidental email wipe)
     const _ownerEmail = (_getVal('set-owner-email') || '').trim() || undefined;
+    // Extra social links live in features_json.social_links (no migration);
+    // merge into the existing features_json so other keys are never wiped.
+    const _meNow = await apiFetch('/me').catch(() => ({}));
+    const _fjNow = (_meNow && _meNow.features_json) || {};
+    const _socialLinks = { ...(_fjNow.social_links || {}) };
+    ['tiktok','telegram','x','youtube','linkedin'].forEach(k => { _socialLinks[k] = (_getVal('set-' + k) || '').trim(); });
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
+      features_json: { ..._fjNow, social_links: _socialLinks },
       name,
       category,
       description:     _getVal('set-description'),
@@ -2617,6 +2665,8 @@ async function saveProfile() {
     if (_rl && userRole !== 'superadmin') _rl.textContent = bizName;
     const hdr = document.getElementById('biz-name-header');
     if (hdr) hdr.textContent = '🟢 ' + bizName;
+    invalidateMeCache();
+    try { applyIndustryProductCategories(category); } catch(_) {}
     toast('✅ Profile saved');
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
@@ -7863,6 +7913,11 @@ async function loadSiteGeneratorSettings() {
     if (_accentInp) _accentInp.value = _savedAccent || '#22c55e';
     if (_savedAccent) sgPreviewAccent(_savedAccent);
 
+    _setVal('sg-hero-title', cfg.hero_title || '');
+    _setVal('sg-hero-tagline', cfg.hero_tagline || '');
+    _setVal('sg-description', cfg.description || '');
+    _setVal('sg-cta-text', cfg.cta_text || '');
+    _setVal('sg-contact-title', cfg.contact_title || '');
     _setVal('sg-hours', cfg.business_hours || '');
     _setVal('sg-location', cfg.location || '');
 
@@ -7895,6 +7950,11 @@ async function saveSiteGeneratorSettings() {
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
       accent_color:     _accentColor,
+      hero_title:       (_getVal('sg-hero-title') || '').trim().slice(0, 80),
+      hero_tagline:     (_getVal('sg-hero-tagline') || '').trim().slice(0, 160),
+      description:      (_getVal('sg-description') || '').trim().slice(0, 600),
+      cta_text:         (_getVal('sg-cta-text') || '').trim().slice(0, 40),
+      contact_title:    (_getVal('sg-contact-title') || '').trim().slice(0, 60),
       business_hours:   _getVal('sg-hours') || '',
       location:         _getVal('sg-location') || '',
       show_hours:       document.getElementById('sg-show-hours')?.checked    ?? true,

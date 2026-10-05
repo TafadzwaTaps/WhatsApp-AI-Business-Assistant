@@ -453,7 +453,72 @@ def _get_site_settings(features_json: dict | None) -> dict:
         # Custom accent colour — overrides the theme's default accent when set.
         # Stored as a hex string e.g. "#ff6b35". Empty string = use theme default.
         "accent_color":   cfg.get("accent_color",   ""),
+        # Owner-editable text overrides (limited, per-site). Empty = keep the
+        # existing default copy. Length-capped here; HTML-escaped at render.
+        "hero_title":     _clip_text(cfg.get("hero_title"),   80),
+        "hero_tagline":   _clip_text(cfg.get("hero_tagline"), 160),
+        "cta_text":       _clip_text(cfg.get("cta_text"),     40),
+        "contact_title":  _clip_text(cfg.get("contact_title"), 60),
     }
+
+
+def _clip_text(v, limit: int) -> str:
+    """Whitespace-normalised, length-limited plain text ('' if not a string)."""
+    if not isinstance(v, str):
+        return ""
+    return " ".join(v.split())[:limit]
+
+
+# Social platforms the owner can link from their site. Each value in
+# features_json.social_links is a handle or URL; _social_url() turns it into
+# a safe https URL on the platform's own domain (never an arbitrary scheme).
+SOCIAL_PLATFORMS = {
+    "instagram": ("📸", "Instagram", "https://instagram.com/{h}"),
+    "facebook":  ("📘", "Facebook",  "https://facebook.com/{h}"),
+    "tiktok":    ("🎵", "TikTok",    "https://tiktok.com/@{h}"),
+    "telegram":  ("✈️", "Telegram",  "https://t.me/{h}"),
+    "x":         ("𝕏",  "X",         "https://x.com/{h}"),
+    "youtube":   ("▶️", "YouTube",   "https://youtube.com/@{h}"),
+    "linkedin":  ("💼", "LinkedIn",  "https://linkedin.com/company/{h}"),
+}
+
+
+def _social_url(platform: str, value) -> str:
+    """Normalise a handle/URL to https://<platform domain>/<handle>; '' if invalid."""
+    if platform not in SOCIAL_PLATFORMS or not isinstance(value, str):
+        return ""
+    v = value.strip()
+    if not v or len(v) > 200:
+        return ""
+    tmpl = SOCIAL_PLATFORMS[platform][2]
+    domain = tmpl.split("/")[2].replace("www.", "")
+    if re.match(r"^https?://", v, re.I):
+        host = (re.match(r"^https?://([^/?#]+)", v, re.I).group(1) or "").lower().replace("www.", "")
+        if host == domain or host.endswith("." + domain) or (platform == "x" and host.endswith("twitter.com")) \
+                or (platform == "telegram" and host in ("t.me", "telegram.me")):
+            return v if len(v) <= 200 and not re.search(r"[\s\"'<>]", v) else ""
+        return ""
+    handle = v.lstrip("@").strip("/")
+    # also tolerate "domain/handle" pasted without scheme
+    handle = re.sub(r"^(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}/", "", handle, flags=re.I).lstrip("@")
+    if not re.match(r"^[A-Za-z0-9._\-]{1,64}$", handle):
+        return ""
+    return tmpl.format(h=handle)
+
+
+def _social_links_html(biz: dict) -> str:
+    fj = biz.get("features_json") or {}
+    links = dict(fj.get("social_links") or {}) if isinstance(fj, dict) else {}
+    # Legacy instagram/facebook columns still count when no explicit link set
+    for k in ("instagram", "facebook"):
+        if not links.get(k) and biz.get(k):
+            links[k] = biz.get(k)
+    out = []
+    for key, (icon, label, _t) in SOCIAL_PLATFORMS.items():
+        url = _social_url(key, links.get(key))
+        if url:
+            out.append(f'<a class="social-link" href="{_e(url)}" target="_blank" rel="noopener noreferrer">{icon} {label}</a>')
+    return f'<div class="social-links">{"".join(out)}</div>' if out else ""
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -964,9 +1029,10 @@ def _nav_html(sections: dict, biz_name: str) -> str:
 
 def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = False) -> str:
     name        = _e(biz.get("name", "Our Business"))  # protected — never translated
+    hero_title  = _e(settings.get("hero_title") or biz.get("name", "Our Business"))
     raw_category= biz.get("category", "") or ""
     category    = _e(raw_category)
-    raw_tagline = biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
+    raw_tagline = settings.get("hero_tagline") or biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
     tagline     = _e(raw_tagline)
     logo_url    = biz.get("logo_url", "")
 
@@ -1001,9 +1067,13 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     # Route hero CTA through /go/{slug} to track WhatsApp link clicks (acquisition analytics)
     _hero_slug = _name_to_slug(biz.get("name", ""))
     wa_href = f"/go/{_e(_hero_slug)}" if _hero_slug else _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
+    _cta_label = (
+        f'<span>{_e(settings["cta_text"])}</span>' if settings.get("cta_text")
+        else f'<span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span>'
+    )
     cta = (
         f'<a class="hero-cta" href="{wa_href}" rel="noopener">'
-        f'💬 <span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span></a>'
+        f'💬 {_cta_label}</a>'
     ) if settings["show_ordering"] else ""
 
     # Service businesses get an additional "Book an Appointment" CTA
@@ -1022,7 +1092,7 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     <div class="hero-inner">
       {logo_html}
       {cat_badge}
-      <h1 class="hero-title">{name}</h1>
+      <h1 class="hero-title">{hero_title}</h1>
       <p class="hero-tagline" data-i18n-dyn="{tagline_key}">{tagline}</p>
       {chips_html}
       {cta}
@@ -1288,11 +1358,16 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
             f'</div>'
         )
 
+    _contact_title = (
+        f'<span>{_e(settings["contact_title"])}</span>' if settings.get("contact_title")
+        else '<span data-i18n="get_in_touch">Get In Touch</span>'
+    )
     return f"""
   <section class="contact-section" id="contact">
     <div class="section-inner contact-inner">
-      <h2 class="section-title">📬 <span data-i18n="get_in_touch">Get In Touch</span></h2>
+      <h2 class="section-title">📬 {_contact_title}</h2>
       <div class="contact-details">{items_html}</div>
+      {_social_links_html(biz)}
       {map_html}
       <a class="wa-cta-big" href="{wa_href}" target="_blank" rel="noopener">
         💬 <span data-i18n="message_us">Message Us on WhatsApp</span>
@@ -1427,7 +1502,10 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
 .prod-card:hover{{transform:translateY(-4px);
                   box-shadow:0 12px 40px var(--shadow)}}
 .prod-card.hidden{{display:none!important}}
-.prod-img{{width:100%;height:200px;object-fit:contain;background:var(--surface2)}}
+.social-links{{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:18px 0}}
+.social-link{{padding:8px 14px;border:1px solid var(--surface2);border-radius:999px;color:inherit;text-decoration:none;font-size:14px;background:var(--surface2)}}
+.social-link:hover{{border-color:var(--brand)}}
+.prod-img{{width:100%;height:auto;aspect-ratio:4/3;max-height:320px;object-fit:contain;background:var(--surface2)}}
 .prod-img-ph{{width:100%;height:200px;background:var(--surface2);
               display:flex;align-items:center;justify-content:center;font-size:48px}}
 .prod-body{{padding:16px}}
@@ -1739,7 +1817,7 @@ def generate_site_html(slug: str) -> str:
     # Custom accent colour: user-picked hex overrides theme default.
     # Falls back to theme accent → business theme_colour → safe green.
     custom_accent = settings.get("accent_color", "").strip()
-    if custom_accent and custom_accent.startswith("#") and len(custom_accent) in (4, 7):
+    if custom_accent and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", custom_accent):
         theme       = custom_accent
         theme_dark  = _hex_darken(custom_accent, 25)
     else:

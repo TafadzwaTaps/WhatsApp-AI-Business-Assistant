@@ -2095,6 +2095,15 @@
               <div class="form-group"><label>Instagram</label><input type="text" id="set-instagram" placeholder="@yourbiz"/></div>
               <div class="form-group"><label>Facebook</label><input type="text" id="set-facebook" placeholder="facebook.com/yourbiz"/></div>
             </div>
+            <div class="form-row">
+              <div class="form-group"><label>TikTok</label><input type="text" id="set-tiktok" placeholder="@yourbiz"/></div>
+              <div class="form-group"><label>Telegram</label><input type="text" id="set-telegram" placeholder="@yourbiz or t.me/yourbiz"/></div>
+            </div>
+            <div class="form-row">
+              <div class="form-group"><label>X (Twitter)</label><input type="text" id="set-x" placeholder="@yourbiz"/></div>
+              <div class="form-group"><label>YouTube</label><input type="text" id="set-youtube" placeholder="@yourchannel"/></div>
+            </div>
+            <div class="form-group"><label>LinkedIn</label><input type="text" id="set-linkedin" placeholder="linkedin.com/company/yourbiz"/></div>
             <!-- H5: shown when owner_email is missing; dismissed via localStorage -->
             <div id="email-missing-banner" style="display:none;
                  background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);
@@ -3204,6 +3213,14 @@
               </div>
             </div>
 
+            <div class="form-group" style="margin-top:18px;">
+              <label>Site Text <span style="opacity:.6;font-weight:400;">(leave blank to keep the default wording)</span></label>
+              <input type="text" id="sg-hero-title" maxlength="80" placeholder="Headline (defaults to your business name)" style="margin-top:4px;"/>
+              <input type="text" id="sg-hero-tagline" maxlength="160" placeholder="Tagline under the headline" style="margin-top:8px;"/>
+              <textarea id="sg-description" maxlength="600" rows="3" placeholder="About text" style="margin-top:8px;width:100%;"></textarea>
+              <input type="text" id="sg-cta-text" maxlength="40" placeholder="Main button text (e.g. Order on WhatsApp)" style="margin-top:8px;"/>
+              <input type="text" id="sg-contact-title" maxlength="60" placeholder="Contact section title (e.g. Visit us)" style="margin-top:8px;"/>
+            </div>
             <div class="form-group" style="margin-top:18px;">
               <label>Business Hours <span style="opacity:.6;font-weight:400;">(shown on site if filled in)</span></label>
               <input type="text" id="sg-hours" placeholder="e.g. 8:00 AM – 8:00 PM" style="margin-top:4px;"/>
