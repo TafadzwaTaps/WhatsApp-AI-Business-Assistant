@@ -429,3 +429,59 @@ def email_unsubscribe(business_id: int, token: str):
         "<p><a href='/'>Return to WaziBot</a></p>"
         "</div></body></html>"
     )
+
+
+# ── Monthly-report opt-out ────────────────────────────────────────────────────
+# GET only shows a confirmation page (mail scanners/prefetchers follow links, so
+# a GET must not change anything); the POST from that page performs the opt-out.
+# Sets the same features_json.pref_weekly_reports flag the dashboard
+# Preferences toggle uses, so both stay in sync.
+def _report_page(title: str, body: str) -> str:
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
+        f"<title>{title} — WaziBot</title>"
+        "<style>body{font-family:Arial,sans-serif;background:#0a0f0d;color:#e8f5e9;"
+        "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}"
+        ".box{text-align:center;max-width:420px;padding:32px;}a{color:#22c55e;}"
+        "button{background:#22c55e;color:#000;border:0;border-radius:9px;padding:12px 24px;"
+        "font-weight:800;cursor:pointer;font-size:14px}</style></head><body><div class='box'>"
+        f"{body}</div></body></html>"
+    )
+
+
+@router.get("/email/unsubscribe-reports", response_class=HTMLResponse)
+def email_unsubscribe_reports_page(business_id: int, token: str):
+    from services.email_service import verify_report_unsub_token
+    if not verify_report_unsub_token(business_id, token):
+        raise HTTPException(400, "Invalid or expired link.")
+    return _report_page("Stop reports", (
+        "<h2>Stop monthly reports?</h2>"
+        "<p>You will no longer receive the monthly performance summary email. "
+        "You can turn it back on any time in Dashboard → Profile → Preferences.</p>"
+        f"<form method='post' action='/email/unsubscribe-reports?business_id={int(business_id)}&token={token}'>"
+        "<button type='submit'>Yes, stop the reports</button></form>"
+    ))
+
+
+@router.post("/email/unsubscribe-reports", response_class=HTMLResponse)
+def email_unsubscribe_reports(business_id: int, token: str):
+    from services.email_service import verify_report_unsub_token
+    if not verify_report_unsub_token(business_id, token):
+        raise HTTPException(400, "Invalid or expired link.")
+    try:
+        from core.db import supabase
+        res = (supabase.table("businesses").select("features_json")
+               .eq("id", business_id).limit(1).execute())
+        fj = (res.data[0].get("features_json") if res.data else None) or {}
+        fj["pref_weekly_reports"] = False
+        supabase.table("businesses").update({"features_json": fj}).eq("id", business_id).execute()
+        log.info("email: business_id=%s opted out of monthly reports", business_id)
+    except Exception as exc:
+        log.warning("email: report opt-out persist failed business_id=%s: %s", business_id, exc)
+        raise HTTPException(500, "Could not save your choice. Please turn reports off in Dashboard → Preferences.")
+    return _report_page("Reports stopped", (
+        "<h2>Reports turned off</h2>"
+        "<p>You won't receive the monthly report anymore. Order and account emails are unaffected.</p>"
+        "<p><a href='/'>Return to WaziBot</a></p>"
+    ))

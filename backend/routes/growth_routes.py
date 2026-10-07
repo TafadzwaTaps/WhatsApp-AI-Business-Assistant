@@ -537,11 +537,11 @@ def growth_automation_status(user=Depends(require_business)):
 # Feature 1 — admin trigger (superadmin only, for testing)
 @router.post("/growth/send-weekly-reports")
 def trigger_weekly_reports(user=Depends(require_business)):
-    """Admin-only endpoint to manually trigger weekly report emails."""
-    try:
-        from core.auth import require_superadmin
-    except ImportError:
-        pass
+    """Admin-only endpoint to manually trigger the report emails (monthly cadence)."""
+    # Previously documented as superadmin-only but never enforced, so any
+    # business login could email every business. Enforce it.
+    if (user or {}).get("role") != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin access required")
     try:
         from services.weekly_report_service import send_weekly_reports
         result = send_weekly_reports()

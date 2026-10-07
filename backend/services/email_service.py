@@ -73,6 +73,20 @@ def unsubscribe_url(business_id: int) -> str:
     return f"{_BASE_URL}/email/unsubscribe?business_id={business_id}&token={_unsubscribe_token(business_id)}"
 
 
+def _report_unsub_token(business_id: int) -> str:
+    """Token scoped to the report opt-out only (distinct HMAC purpose)."""
+    mac = hmac.new(_UNSUB_SECRET.encode(), f"reports:{business_id}".encode(), hashlib.sha256)
+    return mac.hexdigest()[:24]
+
+
+def verify_report_unsub_token(business_id: int, token: str) -> bool:
+    return hmac.compare_digest(_report_unsub_token(business_id), token or "")
+
+
+def report_unsubscribe_url(business_id: int) -> str:
+    return f"{_BASE_URL}/email/unsubscribe-reports?business_id={business_id}&token={_report_unsub_token(business_id)}"
+
+
 def _is_opted_out(business_id: Optional[int]) -> bool:
     """
     Best-effort marketing opt-out check (features_json.marketing_emails_opt_out).

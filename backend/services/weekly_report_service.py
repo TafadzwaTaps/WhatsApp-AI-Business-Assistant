@@ -1,14 +1,17 @@
 """
 services/weekly_report_service.py
 ══════════════════════════════════
-Feature 1 — Weekly Performance Summary Emails.
+Feature 1 — Performance Summary Emails (now MONTHLY; filename/function names
+kept as "weekly_*" so existing imports, main.py and the admin route keep working).
 
 PLACEMENT: backend/services/weekly_report_service.py
 
-Sends every business owner a simple weekly email every Monday with:
-  • Total orders last 7 days
-  • Revenue last 7 days
-  • New customers last 7 days
+Sends each business owner one summary email on the 1st of every month covering
+the previous calendar month, unless they opted out (Profile → Preferences →
+reports toggle, or the unsubscribe link in the email):
+  • Total orders
+  • Revenue
+  • New customers
   • Repeat customers count
   • Top product by order volume
 
@@ -38,10 +41,30 @@ _BASE_URL = os.getenv("WAZIBOT_URL", "https://wazibot-api-assistant.onrender.com
 # Data gathering
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _get_weekly_stats(business_id: int) -> dict:
+def _month_window(now: Optional[datetime] = None):
+    """(start, end, label) of the previous calendar month, in UTC."""
+    now = now or datetime.now(timezone.utc)
+    end = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    start = (end - timedelta(days=1)).replace(day=1)
+    return start, end, start.strftime("%B %Y")
+
+
+def _next_monthly_run(now: Optional[datetime] = None) -> datetime:
+    """Next 1st-of-month 08:00 UTC strictly after `now`."""
+    now = now or datetime.now(timezone.utc)
+    cand = now.replace(day=1, hour=8, minute=0, second=0, microsecond=0)
+    if cand <= now:
+        cand = (cand + timedelta(days=32)).replace(day=1)
+    return cand
+
+
+def _get_weekly_stats(business_id: int, since: Optional[datetime] = None,
+                      until: Optional[datetime] = None) -> dict:
     """
-    Pull 7-day stats for one business using existing Supabase tables.
-    Returns safe defaults on any error.
+    Pull stats for one business for [since, until) (default: last 30 days)
+    using existing Supabase tables. Returns safe defaults on any error.
+    NOTE: result keys keep their historical "_7d" names for compatibility;
+    they hold the figures for the requested window.
     """
     default = {
         "orders_7d": 0, "revenue_7d": 0.0,
@@ -51,7 +74,10 @@ def _get_weekly_stats(business_id: int) -> dict:
     try:
         from core.db import supabase
 
-        since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+        until_dt = until or datetime.now(timezone.utc)
+        since_dt = since or (until_dt - timedelta(days=30))
+        since = since_dt.isoformat()
+        until_iso = until_dt.isoformat()
 
         # Orders last 7 days
         orders_res = (
@@ -59,6 +85,7 @@ def _get_weekly_stats(business_id: int) -> dict:
             .select("id, total_price, payment_status, items, customer_phone, created_at")
             .eq("business_id", business_id)
             .gte("created_at", since)
+            .lt("created_at", until_iso)
             .execute()
         )
         orders = orders_res.data or []
@@ -75,6 +102,7 @@ def _get_weekly_stats(business_id: int) -> dict:
             .select("phone")
             .eq("business_id", business_id)
             .gte("created_at", since)
+            .lt("created_at", until_iso)
             .execute()
         )
         new_customers = len(new_cust_res.data or [])
@@ -112,8 +140,10 @@ def _get_weekly_stats(business_id: int) -> dict:
         return default
 
 
-def _build_report_html(business_name: str, stats: dict, dash_url: str) -> str:
-    """Build the weekly report HTML body."""
+def _build_report_html(business_name: str, stats: dict, dash_url: str,
+                       period_label: str = "", unsubscribe_link: str = "") -> str:
+    """Build the monthly report HTML body."""
+    period_label = period_label or _month_window()[2]
     top_product_line = (
         f"<p>⭐ <strong style='color:#e8f5e9'>Top product:</strong> "
         f"{stats['top_product']}</p>"
@@ -124,10 +154,9 @@ def _build_report_html(business_name: str, stats: dict, dash_url: str) -> str:
         repeat_pct = f" (customers who ordered more than once)"
 
     return f"""
-<h1>Your week at {business_name} 📊</h1>
+<h1>Your month at {business_name} 📊</h1>
 <p style='color:#6b8f71;font-family:monospace;font-size:12px;'>
-  {(datetime.now(timezone.utc) - timedelta(days=7)).strftime('%-d %b')} —
-  {datetime.now(timezone.utc).strftime('%-d %b %Y')}
+  {period_label}
 </p>
 
 <div style='background:#172010;border:1px solid #1f3025;border-radius:10px;
@@ -156,7 +185,13 @@ def _build_report_html(business_name: str, stats: dict, dash_url: str) -> str:
   <a href='{dash_url}' class='btn'>View Full Dashboard →</a>
 </p>
 
-{'<p style="font-family:monospace;font-size:12px;color:#6b8f71;">No orders this week — share your store link to get more customers: <a href="{_BASE_URL}/directory" style="color:#22c55e">{_BASE_URL}/directory</a></p>' if stats["orders_7d"] == 0 else ""}
+{'<p style="font-family:monospace;font-size:12px;color:#6b8f71;">No orders last month — share your store link to get more customers: <a href="{_BASE_URL}/directory" style="color:#22c55e">{_BASE_URL}/directory</a></p>' if stats["orders_7d"] == 0 else ""}
+
+<p style='font-family:monospace;font-size:11px;color:#6b8f71;margin-top:24px;'>
+  You get this summary once a month.
+  {f'<a href="{unsubscribe_link}" style="color:#22c55e">Stop these reports</a> or' if unsubscribe_link else ''}
+  you can switch it off any time in Dashboard → Profile → Preferences.
+</p>
 """
 
 
@@ -166,21 +201,24 @@ def _build_report_html(business_name: str, stats: dict, dash_url: str) -> str:
 
 def send_weekly_reports() -> dict:
     """
-    Send weekly report emails to all active businesses that have an email.
+    Send the monthly report email to all active businesses that have an email
+    and have not opted out (name kept for backward compatibility).
 
     Returns a summary dict: {sent, skipped, errors}
-    Called by the scheduler every Monday.
+    Called by the scheduler on the 1st of each month. Each business is sent at
+    most once per month (features_json.last_monthly_report guards restarts /
+    multiple instances).
     """
     sent = skipped = errors = 0
 
     try:
         from core.db import supabase
-        from services.email_service import _send, _base_template
+        from services.email_service import _send, _base_template, report_unsubscribe_url
 
         # Fetch all active businesses with an email address
         res = (
             supabase.table("businesses")
-            .select("id, name, owner_email, owner_username")
+            .select("id, name, owner_email, owner_username, features_json")
             .eq("is_active", True)
             .execute()
         )
@@ -192,24 +230,46 @@ def send_weekly_reports() -> dict:
             biz_name  = biz.get("name") or "Your Business"
             email     = (biz.get("owner_email") or "").strip()
 
+            fj        = biz.get("features_json") or {}
+            if not isinstance(fj, dict):
+                fj = {}
+
             if not email or "@" not in email:
                 skipped += 1
                 continue
 
-            try:
-                stats    = _get_weekly_stats(biz_id)
-                dash_url = f"{_BASE_URL}/dashboard"
-                body     = _build_report_html(biz_name, stats, dash_url)
-                html     = _base_template(f"Weekly Report — {biz_name}", body)
+            # Opt-out: the Preferences toggle and the email's unsubscribe link
+            # both store pref_weekly_reports=False. Absent = opted in (default).
+            if fj.get("pref_weekly_reports") is False:
+                skipped += 1
+                continue
 
-                week_str = datetime.now(timezone.utc).strftime("%-d %b %Y")
+            start, end, period = _month_window()
+            period_key = start.strftime("%Y-%m")
+            if fj.get("last_monthly_report") == period_key:
+                skipped += 1          # already sent for this month
+                continue
+
+            try:
+                stats    = _get_weekly_stats(biz_id, start, end)
+                dash_url = f"{_BASE_URL}/dashboard"
+                body     = _build_report_html(biz_name, stats, dash_url, period,
+                                              report_unsubscribe_url(biz_id))
+                html     = _base_template(f"Monthly Report — {biz_name}", body)
+
                 ok = _send(
                     to      = email,
-                    subject = f"{biz_name} — Weekly Report ({week_str}) 📊",
+                    subject = f"{biz_name} — Monthly Report ({period}) 📊",
                     html    = html,
                 )
                 if ok:
                     sent += 1
+                    try:
+                        supabase.table("businesses").update(
+                            {"features_json": {**fj, "last_monthly_report": period_key}}
+                        ).eq("id", biz_id).execute()
+                    except Exception as _exc:
+                        log.warning("weekly_report: could not record send for biz=%s: %s", biz_id, _exc)
                     log.info("weekly_report: sent to biz=%s email=%s", biz_id, email)
                 else:
                     errors += 1
@@ -231,8 +291,8 @@ def send_weekly_reports() -> dict:
 
 def attach_weekly_report_scheduler(app) -> None:
     """
-    Attach a simple background thread to FastAPI that fires weekly reports
-    every Monday at 08:00 UTC.
+    Attach a simple background thread to FastAPI that fires the report
+    on the 1st of every month at 08:00 UTC.
 
     Uses only stdlib threading + time — no new dependencies.
     Called once from main.py with attach_weekly_report_scheduler(app).
@@ -242,26 +302,29 @@ def attach_weekly_report_scheduler(app) -> None:
     import time as _time
 
     def _loop():
-        log.info("weekly_report_scheduler: background thread started")
+        log.info("report_scheduler: background thread started (monthly)")
         while True:
             try:
                 now = datetime.now(timezone.utc)
-                # Monday = 0, 08:00 UTC
-                days_until_monday = (7 - now.weekday()) % 7 or 7
-                next_run = now.replace(hour=8, minute=0, second=0, microsecond=0)
-                if now.weekday() != 0 or now.hour >= 8:
-                    next_run += timedelta(days=days_until_monday)
+                next_run = _next_monthly_run(now)
                 wait_seconds = (next_run - now).total_seconds()
                 log.info(
-                    "weekly_report_scheduler: next run in %.1f hours at %s",
+                    "report_scheduler: next run in %.1f hours at %s",
                     wait_seconds / 3600, next_run.strftime("%Y-%m-%d %H:%M UTC"),
                 )
-                _time.sleep(max(wait_seconds, 60))   # at least 60s sleep
-                send_weekly_reports()
+                # sleep in <=1 day chunks so very long waits survive clock drift
+                _time.sleep(min(max(wait_seconds, 60), 86400))
+                if datetime.now(timezone.utc) >= next_run:
+                    send_weekly_reports()
             except Exception as exc:
-                log.warning("weekly_report_scheduler: loop error: %s", exc)
+                log.warning("report_scheduler: loop error: %s", exc)
                 _time.sleep(3600)   # wait an hour and retry
 
     t = threading.Thread(target=_loop, daemon=True, name="weekly-report-scheduler")
     t.start()
     log.info("weekly_report_scheduler: daemon thread launched")
+
+
+# Clearer aliases for the monthly cadence (old names stay valid).
+send_monthly_reports = send_weekly_reports
+attach_monthly_report_scheduler = attach_weekly_report_scheduler

@@ -56,6 +56,7 @@ class FakeQueryBuilder:
     def limit(self, *a, **kw): return self
     def gte(self, *a, **kw): return self
     def lte(self, *a, **kw): return self
+    def lt(self, *a, **kw): return self
     def range(self, *a, **kw): return self
 
     def execute(self):
