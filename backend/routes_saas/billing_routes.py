@@ -5,6 +5,10 @@ Endpoints:
   GET  /billing/status            — current tier + features for logged-in business
   POST /billing/checkout          — create Stripe Checkout Session
   POST /billing/cancel            — cancel subscription at period end
+  POST /billing/resume            — undo a scheduled cancellation
+  POST /billing/change-plan       — upgrade an existing subscription (prorated)
+  POST /billing/portal            — Stripe Customer Portal (own business only)
+  GET  /billing/invoices          — real invoice history from Stripe
   GET  /billing/tiers             — list all available tiers + pricing
   POST /billing/webhook           — Stripe webhook receiver (public, sig-verified)
   GET  /billing/success           — landing page after successful checkout
@@ -43,6 +47,21 @@ class CheckoutRequest(BaseModel):
 
 class CancelRequest(BaseModel):
     confirm: bool = False
+
+
+class ChangePlanRequest(BaseModel):
+    tier:              str
+    billing_period:    str = "monthly"
+    confirm_proration: bool = False
+
+
+def _billing_error(result: dict):
+    """Map a service error to an HTTP status (never leaks internals)."""
+    code = result.get("code")
+    status = {"already_subscribed": 409, "confirmation_required": 409, "cancel_scheduled": 409,
+              "payment_required": 402, "no_customer": 400, "no_subscription": 404,
+              "mismatch": 403, "unconfigured": 503}.get(code, 400)
+    raise HTTPException(status, result["error"])
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -101,7 +120,7 @@ def billing_checkout(body: CheckoutRequest, user=Depends(require_business)):
         price_id_override = regional_price_id,
     )
     if "error" in result:
-        raise HTTPException(400, result["error"])
+        _billing_error(result)
     return result
 
 
@@ -113,8 +132,35 @@ def billing_cancel(body: CancelRequest, user=Depends(require_business)):
     from billing.stripe_service import cancel_subscription
     result = cancel_subscription(user["business_id"])
     if "error" in result:
-        raise HTTPException(400, result["error"])
+        _billing_error(result)
     return result
+
+
+@router.post("/billing/resume")
+def billing_resume(user=Depends(require_business)):
+    """Undo a scheduled end-of-period cancellation (before it takes effect)."""
+    from billing.stripe_service import resume_subscription
+    result = resume_subscription(user["business_id"])
+    if "error" in result:
+        _billing_error(result)
+    return result
+
+
+@router.post("/billing/change-plan")
+def billing_change_plan(body: ChangePlanRequest, user=Depends(require_business)):
+    """Upgrade the business's existing subscription (no second subscription is created)."""
+    from billing.stripe_service import change_plan
+    result = change_plan(user["business_id"], body.tier, body.billing_period, body.confirm_proration)
+    if "error" in result:
+        _billing_error(result)
+    return result
+
+
+@router.get("/billing/invoices")
+def billing_invoices(user=Depends(require_business)):
+    """Invoice/payment history for the caller's own business (Stripe-hosted links)."""
+    from billing.stripe_service import list_invoices
+    return list_invoices(user["business_id"])
 
 
 @router.get("/billing/pricing")
@@ -153,28 +199,14 @@ def billing_pricing(country: str = "", request: Request = None):
 
 @router.post("/billing/portal")
 def billing_portal(user=Depends(require_business)):
-    """Create a Stripe Customer Portal session so users can manage their subscription,
-    update payment method, view invoices — all without leaving WaziBot."""
-    from billing.stripe_service import _stripe, get_subscription_status
-    import os
-    stripe = _stripe()
-    if not stripe:
-        raise HTTPException(503, "Stripe not configured on this server")
-    status = get_subscription_status(user["business_id"])
-    customer_id = status.get("stripe_customer_id")
-    if not customer_id:
-        raise HTTPException(400, "No Stripe customer found — upgrade first to create one")
-    base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
-    try:
-        session = stripe.billing_portal.Session.create(
-            customer=customer_id,
-            return_url=f"{base}/static/dashboard.html",
-        )
-        url = getattr(session, "url", None) or (session.get("url") if isinstance(session, dict) else "")
-        return {"url": url}
-    except Exception as exc:
-        log.error("Stripe portal error: %s", exc)
-        raise HTTPException(500, str(exc))
+    """Stripe Customer Portal for the caller's own business. The Stripe customer
+    always comes from the server-side mapping (verified against Stripe), never
+    from the request."""
+    from billing.stripe_service import create_portal_session
+    result = create_portal_session(user["business_id"])
+    if "error" in result:
+        _billing_error(result)
+    return result
 
 
 # ── Stripe Connect — Merchant onboarding (Phase 1) ───────────────────────────
@@ -487,10 +519,12 @@ def billing_success(session_id: str = ""):
     Landing page after successful Stripe checkout.
     Returns JSON — the frontend dashboard should redirect here and show a success toast.
     """
+    # Visiting this URL proves nothing — access is granted only after Stripe's
+    # verified webhook is processed, so never claim the upgrade has happened.
     return {
-        "ok":         True,
-        "message":    "Subscription activated! Your plan has been upgraded.",
-        "session_id": session_id,
+        "ok":      True,
+        "message": "Payment received. Your plan updates as soon as Stripe confirms it "
+                   "(usually within a minute) — check Billing for your current status.",
     }
 
 

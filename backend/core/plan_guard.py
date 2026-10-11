@@ -63,10 +63,36 @@ _TIER_MAP = {
 # Human-readable plan names for upgrade messages
 _PLAN_LABELS = {
     "FREE":    "Free",
-    "STARTER": "Starter ($9/mo)",
-    "GROWTH":  "Growth ($29/mo)",
-    "PRO":     "Pro ($79/mo)",
+    "STARTER": "Starter",
+    "GROWTH":  "Growth",
+    "PRO":     "Pro",
 }
+
+
+# Billing statuses that never grant paid entitlements, whatever tier is stored.
+# (Defense in depth: a missed/late webhook can't leave a stale paid tier usable.)
+_NON_ENTITLED_STATUSES = ("cancelled", "canceled", "unpaid", "paused",
+                          "incomplete", "incomplete_expired")
+
+
+def _past_due_grace_expired(payment_failed_at) -> bool:
+    """True when a past_due business is beyond BILLING_PAST_DUE_GRACE_DAYS (default 3).
+    Unknown failure time → still in grace (never cut access on missing data)."""
+    import os
+    from datetime import timedelta
+    if not payment_failed_at:
+        return False
+    try:
+        days = max(0, int(os.getenv("BILLING_PAST_DUE_GRACE_DAYS", "3")))
+    except ValueError:
+        days = 3
+    try:
+        d = datetime.fromisoformat(str(payment_failed_at).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) > d + timedelta(days=days)
+    except Exception:
+        return False
 
 
 def _get_business_plan(business_id: int) -> dict:
@@ -77,17 +103,32 @@ def _get_business_plan(business_id: int) -> dict:
     """
     try:
         from core.db import supabase
-        res = (
-            supabase.table("businesses")
-            .select("subscription_tier, billing_status, trial_ends_at, trial_started_at")
-            .eq("id", business_id)
-            .limit(1)
-            .execute()
-        )
+        try:
+            res = (
+                supabase.table("businesses")
+                .select("subscription_tier, billing_status, trial_ends_at, trial_started_at, payment_failed_at")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
+        except Exception:
+            # billing_lifecycle_hardening.sql not applied yet → legacy columns only
+            res = (
+                supabase.table("businesses")
+                .select("subscription_tier, billing_status, trial_ends_at, trial_started_at")
+                .eq("id", business_id)
+                .limit(1)
+                .execute()
+            )
         row = (res.data or [{}])[0]
+        status = (row.get("billing_status") or "free").lower()
+        if status == "past_due" and _past_due_grace_expired(row.get("payment_failed_at")):
+            # Payment failed and the grace window has passed: entitlements lapse.
+            # "unpaid" is the real Stripe status for exhausted retries.
+            status = "unpaid"
         return {
             "tier":             (row.get("subscription_tier") or "free").lower(),
-            "billing_status":   (row.get("billing_status")   or "free").lower(),
+            "billing_status":   status,
             "trial_ends_at":    row.get("trial_ends_at"),
             "trial_started_at": row.get("trial_started_at"),
         }
@@ -167,7 +208,12 @@ def _normalise_tier(raw_tier: str, billing_status: str, trial_ends_at) -> str:
         # Trial expired — fall through to stored tier or FREE
         return _TIER_MAP.get(raw_tier, "FREE")
 
-    # Cancelled, expired, or unknown — fall back to stored tier or FREE
+    # Cancelled / unpaid / paused / incomplete: no paid access even if a stale
+    # paid tier is still stored.
+    if status in _NON_ENTITLED_STATUSES:
+        return "FREE"
+
+    # past_due (inside the grace window), free, or unknown — stored tier
     return _TIER_MAP.get(raw_tier, "FREE")
 
 

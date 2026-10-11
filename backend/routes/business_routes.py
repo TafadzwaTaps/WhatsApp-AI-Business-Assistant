@@ -83,10 +83,11 @@ class BusinessUpdate(BaseModel):
     # the same total as pickup regardless of what was configured. Run the
     # accompanying SQL migration to add the column before this takes effect.
     delivery_fee:        Optional[float] = None
-    # Stripe billing fields
-    stripe_customer_id:     Optional[str]  = None
-    stripe_subscription_id: Optional[str]  = None
-    stripe_plan:            Optional[str]  = None
+    # SECURITY: Stripe billing identifiers (stripe_customer_id,
+    # stripe_subscription_id, stripe_plan) are deliberately NOT accepted here.
+    # They are written only by the verified Stripe webhook / billing service;
+    # letting a tenant set them would allow opening another customer's billing
+    # portal. Unknown fields are ignored by Pydantic.
 
 
 @router.get("/me")

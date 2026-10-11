@@ -298,6 +298,11 @@ def _stripe():
         _s.api_version         = "2024-06-20"
         _s.max_network_retries = 3
         _stripe_module = _s
+        try:
+            for problem in billing_config_check()["problems"]:
+                log.warning("Stripe config: %s", problem)
+        except Exception:
+            pass
         return _s
     except ImportError:
         log.warning("stripe package not installed — add stripe>=7.0.0 to requirements.txt")
@@ -335,6 +340,8 @@ def get_or_create_stripe_customer(
             email=owner_email,
             name=business_name,
             metadata={"wazibot_business_id": str(business_id)},
+            # Concurrent first-time checkouts must not create two customers.
+            idempotency_key=f"cust_biz_{business_id}",
         )
         cid = customer["id"]
 
@@ -352,6 +359,232 @@ def get_or_create_stripe_customer(
         return None
 
 
+# ── Billing hardening helpers ─────────────────────────────────────────────────
+# Stripe is the source of truth for subscription state; WaziBot owns the
+# business↔customer mapping. Everything below derives local state from a
+# freshly-retrieved Stripe object rather than trusting browser input or the
+# (possibly stale / out-of-order) webhook payload.
+
+PURCHASABLE_TIERS = ("starter", "growth")          # enterprise is custom / sales-led
+_PERIOD_ALIASES = {"monthly": "monthly", "month": "monthly",
+                   "annual": "annual", "yearly": "annual", "year": "annual"}
+_TIER_RANK = {"starter": 1, "growth": 2}
+_LIVE_SUB_STATUSES = ("active", "trialing", "past_due")
+
+# Stripe subscription status → businesses.billing_status. "canceled" keeps the
+# spelling the rest of WaziBot already uses ("cancelled"). Every other value is
+# the real Stripe status — no invented states.
+_STRIPE_TO_LOCAL_STATUS = {
+    "active": "active", "trialing": "trialing", "past_due": "past_due",
+    "unpaid": "unpaid", "canceled": "cancelled", "paused": "paused",
+}
+
+_LEGACY_BIZ_COLS = ("name, owner_email, subscription_tier, billing_status, trial_ends_at, "
+                    "stripe_customer_id, stripe_subscription_id")
+# Added by backend/migrations/billing_lifecycle_hardening.sql. All code that
+# touches these tolerates the migration not having been applied yet.
+_BILLING_EXT_COLS = (
+    "stripe_price_id", "billing_interval", "current_period_start", "current_period_end",
+    "cancel_at_period_end", "canceled_at", "stripe_subscription_status",
+    "payment_failed_at", "stripe_last_invoice_id", "billing_synced_at",
+)
+
+
+def _g(obj, key, default=None):
+    """Read a field from a dict OR a StripeObject (never raises)."""
+    if obj is None:
+        return default
+    try:
+        v = obj[key]
+    except (KeyError, TypeError, AttributeError, IndexError):
+        v = getattr(obj, key, None)
+    return default if v is None else v
+
+
+def _key_mode() -> str:
+    """'live' | 'test' | 'unknown' — derived from the key prefix only (key never logged)."""
+    key = os.getenv("STRIPE_SECRET_KEY", "")
+    if key.startswith(("sk_live_", "rk_live_")):
+        return "live"
+    if key.startswith(("sk_test_", "rk_test_")):
+        return "test"
+    return "unknown"
+
+
+def _past_due_grace_days() -> int:
+    try:
+        return max(0, int(os.getenv("BILLING_PAST_DUE_GRACE_DAYS", "3")))
+    except ValueError:
+        return 3
+
+
+def _iso(ts) -> Optional[str]:
+    from datetime import datetime, timezone
+    try:
+        return datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat() if ts else None
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+
+
+def _normalize_period(period: str) -> Optional[str]:
+    return _PERIOD_ALIASES.get((period or "").strip().lower())
+
+
+def _price_index() -> dict:
+    """price_id → (tier, period) for every price this deployment has configured.
+    Built from env at call time so a Price ID can never be 'accepted' unless the
+    operator configured it."""
+    idx: dict = {}
+
+    def add(pid, tier, period):
+        if pid:
+            idx.setdefault(pid, (tier, period))
+
+    for tier in ("starter", "growth", "business"):
+        for period, suffix in (("monthly", "MONTHLY"), ("annual", "ANNUAL")):
+            for region in ("", "_B", "_C"):
+                add(os.getenv(f"STRIPE_PRICE_{tier.upper()}_{suffix}{region}", ""), tier, period)
+    for tier in ("starter", "growth", "business"):
+        data = TIERS.get(tier, {})
+        add(data.get("stripe_price_id_monthly"), tier, "monthly")
+        add(data.get("stripe_price_id_annual"), tier, "annual")
+    for region in PRICING_REGIONS.values():
+        for key, pid in region["price_ids"].items():
+            t, p = key.rsplit("_", 1)
+            add(pid, t, p)
+    return idx
+
+
+def _safe_redirect(url: str, default: str) -> str:
+    """Only allow redirect URLs on the configured WaziBot origin (no open redirects)."""
+    from urllib.parse import urlparse
+    if not url:
+        return default
+    try:
+        u, b = urlparse(url), urlparse(os.getenv("WAZIBOT_URL", "https://wazibothq.com"))
+        if u.scheme in ("http", "https") and u.netloc and u.scheme == b.scheme and u.netloc == b.netloc:
+            return url
+    except Exception:
+        pass
+    log.warning("Rejected non-WaziBot redirect URL in billing request")
+    return default
+
+
+def _load_biz(bid: int) -> dict:
+    """Business billing row. Falls back to legacy columns if the billing
+    migration hasn't been applied. Raises on DB outage (callers must not treat
+    an unreadable row as 'unpaid' or 'paid')."""
+    from core.db import supabase
+    try:
+        res = (supabase.table("businesses")
+               .select(_LEGACY_BIZ_COLS + ", " + ", ".join(_BILLING_EXT_COLS))
+               .eq("id", bid).limit(1).execute())
+    except Exception:
+        res = (supabase.table("businesses").select(_LEGACY_BIZ_COLS)
+               .eq("id", bid).limit(1).execute())
+    return (res.data or [{}])[0]
+
+
+def _verify_price(stripe, price_id: str, tier: str, period: str) -> Optional[str]:
+    """Return an error string if the Price is not a usable recurring price for
+    this plan/interval in the environment the secret key belongs to."""
+    import time
+    cache = _verify_price.__dict__.setdefault("_cache", {})
+    hit = cache.get((price_id, tier, period))
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        p = stripe.Price.retrieve(price_id)
+    except Exception as exc:
+        log.error("price verification failed  tier=%s period=%s err=%s", tier, period, type(exc).__name__)
+        return "Could not verify pricing with Stripe — please try again shortly"
+    err = None
+    rec = _g(p, "recurring")
+    want = "month" if period == "monthly" else "year"
+    if not _g(p, "active", False):
+        err = "This plan is not currently available"
+    elif not rec or _g(rec, "interval") != want or int(_g(rec, "interval_count", 1)) != 1:
+        err = "Plan price is misconfigured (billing interval mismatch)"
+    else:
+        mode, live = _key_mode(), _g(p, "livemode")
+        if (mode == "live" and live is False) or (mode == "test" and live is True):
+            err = "Plan price belongs to a different Stripe environment than the configured key"
+    if not err:
+        if (_g(p, "currency", "") or "").lower() != "usd":
+            log.warning("price currency is not USD  tier=%s period=%s", tier, period)
+        expected = TIERS.get(tier, {}).get("price_monthly" if period == "monthly" else "price_annual")
+        amt = _g(p, "unit_amount")
+        if expected and amt is not None and abs(float(amt) / 100.0 - float(expected)) > 0.01:
+            log.warning("price amount differs from TIERS display price  tier=%s period=%s stripe=%s display=%s",
+                        tier, period, float(amt) / 100.0, expected)
+    cache[(price_id, tier, period)] = (time.time(), err)
+    return err
+
+
+def _resolve_price_id(tier: str, period: str, override: str = "") -> tuple:
+    """(price_id, error). The price always comes from server config; an
+    override is accepted only if it is itself a configured price for exactly
+    this tier+period."""
+    idx = _price_index()
+    override = (override or "").strip()
+    if override:
+        if idx.get(override) == (tier, period):
+            return override, None
+        log.warning("Rejected price override not in server allowlist  tier=%s period=%s", tier, period)
+    pid = (TIERS.get(tier, {}).get(f"stripe_price_id_{period}", "")
+           or os.getenv(f"STRIPE_PRICE_{tier.upper()}_{period.upper()}", ""))
+    if not pid:
+        return None, f"No Stripe price configured for {tier}/{period}"
+    return pid, None
+
+
+def _verified_customer_id(stripe, bid: int) -> tuple:
+    """(customer_id, error). A stored customer is only trusted if Stripe says it
+    carries THIS business's id in its metadata (set server-side at creation)."""
+    cid = _load_biz(bid).get("stripe_customer_id")
+    if not cid:
+        return None, None
+    try:
+        c = stripe.Customer.retrieve(cid)
+    except Exception as exc:
+        if getattr(exc, "code", None) == "resource_missing":
+            log.error("stored Stripe customer not found  business=%s", bid)
+            return None, "Billing profile could not be verified — contact support"
+        raise
+    owner = _g(_g(c, "metadata"), "wazibot_business_id")
+    if _g(c, "deleted", False) or owner != str(bid):
+        log.error("Stripe customer mapping mismatch  business=%s", bid)
+        return None, "Billing profile could not be verified — contact support"
+    return cid, None
+
+
+def _live_subscriptions(stripe, cid: str) -> list:
+    subs = stripe.Subscription.list(customer=cid, status="all", limit=10)
+    return [s for s in (_g(subs, "data", []) or []) if _g(s, "status") in _LIVE_SUB_STATUSES]
+
+
+def billing_config_check() -> dict:
+    """Non-sensitive readiness report for admins (never returns key material)."""
+    mode = _key_mode()
+    idx = _price_index()
+    have = {f"{t}_{p}": any(v == (t, p) for v in idx.values())
+            for t in PURCHASABLE_TIERS for p in ("monthly", "annual")}
+    problems = []
+    if mode == "unknown":
+        problems.append("STRIPE_SECRET_KEY missing or not a recognised sk_/rk_ key")
+    if not os.getenv("STRIPE_WEBHOOK_SECRET"):
+        problems.append("STRIPE_WEBHOOK_SECRET missing")
+    problems += [f"no Stripe price configured for {k}" for k, ok in have.items() if not ok]
+    base = os.getenv("WAZIBOT_URL", "")
+    if not base:
+        problems.append("WAZIBOT_URL not set (default https://wazibothq.com is used)")
+    if mode == "live" and base.startswith("http://"):
+        problems.append("WAZIBOT_URL is not https while using a live key")
+    return {"key_mode": mode, "webhook_secret_set": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
+            "prices_configured": have, "past_due_grace_days": _past_due_grace_days(),
+            "problems": problems, "ok": not problems}
+
+
 # ── Checkout session ──────────────────────────────────────────────────────────
 
 def create_checkout_session(
@@ -361,103 +594,316 @@ def create_checkout_session(
     success_url:       str = "",
     cancel_url:        str = "",
     customer_email:    str = "",
-    price_id_override: str = "",    # regional price ID — falls back to global if empty
+    price_id_override: str = "",    # regional price ID — must be in the server allowlist
 ) -> dict:
     """
     Create a Stripe Checkout Session for a subscription upgrade.
-    Returns {"url": "..."} on success, {"error": "..."} on failure.
-
-    price_id_override: optional regional Stripe Price ID from get_price_id_for_checkout().
+    Returns {"url", "session_id"} on success, {"error", "code"?} on failure.
+    Paid access is NOT granted here — only by a verified webhook / Stripe sync.
     """
+    import hashlib, json, time
     stripe = _stripe()
     if not stripe:
         return {"error": "Stripe not configured — add STRIPE_SECRET_KEY to env"}
 
-    tier_data = TIERS.get(tier)
-    if not tier_data:
+    tier = (tier or "").strip().lower()
+    period = _normalize_period(billing_period)
+    if tier == "enterprise":
+        return {"error": "Enterprise pricing is custom — please contact sales", "code": "enterprise_contact_sales"}
+    if tier not in PURCHASABLE_TIERS:
         return {"error": f"Unknown tier: {tier}"}
+    if not period:
+        return {"error": "Invalid billing period"}
 
-    # Regional override → global tier price → error
-    price_id = (price_id_override or "").strip() or tier_data.get(f"stripe_price_id_{billing_period}", "")
-    if not price_id:
-        return {"error": f"No Stripe price configured for {tier}/{billing_period}. Add STRIPE_PRICE_{tier.upper()}_{billing_period.upper()} env var."}
-
-    base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
-    success_url = success_url or f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
-    cancel_url  = cancel_url  or f"{base}/billing/cancel"
+    price_id, perr = _resolve_price_id(tier, period, price_id_override)
+    if perr:
+        return {"error": perr + ". Add the matching STRIPE_PRICE_* env var."}
 
     try:
+        verr = _verify_price(stripe, price_id, tier, period)
+        if verr:
+            return {"error": verr}
+
+        row = _load_biz(business_id)
+        if not row:
+            return {"error": "Business not found"}
+
+        # One Stripe customer per business, created once and verified.
+        cid, cerr = _verified_customer_id(stripe, business_id)
+        if cerr:
+            return {"error": cerr}
+        if not cid:
+            cid = get_or_create_stripe_customer(
+                business_id, row.get("name") or "", customer_email or row.get("owner_email") or "")
+            if not cid:
+                return {"error": "Could not create billing profile — please try again"}
+
+        # Authoritative duplicate-subscription guard (asks Stripe, not our cache).
+        if _live_subscriptions(stripe, cid):
+            return {"error": "You already have a subscription. Use Manage Subscription to change or cancel it.",
+                    "code": "already_subscribed"}
+
+        base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
+        success_url = _safe_redirect(success_url, f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}")
+        cancel_url  = _safe_redirect(cancel_url,  f"{base}/billing/cancel")
+        meta = {"wazibot_business_id": str(business_id), "tier": tier, "billing_period": period}
+
         params: dict = {
             "mode":              "subscription",
+            "customer":          cid,
+            "client_reference_id": str(business_id),
             "line_items":        [{"price": price_id, "quantity": 1}],
             "success_url":       success_url,
             "cancel_url":        cancel_url,
-            "metadata":          {"wazibot_business_id": str(business_id), "tier": tier},
-            "subscription_data": {"metadata": {"wazibot_business_id": str(business_id), "tier": tier}},
+            "metadata":          meta,
+            "subscription_data": {"metadata": meta},
+            # Checkout Studio parameters. NOTE: ui_mode / branding_settings /
+            # origin_context / integration_identifier are intentionally NOT sent:
+            # this module pins api_version 2024-06-20, which rejects them (see
+            # STRIPE_INTEGRATION_TODO.md).
+            "billing_address_collection": "auto",
+            "phone_number_collection":   {"enabled": True},
+            "automatic_tax":             {"enabled": False},
+            "allow_promotion_codes":     True,
+            "payment_method_collection": "always",
         }
-        if customer_email:
-            params["customer_email"] = customer_email
-
-        session = stripe.checkout.Session.create(**params)
-        log.info("Checkout session created  business=%s  tier=%s", business_id, tier)
-        return {"url": session["url"], "session_id": session["id"]}
+        # Same params inside the same 5-minute window → same Stripe session
+        # (double-clicks, retries, refreshes). Different params never collide.
+        digest = hashlib.sha256(json.dumps(params, sort_keys=True).encode()).hexdigest()[:24]
+        idem = f"co_{business_id}_{digest}_{int(time.time() // 300)}"
+        session = stripe.checkout.Session.create(**params, idempotency_key=idem)
+        log.info("Checkout session created  business=%s  tier=%s  period=%s", business_id, tier, period)
+        return {"url": _g(session, "url"), "session_id": _g(session, "id")}
     except Exception as exc:
-        log.error("create_checkout_session error: %s", exc)
-        return {"error": str(exc)}
+        log.error("create_checkout_session error  business=%s  err=%s", business_id, type(exc).__name__)
+        return {"error": "Could not start checkout — please try again"}
+
+
+def _owned_subscription(stripe, business_id: int) -> tuple:
+    """(subscription_object, error, code) for the business's own subscription,
+    retrieved from Stripe and checked against the trusted customer mapping."""
+    row = _load_biz(business_id)
+    sub_id = row.get("stripe_subscription_id")
+    if not sub_id:
+        return None, "No active subscription found", "no_subscription"
+    sub = stripe.Subscription.retrieve(sub_id)
+    stored = row.get("stripe_customer_id")
+    cust = _g(sub, "customer")
+    cust = _g(cust, "id", cust) if not isinstance(cust, str) else cust
+    if stored and cust and stored != cust:
+        log.error("subscription/customer mismatch  business=%s", business_id)
+        return None, "Billing profile could not be verified — contact support", "mismatch"
+    return sub, None, None
 
 
 def cancel_subscription(business_id: int) -> dict:
-    """Cancel a business's active subscription at period end."""
+    """Cancel at period end. Access continues until the paid period ends; the
+    local record is synced from Stripe's response, not a local boolean."""
     stripe = _stripe()
     if not stripe:
         return {"error": "Stripe not configured"}
     try:
-        from core.db import supabase
-        res = (
-            supabase.table("businesses")
-            .select("stripe_subscription_id")
-            .eq("id", business_id)
-            .limit(1)
-            .execute()
-        )
-        sub_id = (res.data or [{}])[0].get("stripe_subscription_id")
-        if not sub_id:
-            return {"error": "No active Stripe subscription found"}
-        stripe.Subscription.modify(sub_id, cancel_at_period_end=True)
-        log.info("Subscription scheduled for cancellation  business=%s  sub=%s",
-                 business_id, sub_id)
-        return {"ok": True, "cancelled_at_period_end": True}
+        sub, err, code = _owned_subscription(stripe, business_id)
+        if err:
+            return {"error": err, "code": code}
+        if _g(sub, "status") not in _LIVE_SUB_STATUSES:
+            return {"error": "No active subscription found", "code": "no_subscription"}
+        sub = stripe.Subscription.modify(_g(sub, "id"), cancel_at_period_end=True)
+        res = _sync_subscription(sub, source="api_cancel")
+        _send_lifecycle_emails(res)
+        end = _iso(_period_end(sub))
+        log.info("Subscription cancellation scheduled  business=%s  sub=%s", business_id, _g(sub, "id"))
+        return {"ok": True, "cancelled_at_period_end": True, "cancel_at_period_end": True,
+                "access_until": end, "synced": res.get("result") == "synced"}
     except Exception as exc:
-        log.error("cancel_subscription error: %s", exc)
-        return {"error": str(exc)}
+        log.error("cancel_subscription error  business=%s  err=%s", business_id, type(exc).__name__)
+        return {"error": "Could not cancel — please try again or use Manage Subscription"}
+
+
+def resume_subscription(business_id: int) -> dict:
+    """Undo a scheduled end-of-period cancellation (only valid before it takes effect)."""
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured"}
+    try:
+        sub, err, code = _owned_subscription(stripe, business_id)
+        if err:
+            return {"error": err, "code": code}
+        if _g(sub, "status") not in _LIVE_SUB_STATUSES or not _g(sub, "cancel_at_period_end", False):
+            return {"error": "No scheduled cancellation to undo", "code": "not_cancelling"}
+        sub = stripe.Subscription.modify(_g(sub, "id"), cancel_at_period_end=False)
+        _sync_subscription(sub, source="api_resume")
+        return {"ok": True, "cancel_at_period_end": False}
+    except Exception as exc:
+        log.error("resume_subscription error  business=%s  err=%s", business_id, type(exc).__name__)
+        return {"error": "Could not resume subscription — please try again"}
+
+
+def change_plan(business_id: int, tier: str, billing_period: str, confirm_proration: bool = False) -> dict:
+    """
+    Upgrade an existing subscription in place (same Stripe subscription — no
+    second subscription is created).
+
+    Policy: UPGRADES (higher tier, or monthly→annual on the same tier) are applied
+    immediately with prorations invoiced immediately; the new plan only takes
+    effect locally once Stripe reports the new price on the subscription
+    (payment_behavior=pending_if_incomplete → a failed payment leaves the old plan
+    in place). DOWNGRADES and annual→monthly are deliberately NOT done via API:
+    they are handled in the Customer Portal so the customer never loses paid
+    features early or is silently charged/credited.
+    """
+    import time
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured"}
+    tier = (tier or "").strip().lower()
+    period = _normalize_period(billing_period)
+    if tier not in PURCHASABLE_TIERS or not period:
+        return {"error": "Invalid plan or billing period"}
+    try:
+        sub, err, code = _owned_subscription(stripe, business_id)
+        if err:
+            return {"error": err, "code": code}
+        status = _g(sub, "status")
+        if status == "past_due":
+            return {"error": "Update your payment method before changing plan", "code": "payment_required"}
+        if status != "active":
+            return {"error": "Your subscription must be active to change plan", "code": "not_active"}
+        if _g(sub, "cancel_at_period_end", False):
+            return {"error": "Resume your subscription before changing plan", "code": "cancel_scheduled"}
+        items = _g(_g(sub, "items"), "data", []) or []
+        if len(items) != 1:
+            return {"error": "This subscription can't be changed automatically — use Manage Subscription",
+                    "code": "use_portal"}
+        item = items[0]
+        cur = _price_index().get(_g(_g(item, "price"), "id"))
+        if not cur:
+            return {"error": "Current plan could not be identified — use Manage Subscription", "code": "use_portal"}
+        if cur == (tier, period):
+            return {"error": "You are already on this plan", "code": "same_plan"}
+        new_price, perr = _resolve_price_id(tier, period)
+        if perr:
+            return {"error": perr}
+        verr = _verify_price(stripe, new_price, tier, period)
+        if verr:
+            return {"error": verr}
+        cur_currency = (_g(_g(item, "price"), "currency", "") or "").lower()
+        new_currency = (_g(stripe.Price.retrieve(new_price), "currency", "") or "").lower()
+        if cur_currency and new_currency and cur_currency != new_currency:
+            return {"error": "Plan currency differs from your current subscription — contact support",
+                    "code": "currency_mismatch"}
+        ctier, cperiod = cur
+        is_upgrade = (_TIER_RANK.get(tier, 0) > _TIER_RANK.get(ctier, 0)
+                      or (tier == ctier and period == "annual" and cperiod == "monthly"))
+        if not is_upgrade:
+            return {"error": "Downgrades and switching to a shorter billing interval are managed in the "
+                             "billing portal so they take effect at the right time.",
+                    "code": "use_portal"}
+        if not confirm_proration:
+            return {"error": "Confirmation required: upgrading charges the prorated difference to your "
+                             "saved payment method immediately.", "code": "confirmation_required"}
+        updated = stripe.Subscription.modify(
+            _g(sub, "id"),
+            items=[{"id": _g(item, "id"), "price": new_price}],
+            proration_behavior="always_invoice",
+            payment_behavior="pending_if_incomplete",
+            idempotency_key=f"chg_{_g(sub, 'id')}_{new_price}_{int(time.time() // 300)}",
+        )
+        res = _sync_subscription(updated, source="api_change_plan")
+        new_items = _g(_g(updated, "items"), "data", []) or []
+        effective = bool(new_items) and _g(_g(new_items[0], "price"), "id") == new_price
+        log.info("Plan change requested  business=%s  to=%s/%s  effective=%s", business_id, tier, period, effective)
+        return {"ok": True, "effective": effective,
+                "message": ("Your plan has been upgraded." if effective else
+                            "Payment is required to complete the upgrade. Your current plan stays active until it succeeds."),
+                "synced": res.get("result") == "synced"}
+    except Exception as exc:
+        log.error("change_plan error  business=%s  err=%s", business_id, type(exc).__name__)
+        return {"error": "Could not change plan — please try again"}
+
+
+def create_portal_session(business_id: int) -> dict:
+    """Customer Portal for THIS business only; customer comes from the verified DB mapping."""
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured on this server", "code": "unconfigured"}
+    try:
+        cid, err = _verified_customer_id(stripe, business_id)
+        if err:
+            return {"error": err, "code": "mismatch"}
+        if not cid:
+            return {"error": "No billing profile yet — subscribe first to manage billing", "code": "no_customer"}
+        base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
+        session = stripe.billing_portal.Session.create(customer=cid, return_url=f"{base}/static/dashboard.html")
+        return {"url": _g(session, "url", "")}
+    except Exception as exc:
+        log.error("portal error  business=%s  err=%s", business_id, type(exc).__name__)
+        return {"error": "Could not open billing portal — please try again"}
+
+
+def list_invoices(business_id: int, limit: int = 12) -> dict:
+    """Real invoice history from Stripe for this business's verified customer."""
+    stripe = _stripe()
+    if not stripe:
+        return {"invoices": [], "available": False}
+    try:
+        cid, err = _verified_customer_id(stripe, business_id)
+        if err or not cid:
+            return {"invoices": [], "available": bool(cid)}
+        res = stripe.Invoice.list(customer=cid, limit=max(1, min(int(limit), 24)))
+        out = []
+        for inv in (_g(res, "data", []) or []):
+            out.append({
+                "id": _g(inv, "id"), "number": _g(inv, "number"), "status": _g(inv, "status"),
+                "amount_paid": (_g(inv, "amount_paid", 0) or 0) / 100.0,
+                "amount_due": (_g(inv, "amount_due", 0) or 0) / 100.0,
+                "currency": (_g(inv, "currency", "") or "").upper(),
+                "created": _iso(_g(inv, "created")),
+                "hosted_invoice_url": _g(inv, "hosted_invoice_url"),
+                "invoice_pdf": _g(inv, "invoice_pdf"),
+            })
+        return {"invoices": out, "available": True}
+    except Exception as exc:
+        log.error("list_invoices error  business=%s  err=%s", business_id, type(exc).__name__)
+        return {"invoices": [], "available": False, "error": "Invoice history unavailable"}
 
 
 # ── Subscription status ───────────────────────────────────────────────────────
 
 def get_subscription_status(business_id: int) -> dict:
     """
-    Return full billing status for a business.
+    Billing status for the dashboard. Built from the backend's own record
+    (kept in sync with Stripe by webhooks) — never from browser input.
     Always returns a valid dict — defaults to free tier on any error.
     """
     try:
-        from core.db import supabase
-        res = (
-            supabase.table("businesses")
-            .select("subscription_tier, billing_status, trial_ends_at, stripe_customer_id, stripe_subscription_id")
-            .eq("id", business_id)
-            .limit(1)
-            .execute()
-        )
-        row    = (res.data or [{}])[0]
+        row    = _load_biz(business_id)
         tier   = row.get("subscription_tier")  or "free"
         status = row.get("billing_status")      or "trialing"
+        cancel = bool(row.get("cancel_at_period_end"))
+        entitled_tier = tier
+        try:
+            from core.plan_guard import _get_business_plan, _normalise_tier
+            pi = _get_business_plan(business_id)
+            eff = _normalise_tier(pi["tier"], pi["billing_status"], pi["trial_ends_at"])
+            if eff == "FREE" and tier != "free":
+                entitled_tier = "free"          # lapsed (e.g. past-due beyond grace)
+        except Exception:
+            pass
         return {
             "tier":                   tier,
             "billing_status":         status,
             "trial_ends_at":          row.get("trial_ends_at"),
             "stripe_customer_id":     row.get("stripe_customer_id"),
             "stripe_subscription_id": row.get("stripe_subscription_id"),
-            "features":               TIERS.get(tier, TIERS["free"]),
+            "billing_interval":       row.get("billing_interval"),
+            "current_period_end":     row.get("current_period_end"),
+            "cancel_at_period_end":   cancel,
+            "canceled_at":            row.get("canceled_at"),
+            "payment_failed_at":      row.get("payment_failed_at"),
+            "entitled":               entitled_tier != "free" or tier == "free",
+            "access_ends_at":         row.get("current_period_end") if cancel else None,
+            "features":               TIERS.get(entitled_tier, TIERS["free"]),
         }
     except Exception as exc:
         log.warning("get_subscription_status error: %s — returning free tier", exc)
@@ -662,6 +1108,12 @@ def create_product_checkout_session(
             # receipt, and log a proper order against their number. Not
             # required, so it never blocks checkout for customers who skip it.
             "phone_number_collection": {"enabled": True},
+            # Checkout Studio parameters (ui_mode / branding_settings / origin_context /
+            # integration_identifier omitted — rejected by pinned api_version 2024-06-20).
+            "billing_address_collection": "auto",
+            "automatic_tax":             {"enabled": False},
+            "allow_promotion_codes":     True,
+            "submit_type":               "auto",
         }
         if customer_email:
             params["customer_email"] = customer_email
@@ -713,24 +1165,32 @@ def get_payment_analytics(business_id: int) -> dict:
 
 def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
     """
-    Process an incoming Stripe webhook.
-    Called by routes/billing_routes.py after raw body is read.
+    Process an incoming Stripe webhook (raw body + Stripe-Signature header).
+
+    Reliability model
+      • Signature verified against the raw body with STRIPE_WEBHOOK_SECRET.
+      • Events from the wrong Stripe environment (livemode vs key mode) are rejected.
+      • Durable ledger (crud/stripe_webhook_events.py): processed events are skipped;
+        a failed event is recorded as failed and a 5xx is returned so Stripe retries.
+      • Handlers are state-convergent: they re-read the Stripe object and write the
+        result, so retries, duplicates and out-of-order delivery are harmless.
 
     Events handled:
-      checkout.session.completed       → activate subscription
-      customer.subscription.updated    → sync tier/status
-      customer.subscription.deleted    → downgrade to free
-      invoice.payment_failed           → mark past_due
+      checkout.session.completed / async_payment_succeeded → bind customer + sync
+      customer.subscription.created|updated|deleted        → sync from Stripe
+      invoice.paid / invoice.payment_succeeded             → sync (renewal / recovery)
+      invoice.payment_failed / payment_action_required     → sync (past_due)
+      charge.refunded, charge.dispute.*, checkout.session.expired → audit log only
     """
     stripe = _stripe()
     secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
     if not stripe or not secret:
-        return {"error": "Stripe webhook not configured", "status": 400}
+        return {"error": "Stripe webhook not configured", "status": 503}
 
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, secret)
     except Exception as exc:
-        log.warning("Stripe webhook verification failed: %s", exc)
+        log.warning("Stripe webhook verification failed: %s", type(exc).__name__)
         return {"error": "Invalid signature", "status": 400}
 
     etype    = event["type"]
@@ -738,86 +1198,306 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
     data     = event["data"]["object"]
     log.info("Stripe webhook  type=%s  id=%s", etype, event_id)
 
-    # Idempotency fix: Stripe retries webhook deliveries (network hiccups,
-    # a slow 2xx, etc.), and this handler had no dedup — a retried
-    # checkout.session.completed would call _on_product_purchase_completed
-    # again, creating a second order row and sending a second receipt
-    # email/WhatsApp message for the same purchase. Checking + recording
-    # the event ID closes that. Fails open (see crud/stripe_webhook_events.py)
-    # so a DB hiccup or the migration not having been run yet never blocks
-    # a legitimate webhook from being processed — it just means dedup
-    # isn't enforced until stripe_webhook_events_migration.sql has been run.
-    from crud.stripe_webhook_events import already_processed, mark_processed
+    ev_live, mode = _g(event, "livemode"), _key_mode()
+    if (mode == "live" and ev_live is False) or (mode == "test" and ev_live is True):
+        log.error("Stripe webhook environment mismatch  id=%s  key_mode=%s", event_id, mode)
+        return {"error": "Event environment does not match server configuration", "status": 400}
+
+    from crud.stripe_webhook_events import already_processed, mark_processed, claim_event, mark_failed
     if already_processed(event_id):
         log.info("Stripe webhook  type=%s  id=%s  — already processed, skipping", etype, event_id)
         return {"ok": True, "event": etype, "duplicate": True}
 
+    claim = claim_event(event_id, etype)
+    if claim == "duplicate":
+        return {"ok": True, "event": etype, "duplicate": True}
+    if claim == "in_progress":
+        # Another delivery of the same event is being handled right now; make Stripe retry later.
+        return {"error": "Event is being processed", "status": 409}
+
     handlers = {
-        "checkout.session.completed":     _on_checkout_completed,
-        "customer.subscription.created":  _on_subscription_updated,
-        "customer.subscription.updated":  _on_subscription_updated,
-        "customer.subscription.deleted":  _on_subscription_deleted,
-        "invoice.payment_failed":         _on_payment_failed,
+        "checkout.session.completed":              _on_checkout_completed,
+        "checkout.session.async_payment_succeeded": _on_checkout_completed,
+        "checkout.session.async_payment_failed":   _on_checkout_async_failed,
+        "checkout.session.expired":                _on_audit_only,
+        "customer.subscription.created":           _on_subscription_updated,
+        "customer.subscription.updated":           _on_subscription_updated,
+        "customer.subscription.deleted":           _on_subscription_deleted,
+        "invoice.paid":                            _on_invoice_paid,
+        "invoice.payment_succeeded":               _on_invoice_paid,
+        "invoice.payment_failed":                  _on_payment_failed,
+        "invoice.payment_action_required":         _on_payment_failed,
+        "charge.refunded":                         _on_audit_only,
+        "charge.dispute.created":                  _on_audit_only,
+        "charge.dispute.closed":                   _on_audit_only,
     }
     handler = handlers.get(etype)
     if handler:
         try:
-            handler(data)
+            if handler is _on_audit_only:
+                handler(data, etype)
+            else:
+                handler(data)
         except Exception as exc:
-            log.error("Stripe webhook handler error  type=%s  error=%s", etype, exc)
+            # Do NOT mark processed: a required update failed, so let Stripe retry.
+            log.error("Stripe webhook handler FAILED  type=%s  id=%s  err=%s", etype, event_id, type(exc).__name__)
+            mark_failed(event_id, etype, f"{type(exc).__name__}: {str(exc)[:200]}")
+            return {"error": "Processing failed; will be retried", "status": 500}
 
     mark_processed(event_id, etype)
-
     return {"ok": True, "event": etype}
 
 
 def _bid_from_meta(obj: dict) -> Optional[int]:
-    for src in [obj.get("metadata") or {}, (obj.get("subscription_data") or {}).get("metadata") or {}]:
-        v = src.get("wazibot_business_id")
+    for src in [_g(obj, "metadata") or {}, (_g(obj, "subscription_data") or {}).get("metadata") or {}]:
+        v = _g(src, "wazibot_business_id")
         if v:
             try: return int(v)
             except (ValueError, TypeError): pass
     return None
 
 
+# Columns that only exist after billing_lifecycle_hardening.sql has been applied.
+_EXT_SET = set(_BILLING_EXT_COLS)
+
+
 def _patch_biz(bid: int, patch: dict) -> None:
+    """Persist a billing patch. RAISES on failure so webhooks can be retried.
+    If the billing migration hasn't been applied, retries once without the new
+    columns so the core tier/status update still lands."""
+    from core.db import supabase
     try:
-        from core.db import supabase
         supabase.table("businesses").update(patch).eq("id", bid).execute()
-        log.info("Billing patch  business=%s  keys=%s", bid, list(patch.keys()))
     except Exception as exc:
-        log.error("_patch_biz error  business=%s  error=%s", bid, exc)
+        legacy = {k: v for k, v in patch.items() if k not in _EXT_SET}
+        if len(legacy) == len(patch) or not legacy:
+            raise
+        log.warning("billing patch retried without extended columns (migration not applied?)  business=%s  err=%s",
+                    bid, type(exc).__name__)
+        supabase.table("businesses").update(legacy).eq("id", bid).execute()
+    log.info("Billing patch  business=%s  keys=%s", bid, sorted(patch.keys()))
 
 
 def _prev_tier_status(bid: int) -> tuple:
-    """
-    Read a business's tier/status BEFORE a billing patch is applied, so the
-    subscription_events log (SuperAdmin 2.0 Phase 9) captures a real
-    before/after pair rather than "after" on both sides. Best-effort —
-    returns (None, None) on any error, same fail-soft guarantee as every
-    other analytics helper; never blocks the actual billing update.
-    """
+    """Tier/status BEFORE a patch (best-effort; used only for the audit trail)."""
     try:
-        from core.db import supabase
-        res = supabase.table("businesses").select("subscription_tier, billing_status").eq("id", bid).limit(1).execute()
-        row = (res.data or [{}])[0]
+        row = _load_biz(bid)
         return row.get("subscription_tier"), row.get("billing_status")
     except Exception as exc:
         log.debug("_prev_tier_status failed  business=%s  error=%s", bid, exc)
         return None, None
 
 
-def _log_subscription_event(bid: int, prev_tier, new_tier, prev_status, new_status) -> None:
-    """Best-effort wrapper so a missing/unmigrated subscription_events table
-    can never affect real billing processing (see crud/subscription_history.py)."""
+def _log_subscription_event(bid: int, prev_tier, new_tier, prev_status, new_status,
+                            source: str = "stripe_webhook") -> None:
+    """Best-effort audit row (crud/subscription_history.py). Never blocks billing."""
     try:
         from crud.subscription_history import log_subscription_event
         log_subscription_event(
             business_id=bid, previous_tier=prev_tier, new_tier=new_tier,
-            previous_status=prev_status, new_status=new_status, source="stripe_webhook",
+            previous_status=prev_status, new_status=new_status, source=source,
         )
     except Exception as exc:
         log.debug("_log_subscription_event skipped  business=%s  error=%s", bid, exc)
+
+
+def _fetch_subscription(stripe, sub_id: str, fallback=None):
+    """Current subscription from Stripe. Deleted/missing → fallback payload.
+    Any other failure RAISES so the webhook is retried (never guess state)."""
+    try:
+        return stripe.Subscription.retrieve(sub_id)
+    except Exception as exc:
+        if getattr(exc, "code", None) == "resource_missing":
+            return fallback
+        raise
+
+
+def _period_end(sub):
+    pe = _g(sub, "current_period_end")
+    if pe:
+        return pe
+    items = _g(_g(sub, "items"), "data", []) or []
+    return _g(items[0], "current_period_end") if items else None
+
+
+def _period_start(sub):
+    ps = _g(sub, "current_period_start")
+    if ps:
+        return ps
+    items = _g(_g(sub, "items"), "data", []) or []
+    return _g(items[0], "current_period_start") if items else None
+
+
+def _derive(sub) -> dict:
+    """Pure: everything WaziBot needs to know from a Stripe subscription object."""
+    items = _g(_g(sub, "items"), "data", []) or []
+    price = _g(items[0], "price") if items else None
+    price_id = _g(price, "id")
+    tier = period = None
+    hit = _price_index().get(price_id) if price_id else None
+    if hit:
+        tier, period = hit
+    if not tier:
+        t = _g(_g(price, "metadata"), "wazibot_tier") or _g(_g(sub, "metadata"), "tier")
+        if t in TIERS and t not in ("free", "trial"):
+            tier = t
+    if not period:
+        interval = _g(_g(price, "recurring"), "interval")
+        period = {"month": "monthly", "year": "annual"}.get(interval)
+    cust = _g(sub, "customer")
+    if cust is not None and not isinstance(cust, str):
+        cust = _g(cust, "id")
+    status = _g(sub, "status", "")
+    return {
+        "sub_id": _g(sub, "id"), "customer_id": cust, "stripe_status": status,
+        "live": status in _LIVE_SUB_STATUSES, "tier": tier, "interval": period,
+        "price_id": price_id, "currency": (_g(price, "currency", "") or "").upper(),
+        "amount": _g(price, "unit_amount"),
+        "cancel_at_period_end": bool(_g(sub, "cancel_at_period_end", False)),
+        "period_start": _period_start(sub), "period_end": _period_end(sub),
+        "canceled_at": _g(sub, "ended_at") or _g(sub, "canceled_at"),
+        "trial_end": _g(sub, "trial_end"),
+    }
+
+
+def _resolve_business_id(sub, d: dict) -> Optional[int]:
+    bid = _bid_from_meta(sub)
+    if bid:
+        return bid
+    from core.db import supabase
+    for col, val in (("stripe_subscription_id", d["sub_id"]), ("stripe_customer_id", d["customer_id"])):
+        if val:
+            r = supabase.table("businesses").select("id").eq(col, val).limit(1).execute()
+            if r.data:
+                return int(r.data[0]["id"])
+    return None
+
+
+def _fmt_amount(d: dict) -> str:
+    if d.get("amount") is None:
+        return ""
+    sym = {"USD": "$"}.get(d.get("currency"), "")
+    amt = f"{float(d['amount']) / 100.0:g}" if d.get("currency") not in ("JPY",) else str(d["amount"])
+    unit = "year" if d.get("interval") == "annual" else "month"
+    return f"{sym}{amt}{'' if sym else ' ' + (d.get('currency') or '')}/{unit}"
+
+
+def _sync_subscription(sub, source: str) -> dict:
+    """
+    Make WaziBot's record for the owning business match this Stripe subscription.
+    Safe to call repeatedly / out of order (callers pass a freshly retrieved object).
+    Returns {"result": "synced"|"ignored", ...transition info...}.
+    """
+    d = _derive(sub)
+    if not d["sub_id"]:
+        return {"result": "ignored", "reason": "no_subscription_id"}
+    bid = _resolve_business_id(sub, d)
+    if not bid:
+        log.warning("subscription has no business mapping  sub=%s  source=%s", d["sub_id"], source)
+        return {"result": "ignored", "reason": "no_business"}
+    row = _load_biz(bid)
+    if not row:
+        log.warning("subscription maps to unknown business  business=%s  sub=%s", bid, d["sub_id"])
+        return {"result": "ignored", "reason": "unknown_business"}
+
+    stored_cid = row.get("stripe_customer_id")
+    if stored_cid and d["customer_id"] and stored_cid != d["customer_id"]:
+        log.error("customer mismatch — ignoring  business=%s  sub=%s", bid, d["sub_id"])
+        return {"result": "ignored", "reason": "customer_mismatch"}
+
+    cur_id = row.get("stripe_subscription_id")
+    if cur_id and cur_id != d["sub_id"]:
+        if not d["live"]:
+            log.info("stale event for non-current subscription ignored  business=%s  sub=%s", bid, d["sub_id"])
+            return {"result": "ignored", "reason": "stale_subscription"}
+        cur = _fetch_subscription(_stripe(), cur_id, None)
+        if cur is not None and _g(cur, "status") in _LIVE_SUB_STATUSES:
+            log.error("DUPLICATE_ACTIVE_SUBSCRIPTION  business=%s  current=%s  other=%s", bid, cur_id, d["sub_id"])
+            return {"result": "ignored", "reason": "duplicate_active_subscription"}
+
+    status = d["stripe_status"]
+    if status in ("incomplete", "incomplete_expired"):
+        # First payment never completed: must not alter a trial/free business.
+        return {"result": "ignored", "reason": f"status_{status}"}
+
+    prev_tier, prev_status = row.get("subscription_tier"), row.get("billing_status")
+    local_status = _STRIPE_TO_LOCAL_STATUS.get(status)
+    if not local_status:
+        log.warning("unrecognised Stripe subscription status  business=%s  status=%s", bid, status)
+        return {"result": "ignored", "reason": "unknown_status"}
+
+    tier = d["tier"]
+    if status == "canceled":
+        new_tier = "free"
+    elif tier:
+        new_tier = tier
+    else:
+        new_tier = prev_tier or "free"
+        log.error("UNKNOWN_PRICE_ID — tier not changed  business=%s  sub=%s  price=%s", bid, d["sub_id"], d["price_id"])
+
+    from datetime import datetime, timezone
+    patch: dict = {
+        "subscription_tier": new_tier, "billing_status": local_status,
+        "stripe_subscription_id": d["sub_id"],
+        "stripe_subscription_status": status,
+        "stripe_price_id": d["price_id"], "billing_interval": d["interval"],
+        "current_period_start": _iso(d["period_start"]), "current_period_end": _iso(d["period_end"]),
+        "cancel_at_period_end": d["cancel_at_period_end"] and status != "canceled",
+        "canceled_at": _iso(d["canceled_at"]),
+        "billing_synced_at": datetime.now(timezone.utc).isoformat(),
+        "payment_failed_at": (row.get("payment_failed_at") or datetime.now(timezone.utc).isoformat())
+                             if status == "past_due" else None,
+    }
+    if d["customer_id"] and not stored_cid:
+        patch["stripe_customer_id"] = d["customer_id"]
+    if status == "trialing" and d["trial_end"]:
+        patch["trial_ends_at"] = _iso(d["trial_end"])
+
+    _patch_biz(bid, patch)
+    if (prev_tier, prev_status) != (new_tier, local_status):
+        _log_subscription_event(bid, prev_tier, new_tier, prev_status, local_status, source=f"stripe:{source}"[:60])
+        log.info("Subscription state change  business=%s  %s/%s → %s/%s  source=%s",
+                 bid, prev_tier, prev_status, new_tier, local_status, source)
+    return {
+        "result": "synced", "business_id": bid, "d": d, "row": row,
+        "prev_tier": prev_tier, "prev_status": prev_status,
+        "new_tier": new_tier, "new_status": local_status,
+        "new_subscription": cur_id != d["sub_id"],
+        "was_cancel_scheduled": bool(row.get("cancel_at_period_end")),
+    }
+
+
+def _send_lifecycle_emails(res: dict, *, activated_hint: bool = False) -> None:
+    """Fire-and-forget emails, only on real transitions (so duplicates/retries are silent)."""
+    if res.get("result") != "synced":
+        return
+    d, row, bid = res["d"], res["row"], res["business_id"]
+    to = row.get("owner_email")
+    if not to:
+        return
+    try:
+        from datetime import datetime
+        end = _iso(d["period_end"])
+        end_h = datetime.fromisoformat(end).strftime("%d %B %Y") if end else "the end of your billing period"
+        plan = {"starter": "Starter", "growth": "Growth", "enterprise": "Enterprise"}.get(res["new_tier"], str(res["new_tier"]).title())
+        name = row.get("name", "")
+        became_active = res["new_status"] == "active" and (res["prev_status"] != "active" or res["new_subscription"])
+        if activated_hint and became_active:
+            from services.email_service import send_subscription_confirmed
+            send_subscription_confirmed(to_email=to, business_name=name, plan_name=plan,
+                                        amount=_fmt_amount(d), next_billing=end_h)
+        elif res["new_status"] == "past_due" and res["prev_status"] != "past_due":
+            from services.email_service import send_payment_failed
+            send_payment_failed(to_email=to, business_name=name, plan_name=plan,
+                                amount=_fmt_amount(d), retry_date="the next few days")
+        elif d["cancel_at_period_end"] and not res["was_cancel_scheduled"] and res["new_status"] != "cancelled":
+            from services.email_service import send_subscription_cancelled
+            send_subscription_cancelled(to_email=to, business_name=name, plan_name=plan, access_ends=end_h)
+        elif res["new_status"] == "cancelled" and res["prev_status"] != "cancelled" and not res["was_cancel_scheduled"]:
+            from services.email_service import send_subscription_cancelled
+            send_subscription_cancelled(to_email=to, business_name=name, plan_name=plan, access_ends="today")
+    except Exception as exc:
+        log.debug("lifecycle email skipped  business=%s  err=%s", bid, type(exc).__name__)
 
 
 def _on_product_purchase_completed(obj: dict) -> None:
@@ -956,128 +1636,207 @@ def _on_product_purchase_completed(obj: dict) -> None:
 
 
 def _on_checkout_completed(obj: dict) -> None:
-    # Bug fix: this function used to run unconditionally for EVERY completed
-    # Stripe checkout — including storefront product/service purchases from
-    # the "Pay" button on a business's public site. That meant a customer
-    # paying for a haircut would silently (and incorrectly) upgrade the
-    # BARBERSHOP's own WaziBot subscription tier, with no order ever created
-    # and no receipt ever sent to the customer who actually paid. Only a real
-    # subscription checkout (mode="subscription") should reach the logic
-    # below; product/service purchases (mode="payment") are routed to
-    # _on_product_purchase_completed() instead.
-    if obj.get("mode") == "payment":
+    # Storefront product/service purchases (mode="payment") are routed to the
+    # order/receipt flow and must never touch the merchant's own WaziBot plan.
+    mode = _g(obj, "mode")
+    if mode == "payment":
         _on_product_purchase_completed(obj)
         return
+    if mode != "subscription":
+        log.info("checkout.session.completed ignored  mode=%s", mode)
+        return
 
-    bid  = _bid_from_meta(obj)
-    if not bid: return
-    tier = (obj.get("metadata") or {}).get("tier", "pro")
-    _patch_biz(bid, {
-        "subscription_tier":      tier,
-        "billing_status":         "active",
-        "stripe_subscription_id": obj.get("subscription", ""),
-    })
-    log.info("SUBSCRIPTION ACTIVATED  business=%s  tier=%s", bid, tier)
-    # Send subscription confirmation email — fire-and-forget
-    try:
-        from core.db import supabase
-        from services.email_service import send_subscription_confirmed
-        biz = supabase.table("businesses").select("name,owner_email").eq("id", bid).limit(1).execute()
-        b   = (biz.data or [{}])[0]
-        if b.get("owner_email"):
-            tier_labels = {"starter": "Starter", "growth": "Growth", "enterprise": "Enterprise"}
-            tier_prices = {"starter": "$5.99/month", "growth": "$12/month", "enterprise": "Custom"}
-            send_subscription_confirmed(
-                to_email      = b["owner_email"],
-                business_name = b.get("name", ""),
-                plan_name     = tier_labels.get(tier, tier.title()),
-                amount        = tier_prices.get(tier, ""),
-                next_billing  = "See your Stripe dashboard",
-            )
-    except Exception as _e:
-        log.debug("checkout email error: %s", _e)
+    bid = _bid_from_meta(obj)
+    if not bid:
+        try:
+            bid = int(_g(obj, "client_reference_id") or 0) or None
+        except (TypeError, ValueError):
+            bid = None
+    if not bid:
+        log.warning("subscription checkout without business reference  session=%s", _g(obj, "id"))
+        return
+
+    # A completed Checkout page is not proof of payment: wait for 'paid'
+    # (async methods deliver checkout.session.async_payment_succeeded later).
+    if _g(obj, "payment_status") not in ("paid", "no_payment_required"):
+        log.info("checkout completed but not yet paid — no access granted  business=%s  session=%s",
+                 bid, _g(obj, "id"))
+        return
+    sub_id = _g(obj, "subscription")
+    if not sub_id:
+        return
+    sub_id = sub_id if isinstance(sub_id, str) else _g(sub_id, "id")
+
+    row = _load_biz(bid)
+    if not row:
+        log.warning("checkout for unknown business  business=%s", bid)
+        return
+    cust = _g(obj, "customer")
+    cust = cust if (cust is None or isinstance(cust, str)) else _g(cust, "id")
+    stored = row.get("stripe_customer_id")
+    if stored and cust and stored != cust:
+        log.error("checkout customer does not match business mapping — ignored  business=%s", bid)
+        return
+    if cust and not stored:
+        _patch_biz(bid, {"stripe_customer_id": cust})
+
+    sub = _fetch_subscription(_stripe(), sub_id, None)
+    if sub is None:
+        log.error("checkout references missing subscription  business=%s", bid)
+        return
+    # The subscription must belong to the business named on the session.
+    sub_bid = _bid_from_meta(sub)
+    if sub_bid and sub_bid != bid:
+        log.error("session/subscription business mismatch — ignored  session_biz=%s  sub_biz=%s", bid, sub_bid)
+        return
+    res = _sync_subscription(sub, source="checkout.session.completed")
+    if res.get("result") == "synced":
+        log.info("SUBSCRIPTION ACTIVATED  business=%s  tier=%s", bid, res["new_tier"])
+    _send_lifecycle_emails(res, activated_hint=True)
+
+
+def _on_checkout_async_failed(obj: dict) -> None:
+    log.warning("checkout async payment failed — no access granted  session=%s", _g(obj, "id"))
+
+
+def _on_audit_only(obj: dict, etype: str) -> None:
+    """Refunds / disputes / expired sessions: recorded for audit, no automatic
+    access change (policy: a refund or dispute never silently cancels a plan —
+    cancellations arrive as customer.subscription.* events)."""
+    log.warning("BILLING_AUDIT  type=%s  object=%s  customer=%s  amount=%s  currency=%s",
+                etype, _g(obj, "id"), _g(obj, "customer"),
+                _g(obj, "amount_refunded", _g(obj, "amount")), _g(obj, "currency"))
 
 
 def _on_subscription_updated(obj: dict) -> None:
-    bid = _bid_from_meta(obj)
-    if not bid: return
-    status_map = {"active": "active", "trialing": "trialing",
-                  "past_due": "past_due", "canceled": "cancelled", "unpaid": "past_due"}
-    billing_status = status_map.get(obj.get("status", ""), "active")
-    patch: dict = {"billing_status": billing_status, "stripe_subscription_id": obj.get("id")}
-    # Try to derive tier from price metadata
-    for item in ((obj.get("items") or {}).get("data") or []):
-        t = ((item.get("price") or {}).get("metadata") or {}).get("wazibot_tier")
-        if t:
-            patch["subscription_tier"] = t
-            break
-
-    # SuperAdmin 2.0 (Phase 9) — record the transition for cohort/churn
-    # analytics BEFORE patching, so we capture the pre-change state. Never
-    # blocks or fails the actual billing update if it errors.
-    prev_tier, prev_status = _prev_tier_status(bid)
-    _patch_biz(bid, patch)
-    _log_subscription_event(
-        bid, prev_tier, patch.get("subscription_tier", prev_tier),
-        prev_status, billing_status,
-    )
+    sub_id = _g(obj, "id")
+    sub = _fetch_subscription(_stripe(), sub_id, obj) if sub_id else obj
+    res = _sync_subscription(sub, source="customer.subscription.updated")
+    _send_lifecycle_emails(res)
 
 
 def _on_subscription_deleted(obj: dict) -> None:
-    bid = _bid_from_meta(obj)
-    if not bid: return
-    prev_tier, prev_status = _prev_tier_status(bid)
-    _patch_biz(bid, {"subscription_tier": "free", "billing_status": "cancelled",
-                     "stripe_subscription_id": None})
-    _log_subscription_event(bid, prev_tier, "free", prev_status, "cancelled")
-    log.info("SUBSCRIPTION CANCELLED → FREE  business=%s", bid)
-    # Send cancellation confirmation email — fire-and-forget
-    try:
-        from core.db import supabase
-        from services.email_service import send_subscription_cancelled
-        biz = supabase.table("businesses").select("name,owner_email,subscription_tier").eq("id", bid).limit(1).execute()
-        b   = (biz.data or [{}])[0]
-        if b.get("owner_email"):
-            send_subscription_cancelled(
-                to_email      = b["owner_email"],
-                business_name = b.get("name", ""),
-                plan_name     = (b.get("subscription_tier") or "").title() or "Paid",
-                access_ends   = "end of current billing period",
-            )
-    except Exception as _e:
-        log.debug("cancellation email error: %s", _e)
+    sub_id = _g(obj, "id")
+    sub = _fetch_subscription(_stripe(), sub_id, obj) if sub_id else obj
+    res = _sync_subscription(sub, source="customer.subscription.deleted")
+    if res.get("result") == "synced":
+        log.info("SUBSCRIPTION ENDED → FREE  business=%s", res["business_id"])
+    _send_lifecycle_emails(res)
+
+
+def _invoice_subscription_id(invoice) -> Optional[str]:
+    sid = _g(invoice, "subscription")
+    if not sid:
+        sid = _g(_g(_g(invoice, "parent"), "subscription_details"), "subscription")
+    if sid and not isinstance(sid, str):
+        sid = _g(sid, "id")
+    return sid
+
+
+def _sync_from_invoice(invoice, source: str) -> dict:
+    sub_id = _invoice_subscription_id(invoice)
+    if not sub_id:
+        return {"result": "ignored", "reason": "not_a_subscription_invoice"}
+    sub = _fetch_subscription(_stripe(), sub_id, None)
+    if sub is None:
+        return {"result": "ignored", "reason": "subscription_missing"}
+    res = _sync_subscription(sub, source=source)
+    if res.get("result") == "synced" and _g(invoice, "id"):
+        try:
+            _patch_biz(res["business_id"], {"stripe_last_invoice_id": _g(invoice, "id")})
+        except Exception as exc:
+            log.debug("last-invoice id not stored: %s", type(exc).__name__)
+    return res
+
+
+def _on_invoice_paid(invoice: dict) -> None:
+    """Renewal / recovery: state comes from the subscription, so a stale or
+    duplicate invoice event can't regress a newer state."""
+    res = _sync_from_invoice(invoice, "invoice.paid")
+    if res.get("result") == "synced":
+        log.info("RENEWAL/PAYMENT OK  business=%s  invoice=%s", res["business_id"], _g(invoice, "id"))
 
 
 def _on_payment_failed(invoice: dict) -> None:
-    cid = invoice.get("customer")
-    if not cid: return
-    try:
-        from core.db import supabase
-        res = supabase.table("businesses").select("id,name,owner_email,subscription_tier").eq("stripe_customer_id", cid).limit(1).execute()
-        b   = (res.data or [{}])[0]
-        bid = b.get("id")
-        if bid:
-            prev_tier, prev_status = _prev_tier_status(bid)
-            _patch_biz(bid, {"billing_status": "past_due"})
-            _log_subscription_event(bid, prev_tier, prev_tier, prev_status, "past_due")
-            log.warning("PAYMENT FAILED  business=%s  customer=%s", bid, cid)
-            # Send payment failed email — fire-and-forget
-            try:
-                from services.email_service import send_payment_failed
-                if b.get("owner_email"):
-                    tier = b.get("subscription_tier") or "starter"
-                    tier_prices = {"starter": "$5.99", "growth": "$12.00", "enterprise": "Custom"}
-                    send_payment_failed(
-                        to_email      = b["owner_email"],
-                        business_name = b.get("name", ""),
-                        plan_name     = tier.title(),
-                        amount        = tier_prices.get(tier, ""),
-                        retry_date    = "3 days",
-                    )
-            except Exception as _e:
-                log.debug("payment failed email error: %s", _e)
-    except Exception as exc:
-        log.error("_on_payment_failed error: %s", exc)
+    res = _sync_from_invoice(invoice, "invoice.payment_failed")
+    if res.get("result") == "synced":
+        log.warning("PAYMENT FAILED  business=%s  invoice=%s  status=%s",
+                    res["business_id"], _g(invoice, "id"), res["new_status"])
+    _send_lifecycle_emails(res)
+
+
+# ── Reconciliation (admin-triggered, report-first) ────────────────────────────
+
+def reconcile_billing(fix: bool = False, limit: int = 200) -> dict:
+    """
+    Compare local billing records with Stripe and report discrepancies.
+    Default is READ-ONLY. With fix=True it only re-syncs local metadata from the
+    Stripe subscription (deterministic); it never refunds, cancels, charges or
+    creates subscriptions. Idempotent.
+    """
+    stripe = _stripe()
+    if not stripe:
+        return {"error": "Stripe not configured"}
+    from core.db import supabase
+    rows = (supabase.table("businesses")
+            .select("id, subscription_tier, billing_status, stripe_customer_id, stripe_subscription_id, "
+                    "stripe_price_id, cancel_at_period_end")
+            .limit(max(1, min(int(limit), 1000))).execute().data or [])
+    out, repaired, checked = [], 0, 0
+    for r in rows:
+        bid, sub_id = r["id"], r.get("stripe_subscription_id")
+        tier, status = r.get("subscription_tier") or "free", r.get("billing_status")
+        paid_local = tier != "free" and status in ("active", "past_due", "trialing_paid")
+        if not sub_id:
+            if paid_local:
+                out.append({"business_id": bid, "kind": "paid_without_subscription",
+                            "local": {"tier": tier, "status": status}})
+            continue
+        checked += 1
+        try:
+            sub = stripe.Subscription.retrieve(sub_id)
+        except Exception as exc:
+            kind = "stripe_subscription_missing" if getattr(exc, "code", None) == "resource_missing" else "stripe_lookup_failed"
+            out.append({"business_id": bid, "kind": kind, "local": {"tier": tier, "status": status}})
+            continue
+        d = _derive(sub)
+        expect_status = _STRIPE_TO_LOCAL_STATUS.get(d["stripe_status"])
+        issues = []
+        if d["stripe_status"] in ("incomplete", "incomplete_expired"):
+            continue
+        if expect_status and expect_status != status:
+            issues.append("status_mismatch")
+        exp_tier = "free" if d["stripe_status"] == "canceled" else d["tier"]
+        if exp_tier and exp_tier != tier:
+            issues.append("tier_mismatch")
+        if d["price_id"] and r.get("stripe_price_id") and d["price_id"] != r.get("stripe_price_id"):
+            issues.append("price_mismatch")
+        if d["customer_id"] and r.get("stripe_customer_id") and d["customer_id"] != r.get("stripe_customer_id"):
+            issues.append("customer_mismatch")
+        if d["tier"] is None and d["live"]:
+            issues.append("unknown_price_id")
+        if d["stripe_status"] == "canceled" and tier != "free":
+            issues.append("stripe_canceled_local_entitled")
+        if d["live"] and tier == "free":
+            issues.append("stripe_active_local_free")
+        if issues:
+            item = {"business_id": bid, "kinds": sorted(set(issues)),
+                    "local": {"tier": tier, "status": status},
+                    "stripe": {"status": d["stripe_status"], "tier": d["tier"], "interval": d["interval"]}}
+            if fix and "customer_mismatch" not in issues:
+                try:
+                    res = _sync_subscription(sub, source="reconcile")
+                    item["repaired"] = res.get("result") == "synced"
+                    repaired += 1 if item["repaired"] else 0
+                except Exception as exc:
+                    item["repair_error"] = type(exc).__name__
+            out.append(item)
+    for item in out:
+        log.warning("RECONCILE_DISCREPANCY  business=%s  kinds=%s", item["business_id"],
+                    item.get("kinds") or item.get("kind"))
+    from crud.stripe_webhook_events import list_failed_events
+    return {"checked": checked, "discrepancies": out, "repaired": repaired,
+            "dry_run": not fix, "failed_webhook_events": list_failed_events()}
 
 
 # ── One-time SQL migration ────────────────────────────────────────────────────

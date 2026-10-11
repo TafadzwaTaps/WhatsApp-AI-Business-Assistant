@@ -2915,28 +2915,47 @@ async function loadStripeSubscriptionStatus() {
   const upgradeBtn = document.getElementById('stripe-upgrade-btn');
   const manageBtn  = document.getElementById('stripe-manage-btn');
   const cancelBtn  = document.getElementById('stripe-cancel-btn');
+  const resumeBtn  = document.getElementById('stripe-resume-btn');
   try {
     const s = await apiFetch('/billing/status');
     if (!s) return;
     const tier   = (s.tier || 'free').charAt(0).toUpperCase() + (s.tier || 'free').slice(1);
-    const status = s.billing_status || 'active';
-    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', canceled:'var(--text-dim)' };
+    const raw    = (s.billing_status || 'active').toLowerCase();
+    const status = raw === 'canceled' ? 'cancelled' : raw;      // backend spells it "cancelled"
+    const scheduled = !!s.cancel_at_period_end && status === 'active';
+    const fmt = d => d ? new Date(d).toLocaleDateString(undefined, { day:'numeric', month:'long', year:'numeric' }) : '';
+    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', unpaid:'#ff5252',
+                           paused:'var(--amber)', cancelled:'var(--text-dim)' };
+    const labels = { active: scheduled ? 'Cancelling' : 'Active', trialing:'Trial', past_due:'Payment required',
+                     unpaid:'Payment required', paused:'Paused', cancelled:'Cancelled' };
     if (planLabel) { planLabel.textContent = `${tier} Plan`; planLabel.style.color = statusColors[status] || 'var(--text)'; }
-    if (statusEl)  { statusEl.textContent  = status.charAt(0).toUpperCase()+status.slice(1).replace('_',' '); statusEl.style.color = statusColors[status] || 'var(--text-dim)'; }
+    if (statusEl)  { statusEl.textContent  = labels[status] || (status.charAt(0).toUpperCase()+status.slice(1).replace('_',' ')); statusEl.style.color = scheduled ? 'var(--amber)' : (statusColors[status] || 'var(--text-dim)'); }
     if (trialEl) {
+      let msg = '', color = 'var(--green)';
       if (status === 'trialing' && s.trial_ends_at) {
         const days = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
-        trialEl.style.display = 'block';
-        trialEl.textContent = days > 0
-          ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade from $5.99/mo when ready.`
-          : `Trial ended. Upgrade from $5.99/month to restore full access.`;
-      } else { trialEl.style.display = 'none'; }
+        msg = days > 0 ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade when you're ready.`
+                       : 'Trial ended. Upgrade to restore full access.';
+      } else if (scheduled) {
+        msg = `Your plan is set to end on ${fmt(s.access_ends_at || s.current_period_end) || 'the end of this billing period'}. You keep full access until then.`;
+        color = 'var(--amber)';
+      } else if (status === 'past_due' || status === 'unpaid') {
+        msg = 'Your last payment failed. Please update your payment method via Manage Subscription to keep your plan.';
+        color = '#ff5252';
+      } else if (status === 'active' && s.current_period_end) {
+        msg = `Next renewal: ${fmt(s.current_period_end)}`;
+        color = 'var(--text-dim)';
+      }
+      trialEl.style.display = msg ? 'block' : 'none';
+      trialEl.style.color = color;
+      trialEl.textContent = msg;
     }
-    const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'canceled';
-    const hasActiveSub = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
-    if (upgradeBtn) upgradeBtn.style.display = canUpgrade   ? 'inline-flex' : 'none';
-    if (manageBtn)  manageBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
-    if (cancelBtn)  cancelBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
+    const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'cancelled';
+    const hasSub       = !!s.stripe_subscription_id && ['active','past_due','unpaid'].includes(status);
+    if (upgradeBtn) upgradeBtn.style.display = canUpgrade ? 'inline-flex' : 'none';
+    if (manageBtn)  manageBtn.style.display  = (hasSub || (s.stripe_customer_id && status !== 'trialing')) ? 'inline-flex' : 'none';
+    if (cancelBtn)  cancelBtn.style.display  = (hasSub && !scheduled) ? 'inline-flex' : 'none';
+    if (resumeBtn)  resumeBtn.style.display  = scheduled ? 'inline-flex' : 'none';
   } catch(e) { /* subscription status unavailable */ }
 }
 
@@ -3024,19 +3043,43 @@ async function stripeManage() {
   }
 }
 
+let _billingBusy = false;   // blocks double submits of cancel/resume
+
 async function stripeCancel() {
-  if (!confirm('Cancel your subscription? You keep access until the end of your billing period.')) return;
+  if (_billingBusy) return;
+  if (!confirm('Cancel your subscription?\n\nYou keep full access until the end of your current paid billing period, then your account moves to the Free plan. Your data is kept.')) return;
   const btn = document.getElementById('stripe-cancel-btn');
   const statusEl = document.getElementById('stripe-action-status');
   try {
+    _billingBusy = true;
     if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
-    await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Subscription cancelled — access continues until period end.</span>';
-    setTimeout(loadStripeBillingStatus, 1500);
+    const r = await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
+    const until = r && r.access_until ? new Date(r.access_until).toLocaleDateString(undefined, { day:'numeric', month:'long', year:'numeric' }) : 'the end of your billing period';
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Cancellation scheduled — you keep access until ' + escHtml(until) + '.</span>';
+    await loadStripeBillingStatus();
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
+    _billingBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Cancel Plan'; }
+  }
+}
+
+async function stripeResume() {
+  if (_billingBusy) return;
+  const btn = document.getElementById('stripe-resume-btn');
+  const statusEl = document.getElementById('stripe-action-status');
+  try {
+    _billingBusy = true;
+    if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+    await apiFetch('/billing/resume', { method: 'POST' });
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Your plan will continue and renew as normal.</span>';
+    await loadStripeBillingStatus();
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
+  } finally {
+    _billingBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '↩ Keep My Plan'; }
   }
 }
 
