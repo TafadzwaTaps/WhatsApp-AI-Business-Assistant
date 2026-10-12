@@ -2227,7 +2227,7 @@ async function loadChatMessages(phone) {
     }
   } catch(e) {
     const el = document.getElementById('chat-msgs');
-    if (el) el.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
+    if (el) el.innerHTML = `<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -2321,7 +2321,7 @@ async function loadCustomers() {
     if (statTotal) statTotal.textContent = phones.length;
   } catch (e) {
     const rl = document.getElementById('recipient-list');
-    if (rl) rl.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
+    if (rl) rl.innerHTML = `<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -2971,7 +2971,7 @@ async function stripeConnect() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Could not start Stripe setup') + '</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ Connect Stripe Account'; }
   }
@@ -2989,7 +2989,7 @@ async function stripeConnectDashboard() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Dashboard not available') + '</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📊 Open Stripe Dashboard'; }
   }
@@ -3037,7 +3037,7 @@ async function stripeManage() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ Portal not available — contact support.</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚙ Manage Subscription'; }
   }
@@ -4629,7 +4629,7 @@ async function loadInactive(days) {
       </div>`
     ).join('') + (data.length > 8 ? `<div style="color:var(--text-dim);font-size:10px;padding-top:6px;">+${data.length-8} more</div>` : '');
   } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${e.message}</div>`;
+    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -4760,7 +4760,7 @@ async function loadDrawerOrders(phone) {
       </div>`
     ).join('');
   } catch (e) {
-    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
+    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -5905,7 +5905,7 @@ async function loadBcCustomerPicker() {
     const sel = document.querySelector('input[name="bc-audience"]:checked');
     if (sel && sel.value === 'custom') updateBcRecipientPreview('custom');
   } catch (e) {
-    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${e.message}</div>`;
+    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -6006,7 +6006,7 @@ function updateBcRecipientPreview(audience) {
       return `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:3px 0;">${escHtml(display)}</div>`;
     }).join('');
   }).catch(e => {
-    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
+    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${escHtml(e.message)}</div>`;
     if (statSelected) statSelected.textContent = '—';
   });
 }
@@ -6717,7 +6717,7 @@ async function askDashHelp() {
     if (data.related?.length) html += `<div class="help-related">${data.related.map(r=>`<button class="help-related-chip" onclick="askDashHelpQ('Tell me about ${r.title}')">${r.title}</button>`).join('')}</div>`;
     body.innerHTML = html;
   } catch (e) {
-    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${e.message}</div>`;
+    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -6893,13 +6893,13 @@ async function submitReferralWithdrawal() {
       method: 'POST',
       body:   JSON.stringify({ paypal_email: email, amount }),
     });
-    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${result.message}</div>`;
+    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${escHtml(result.message)}</div>`;
     toast('✅ Payout requested!');
     // Refresh stats
     _refData = null;
     setTimeout(loadReferralTab, 1000);
   } catch(e) {
-    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${e.message}</span>`;
+    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${escHtml(e.message)}</span>`;
     toast(e.message, true);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '💸 Request Payout'; }

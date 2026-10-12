@@ -455,6 +455,24 @@ async def run_scheduled_campaigns():
         audience    = campaign["audience"]
         message     = campaign["message"]
 
+        # Claim atomically (pending -> processing). If another run already took it
+        # the conditional update matches nothing and we skip, so overlapping cron
+        # invocations can't send the same campaign twice. If the status column
+        # rejects the value we fall back to the previous behaviour.
+        try:
+            claimed = (
+                supabase.table("scheduled_campaigns")
+                .update({"status": "processing"})
+                .eq("id", campaign_id)
+                .eq("status", "pending")
+                .execute()
+            )
+            if not claimed.data:
+                log.info("scheduled_campaign %s already claimed - skipping", campaign_id)
+                continue
+        except Exception as exc:
+            log.warning("scheduled campaign claim unavailable (%s) - proceeding unclaimed", type(exc).__name__)
+
         try:
             result = CampaignService.run(
                 business_id=bid,

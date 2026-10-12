@@ -169,6 +169,25 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+# SECURITY: many routes do `raise HTTPException(500, str(exc))`, which sends raw
+# database / library error text (table names, SQL hints, stack fragments) to the
+# client. Log the real detail server-side and return a generic message for
+# 500/502/504. 4xx and 503 (intentional "not configured"/"paused" messages) keep
+# their original detail, and response headers are preserved.
+from starlette.exceptions import HTTPException as _StarletteHTTPException
+from fastapi.responses import JSONResponse as _JSONResponse
+
+
+@app.exception_handler(_StarletteHTTPException)
+async def _sanitised_http_exception_handler(request, exc):
+    detail = exc.detail
+    if exc.status_code in (500, 502, 504):
+        log.error("HTTP %s on %s %s: %s", exc.status_code, request.method, request.url.path, detail)
+        detail = "Internal server error. Please try again."
+    return _JSONResponse({"detail": detail}, status_code=exc.status_code,
+                         headers=getattr(exc, "headers", None))
+
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request, exc: RateLimitExceeded):
     # Logging fix: this used the raw X-Forwarded-For header directly rather

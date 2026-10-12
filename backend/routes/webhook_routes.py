@@ -826,6 +826,9 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
     token_param = websocket.query_params.get("token", "")
     try:
         payload = decode_token(token_param)
+        if payload.get("type") == "refresh":          # refresh tokens never authenticate
+            await websocket.close(code=4001)
+            return
         if payload.get("business_id") != business_id and payload.get("role") != "superadmin":
             await websocket.close(code=4001)
             return

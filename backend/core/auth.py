@@ -204,33 +204,46 @@ def decode_token(token: str) -> dict:
 # issued before this feature existed) skips the check entirely — no
 # existing session is invalidated by deploying this.
 _pwd_ts_cache: dict[int, tuple[str, float]] = {}
+_active_cache: dict[int, tuple[bool, float]] = {}
 _PWD_TS_CACHE_TTL = 60  # seconds
 
 
-def _get_current_password_changed_at(business_id: int) -> str | None:
+def _lookup_auth_state(business_id: int) -> tuple[str | None, bool] | None:
+    """(password_changed_at, is_active) for a business, cached for
+    _PWD_TS_CACHE_TTL. None on lookup failure or unknown business (callers
+    fail open — a DB hiccup must not lock everyone out; signature/expiry
+    checks still apply)."""
     import time as _time
-    cached = _pwd_ts_cache.get(business_id)
     now = _time.time()
-    if cached and (now - cached[1]) < _PWD_TS_CACHE_TTL:
-        return cached[0]
+    cached_pwd = _pwd_ts_cache.get(business_id)
+    cached_act = _active_cache.get(business_id)
+    if (cached_pwd and cached_act
+            and (now - cached_pwd[1]) < _PWD_TS_CACHE_TTL and (now - cached_act[1]) < _PWD_TS_CACHE_TTL):
+        return cached_pwd[0], cached_act[0]
     try:
         from core.db import supabase
         res = (
             supabase.table("businesses")
-            .select("password_changed_at")
+            .select("password_changed_at, is_active")
             .eq("id", business_id)
             .limit(1)
             .execute()
         )
-        value = (res.data[0].get("password_changed_at") if res.data else None)
+        if not res.data:
+            return None
+        row = res.data[0]
+        pwd = row.get("password_changed_at")
+        active = row.get("is_active") is not False       # NULL / missing column = active
     except Exception:
-        # Fail open on lookup errors — a transient DB hiccup must not lock
-        # every business out of their own account. The signature/expiry
-        # check above still fully applies; this is an additional layer,
-        # not the only one.
         return None
-    _pwd_ts_cache[business_id] = (value, now)
-    return value
+    _pwd_ts_cache[business_id] = (pwd, now)
+    _active_cache[business_id] = (active, now)
+    return pwd, active
+
+
+def _get_current_password_changed_at(business_id: int) -> str | None:
+    state = _lookup_auth_state(business_id)
+    return state[0] if state else None
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
@@ -247,6 +260,23 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     if not username:
         _log.warning("AUTH FAILED: reason=missing_sub_in_token")
         raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    # SECURITY: a refresh token (7-day lifetime) must never authenticate API
+    # calls — it is only valid at /auth/refresh. Previously it was accepted
+    # here, silently extending a stolen token's useful life from 8h to 7 days.
+    if payload.get("type") == "refresh":
+        _log.warning("AUTH FAILED: reason=refresh_token_used_as_access_token")
+        raise HTTPException(status_code=401, detail="Invalid token type. Please log in again.")
+
+    # A suspended business is locked out within the cache TTL instead of
+    # keeping a working session until its token expires. Impersonation
+    # (superadmin support tool) is deliberately exempt so support can still
+    # inspect a suspended account.
+    if role == "business" and business_id is not None and not payload.get("impersonated_by"):
+        state = _lookup_auth_state(business_id)
+        if state and state[1] is False:
+            _log.warning("AUTH FAILED: reason=account_suspended  business_id=%s", business_id)
+            raise HTTPException(status_code=403, detail="Account suspended. Contact support.")
 
     token_pwd_ts = payload.get("pwd_ts")
     if token_pwd_ts and business_id is not None:

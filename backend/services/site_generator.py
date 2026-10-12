@@ -1166,10 +1166,16 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
     _verb = "book" if is_service else "order"
     order_text = f"Hi! I'd like to {_verb} {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to {_verb} {p.get('name','')}"
 
-    buy_now_js = (
-        f"wzBuyNow({business_id},{repr(str(p.get('id','')))},{repr(str(name))},{price},'{_e(currency_sym)}')"
-        if business_id else ""
-    )
+    # SECURITY/BUGFIX: build the JS call from RAW values with json.dumps (valid JS
+    # string literals - quotes/backslashes/newlines escaped), then HTML-escape the
+    # whole expression once for the attribute. The previous version put an
+    # already-HTML-escaped name inside repr(): the browser decodes &#x27; back to
+    # ' before running the handler, so a product name containing an apostrophe
+    # broke the Buy Now button and a crafted name ("x',alert(1),'") ran script.
+    buy_now_js = _e(
+        f"wzBuyNow({int(business_id)},{json.dumps(str(p.get('id','')))},"
+        f"{json.dumps(str(p.get('name','Product')))},{price},{json.dumps(str(currency_sym))})"
+    ) if business_id else ""
     _buy_key = "pay_btn" if is_service else "buy_now"
     buy_label = f'💳 <span data-i18n="{_buy_key}">{SITE_I18N["en"][_buy_key]}</span>'
     buy_btn = (
@@ -1623,7 +1629,8 @@ def _buy_now_html(biz_id: int, currency_sym: str, currency_code: str, palette: d
     border = p["border"]
     curr   = currency_code.lower()[:3] if currency_code else "usd"
     # Escape currency symbol for safe JS string embedding
-    sym_js = currency_sym.replace("\\", "\\\\").replace("'", "\\'")
+    # JSON-escape (quotes, backslashes, newlines) and neutralise "</script>".
+    sym_js = json.dumps(str(currency_sym))[1:-1].replace("'", "\\'").replace("</", "<\\/")
     return f"""
 <div id="wz-cart-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:{bg};border-radius:16px;padding:28px;width:min(420px,94vw);max-height:90vh;overflow-y:auto;">
@@ -1652,6 +1659,12 @@ var _wzCurrSym = '{sym_js}';
 var _wzCurrCode= '{curr}';
 var _wzCart    = [];
 
+function _wzEsc(s) {{
+  return String(s).replace(/[&<>"']/g, function(c) {{
+    return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c];
+  }});
+}}
+
 function wzBuyNow(bizId, prodId, prodName, price, currSym) {{
   _wzCart = [{{ id: prodId, name: prodName, price: parseFloat(price), quantity: 1 }}];
   _wzShowCart(currSym || _wzCurrSym);
@@ -1666,7 +1679,7 @@ function _wzShowCart(sym) {{
   itemsEl.innerHTML = _wzCart.map(function(i) {{
     total += i.price * i.quantity;
     return '<div style="display:flex;justify-content:space-between;padding:8px 0;">'
-      + '<span>' + i.name + '</span>'
+      + '<span>' + _wzEsc(i.name) + '</span>'
       + '<span style="font-weight:600">' + sym + (i.price * i.quantity).toFixed(2) + '</span>'
       + '</div>';
   }}).join('');
