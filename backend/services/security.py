@@ -187,6 +187,7 @@ LIMITS = {
     # hammer availability checks with no cost. 10/min is generous for a
     # genuine customer booking an appointment, but blocks casual abuse.
     "booking":      {"max_calls": 10, "window": 60},    # 10/min per IP
+    "product_checkout": {"max_calls": 20, "window": 60},  # storefront Stripe sessions, per IP
 }
 
 

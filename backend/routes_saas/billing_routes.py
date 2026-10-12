@@ -317,8 +317,44 @@ def _resolve_currency(business_id: int, client_currency: str) -> str:
     return c if (c and len(c) == 3 and c.isalpha()) else "usd"
 
 
+def _server_priced_items(business_id: int, items: list) -> list:
+    """
+    Re-price storefront items from the business's own products table. The
+    browser only says WHICH products (id, else exact name) and how many — the
+    name, price and description charged are always the server's, so a visitor
+    can't edit the cart to pay less. Items that aren't this business's
+    products are rejected.
+    """
+    from core.db import supabase
+    if not isinstance(items, list) or not items:
+        raise HTTPException(400, "No items provided")
+    rows = (supabase.table("products").select("*").eq("business_id", business_id).execute().data) or []
+    by_id   = {str(r.get("id")): r for r in rows}
+    by_name = {(r.get("name") or "").strip().lower(): r for r in rows}
+    priced = []
+    for it in items[:50]:
+        if not isinstance(it, dict):
+            raise HTTPException(400, "Invalid item")
+        row = by_id.get(str(it.get("id"))) if it.get("id") not in (None, "") else None
+        row = row or by_name.get(str(it.get("name") or "").strip().lower())
+        if not row:
+            raise HTTPException(400, "One or more items are no longer available")
+        try:
+            qty = max(1, min(99, int(it.get("quantity", 1) or 1)))
+            price = float(row.get("price") or 0)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Invalid item")
+        if price <= 0:
+            continue
+        priced.append({"name": row.get("name") or "Item", "price": price, "quantity": qty,
+                       "description": row.get("description") or None})
+    if not priced:
+        raise HTTPException(400, "No payable items in cart")
+    return priced
+
+
 @router.post("/billing/product-checkout")
-def billing_product_checkout(body: ProductCheckoutRequest):
+def billing_product_checkout(body: ProductCheckoutRequest, request: Request):
     """
     Public endpoint — no auth required.
     Called by storefront customers who are not logged in to WaziBot.
@@ -328,8 +364,11 @@ def billing_product_checkout(body: ProductCheckoutRequest):
     Currency is always resolved from the business DB record so that cached
     or stale storefront HTML cannot cause the wrong currency to be charged.
     """
+    from services.security import check as _rate_check
+    _rate_check("product_checkout", request)
     if not body.business_id or body.business_id < 1:
         raise HTTPException(400, "Invalid business_id")
+    priced_items = _server_priced_items(body.business_id, body.items)
 
     # Look up the real currency from the DB — never trust client alone
     currency = _resolve_currency(body.business_id, body.currency)
@@ -339,7 +378,7 @@ def billing_product_checkout(body: ProductCheckoutRequest):
     from billing.stripe_service import create_product_checkout_session
     result = create_product_checkout_session(
         business_id    = body.business_id,
-        items          = body.items,
+        items          = priced_items,
         currency       = currency,
         customer_email = body.customer_email,
         success_url    = body.success_url,

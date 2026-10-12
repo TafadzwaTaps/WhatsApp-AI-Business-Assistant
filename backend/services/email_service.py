@@ -240,7 +240,7 @@ def send_welcome_email(
 <hr class="divider"/>
 <p>Your username is <strong style="color:#e8f5e9;">@{username}</strong>.</p>
 <p>Your trial gives you full access for <strong style="color:#22c55e;">30 days</strong>.
-   After that, plans start from <strong style="color:#22c55e;">$5.99/month</strong>.</p>
+   After that, plans start from <strong style="color:#22c55e;">$4.99/month</strong>.</p>
 <p>Questions? <a href="{support_url}" style="color:#22c55e;">hello@wazibothq.com</a></p>
 """
     return _send(
@@ -353,7 +353,7 @@ def send_trial_expiry_warning(
 <h1>{headline} for {business_name}</h1>
 <p>{tone}</p>
 <p>
-  Plans start from <strong style="color:#22c55e;">$5.99/month</strong> — less than a cup of coffee a week.
+  Plans start from <strong style="color:#22c55e;">$4.99/month</strong> — less than a cup of coffee a week.
   No setup fees. Cancel anytime.
 </p>
 <p><a href="{pricing_url}" class="btn">{cta_text}</a></p>
@@ -396,7 +396,7 @@ def send_trial_expired(
 <p><a href="{pricing_url}" class="btn">Choose a Plan — Restore Access →</a></p>
 <hr class="divider"/>
 <p style="font-size:13px;color:#6b8f71;">
-  Plans start from <strong style="color:#22c55e;">$5.99/month</strong>.
+  Plans start from <strong style="color:#22c55e;">$4.99/month</strong>.
   Cancel anytime. No setup fees.
 </p>
 """
@@ -415,7 +415,7 @@ def send_subscription_confirmed(
     to_email:      str,
     business_name: str,
     plan_name:     str,           # "Starter" | "Growth" | "Enterprise"
-    amount:        str,           # e.g. "$5.99/month"
+    amount:        str,           # e.g. "$4.99/month"
     next_billing:  str,           # e.g. "8 August 2026"
 ) -> bool:
     """Confirmation email sent after a successful subscription payment."""

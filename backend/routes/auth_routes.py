@@ -160,6 +160,24 @@ def signup(data: SignupRequest, request: Request):
                     "An account with that email address already exists. "
                     "Please log in or use a different email."
                 )
+            # Trial-reset guard: "name+tag@x.com" is the same mailbox as "name@x.com",
+            # so an existing account on either form blocks the other.
+            _base, _, _dom = _signup_email.partition("@")
+            _root = _base.split("+", 1)[0]
+            if _dom and _root:
+                _alias = (
+                    _sdb.table("businesses")
+                    .select("id")
+                    .or_(f"owner_email.ilike.{_root}@{_dom},owner_email.ilike.{_root}+%@{_dom}")
+                    .limit(1)
+                    .execute()
+                )
+                if _alias.data:
+                    raise HTTPException(
+                        400,
+                        "An account with that email address already exists. "
+                        "Please log in or use a different email."
+                    )
         except HTTPException:
             raise
         except Exception as _ee:

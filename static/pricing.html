@@ -248,7 +248,7 @@ footer a{color:var(--green);}
     <div class="plan-name">Starter</div>
     <div class="price-row">
       <span class="curr">$</span>
-      <span class="amount" id="p-starter">5.99</span>
+      <span class="amount" id="p-starter">4.99</span>
     </div>
     <div class="period">per month</div>
     <div class="annual-note" id="note-starter">Billed monthly</div>
@@ -443,7 +443,7 @@ footer a{color:var(--green);}
 // ── State ─────────────────────────────────────────────────────────────────────
 let isAnnual = false;
 let _pricing = {
-  starter_monthly: 5.99, starter_annual: 57,
+  starter_monthly: 4.99, starter_annual: 48,
   growth_monthly:  12,   growth_annual:  115,
   region: 'A', region_label: 'Global', country_code: ''
 };
@@ -479,7 +479,7 @@ function toggleBilling() {
 }
 
 function updatePriceDisplay() {
-  const sm = _pricing.starter_monthly || 5.99, sa = _pricing.starter_annual || 57;
+  const sm = _pricing.starter_monthly || 4.99, sa = _pricing.starter_annual || 48;
   const gm = _pricing.growth_monthly,  ga = _pricing.growth_annual;
 
   // Monthly per-month equivalent when annual chosen

@@ -877,3 +877,111 @@ def test_missing_stripe_configuration_fails_safe(env, monkeypatch):
     assert "error" in svc.cancel_subscription(1) and "error" in svc.create_portal_session(1)
     assert "error" in svc.change_plan(1, "growth", "monthly", True)
     assert svc.list_invoices(1)["invoices"] == []
+
+
+# ═══ Pricing consistency, storefront checkout, stored merchant keys ═════════
+
+PUBLISHED = {"starter_monthly": 4.99, "starter_annual": 48, "growth_monthly": 12, "growth_annual": 115}
+
+
+def test_displayed_prices_match_live_stripe_prices():
+    assert svc.TIERS["starter"]["price_monthly"] == 4.99 and svc.TIERS["starter"]["price_annual"] == 48
+    assert svc.TIERS["growth"]["price_monthly"] == 12 and svc.TIERS["growth"]["price_annual"] == 115
+    for cc in ("US", "PL", "ZW", "NG", "", "XX"):                 # no region sees a different price
+        p = svc.get_pricing_for_country(cc)
+        assert {k: p[k] for k in PUBLISHED} == PUBLISHED, cc
+
+
+def test_client_country_cannot_change_price_id(env):
+    ids = {svc.get_price_id_for_checkout("starter", "monthly", cc) for cc in ("US", "PL", "ZW", "")}
+    assert ids == {"price_sm"}
+
+
+def test_amount_or_currency_mismatch_blocks_checkout(env):
+    env.fs.prices["price_sm"]["unit_amount"] = 599
+    assert "amount" in svc.create_checkout_session(1, "starter", "monthly")["error"]
+    env.fs.prices["price_sm"] = _price("price_sm", "month", 499, currency="pln")
+    svc._verify_price.__dict__.pop("_cache", None)
+    assert "currency" in svc.create_checkout_session(1, "starter", "monthly")["error"]
+    assert env.fs.sessions == []
+
+
+def _storefront(env):
+    env.db.t["products"] = [
+        {"id": 5, "business_id": 1, "name": "Haircut", "price": 20, "description": "Cut"},
+        {"id": 6, "business_id": 2, "name": "Other Shop Item", "price": 5, "description": None},
+        {"id": 7, "business_id": 1, "name": "Free Sample", "price": 0},
+    ]
+
+
+def test_storefront_checkout_charges_server_price_not_client_price(client, env):
+    c, _, _ = client
+    _storefront(env)
+    r = c.post("/billing/product-checkout", json={
+        "business_id": 1, "currency": "usd",
+        "items": [{"id": 5, "name": "Haircut", "price": 0.01, "quantity": 2}],
+        "success_url": "https://evil.example/ok"})
+    assert r.status_code == 200
+    p = env.fs.sessions[-1]
+    li = p["line_items"][0]
+    assert li["price_data"]["unit_amount"] == 2000 and li["quantity"] == 2
+    assert p["success_url"].startswith("https://wazibothq.com/")
+
+
+def test_storefront_checkout_matches_by_name_for_cached_pages(client, env):
+    c, _, _ = client
+    _storefront(env)
+    r = c.post("/billing/product-checkout", json={"business_id": 1, "items": [{"name": "haircut", "price": 1, "quantity": 1}]})
+    assert r.status_code == 200 and env.fs.sessions[-1]["line_items"][0]["price_data"]["unit_amount"] == 2000
+
+
+def test_storefront_checkout_rejects_other_business_and_unknown_items(client, env):
+    c, _, _ = client
+    _storefront(env)
+    before = len(env.fs.sessions)
+    for items in ([{"id": 6, "name": "Other Shop Item", "price": 5, "quantity": 1}],
+                  [{"name": "Invented", "price": 1, "quantity": 1}],
+                  [{"name": "Free Sample", "price": 5, "quantity": 1}], []):
+        assert c.post("/billing/product-checkout", json={"business_id": 1, "items": items}).status_code == 400
+    assert len(env.fs.sessions) == before
+
+
+def test_storefront_quantity_is_clamped(client, env):
+    c, _, _ = client
+    _storefront(env)
+    c.post("/billing/product-checkout", json={"business_id": 1, "items": [{"id": 5, "quantity": 100000}]})
+    assert env.fs.sessions[-1]["line_items"][0]["quantity"] == 99
+
+
+def test_merchant_stripe_keys_encrypted_at_rest_and_redacted(monkeypatch):
+    import crud
+    from core.crypto import is_encrypted
+    from routes import business_routes as br
+    saved = {}
+    monkeypatch.setattr(crud, "get_business_by_id", lambda bid: {"id": bid, "features_json": {}})
+    monkeypatch.setattr(crud, "update_business", lambda bid, d: saved.update(d.dict()) or {"id": bid})
+    br.update_stripe_settings(br.StripeSettingsUpdate(stripe_pub_key="pk_live_x", stripe_secret_key="sk_live_plain_secret",
+                                                      stripe_webhook_secret="whsec_plain"), user={"business_id": 1})
+    cfg = saved["features_json"]["stripe"]
+    assert cfg["pub_key"] == "pk_live_x"
+    assert is_encrypted(cfg["secret_key"]) and "sk_live_plain_secret" not in json.dumps(cfg)
+    assert is_encrypted(cfg["webhook_secret"])
+    out = br._redact_stripe_secrets({"features_json": {"stripe": {**cfg, "secret_key": "sk_old_plain"}, "x": 1}})
+    s = json.dumps(out)
+    assert "secret_key\"" not in s.replace("secret_key_configured", "") and "sk_old_plain" not in s
+    assert out["features_json"]["stripe"]["secret_key_configured"] is True and out["features_json"]["x"] == 1
+
+
+def test_profile_update_cannot_erase_or_inject_stripe_section(monkeypatch):
+    import crud
+    from routes import business_routes as br
+    existing = {"stripe": {"secret_key": "ENCRYPTED", "pub_key": "pk"}, "owner_name": "A"}
+    saved = {}
+    monkeypatch.setattr(crud, "get_business_by_id", lambda bid: {"id": bid, "features_json": existing})
+    monkeypatch.setattr(crud, "update_business", lambda bid, d: saved.update(d.dict()) or {"id": bid})
+    br.update_me(br.BusinessUpdate(features_json={"owner_name": "B", "stripe": {"secret_key": "attacker"}}),
+                 user={"business_id": 1})
+    assert saved["features_json"]["stripe"] == existing["stripe"] and saved["features_json"]["owner_name"] == "B"
+    monkeypatch.setattr(crud, "get_business_by_id", lambda bid: {"id": bid, "features_json": {}})
+    br.update_me(br.BusinessUpdate(features_json={"stripe": {"secret_key": "attacker"}}), user={"business_id": 1})
+    assert "stripe" not in saved["features_json"]

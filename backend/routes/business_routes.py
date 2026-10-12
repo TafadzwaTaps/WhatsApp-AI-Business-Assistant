@@ -135,7 +135,7 @@ def get_me(user=Depends(require_business)):
     b.setdefault("ecocash_number",     None)
     b.setdefault("paypal_email",       None)
     b.setdefault("cash_enabled",       False)
-    return b
+    return _redact_stripe_secrets(b)
 
 
 # Currency symbol → ISO code map — keeps symbol and currency column in sync
@@ -155,6 +155,18 @@ _SYM_TO_ISO: dict = {
 def update_me(data: BusinessUpdate, user=Depends(require_business)):
     safe = data.dict(exclude_none=True)
     safe.pop("is_active", None)
+    if isinstance(safe.get("features_json"), dict):
+        # The "stripe" section is managed only by /me/payment-settings/stripe.
+        # GET /me redacts the keys, so a client that round-trips features_json
+        # must not be able to erase (or inject) them here.
+        current = crud.get_business_by_id(user["business_id"]) or {}
+        cur_fj = current.get("features_json") if isinstance(current.get("features_json"), dict) else {}
+        fj = dict(safe["features_json"])
+        if "stripe" in cur_fj:
+            fj["stripe"] = cur_fj["stripe"]
+        else:
+            fj.pop("stripe", None)
+        safe["features_json"] = fj
     new_phone_id = safe.get("whatsapp_phone_id")
     if new_phone_id:
         existing = crud.get_business_by_phone_id(new_phone_id)
@@ -177,7 +189,7 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
     if not b: raise HTTPException(404, "Not found")
     b.pop("owner_password", None)
     b.pop("whatsapp_token", None)
-    return b
+    return _redact_stripe_secrets(b)
 
 
 @router.get("/me/test-whatsapp")
@@ -333,12 +345,29 @@ class StripeSettingsUpdate(BaseModel):
     stripe_secret_key:     Optional[str] = None
     stripe_webhook_secret: Optional[str] = None
 
+def _encrypt_secret(value: str) -> str:
+    from core.crypto import encrypt_token, is_encrypted
+    return value if is_encrypted(value) else encrypt_token(value)
+
+
+def _redact_stripe_secrets(b: dict) -> dict:
+    """Never send a merchant's Stripe secret/webhook keys back to the browser —
+    only whether they are set (also scrubs values saved before encryption)."""
+    fj = b.get("features_json")
+    if isinstance(fj, dict) and isinstance(fj.get("stripe"), dict):
+        cfg = dict(fj["stripe"])
+        for k in ("secret_key", "webhook_secret"):
+            if cfg.pop(k, None):
+                cfg[f"{k}_configured"] = True
+        b["features_json"] = {**fj, "stripe": cfg}
+    return b
+
+
 @router.post("/me/payment-settings/stripe")
 def update_stripe_settings(data: StripeSettingsUpdate, user=Depends(require_business)):
     """Save Stripe API keys into features_json (encrypted fields go here).
     We store them in features_json rather than top-level columns so no schema
-    migration is required. Secret/webhook keys are stored as-is — consider
-    encrypting them using core.crypto if needed in future.
+    migration is required. Secret/webhook keys are encrypted with core.crypto.
     """
     bid = user["business_id"]
     b = crud.get_business_by_id(bid)
@@ -348,10 +377,11 @@ def update_stripe_settings(data: StripeSettingsUpdate, user=Depends(require_busi
     stripe_cfg = existing_fj.get("stripe", {}) if isinstance(existing_fj.get("stripe"), dict) else {}
     if data.stripe_pub_key:
         stripe_cfg["pub_key"] = data.stripe_pub_key.strip()
+    # Secrets are encrypted at rest (same Fernet scheme as WhatsApp tokens).
     if data.stripe_secret_key:
-        stripe_cfg["secret_key"] = data.stripe_secret_key.strip()
+        stripe_cfg["secret_key"] = _encrypt_secret(data.stripe_secret_key.strip())
     if data.stripe_webhook_secret:
-        stripe_cfg["webhook_secret"] = data.stripe_webhook_secret.strip()
+        stripe_cfg["webhook_secret"] = _encrypt_secret(data.stripe_webhook_secret.strip())
     new_fj = {**existing_fj, "stripe": stripe_cfg}
     class _D:
         def dict(self, **_): return {"features_json": new_fj}

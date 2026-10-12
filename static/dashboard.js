@@ -8195,7 +8195,7 @@ async function loadTrialBanner() {
           if (graceMsg && typeof ts.grace_hours_left === 'number') {
             const h = Math.max(0, Math.round(ts.grace_hours_left));
             graceMsg.textContent = `You have about ${h} hour${h===1?'':'s'} left before some features are restricted. `
-              + `Choose a plan from $5.99/month to keep everything running — all your data is safe.`;
+              + `Choose a plan from $4.99/month to keep everything running — all your data is safe.`;
           }
         }
       } else if (expiredBanner) {

@@ -80,11 +80,11 @@ TIERS: dict[str, dict] = {
         "stripe_price_id_monthly": "",
         "stripe_price_id_annual":  "",
     },
-    # ── Starter — $5.99/month ─────────────────────────────────────────────────
+    # ── Starter — $4.99/month ─────────────────────────────────────────────────
     "starter": {
         "label":               "Starter",
-        "price_monthly":       5.99,
-        "price_annual":        57,      # ~$4.75/mo — save 20%
+        "price_monthly":       4.99,
+        "price_annual":        48,      # $4/mo — save 20%
         "trial_days":          0,
         "messages_per_day":    200,
         "products_limit":      20,
@@ -167,7 +167,11 @@ TIERS: dict[str, dict] = {
 # REGIONAL PRICING CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 # Plans and features are IDENTICAL across all regions.
-# Only the displayed price and Stripe checkout amount differ.
+# CURRENT STATE: every region uses the same four live USD Stripe Prices
+# (Starter $4.99/mo · $48/yr, Growth $12/mo · $115/yr), so what the pricing
+# page shows is exactly what Stripe charges. The region structure is kept so
+# local pricing can be added later: create matching Stripe Prices, then give
+# the region its own amounts and price_ids (and review _price_index()).
 # To add a country: add it to the appropriate PRICING_REGIONS tier.
 # To add a region tier: add a new entry to PRICING_REGIONS and
 #   create matching Stripe Price objects + env vars.
@@ -187,8 +191,8 @@ PRICING_REGIONS: dict[str, dict] = {
             "US","CA","GB","DE","AU","NZ","SE","NO","DK","FI","NL","BE",
             "AT","CH","IE","FR","IT","ES","JP","SG","HK","AE","IL","KR",
         },
-        "starter_monthly": 5.99,
-        "starter_annual":  57,
+        "starter_monthly": 4.99,
+        "starter_annual":  48,
         "growth_monthly":  12,
         "growth_annual":   115,
         "price_ids": {
@@ -208,13 +212,13 @@ PRICING_REGIONS: dict[str, dict] = {
         },
         "starter_monthly": 4.99,
         "starter_annual":  48,
-        "growth_monthly":  10,
-        "growth_annual":   96,
+        "growth_monthly":  12,
+        "growth_annual":   115,
         "price_ids": {
-            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY_B", os.getenv("STRIPE_PRICE_STARTER_MONTHLY", "")),
-            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL_B",  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  "")),
-            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY_B",  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",  "")),
-            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL_B",   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",   "")),
+            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY", ""),
+            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  ""),
+            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",  ""),
+            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",   ""),
         },
     },
     # ── Tier C — Emerging markets ─────────────────────────────────────────────
@@ -224,15 +228,15 @@ PRICING_REGIONS: dict[str, dict] = {
             "ZW","ZM","ZA","KE","UG","TZ","NG","GH","ET","RW","SN","CI",
             "IN","PK","BD","LK","NP","MM","KH","LA","AF",
         },
-        "starter_monthly": 3.99,
-        "starter_annual":  38,
-        "growth_monthly":  8.99,
-        "growth_annual":   86,
+        "starter_monthly": 4.99,
+        "starter_annual":  48,
+        "growth_monthly":  12,
+        "growth_annual":   115,
         "price_ids": {
-            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY_C", os.getenv("STRIPE_PRICE_STARTER_MONTHLY", "")),
-            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL_C",  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  "")),
-            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY_C",  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",  "")),
-            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL_C",   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",   "")),
+            "starter_monthly": os.getenv("STRIPE_PRICE_STARTER_MONTHLY", ""),
+            "starter_annual":  os.getenv("STRIPE_PRICE_STARTER_ANNUAL",  ""),
+            "growth_monthly":  os.getenv("STRIPE_PRICE_GROWTH_MONTHLY",  ""),
+            "growth_annual":   os.getenv("STRIPE_PRICE_GROWTH_ANNUAL",   ""),
         },
     },
 }
@@ -279,7 +283,11 @@ def get_price_id_for_checkout(tier: str, billing_period: str, country_code: str 
         pass
     # Ultimate fallback: global TIERS dict
     tier_data = TIERS.get(tier, {})
-    return tier_data.get(f"stripe_price_id_{billing_period}", "")
+    pid = tier_data.get(f"stripe_price_id_{billing_period}", "")
+    if pid:
+        return pid
+    # Env read at call time (import-time values are empty if env loads late).
+    return os.getenv(f"STRIPE_PRICE_{tier.upper()}_{(billing_period or '').upper()}", "")
 
 
 _stripe_module = None
@@ -509,14 +517,18 @@ def _verify_price(stripe, price_id: str, tier: str, period: str) -> Optional[str
         mode, live = _key_mode(), _g(p, "livemode")
         if (mode == "live" and live is False) or (mode == "test" and live is True):
             err = "Plan price belongs to a different Stripe environment than the configured key"
+    if not err and (_g(p, "currency", "") or "").lower() != "usd":
+        log.error("price currency is not USD  tier=%s period=%s", tier, period)
+        err = "Plan price currency does not match the published USD pricing"
     if not err:
-        if (_g(p, "currency", "") or "").lower() != "usd":
-            log.warning("price currency is not USD  tier=%s period=%s", tier, period)
+        # The advertised price and the Stripe Price must agree — never charge a
+        # surprise amount.
         expected = TIERS.get(tier, {}).get("price_monthly" if period == "monthly" else "price_annual")
         amt = _g(p, "unit_amount")
         if expected and amt is not None and abs(float(amt) / 100.0 - float(expected)) > 0.01:
-            log.warning("price amount differs from TIERS display price  tier=%s period=%s stripe=%s display=%s",
-                        tier, period, float(amt) / 100.0, expected)
+            log.error("price amount differs from published price  tier=%s period=%s stripe=%s published=%s",
+                      tier, period, float(amt) / 100.0, expected)
+            err = "Plan price is misconfigured (amount differs from published pricing)"
     cache[(price_id, tier, period)] = (time.time(), err)
     return err
 
@@ -1090,8 +1102,8 @@ def create_product_checkout_session(
             })
 
         base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
-        success_url = success_url or f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}"
-        cancel_url  = cancel_url  or f"{base}/billing/cancel-page"
+        success_url = _safe_redirect(success_url, f"{base}/billing/success?session_id={{CHECKOUT_SESSION_ID}}")
+        cancel_url  = _safe_redirect(cancel_url,  f"{base}/billing/cancel-page")
 
         params: dict = {
             "mode":        "payment",

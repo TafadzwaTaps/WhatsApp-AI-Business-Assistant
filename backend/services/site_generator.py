@@ -1686,7 +1686,7 @@ function wzCheckout() {{
     headers: {{ 'Content-Type': 'application/json' }},
     body: JSON.stringify({{
       business_id: _wzBizId,
-      items:    _wzCart.map(function(i) {{ return {{ name: i.name, price: i.price, quantity: i.quantity }}; }}),
+      items:    _wzCart.map(function(i) {{ return {{ id: i.id, name: i.name, price: i.price, quantity: i.quantity }}; }}),
       currency: _wzCurrCode
     }})
   }})
