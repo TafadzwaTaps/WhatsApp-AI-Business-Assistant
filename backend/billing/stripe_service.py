@@ -710,45 +710,77 @@ def _owned_subscription(stripe, business_id: int) -> tuple:
 
 def cancel_subscription(business_id: int) -> dict:
     """Cancel at period end. Access continues until the paid period ends; the
-    local record is synced from Stripe's response, not a local boolean."""
+    local record is synced from Stripe's response, not a local boolean. Every
+    outcome carries a localized `message` (billing/messages.py) that matches what
+    Stripe actually reported — success is only claimed after Stripe confirms."""
+    from billing.messages import billing_message, business_language
+    lang = business_language(business_id)
+    fail = {"error": billing_message("cancel_failed", lang), "message": billing_message("cancel_failed", lang),
+            "code": "cancel_failed"}
     stripe = _stripe()
     if not stripe:
-        return {"error": "Stripe not configured"}
+        return fail
     try:
         sub, err, code = _owned_subscription(stripe, business_id)
+        if code == "no_subscription":
+            m = billing_message("no_subscription", lang)
+            return {"error": m, "message": m, "code": "no_subscription"}
         if err:
-            return {"error": err, "code": code}
-        if _g(sub, "status") not in _LIVE_SUB_STATUSES:
-            return {"error": "No active subscription found", "code": "no_subscription"}
+            return {**fail, "code": code or "cancel_failed"}
+        status = _g(sub, "status")
+        if status in ("canceled", "incomplete_expired"):
+            return {"ok": True, "state": "already_canceled", "message": billing_message("already_canceled", lang)}
+        if status not in _LIVE_SUB_STATUSES:
+            m = billing_message("no_subscription", lang)
+            return {"error": m, "message": m, "code": "no_subscription"}
+        end = _iso(_period_end(sub))
+        if _g(sub, "cancel_at_period_end", False):
+            return {"ok": True, "state": "already_scheduled", "cancel_at_period_end": True, "access_until": end,
+                    "message": billing_message("already_scheduled", lang, end)}
         sub = stripe.Subscription.modify(_g(sub, "id"), cancel_at_period_end=True)
+        if not _g(sub, "cancel_at_period_end", False):          # Stripe did not confirm
+            log.error("Stripe did not confirm cancellation  business=%s", business_id)
+            return fail
         res = _sync_subscription(sub, source="api_cancel")
         _send_lifecycle_emails(res)
         end = _iso(_period_end(sub))
         log.info("Subscription cancellation scheduled  business=%s  sub=%s", business_id, _g(sub, "id"))
-        return {"ok": True, "cancelled_at_period_end": True, "cancel_at_period_end": True,
-                "access_until": end, "synced": res.get("result") == "synced"}
+        return {"ok": True, "state": "scheduled", "cancelled_at_period_end": True, "cancel_at_period_end": True,
+                "access_until": end, "synced": res.get("result") == "synced",
+                "message": billing_message("cancel_scheduled", lang, end)}
     except Exception as exc:
         log.error("cancel_subscription error  business=%s  err=%s", business_id, type(exc).__name__)
-        return {"error": "Could not cancel — please try again or use Manage Subscription"}
+        return fail
 
 
 def resume_subscription(business_id: int) -> dict:
     """Undo a scheduled end-of-period cancellation (only valid before it takes effect)."""
+    from billing.messages import billing_message, business_language
+    lang = business_language(business_id)
     stripe = _stripe()
     if not stripe:
         return {"error": "Stripe not configured"}
     try:
         sub, err, code = _owned_subscription(stripe, business_id)
+        if code == "no_subscription":
+            m = billing_message("no_subscription", lang)
+            return {"error": m, "message": m, "code": "no_subscription"}
         if err:
             return {"error": err, "code": code}
         if _g(sub, "status") not in _LIVE_SUB_STATUSES or not _g(sub, "cancel_at_period_end", False):
-            return {"error": "No scheduled cancellation to undo", "code": "not_cancelling"}
+            m = billing_message("not_cancelling", lang)
+            return {"error": m, "message": m, "code": "not_cancelling"}
         sub = stripe.Subscription.modify(_g(sub, "id"), cancel_at_period_end=False)
+        if _g(sub, "cancel_at_period_end", False):              # Stripe did not confirm the reversal
+            return {"error": billing_message("cancel_failed", lang), "message": billing_message("cancel_failed", lang),
+                    "code": "resume_failed"}
         _sync_subscription(sub, source="api_resume")
-        return {"ok": True, "cancel_at_period_end": False}
+        return {"ok": True, "state": "resumed", "cancel_at_period_end": False,
+                "message": billing_message("cancel_reversed", lang)}
     except Exception as exc:
         log.error("resume_subscription error  business=%s  err=%s", business_id, type(exc).__name__)
-        return {"error": "Could not resume subscription — please try again"}
+        m = billing_message("cancel_failed", lang)
+        return {"error": m, "message": m, "code": "resume_failed"}
 
 
 def change_plan(business_id: int, tier: str, billing_period: str, confirm_proration: bool = False) -> dict:
@@ -902,7 +934,27 @@ def get_subscription_status(business_id: int) -> dict:
                 entitled_tier = "free"          # lapsed (e.g. past-due beyond grace)
         except Exception:
             pass
+        status_message, state = "", None
+        try:
+            from billing.messages import billing_message, business_language
+            lang = business_language(business_id)
+            if cancel and status == "active" and row.get("current_period_end"):
+                state, status_message = "cancel_scheduled", billing_message("already_scheduled", lang, row.get("current_period_end"))
+            elif status == "cancelled" and row.get("stripe_subscription_id"):
+                from datetime import datetime, timezone, timedelta
+                recent = False
+                try:
+                    ca = datetime.fromisoformat(str(row.get("canceled_at")).replace("Z", "+00:00"))
+                    recent = (datetime.now(timezone.utc) - ca) < timedelta(hours=24)
+                except Exception:
+                    pass
+                state = "cancelled"
+                status_message = billing_message("cancel_completed" if recent else "already_canceled", lang)
+        except Exception:
+            pass
         return {
+            "state":                  state,
+            "status_message":         status_message,
             "tier":                   tier,
             "billing_status":         status,
             "trial_ends_at":          row.get("trial_ends_at"),

@@ -198,11 +198,180 @@ def _argos_translate_raw(text: str, source_lang: str, target_lang: str) -> Optio
 # ─────────────────────────────────────────────────────────────────────────
 _cache: dict[str, str] = {}
 _cache_lock = threading.Lock()
+_CACHE_MAX_ENTRIES = 4000      # bounded: a long-running dyno must not grow without limit
 
 
 def _cache_key(business_id, source_lang: str, target_lang: str, text: str) -> str:
     h = hashlib.sha256(text.encode("utf-8")).hexdigest()
     return f"{business_id}:{source_lang}:{target_lang}:{h}"
+
+
+# ── Protected-span masking ───────────────────────────────────────────────────
+# URLs, emails, {placeholders}, prices and phone numbers INSIDE a sentence used to
+# make the whole sentence skip translation (or, worse, risk being mangled by MT).
+# They are now swapped for opaque tokens before MT and restored afterwards; if any
+# token does not come back exactly once the translation is REJECTED (never shipped
+# with a corrupted price/URL).
+_MASK_PATTERNS = [
+    re.compile(r"https?://[^\s<>\"']+|www\.[^\s<>\"']+", re.I),
+    re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"),
+    re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}"),
+    re.compile(r"(?:[$€£¥]\s?\d[\d.,]*|\d[\d.,]*\s?(?:USD|EUR|GBP|PLN|ZAR|ZWL|KES|NGN|GHS|[$€£¥]))"),
+    re.compile(r"\+?\d[\d\s().-]{6,}\d"),
+]
+_TOKEN_FMT = "ZQ{}Q"
+
+
+def _mask_protected(text: str) -> tuple[str, list[str]]:
+    originals: list[str] = []
+    for pat in _MASK_PATTERNS:
+        def _sub(m):
+            originals.append(m.group(0))
+            return _TOKEN_FMT.format(len(originals) - 1)
+        text = pat.sub(_sub, text)
+    return text, originals
+
+
+def _unmask(text: str, originals: list[str]) -> Optional[str]:
+    """Restore protected spans; None if any token is missing or duplicated."""
+    for i, orig in enumerate(originals):
+        tok = _TOKEN_FMT.format(i)
+        if text.count(tok) != 1:
+            return None
+        text = text.replace(tok, orig)
+    return text
+
+
+# ── Language detection / validation ──────────────────────────────────────────
+_AR_RE = re.compile(r"[\u0600-\u06FF]")
+_PL_RE = re.compile(r"[ąćęłńóśźżĄĆĘŁŃÓŚŹŻ]")
+
+
+def detect_language(text: str) -> Optional[str]:
+    """Best-effort language of OWNER-written text, restricted to the supported
+    site languages. None when unsure — callers then keep their configured default
+    instead of guessing. Uses langdetect when installed, otherwise only the two
+    unambiguous script/diacritic signals (Arabic script, Polish letters)."""
+    t = (text or "").strip()
+    if len(t) < 12:
+        return None
+    letters = [c for c in t if c.isalpha()]
+    if letters and len(_AR_RE.findall(t)) / len(letters) > 0.5:
+        return "ar"
+    try:
+        from langdetect import detect_langs, DetectorFactory
+        DetectorFactory.seed = 0
+        if len(t) >= 25:
+            best = detect_langs(t)[0]
+            if best.prob >= 0.85 and best.lang in SUPPORTED_SITE_LANGS:
+                return best.lang
+            return None
+    except Exception:
+        pass
+    if _PL_RE.search(t):
+        return "pl"
+    return None
+
+
+def _words(t: str) -> list[str]:
+    return re.findall(r"[^\W\d_]+", t, re.UNICODE)
+
+
+def _validate_translation(source: str, out: str, source_lang: str, target_lang: str) -> bool:
+    """True only if `out` plausibly IS the target language and a real translation."""
+    if not out or not out.strip():
+        return False
+    # An MT engine echoing a multi-word sentence back unchanged is a failure, not a success.
+    if len(_words(source)) >= 4 and out.strip().casefold() == source.strip().casefold():
+        return False
+    letters = [c for c in out if c.isalpha()]
+    if target_lang == "ar":
+        if not letters or len(_AR_RE.findall(out)) / len(letters) < 0.3:
+            return False
+    elif letters and len(_AR_RE.findall(out)) / len(letters) > 0.5:
+        return False                      # Arabic script where a Latin-script language was requested
+    if len(out.strip()) >= 60 and target_lang != "ar":
+        try:
+            from langdetect import detect_langs, DetectorFactory
+            DetectorFactory.seed = 0
+            best = detect_langs(out)[0]
+            if best.lang != target_lang and best.prob >= 0.9 and best.lang in SUPPORTED_SITE_LANGS:
+                return False              # clearly the wrong language
+        except Exception:
+            pass
+    return True
+
+
+def supported_pairs() -> list[tuple[str, str]]:
+    """Language pairs the installed Argos models can ACTUALLY translate (empty if
+    Argos or its models are not installed)."""
+    _ensure_argos_loaded()
+    return sorted(_argos_installed_pairs)
+
+
+def engine_status() -> dict:
+    avail = _ensure_argos_loaded()
+    return {"engine": "argos", "available": avail, "pairs": [list(p) for p in supported_pairs()],
+            "supported_languages": list(SUPPORTED_SITE_LANGS)}
+
+
+def translate_text_checked(
+    text: str,
+    target_lang: str,
+    source_lang: str = "en",
+    business_id: Optional[int] = None,
+) -> tuple[str, str]:
+    """
+    Translate plain text and say what actually happened. Never raises and never
+    returns blank text — on any problem it returns the ORIGINAL text plus a
+    status, so callers can tell a real translation from a fallback:
+
+      translated          real translation, validated
+      cached              served from the per-business cache
+      same_language       source == target (nothing to do)
+      empty               nothing to translate
+      protected           pure URL/email/phone/number — intentionally untouched
+      unsupported_target / unsupported_source   language not in SUPPORTED_SITE_LANGS
+      unavailable         Argos missing or this exact pair has no installed model
+      failed              engine error
+      failed_validation   engine output rejected (empty/unchanged/wrong script/
+                          wrong language) or protected spans were corrupted
+    """
+    if not text or not text.strip():
+        return text, "empty"
+    if source_lang == target_lang:
+        return text, "same_language"
+    if target_lang not in SUPPORTED_SITE_LANGS:
+        return text, "unsupported_target"
+    if source_lang not in SUPPORTED_SITE_LANGS:
+        return text, "unsupported_source"
+    if _looks_protected(text) and not re.search(r"[^\W\d_]{2,}\s+[^\W\d_]{2,}", text):
+        return text, "protected"          # a bare URL / email / phone / amount: nothing to translate
+
+    key = _cache_key(business_id, source_lang, target_lang, text)
+    with _cache_lock:
+        cached = _cache.get(key)
+    if cached is not None:
+        return cached, "cached"
+
+    masked, originals = _mask_protected(text)
+    if not _words(re.sub(r"ZQ\d+Q", " ", masked)):     # only protected spans remained
+        return text, "protected"
+    raw = _argos_translate_raw(masked, source_lang, target_lang)
+    if raw is None:
+        return text, "unavailable" if (not _ensure_argos_loaded()
+                                       or (source_lang, target_lang) not in _argos_installed_pairs) else "failed"
+    restored = _unmask(raw, originals)
+    if restored is None or not _validate_translation(text, restored, source_lang, target_lang):
+        log.warning("translation_service: rejected %s->%s output (validation)", source_lang, target_lang)
+        return text, "failed_validation"
+
+    with _cache_lock:
+        if len(_cache) >= _CACHE_MAX_ENTRIES:
+            for k in list(_cache)[: _CACHE_MAX_ENTRIES // 10]:     # drop the oldest 10%
+                del _cache[k]
+        _cache[key] = restored
+    return restored, "translated"
 
 
 def translate_text(
@@ -211,46 +380,9 @@ def translate_text(
     source_lang: str = "en",
     business_id: Optional[int] = None,
 ) -> str:
-    """
-    Translate a plain-text string for the generated website. NEVER raises
-    and NEVER returns an empty/undefined value on failure — always falls
-    back to the original `text` (per the spec's explicit fallback
-    requirement: never blank the site, never show undefined/null).
-
-    Deliberately does nothing (returns `text` unchanged) for:
-      - empty/whitespace-only input
-      - source_lang == target_lang
-      - a target language outside SUPPORTED_SITE_LANGS
-      - text that looks like a URL/email/phone/number (protected content
-        a caller should not have passed in the first place — see module
-        docstring)
-      - Argos being unavailable or not having that language pair installed
-    """
-    if not text or not text.strip():
-        return text
-    if source_lang == target_lang:
-        return text
-    if target_lang not in SUPPORTED_SITE_LANGS:
-        return text
-    if _looks_protected(text):
-        return text
-
-    key = _cache_key(business_id, source_lang, target_lang, text)
-    with _cache_lock:
-        cached = _cache.get(key)
-    if cached is not None:
-        return cached
-
-    translated = _argos_translate_raw(text, source_lang, target_lang)
-    if not translated:
-        # Fallback: keep the site usable and honest rather than blank —
-        # per spec, showing the original text is strictly better than
-        # showing nothing or a broken placeholder.
-        return text
-
-    with _cache_lock:
-        _cache[key] = translated
-    return translated
+    """Backward-compatible wrapper: returns the translation, or the ORIGINAL
+    text on any failure (see translate_text_checked for the reason)."""
+    return translate_text_checked(text, target_lang, source_lang, business_id)[0]
 
 
 def translate_for_all_languages(

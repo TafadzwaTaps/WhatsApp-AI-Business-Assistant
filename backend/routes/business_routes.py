@@ -151,6 +151,60 @@ _SYM_TO_ISO: dict = {
     "SGD": "SGD", "RM": "MYR",
 }
 
+_SG_ENUM_RE = __import__("re").compile(r"^[a-z0-9_]{1,40}$")
+_SG_ACCENT_RE = __import__("re").compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_SG_LANGS = ("en", "pl", "fr", "pt", "es", "de", "ar")
+_FEATURES_JSON_MAX_BYTES = 64_000
+
+
+def _clean_text(v, limit: int, multiline: bool = False) -> str:
+    if not isinstance(v, str):
+        return ""
+    # control characters become spaces (newlines are kept for multi-line text only)
+    v = "".join(" " if (ch < " " or ch == "\x7f") and not (ch == "\n" and multiline) else ch for ch in v)
+    if multiline:
+        return "\n".join(line.rstrip() for line in v.strip().split("\n"))[:limit]
+    return " ".join(v.split())[:limit]
+
+
+def _sanitize_site_settings(cfg):
+    """Server-side validation of features_json.site_generator (the dashboard
+    already limits these client-side, but the API accepted anything). Unknown
+    keys are kept (other features share this object); known keys are coerced:
+    enums must look like preset ids, accent must be a hex colour, texts are
+    control-char-stripped and length-capped, toggles are booleans, language must
+    be a supported site language. Invalid values are dropped (-> defaults)."""
+    if not isinstance(cfg, dict):
+        return {}
+    out = dict(cfg)
+    for k in ("theme_style", "font", "layout"):
+        if k in out and not (isinstance(out[k], str) and _SG_ENUM_RE.match(out[k])):
+            out.pop(k)
+    if "accent_color" in out:
+        out["accent_color"] = out["accent_color"] if (isinstance(out["accent_color"], str)
+                                                     and _SG_ACCENT_RE.match(out["accent_color"])) else ""
+    for k, lim in (("hero_title", 80), ("hero_tagline", 160), ("cta_text", 40), ("contact_title", 60),
+                   ("business_hours", 300), ("location", 200)):
+        if k in out:
+            out[k] = _clean_text(out[k], lim)
+    if "description" in out:
+        out["description"] = _clean_text(out["description"], 2000, multiline=True)
+    for k in ("show_hours", "show_location", "show_reviews", "show_gallery", "show_ordering", "show_map"):
+        if k in out:
+            out[k] = bool(out[k])
+    if "language" in out and out["language"] not in _SG_LANGS:
+        out["language"] = ""
+    return out
+
+
+@router.get("/me/translation-status")
+def translation_status(user=Depends(require_business)):
+    """Which languages the generated website can ACTUALLY translate on this server
+    (fixed labels always; owner text only when the Argos engine + pair is installed)."""
+    from services.translation_service import engine_status
+    return engine_status()
+
+
 @router.patch("/me")
 def update_me(data: BusinessUpdate, user=Depends(require_business)):
     safe = data.dict(exclude_none=True)
@@ -166,6 +220,10 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
             fj["stripe"] = cur_fj["stripe"]
         else:
             fj.pop("stripe", None)
+        if "site_generator" in fj:
+            fj["site_generator"] = _sanitize_site_settings(fj["site_generator"])
+        if len(__import__("json").dumps(fj, default=str).encode("utf-8")) > _FEATURES_JSON_MAX_BYTES:
+            raise HTTPException(413, "Settings are too large to save.")
         safe["features_json"] = fj
     new_phone_id = safe.get("whatsapp_phone_id")
     if new_phone_id:

@@ -221,6 +221,95 @@ async def public_booking_page(slug: str):
         return RedirectResponse(url="/directory", status_code=302)
 
 
+# Booking-page UI text. Same languages and the same `wz_lang` visitor preference as
+# the generated website (services/site_generator.SITE_I18N_LANGS), so a visitor who
+# picked a language on the site lands on a booking page in that language.
+# Business-owned content (business/service names) and server-provided availability
+# reasons / API error details are NOT translated here - see the audit report.
+BOOKING_I18N = {
+  "en": {"book_title": "Book an appointment", "loading_services": "Loading services…",
+         "no_services": "No services listed yet. Please contact the business directly.",
+         "load_failed": "Could not load this business's booking page.", "date": "Date",
+         "times": "Available Times", "cont": "Continue", "back": "← Back", "your_name": "Your Name",
+         "phone": "Phone Number", "email_opt": "Email (optional)", "notes_opt": "Notes (optional)",
+         "notes_ph": "Anything we should know?", "confirm": "Confirm Booking",
+         "confirmed": "Booking Confirmed!", "loading": "Loading…",
+         "no_times": "No times available for this day", "avail_failed": "Could not load availability.",
+         "need_name_phone": "Please enter your name and phone number.",
+         "booking_failed": "Could not create booking",
+         "went_wrong": "Something went wrong. Please try again.", "at": "at"},
+  "pl": {"book_title": "Umów wizytę", "loading_services": "Ładowanie usług…",
+         "no_services": "Brak usług na liście. Skontaktuj się bezpośrednio z firmą.",
+         "load_failed": "Nie udało się wczytać strony rezerwacji tej firmy.", "date": "Data",
+         "times": "Dostępne godziny", "cont": "Dalej", "back": "← Wstecz", "your_name": "Imię i nazwisko",
+         "phone": "Numer telefonu", "email_opt": "E-mail (opcjonalnie)", "notes_opt": "Uwagi (opcjonalnie)",
+         "notes_ph": "Czy jest coś, co powinniśmy wiedzieć?", "confirm": "Potwierdź rezerwację",
+         "confirmed": "Rezerwacja potwierdzona!", "loading": "Ładowanie…",
+         "no_times": "Brak dostępnych godzin w tym dniu", "avail_failed": "Nie udało się wczytać dostępności.",
+         "need_name_phone": "Podaj imię i nazwisko oraz numer telefonu.",
+         "booking_failed": "Nie udało się utworzyć rezerwacji",
+         "went_wrong": "Coś poszło nie tak. Spróbuj ponownie.", "at": "o godz."},
+  "fr": {"book_title": "Prendre rendez-vous", "loading_services": "Chargement des services…",
+         "no_services": "Aucun service n'est encore répertorié. Veuillez contacter directement l'entreprise.",
+         "load_failed": "Impossible de charger la page de réservation de cette entreprise.", "date": "Date",
+         "times": "Horaires disponibles", "cont": "Continuer", "back": "← Retour", "your_name": "Votre nom",
+         "phone": "Numéro de téléphone", "email_opt": "E-mail (facultatif)", "notes_opt": "Notes (facultatif)",
+         "notes_ph": "Y a-t-il quelque chose que nous devrions savoir ?", "confirm": "Confirmer la réservation",
+         "confirmed": "Réservation confirmée !", "loading": "Chargement…",
+         "no_times": "Aucun horaire disponible ce jour-là",
+         "avail_failed": "Impossible de charger les disponibilités.",
+         "need_name_phone": "Veuillez saisir votre nom et votre numéro de téléphone.",
+         "booking_failed": "Impossible de créer la réservation",
+         "went_wrong": "Une erreur s'est produite. Veuillez réessayer.", "at": "à"},
+  "pt": {"book_title": "Marcar uma consulta", "loading_services": "A carregar serviços…",
+         "no_services": "Ainda não há serviços listados. Contacte diretamente a empresa.",
+         "load_failed": "Não foi possível carregar a página de reservas desta empresa.", "date": "Data",
+         "times": "Horários disponíveis", "cont": "Continuar", "back": "← Voltar", "your_name": "O seu nome",
+         "phone": "Número de telefone", "email_opt": "E-mail (opcional)", "notes_opt": "Notas (opcional)",
+         "notes_ph": "Há algo que devamos saber?", "confirm": "Confirmar reserva",
+         "confirmed": "Reserva confirmada!", "loading": "A carregar…",
+         "no_times": "Sem horários disponíveis neste dia",
+         "avail_failed": "Não foi possível carregar a disponibilidade.",
+         "need_name_phone": "Introduza o seu nome e número de telefone.",
+         "booking_failed": "Não foi possível criar a reserva",
+         "went_wrong": "Algo correu mal. Tente novamente.", "at": "às"},
+  "es": {"book_title": "Reservar una cita", "loading_services": "Cargando servicios…",
+         "no_services": "Aún no hay servicios publicados. Ponte en contacto directamente con el negocio.",
+         "load_failed": "No se pudo cargar la página de reservas de este negocio.", "date": "Fecha",
+         "times": "Horarios disponibles", "cont": "Continuar", "back": "← Volver", "your_name": "Tu nombre",
+         "phone": "Número de teléfono", "email_opt": "Correo electrónico (opcional)",
+         "notes_opt": "Notas (opcional)", "notes_ph": "¿Hay algo que debamos saber?",
+         "confirm": "Confirmar reserva", "confirmed": "¡Reserva confirmada!", "loading": "Cargando…",
+         "no_times": "No hay horarios disponibles para este día",
+         "avail_failed": "No se pudo cargar la disponibilidad.",
+         "need_name_phone": "Introduce tu nombre y número de teléfono.",
+         "booking_failed": "No se pudo crear la reserva",
+         "went_wrong": "Algo salió mal. Inténtalo de nuevo.", "at": "a las"},
+  "de": {"book_title": "Termin buchen", "loading_services": "Leistungen werden geladen…",
+         "no_services": "Noch keine Leistungen aufgelistet. Bitte kontaktieren Sie das Unternehmen direkt.",
+         "load_failed": "Die Buchungsseite dieses Unternehmens konnte nicht geladen werden.", "date": "Datum",
+         "times": "Verfügbare Zeiten", "cont": "Weiter", "back": "← Zurück", "your_name": "Ihr Name",
+         "phone": "Telefonnummer", "email_opt": "E-Mail (optional)", "notes_opt": "Notizen (optional)",
+         "notes_ph": "Gibt es etwas, das wir wissen sollten?", "confirm": "Buchung bestätigen",
+         "confirmed": "Buchung bestätigt!", "loading": "Wird geladen…",
+         "no_times": "Für diesen Tag sind keine Zeiten verfügbar",
+         "avail_failed": "Die Verfügbarkeit konnte nicht geladen werden.",
+         "need_name_phone": "Bitte geben Sie Ihren Namen und Ihre Telefonnummer ein.",
+         "booking_failed": "Die Buchung konnte nicht erstellt werden",
+         "went_wrong": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut.", "at": "um"},
+  "ar": {"book_title": "حجز موعد", "loading_services": "جارٍ تحميل الخدمات…",
+         "no_services": "لا توجد خدمات مدرجة بعد. يُرجى التواصل مع النشاط التجاري مباشرة.",
+         "load_failed": "تعذّر تحميل صفحة الحجز لهذا النشاط التجاري.", "date": "التاريخ",
+         "times": "الأوقات المتاحة", "cont": "متابعة", "back": "→ رجوع", "your_name": "اسمك",
+         "phone": "رقم الهاتف", "email_opt": "البريد الإلكتروني (اختياري)", "notes_opt": "ملاحظات (اختياري)",
+         "notes_ph": "هل هناك أي شيء يجب أن نعرفه؟", "confirm": "تأكيد الحجز",
+         "confirmed": "تم تأكيد الحجز!", "loading": "جارٍ التحميل…",
+         "no_times": "لا توجد أوقات متاحة في هذا اليوم", "avail_failed": "تعذّر تحميل التوافر.",
+         "need_name_phone": "يُرجى إدخال اسمك ورقم هاتفك.", "booking_failed": "تعذّر إنشاء الحجز",
+         "went_wrong": "حدث خطأ ما. يُرجى المحاولة مرة أخرى.", "at": "في"},
+}
+
+
 def _render_booking_page_html(slug: str, biz: dict) -> str:
     """
     Server-rendered shell; all data (services, availability) loads via the
@@ -230,13 +319,24 @@ def _render_booking_page_html(slug: str, biz: dict) -> str:
     booking widget.
     """
     import html as _h
+    import json as _json
     name = _h.escape(biz.get("name", "Book an Appointment"))
+    try:
+        from services.site_generator import _site_language, _get_site_settings, SITE_I18N_RTL_LANGS
+        _lang = _site_language(biz, _get_site_settings(biz.get("features_json")))
+        _dir = "rtl" if _lang in SITE_I18N_RTL_LANGS else "ltr"
+    except Exception:
+        _lang, _dir = "en", "ltr"
+    # JSON for embedding in <script>: "</" can never close the tag.
+    _safe = lambda v: _json.dumps(v, ensure_ascii=False).replace("</", "<\\/")
+    _i18n_json, _slug_js = _safe(BOOKING_I18N), _safe(slug)
+    _name_js, _lang_js = _safe(biz.get("name", "")), _safe(_lang)
     accent = biz.get("theme_colour") or "#22c55e"
     if not (isinstance(accent, str) and accent.startswith("#") and len(accent) == 7):
         accent = "#22c55e"
 
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{_lang}" dir="{_dir}">
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
@@ -279,46 +379,83 @@ input[type=date],input[type=text],input[type=tel],input[type=email],textarea{{
 <body>
 <div class="wrap">
   <h1>{name}</h1>
-  <div class="sub">Book an appointment</div>
+  <div class="sub" data-i18n="book_title">Book an appointment</div>
 
   <div id="step-service" class="step active">
-    <div id="services-list" class="msg">Loading services…</div>
+    <div id="services-list" class="msg" data-i18n="loading_services">Loading services…</div>
   </div>
 
   <div id="step-datetime" class="step">
-    <label>Date</label>
+    <label data-i18n="date">Date</label>
     <input type="date" id="f-date" onchange="loadSlots()"/>
-    <label>Available Times</label>
+    <label data-i18n="times">Available Times</label>
     <div id="slots-list" class="slots"></div>
-    <button class="btn" id="btn-to-details" disabled onclick="showStep('details')">Continue</button>
-    <button class="btn btn-ghost" onclick="showStep('service')">← Back</button>
+    <button class="btn" id="btn-to-details" disabled onclick="showStep('details')" data-i18n="cont">Continue</button>
+    <button class="btn btn-ghost" onclick="showStep('service')" data-i18n="back">← Back</button>
   </div>
 
   <div id="step-details" class="step">
-    <label>Your Name</label>
-    <input type="text" id="f-name" placeholder="Jane Doe"/>
-    <label>Phone Number</label>
-    <input type="tel" id="f-phone" placeholder="+48 500 000 000"/>
-    <label>Email (optional)</label>
-    <input type="email" id="f-email" placeholder="jane@example.com"/>
-    <label>Notes (optional)</label>
-    <textarea id="f-notes" rows="2" placeholder="Anything we should know?"></textarea>
-    <button class="btn" onclick="submitBooking()">Confirm Booking</button>
-    <button class="btn btn-ghost" onclick="showStep('datetime')">← Back</button>
+    <label data-i18n="your_name">Your Name</label>
+    <input type="text" id="f-name" placeholder="Jane Doe" maxlength="120"/>
+    <label data-i18n="phone">Phone Number</label>
+    <input type="tel" id="f-phone" placeholder="+48 500 000 000" maxlength="40"/>
+    <label data-i18n="email_opt">Email (optional)</label>
+    <input type="email" id="f-email" placeholder="jane@example.com" maxlength="200"/>
+    <label data-i18n="notes_opt">Notes (optional)</label>
+    <textarea id="f-notes" rows="2" placeholder="Anything we should know?" data-i18n-ph="notes_ph" maxlength="1000"></textarea>
+    <button class="btn" onclick="submitBooking()" data-i18n="confirm">Confirm Booking</button>
+    <button class="btn btn-ghost" onclick="showStep('datetime')" data-i18n="back">← Back</button>
   </div>
 
   <div id="step-confirm" class="step">
     <div class="confirm">
       <div class="big">✅</div>
-      <h1 id="confirm-title">Booking Confirmed!</h1>
+      <h1 id="confirm-title" data-i18n="confirmed">Booking Confirmed!</h1>
       <div class="sub" id="confirm-detail"></div>
     </div>
   </div>
 </div>
 
 <script>
-const SLUG = {slug!r};
+const SLUG = {_slug_js};
+const BK_I18N = {_i18n_json};
+const BK_DEFAULT = {_lang_js};
+const BK_NAME = {_name_js};
+const BK_RTL = ['ar'];
+let _bkLang = BK_DEFAULT;
 let selectedService = null, selectedDate = null, selectedTime = null;
+
+function esc(v) {{
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c =>
+    ({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c]));
+}}
+function _bt(key) {{
+  return (BK_I18N[_bkLang] && BK_I18N[_bkLang][key]) || BK_I18N.en[key] || key;
+}}
+function _bkApply(lang) {{
+  _bkLang = BK_I18N[lang] ? lang : 'en';
+  document.documentElement.setAttribute('lang', _bkLang);
+  document.documentElement.setAttribute('dir', BK_RTL.includes(_bkLang) ? 'rtl' : 'ltr');
+  document.querySelectorAll('[data-i18n]').forEach(el => {{
+    const k = el.getAttribute('data-i18n'); if (BK_I18N[_bkLang][k]) el.textContent = BK_I18N[_bkLang][k];
+  }});
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => {{
+    const k = el.getAttribute('data-i18n-ph'); if (BK_I18N[_bkLang][k]) el.setAttribute('placeholder', BK_I18N[_bkLang][k]);
+  }});
+  document.title = _bt('book_title') + ' — ' + BK_NAME;
+}}
+(function _bkInit() {{
+  let lang = BK_DEFAULT;
+  try {{
+    const saved = localStorage.getItem('wz_lang');
+    if (saved && BK_I18N[saved]) lang = saved;
+    else {{
+      const b = (navigator.language || 'en').slice(0, 2).toLowerCase();
+      if (BK_I18N[b]) lang = b;
+    }}
+  }} catch (e) {{}}
+  _bkApply(lang);
+}})();
 
 function showStep(name) {{
   document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
@@ -332,18 +469,18 @@ async function loadServices() {{
     const data = await res.json();
     const list = document.getElementById('services-list');
     if (!data.services || !data.services.length) {{
-      list.innerHTML = '<div class="msg">No services listed yet. Please contact the business directly.</div>';
+      list.innerHTML = '<div class="msg">' + esc(_bt('no_services')) + '</div>';
       return;
     }}
     list.innerHTML = data.services.map((s, i) => `
       <div class="card" onclick="pickService(${{i}}, this)">
-        <div class="card-name">${{s.name}}</div>
-        <div class="card-price">${{data.currency_symbol}}${{Number(s.price).toFixed(2)}}</div>
+        <div class="card-name">${{esc(s.name)}}</div>
+        <div class="card-price">${{esc(data.currency_symbol)}}${{Number(s.price).toFixed(2)}}</div>
       </div>`).join('');
     window._services = data.services;
   }} catch (e) {{
     document.getElementById('services-list').innerHTML =
-      '<div class="msg">⚠️ Could not load this business\\'s booking page.</div>';
+      '<div class="msg">⚠️ ' + esc(_bt('load_failed')) + '</div>';
   }}
 }}
 
@@ -361,18 +498,18 @@ function pickService(i, el) {{
 async function loadSlots() {{
   selectedDate = document.getElementById('f-date').value;
   const slotsEl = document.getElementById('slots-list');
-  slotsEl.innerHTML = '<div class="msg">Loading…</div>';
+  slotsEl.innerHTML = '<div class="msg">' + esc(_bt('loading')) + '</div>';
   document.getElementById('btn-to-details').disabled = true;
   try {{
     const res = await fetch(`/api/public/booking/${{SLUG}}/availability?booking_date=${{selectedDate}}&duration_hrs=1`);
     const data = await res.json();
     if (!data.slots || !data.slots.length) {{
-      slotsEl.innerHTML = `<div class="msg">${{data.reason || 'No times available for this day'}}</div>`;
+      slotsEl.innerHTML = `<div class="msg">${{esc(data.reason || _bt('no_times'))}}</div>`;
       return;
     }}
-    slotsEl.innerHTML = data.slots.map(t => `<div class="slot" onclick="pickTime('${{t}}', this)">${{t}}</div>`).join('');
+    slotsEl.innerHTML = data.slots.map(t => `<div class="slot" data-t="${{esc(t)}}" onclick="pickTime(this.dataset.t, this)">${{esc(t)}}</div>`).join('');
   }} catch (e) {{
-    slotsEl.innerHTML = '<div class="msg">⚠️ Could not load availability.</div>';
+    slotsEl.innerHTML = '<div class="msg">⚠️ ' + esc(_bt('avail_failed')) + '</div>';
   }}
 }}
 
@@ -386,7 +523,7 @@ function pickTime(t, el) {{
 async function submitBooking() {{
   const name  = document.getElementById('f-name').value.trim();
   const phone = document.getElementById('f-phone').value.trim();
-  if (!name || !phone) {{ alert('Please enter your name and phone number.'); return; }}
+  if (!name || !phone) {{ alert(_bt('need_name_phone')); return; }}
   try {{
     const res = await fetch(`/api/public/booking/${{SLUG}}`, {{
       method: 'POST', headers: {{'Content-Type': 'application/json'}},
@@ -398,12 +535,12 @@ async function submitBooking() {{
       }}),
     }});
     const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Could not create booking');
+    if (!res.ok) throw new Error((typeof data.detail === 'string' && data.detail) || _bt('booking_failed'));
     document.getElementById('confirm-detail').textContent =
-      `${{selectedService}} — ${{selectedDate}} at ${{selectedTime}}`;
+      `${{selectedService}} — ${{selectedDate}} ${{_bt('at')}} ${{selectedTime}}`;
     showStep('confirm');
   }} catch (e) {{
-    alert(e.message || 'Something went wrong. Please try again.');
+    alert(e.message || _bt('went_wrong'));
   }}
 }}
 

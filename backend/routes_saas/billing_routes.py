@@ -59,8 +59,8 @@ def _billing_error(result: dict):
     """Map a service error to an HTTP status (never leaks internals)."""
     code = result.get("code")
     status = {"already_subscribed": 409, "confirmation_required": 409, "cancel_scheduled": 409,
-              "payment_required": 402, "no_customer": 400, "no_subscription": 404,
-              "mismatch": 403, "unconfigured": 503}.get(code, 400)
+              "not_cancelling": 409, "payment_required": 402, "no_customer": 400, "no_subscription": 404,
+              "mismatch": 403, "unconfigured": 503, "cancel_failed": 502, "resume_failed": 502}.get(code, 400)
     raise HTTPException(status, result["error"])
 
 

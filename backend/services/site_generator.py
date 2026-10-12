@@ -68,41 +68,102 @@ log = logging.getLogger("wazibot")
 _dyn_i18n_ctx: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("dyn_i18n", default=None)
 
 
-def _dyn_i18n_start() -> None:
+_site_lang_ctx: "contextvars.ContextVar[str]" = contextvars.ContextVar("site_lang", default="en")
+_dyn_status_ctx: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar("dyn_status", default=None)
+
+# Work bounds for one page render (translation is CPU-heavy and runs on the
+# request path): beyond these, strings are left in their original language and
+# the page is reported as "partial" instead of silently hanging or lying.
+_MAX_DYNAMIC_STRINGS = 60
+_MAX_DYNAMIC_CHARS   = 1500
+
+
+def _dyn_i18n_start(site_lang: str = "en") -> None:
     _dyn_i18n_ctx.set({})
+    _site_lang_ctx.set(site_lang or "en")
+    _dyn_status_ctx.set(None)
 
 
-def _register_dynamic_text(key: str, text: str, business_id, source_lang: str = "en") -> None:
-    """Register a piece of business-supplied text for translation. No-op
-    (never raises) if called outside a _dyn_i18n_start()..collect() bracket,
-    or with empty text — callers don't need to guard for that themselves."""
+def _register_dynamic_text(key: str, text: str, business_id, source_lang: str | None = None) -> None:
+    """Register a piece of text for translation. `source_lang=None` means
+    "owner-written text" → the site's own language (the language the owner wrote
+    in); pass "en" explicitly for WaziBot-generated English fallback copy. No-op
+    (never raises) outside a _dyn_i18n_start()..collect() bracket or for empty text."""
     reg = _dyn_i18n_ctx.get()
     if reg is None or not text or not text.strip():
         return
-    reg[key] = {"text": text, "business_id": business_id, "source_lang": source_lang}
+    reg[key] = {"text": text, "business_id": business_id,
+                "source_lang": source_lang or _site_lang_ctx.get()}
+
+
+def _dyn_i18n_status() -> dict:
+    """Outcome of the most recent collect: {"status": none|complete|partial|unavailable,
+    "lang_ok": {lang: bool}, "failed": int, "skipped": int}."""
+    return _dyn_status_ctx.get() or {"status": "none", "lang_ok": {}, "failed": 0, "skipped": 0}
 
 
 def _dyn_i18n_collect_and_translate() -> dict:
-    """End-of-render: translate every registered string into every
-    supported site language (services.translation_service handles caching
-    and gracefully no-ops to the original text if Argos Translate isn't
-    installed — see that module's docstring). Returns the
+    """End-of-render: translate every registered string into every supported
+    site language (services.translation_service caches and falls back to the
+    original text if Argos Translate / a language pair isn't available).
+
+    HONEST about coverage: a language entry is only embedded for a key when the
+    text was really translated (an unchanged multi-word result counts as a failed
+    translation, not a success). Missing entries make the page fall back to the
+    original text per element AND flip that language to "not fully translated" so
+    the page can tell the visitor instead of pretending. Returns the
     {lang: {key: text}} shape _i18n_script() embeds as WZ_I18N_DYNAMIC."""
     reg = _dyn_i18n_ctx.get() or {}
+    langs = [c for c, _, _ in SITE_I18N_LANGS]
     out: dict = {}
+    lang_ok = {l: True for l in langs}
+    failed = skipped = 0
+    out_any = False                                  # did ANY string get a real translation?
     if reg:
         try:
             from services.translation_service import translate_for_all_languages
-            for key, meta in reg.items():
+            for i, (key, meta) in enumerate(reg.items()):
+                src = meta["source_lang"]
+                if i >= _MAX_DYNAMIC_STRINGS or len(meta["text"]) > _MAX_DYNAMIC_CHARS:
+                    skipped += 1
+                    for l in langs:
+                        if l != src:
+                            lang_ok[l] = False
+                    continue
                 translations = translate_for_all_languages(
-                    meta["text"], source_lang=meta["source_lang"], business_id=meta["business_id"],
+                    meta["text"], source_lang=src, business_id=meta["business_id"],
                 )
-                for lang, translated in translations.items():
-                    out.setdefault(lang, {})[key] = translated
+                multiword = len(meta["text"].split()) >= 4
+                for lang in langs:
+                    t = translations.get(lang)
+                    if lang == src:
+                        out.setdefault(lang, {})[key] = meta["text"]
+                    elif t and not (multiword and t.strip() == meta["text"].strip()):
+                        out.setdefault(lang, {})[key] = t
+                        if t.strip() != meta["text"].strip():      # an unchanged short string proves nothing
+                            out_any = True
+                    else:
+                        lang_ok[lang] = False
+                        failed += 1
         except Exception as exc:
             # Never let a translation-layer failure break site generation —
             # the page still renders correctly in its original language.
             log.warning("site_generator: dynamic translation pass failed: %s", exc)
+            out = {}
+            lang_ok = {l: False for l in langs}
+    site_lang = _site_lang_ctx.get()
+    others = [l for l in langs if l != site_lang]
+    if not reg:
+        status = "none"
+    elif all(lang_ok[l] for l in others):
+        status = "complete"
+    elif not out_any:
+        status = "unavailable"
+    else:
+        status = "partial"
+    if status in ("partial", "unavailable"):
+        log.warning("site_generator: dynamic translation %s  failed=%d skipped=%d", status, failed, skipped)
+    _dyn_status_ctx.set({"status": status, "lang_ok": lang_ok, "failed": failed, "skipped": skipped})
     _dyn_i18n_ctx.set(None)
     return out
 
@@ -136,7 +197,10 @@ def _e(s: str) -> str:
 def _wa_url(phone: str, text: str = "") -> str:
     """Build a wa.me URL. phone may include +263 prefix or be blank."""
     number = re.sub(r"[^\d]", "", phone or "")
-    encoded = text.replace(" ", "%20").replace("'", "%27").replace("!", "%21")
+    # SECURITY: percent-encode EVERYTHING (the old code only encoded space, ' and !,
+    # so a business name containing  "  or  <  could break out of the href attribute
+    # this URL is placed in). The result contains only URL-safe characters.
+    encoded = quote(text or "", safe="")
     if number:
         return f"https://wa.me/{number}?text={encoded}"
     return f"https://wa.me/?text={encoded}"
@@ -455,6 +519,10 @@ def _get_site_settings(features_json: dict | None) -> dict:
         "accent_color":   cfg.get("accent_color",   ""),
         # Owner-editable text overrides (limited, per-site). Empty = keep the
         # existing default copy. Length-capped here; HTML-escaped at render.
+        # Language the owner writes the site content in (drives <html lang>, the
+        # default language and the translation SOURCE). Only supported codes are
+        # accepted; anything else is ignored (auto-detected instead).
+        "language":       cfg.get("language") if cfg.get("language") in ("en", "pl", "fr", "pt", "es", "de", "ar") else "",
         "hero_title":     _clip_text(cfg.get("hero_title"),   80),
         "hero_tagline":   _clip_text(cfg.get("hero_tagline"), 160),
         "cta_text":       _clip_text(cfg.get("cta_text"),     40),
@@ -890,6 +958,80 @@ SITE_I18N_LANGS = [
 
 SITE_I18N_RTL_LANGS = {"ar"}
 
+# Strings that used to be hardcoded English in the generated page (cart overlay,
+# footer, category "All" pill, aria/title labels, review labels) plus the notice
+# shown when a language is only partly translated. Merged into SITE_I18N so the
+# existing switcher/_wzT machinery handles them like every other label.
+_EXTRA_I18N = {
+  "en": {"secure_payments": "Payments processed securely by Stripe • SSL Encrypted",
+         "footer_tagline": "AI Employee for WhatsApp Businesses",
+         "footer_secure": "Payments processed securely by Stripe • PCI DSS Level 1 • SSL Encrypted",
+         "filter_all": "All", "menu_label": "Menu", "map_title": "Location map",
+         "orders_label": "Orders", "customer_fallback": "Customer",
+         "translation_partial": "Some content is shown in its original language."},
+  "pl": {"secure_payments": "Płatności bezpiecznie obsługiwane przez Stripe • Szyfrowanie SSL",
+         "footer_tagline": "Pracownik AI dla firm korzystających z WhatsApp",
+         "footer_secure": "Płatności bezpiecznie obsługiwane przez Stripe • PCI DSS poziom 1 • Szyfrowanie SSL",
+         "filter_all": "Wszystko", "menu_label": "Menu", "map_title": "Mapa lokalizacji",
+         "orders_label": "Zamówienia", "customer_fallback": "Klient",
+         "translation_partial": "Część treści jest wyświetlana w języku oryginału."},
+  "fr": {"secure_payments": "Paiements traités en toute sécurité par Stripe • Chiffrement SSL",
+         "footer_tagline": "Employé IA pour les entreprises sur WhatsApp",
+         "footer_secure": "Paiements traités en toute sécurité par Stripe • PCI DSS niveau 1 • Chiffrement SSL",
+         "filter_all": "Tout", "menu_label": "Menu", "map_title": "Carte de localisation",
+         "orders_label": "Commandes", "customer_fallback": "Client",
+         "translation_partial": "Certains contenus sont affichés dans leur langue d'origine."},
+  "pt": {"secure_payments": "Pagamentos processados com segurança pela Stripe • Encriptação SSL",
+         "footer_tagline": "Funcionário de IA para empresas no WhatsApp",
+         "footer_secure": "Pagamentos processados com segurança pela Stripe • PCI DSS nível 1 • Encriptação SSL",
+         "filter_all": "Tudo", "menu_label": "Menu", "map_title": "Mapa de localização",
+         "orders_label": "Pedidos", "customer_fallback": "Cliente",
+         "translation_partial": "Alguns conteúdos são apresentados no idioma original."},
+  "es": {"secure_payments": "Pagos procesados de forma segura por Stripe • Cifrado SSL",
+         "footer_tagline": "Empleado de IA para negocios en WhatsApp",
+         "footer_secure": "Pagos procesados de forma segura por Stripe • PCI DSS nivel 1 • Cifrado SSL",
+         "filter_all": "Todo", "menu_label": "Menú", "map_title": "Mapa de ubicación",
+         "orders_label": "Pedidos", "customer_fallback": "Cliente",
+         "translation_partial": "Parte del contenido se muestra en su idioma original."},
+  "de": {"secure_payments": "Zahlungen werden sicher über Stripe abgewickelt • SSL-verschlüsselt",
+         "footer_tagline": "KI-Mitarbeiter für WhatsApp-Unternehmen",
+         "footer_secure": "Zahlungen werden sicher über Stripe abgewickelt • PCI DSS Stufe 1 • SSL-verschlüsselt",
+         "filter_all": "Alle", "menu_label": "Menü", "map_title": "Standortkarte",
+         "orders_label": "Bestellungen", "customer_fallback": "Kunde",
+         "translation_partial": "Einige Inhalte werden in der Originalsprache angezeigt."},
+  "ar": {"secure_payments": "تتم معالجة المدفوعات بأمان عبر Stripe • تشفير SSL",
+         "footer_tagline": "موظف ذكاء اصطناعي لأنشطة واتساب التجارية",
+         "footer_secure": "تتم معالجة المدفوعات بأمان عبر Stripe • PCI DSS المستوى 1 • تشفير SSL",
+         "filter_all": "الكل", "menu_label": "القائمة", "map_title": "خريطة الموقع",
+         "orders_label": "الطلبات", "customer_fallback": "عميل",
+         "translation_partial": "يتم عرض بعض المحتوى بلغته الأصلية."},
+}
+for _l, _d in _EXTRA_I18N.items():
+    SITE_I18N[_l].update(_d)
+
+
+def _site_language(biz: dict, settings: dict) -> str:
+    """The language the OWNER writes their site content in. Order: explicit
+    Website-settings language → explicit (non-default) profile language → detected
+    from their own text → English."""
+    supported = [c for c, _, _ in SITE_I18N_LANGS]
+    lang = settings.get("language")
+    if lang in supported:
+        return lang
+    fj = biz.get("features_json") if isinstance(biz.get("features_json"), dict) else {}
+    prof = (fj.get("language") or "") if isinstance(fj, dict) else ""
+    if prof in supported and prof != "en":
+        return prof
+    sample = settings.get("description") or settings.get("hero_tagline") or biz.get("tagline") or ""
+    try:
+        from services.translation_service import detect_language
+        d = detect_language(sample)
+        if d in supported:
+            return d
+    except Exception:
+        pass
+    return "en"
+
 
 def _i18n_switcher_html() -> str:
     """
@@ -904,7 +1046,8 @@ def _i18n_switcher_html() -> str:
         aria-label="Language / Język / Langue / Idioma / Sprache / اللغة">{options}</select>'''
 
 
-def _i18n_script(dynamic_i18n: Optional[dict] = None) -> str:
+def _i18n_script(dynamic_i18n: Optional[dict] = None, default_lang: str = "en",
+                 lang_ok: Optional[dict] = None) -> str:
     """
     Vanilla-JS language switcher. Swaps the textContent of every
     [data-i18n] element using the SITE_I18N dict embedded in the page as
@@ -930,13 +1073,21 @@ def _i18n_script(dynamic_i18n: Optional[dict] = None) -> str:
     dyn_json  = json.dumps(dynamic_i18n or {}, ensure_ascii=False)
     supported = json.dumps([c for c, _, _ in SITE_I18N_LANGS])
     rtl_langs = json.dumps(sorted(SITE_I18N_RTL_LANGS))
+    # "</" can never appear inside the embedded JSON blobs (owner/translated text
+    # could contain "</script>"): escape it so the data can't close the script tag.
+    i18n_json = i18n_json.replace("<", "\\u003c")      # valid inside JS strings
+    dyn_json  = dyn_json.replace("<", "\\u003c")
+    default_js = json.dumps(default_lang if default_lang in [c for c, _, _ in SITE_I18N_LANGS] else "en")
+    ok_json    = json.dumps(lang_ok or {})
     return f'''
 <script>
 const WZ_I18N = {i18n_json};
 const WZ_I18N_DYNAMIC = {dyn_json};
 const WZ_I18N_SUPPORTED = {supported};
 const WZ_I18N_RTL = {rtl_langs};
-var _wzCurrentLang = 'en';
+const WZ_I18N_DEFAULT = {default_js};
+const WZ_I18N_LANG_OK = {ok_json};
+var _wzCurrentLang = WZ_I18N_DEFAULT;
 
 function _wzApplyLang(lang) {{
   const dict = WZ_I18N[lang] || WZ_I18N['en'];
@@ -952,6 +1103,14 @@ function _wzApplyLang(lang) {{
     // blanks the element.
     if (dynDict[key]) el.textContent = dynDict[key];
   }});
+  document.querySelectorAll('[data-i18n-dyn-content]').forEach(el => {{
+    const key = el.getAttribute('data-i18n-dyn-content');
+    if (dynDict[key]) el.setAttribute('content', dynDict[key]);
+  }});
+  // Honest status: if this language's dynamic content was not fully translated
+  // (engine unavailable / pair missing) tell the visitor instead of implying it was.
+  const note = document.getElementById('wz-translation-note');
+  if (note) note.hidden = (WZ_I18N_LANG_OK[lang] !== false);
   document.querySelectorAll('[data-i18n-aria]').forEach(el => {{
     const key = el.getAttribute('data-i18n-aria');
     if (dict[key]) el.setAttribute('aria-label', dict[key]);
@@ -982,14 +1141,18 @@ function _wzT(key, fallback) {{
 }}
 
 (function _wzInitLang() {{
-  let lang = 'en';
+  let lang = WZ_I18N_DEFAULT;
   try {{
     const saved = localStorage.getItem('wz_lang');
     if (saved && WZ_I18N_SUPPORTED.includes(saved)) {{
       lang = saved;
     }} else {{
+      // Auto-match the visitor's browser language only when this site can serve
+      // it completely (or it is the site's own language) - never auto-switch a
+      // visitor into a half-translated page.
       const browserLang = (navigator.language || 'en').slice(0, 2).toLowerCase();
-      if (WZ_I18N_SUPPORTED.includes(browserLang)) lang = browserLang;
+      if (WZ_I18N_SUPPORTED.includes(browserLang) &&
+          (browserLang === WZ_I18N_DEFAULT || WZ_I18N_LANG_OK[browserLang] !== false)) lang = browserLang;
     }}
   }} catch (e) {{}}
   _wzApplyLang(lang);
@@ -1021,7 +1184,7 @@ def _nav_html(sections: dict, biz_name: str) -> str:
     <div class="nav-inner">
       <span class="nav-brand">{_e(biz_name)}</span>
       {_i18n_switcher_html()}
-      <button class="nav-toggle" onclick="toggleMobileNav()" aria-label="Menu">&#9776;</button>
+      <button class="nav-toggle" onclick="toggleMobileNav()" data-i18n-aria="menu_label" aria-label="{SITE_I18N["en"]["menu_label"]}">&#9776;</button>
       <div class="nav-links" id="nav-links">{items}</div>
     </div>
   </nav>"""
@@ -1029,10 +1192,12 @@ def _nav_html(sections: dict, biz_name: str) -> str:
 
 def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = False) -> str:
     name        = _e(biz.get("name", "Our Business"))  # protected — never translated
-    hero_title  = _e(settings.get("hero_title") or biz.get("name", "Our Business"))
+    _custom_title = settings.get("hero_title") or ""
+    hero_title  = _e(_custom_title or biz.get("name", "Our Business"))
     raw_category= biz.get("category", "") or ""
     category    = _e(raw_category)
-    raw_tagline = settings.get("hero_tagline") or biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
+    _tagline_custom = settings.get("hero_tagline") or biz.get("tagline") or settings.get("description") or ""
+    raw_tagline = _tagline_custom or f"Order {raw_category or 'products'} on WhatsApp"
     tagline     = _e(raw_tagline)
     logo_url    = biz.get("logo_url", "")
 
@@ -1045,7 +1210,8 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     # descriptions already are.
     biz_id = biz.get("id")
     tagline_key = f"hero_tagline_{biz_id or 'x'}"
-    _register_dynamic_text(tagline_key, raw_tagline, biz_id)
+    # Owner-written text is in the site language; the auto-generated fallback is English.
+    _register_dynamic_text(tagline_key, raw_tagline, biz_id, source_lang=None if _tagline_custom else "en")
     category_key = f"hero_category_{biz_id or 'x'}"
     if raw_category:
         _register_dynamic_text(category_key, raw_category, biz_id)
@@ -1056,6 +1222,13 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
         f'<div class="hero-logo-placeholder">{name[0].upper() if name else "W"}</div>'
     )
     cat_badge = f'<span class="cat-badge" data-i18n-dyn="{category_key}">{category}</span>' if category else ""
+    # Owner-typed headline / button / section title are free text too: register
+    # them so they follow the language switcher (the business NAME, used when no
+    # custom headline is set, stays protected and is never translated).
+    _title_attr = ""
+    if _custom_title:
+        _register_dynamic_text(f"hero_title_{biz_id or 'x'}", _custom_title, biz_id)
+        _title_attr = f' data-i18n-dyn="hero_title_{biz_id or "x"}"'
 
     chips = []
     if settings["show_hours"] and settings["business_hours"]:
@@ -1067,8 +1240,10 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     # Route hero CTA through /go/{slug} to track WhatsApp link clicks (acquisition analytics)
     _hero_slug = _name_to_slug(biz.get("name", ""))
     wa_href = f"/go/{_e(_hero_slug)}" if _hero_slug else _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
+    if settings.get("cta_text"):
+        _register_dynamic_text(f"cta_text_{biz_id or 'x'}", settings["cta_text"], biz_id)
     _cta_label = (
-        f'<span>{_e(settings["cta_text"])}</span>' if settings.get("cta_text")
+        f'<span data-i18n-dyn="cta_text_{biz_id or "x"}">{_e(settings["cta_text"])}</span>' if settings.get("cta_text")
         else f'<span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span>'
     )
     cta = (
@@ -1092,7 +1267,7 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     <div class="hero-inner">
       {logo_html}
       {cat_badge}
-      <h1 class="hero-title">{hero_title}</h1>
+      <h1 class="hero-title"{_title_attr}>{hero_title}</h1>
       <p class="hero-tagline" data-i18n-dyn="{tagline_key}">{tagline}</p>
       {chips_html}
       {cta}
@@ -1203,10 +1378,13 @@ def _category_filter_html(products: list) -> str:
     cats = sorted({p.get("category") for p in products if p.get("category")})
     if not cats:
         return ""
-    pills = ['<button class="cat-pill active" data-filter="all" onclick="_wzFilter(this,\'all\')">All</button>']
+    pills = [f'<button class="cat-pill active" data-filter="all" onclick="_wzFilter(this,\'all\')"><span data-i18n="filter_all">{SITE_I18N["en"]["filter_all"]}</span></button>']
     for c in cats:
+        # SECURITY: the category goes into a JS string inside an HTML attribute -
+        # build it with json.dumps then attribute-escape the whole call (the old
+        # _e()-inside-quotes form let a category like  x');alert(1);('  break out).
         pills.append(
-            f'<button class="cat-pill" data-filter="{_e(c)}" onclick="_wzFilter(this,\'{_e(c)}\')">{_e(c)}</button>'
+            f'<button class="cat-pill" data-filter="{_e(c)}" onclick="{_e("_wzFilter(this," + json.dumps(str(c)) + ")")}">{_e(c)}</button>'
         )
     return f'<div class="cat-filters">{"".join(pills)}</div>'
 
@@ -1230,6 +1408,7 @@ def _about_html(biz: dict, settings: dict) -> str:
             f"Just message us and we'll take care of the rest."
         )
     desc = _e(raw_desc)
+    _about_src = None if custom_desc else "en"      # None → owner's site language
 
     # Translation fix: this "About" description is the single biggest
     # untranslated block the audit found (a free-text paragraph, not a
@@ -1237,7 +1416,7 @@ def _about_html(biz: dict, settings: dict) -> str:
     # server-side translation into every supported language; the client
     # switcher swaps it via data-i18n-dyn (see _i18n_script()).
     about_key = f"about_desc_{biz.get('id','x')}"
-    _register_dynamic_text(about_key, raw_desc, biz.get("id"))
+    _register_dynamic_text(about_key, raw_desc, biz.get("id"), source_lang=_about_src)
 
     location_html = ""
     if settings["show_location"] and settings["location"]:
@@ -1291,7 +1470,8 @@ def _reviews_html(reviews: list) -> str:
 
     cards = []
     for r in reviews[:6]:
-        customer = _e(r.get("customer_name") or "Customer")
+        customer = _e(r.get("customer_name")) if r.get("customer_name") else \
+            f'<span data-i18n="customer_fallback">{SITE_I18N["en"]["customer_fallback"]}</span>'
         rating   = r.get("last_rating", "")
         stars    = _stars(rating)
         orders   = r.get("order_count") or 1
@@ -1299,7 +1479,7 @@ def _reviews_html(reviews: list) -> str:
             f'<div class="review-card">'
             f'<div class="review-stars">{stars}</div>'
             f'<p class="review-text">"{_e(str(rating))}"</p>'
-            f'<div class="review-author">{customer} · {orders} order{"s" if orders != 1 else ""}</div>'
+            f'<div class="review-author">{customer} · <span data-i18n="orders_label">{SITE_I18N["en"]["orders_label"]}</span>: {_e(str(orders))}</div>'
             f'</div>'
         )
 
@@ -1360,12 +1540,14 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
             f'width="100%" height="280" style="border:0;border-radius:var(--r);" '
             f'allowfullscreen="" loading="lazy" '
             f'referrerpolicy="no-referrer-when-downgrade" '
-            f'title="{_e(name)} location map"></iframe>'
+            f'data-i18n-title="map_title" title="{SITE_I18N["en"]["map_title"]}"></iframe>'
             f'</div>'
         )
 
+    if settings.get("contact_title"):
+        _register_dynamic_text(f"contact_title_{biz.get('id','x')}", settings["contact_title"], biz.get("id"))
     _contact_title = (
-        f'<span>{_e(settings["contact_title"])}</span>' if settings.get("contact_title")
+        f'<span data-i18n-dyn="contact_title_{biz.get("id","x")}">{_e(settings["contact_title"])}</span>' if settings.get("contact_title")
         else '<span data-i18n="get_in_touch">Get In Touch</span>'
     )
     return f"""
@@ -1397,22 +1579,32 @@ def _sticky_wa_btn(wa_phone: str, biz_name: str, slug: str = "") -> str:
     )
 
 
-def _seo_tags(name: str, category: str, tagline: str, slug: str) -> str:
+def _seo_tags(name: str, category: str, tagline: str, slug: str,
+              lang: str = "en", logo_url: str = "", desc_key: str = "") -> str:
     title = f"{_e(name)} | {_e(category)}" if category else _e(name)
     desc  = _e(tagline[:160])
     url   = f"https://wazibothq.com/site/{slug}"
-    json_ld = (
-        '{"@context":"https://schema.org","@type":"LocalBusiness",'
-        f'"name":"{_e(name)}","description":"{desc}","url":"{url}"'
-        + (f',"@type":"{_e(category)}"' if category else "")
-        + "}"
-    )
+    image = logo_url if isinstance(logo_url, str) and re.match(r"^https://[^\s\"'<>]+$", logo_url) else ""
+    # Structured data from KNOWN facts only, built with json.dumps (previously
+    # hand-assembled: invalid JSON for names containing a backslash, HTML entities
+    # inside JSON, and a duplicate "@type" key overriding LocalBusiness with the
+    # free-text category). "</" is neutralised so it can never close the script.
+    ld = {"@context": "https://schema.org", "@type": "LocalBusiness", "name": name,
+          "description": tagline[:160], "url": url, "inLanguage": lang}
+    if category:
+        ld["additionalType"] = category
+    if image:
+        ld["image"] = image
+    json_ld = json.dumps(ld, ensure_ascii=False).replace("<", "\\u003c")     # no raw "<" in script data
+    dyn = f' data-i18n-dyn-content="{_e(desc_key)}"' if desc_key else ""
+    img_tag = f'\n  <meta property="og:image" content="{_e(image)}">' if image else ""
     return f"""  <title>{title}</title>
-  <meta name="description" content="{desc}">
+  <meta name="description" content="{desc}"{dyn}>
   <meta property="og:title" content="{_e(name)}">
-  <meta property="og:description" content="{desc}">
+  <meta property="og:description" content="{desc}"{dyn}>
   <meta property="og:type" content="website">
   <meta property="og:url" content="{url}">
+  <meta property="og:locale" content="{_e(lang)}">{img_tag}
   <link rel="canonical" href="{url}">
   <script type="application/ld+json">{json_ld}</script>"""
 
@@ -1649,7 +1841,7 @@ def _buy_now_html(biz_id: int, currency_sym: str, currency_code: str, palette: d
       &#x1F4B3; <span data-i18n="pay_securely">Pay Securely</span>
     </button>
     <div style="text-align:center;margin-top:12px;font-size:11px;color:{muted};">
-      &#x1F512; Payments processed securely by Stripe &bull; SSL Encrypted
+      &#x1F512; <span data-i18n="secure_payments">{SITE_I18N["en"]["secure_payments"]}</span>
     </div>
   </div>
 </div>
@@ -1804,11 +1996,15 @@ def generate_site_html(slug: str) -> str:
     # registry (About description, product/service descriptions) — see the
     # module-level comment above _dyn_i18n_ctx for why a ContextVar and not
     # a plain module dict.
-    _dyn_i18n_start()
+    settings   = _get_site_settings(biz.get("features_json"))
+    site_lang  = _site_language(biz, settings)
+    _dyn_i18n_start(site_lang)
 
     name         = biz.get("name", "Our Business")
     category     = biz.get("category", "")
-    tagline      = biz.get("tagline") or f"Order {category or 'products'} on WhatsApp"
+    _settings0   = _get_site_settings(biz.get("features_json"))
+    tagline      = (_settings0.get("hero_tagline") or biz.get("tagline") or _settings0.get("description")
+                    or f"Order {category or 'products'} on WhatsApp")
     # theme and theme_dark derived below via palette.accent / accent_color override
     currency_sym = biz.get("currency_symbol", "$")
     # Resolve the correct WhatsApp number to link to:
@@ -1821,7 +2017,6 @@ def generate_site_html(slug: str) -> str:
     dedicated_phone  = re.sub(r"[^\d]", "", biz.get("contact_phone") or "")
     wa_phone         = dedicated_phone if (not use_shared and dedicated_phone) else SHARED_WA_NUMBER
 
-    settings   = _get_site_settings(biz.get("features_json"))
     palette    = THEME_PRESETS.get(settings["theme_style"], THEME_PRESETS["dark_modern"])
     font_stack = FONT_PRESETS.get(settings["font"], FONT_PRESETS.get("inter", "'Inter',sans-serif"))
     font_google= FONT_GOOGLE_FAMILIES.get(settings["font"], FONT_GOOGLE_FAMILIES.get("inter","Inter:wght@400;700"))
@@ -1852,7 +2047,10 @@ def generate_site_html(slug: str) -> str:
     }
 
     css           = _build_css(palette, font_stack, layout, theme, theme_dark)
-    seo           = _seo_tags(name, category, tagline, slug)
+    _seo_custom   = settings.get("hero_tagline") or biz.get("tagline") or settings.get("description") or ""
+    _register_dynamic_text("meta_desc", tagline[:160], biz["id"], source_lang=None if _seo_custom else "en")
+    seo           = _seo_tags(name, category, tagline, slug, lang=site_lang,
+                              logo_url=biz.get("logo_url", ""), desc_key="meta_desc")
     nav           = _nav_html(sections, name)
     is_service    = bool(biz.get("is_service_business", False))
     hero          = _hero_html(biz, settings, wa_phone, is_service)
@@ -1878,12 +2076,15 @@ def generate_site_html(slug: str) -> str:
     # above (about description, product/service descriptions) gets
     # translated here, once, into every supported language.
     dynamic_i18n = _dyn_i18n_collect_and_translate()
+    _tstatus = _dyn_i18n_status()
+    _dir = "rtl" if site_lang in SITE_I18N_RTL_LANGS else "ltr"
 
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="{site_lang}" dir="{_dir}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="wz-translation-status" content="{_tstatus["status"]}">
   {seo}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family={font_google}&display=swap" rel="stylesheet">
@@ -1899,13 +2100,14 @@ def generate_site_html(slug: str) -> str:
 {gallery_sec}
 {contact_sec}
   <footer>
-    <p><span data-i18n="powered_by">Powered by</span> <a href="https://wazibothq.com" target="_blank">WaziBot</a>
-       &mdash; AI Employee for WhatsApp Businesses</p>
-    <p style="margin-top:8px;font-size:11px;opacity:.6;">🔒 Payments processed securely by Stripe &bull; PCI DSS Level 1 &bull; SSL Encrypted</p>
+    <p><span data-i18n="powered_by">Powered by</span> <a href="https://wazibothq.com" target="_blank" rel="noopener">WaziBot</a>
+       &mdash; <span data-i18n="footer_tagline">{SITE_I18N["en"]["footer_tagline"]}</span></p>
+    <p style="margin-top:8px;font-size:11px;opacity:.6;">🔒 <span data-i18n="footer_secure">{SITE_I18N["en"]["footer_secure"]}</span></p>
+    <p id="wz-translation-note" hidden style="margin-top:8px;font-size:11px;opacity:.8;" data-i18n="translation_partial">{SITE_I18N["en"]["translation_partial"]}</p>
   </footer>
 {wa_sticky}
 {_JS}
-{_i18n_script(dynamic_i18n)}
+{_i18n_script(dynamic_i18n, site_lang, _tstatus["lang_ok"])}
 </body>
 </html>"""
 

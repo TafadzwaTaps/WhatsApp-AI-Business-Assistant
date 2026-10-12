@@ -106,7 +106,9 @@ function icon(cat) {
     if ((cat||'').toLowerCase().includes(k.toLowerCase())) return v;
   return CAT_ICONS.default;
 }
-function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+// Escapes quotes too: esc() is used inside double-quoted attributes (alt="...", src="..."),
+// where a product name containing " would otherwise inject attributes (stored XSS).
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function sym(b){return b.currency_sym||b.currency_symbol||'$';}
 
 async function load() {

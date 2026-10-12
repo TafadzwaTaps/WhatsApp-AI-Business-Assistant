@@ -2937,8 +2937,11 @@ async function loadStripeSubscriptionStatus() {
         msg = days > 0 ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade when you're ready.`
                        : 'Trial ended. Upgrade to restore full access.';
       } else if (scheduled) {
-        msg = `Your plan is set to end on ${fmt(s.access_ends_at || s.current_period_end) || 'the end of this billing period'}. You keep full access until then.`;
+        msg = s.status_message || `Your plan is set to end on ${fmt(s.access_ends_at || s.current_period_end) || 'the end of this billing period'}. You keep full access until then.`;
         color = 'var(--amber)';
+      } else if (status === 'cancelled' && s.status_message) {
+        msg = s.status_message;
+        color = 'var(--text-dim)';
       } else if (status === 'past_due' || status === 'unpaid') {
         msg = 'Your last payment failed. Please update your payment method via Manage Subscription to keep your plan.';
         color = '#ff5252';
@@ -3054,8 +3057,8 @@ async function stripeCancel() {
     _billingBusy = true;
     if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
     const r = await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
-    const until = r && r.access_until ? new Date(r.access_until).toLocaleDateString(undefined, { day:'numeric', month:'long', year:'numeric' }) : 'the end of your billing period';
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Cancellation scheduled — you keep access until ' + escHtml(until) + '.</span>';
+    // The message comes from the backend, already localized and matched to what Stripe confirmed.
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ ' + escHtml((r && r.message) || '') + '</span>';
     await loadStripeBillingStatus();
   } catch(e) {
     if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
@@ -3072,8 +3075,8 @@ async function stripeResume() {
   try {
     _billingBusy = true;
     if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
-    await apiFetch('/billing/resume', { method: 'POST' });
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Your plan will continue and renew as normal.</span>';
+    const r = await apiFetch('/billing/resume', { method: 'POST' });
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ ' + escHtml((r && r.message) || '') + '</span>';
     await loadStripeBillingStatus();
   } catch(e) {
     if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
@@ -7956,6 +7959,8 @@ async function loadSiteGeneratorSettings() {
     if (_accentInp) _accentInp.value = _savedAccent || '#22c55e';
     if (_savedAccent) sgPreviewAccent(_savedAccent);
 
+    _setVal('sg-language', cfg.language || '');
+    loadSiteTranslationNote();
     _setVal('sg-hero-title', cfg.hero_title || '');
     _setVal('sg-hero-tagline', cfg.hero_tagline || '');
     _setVal('sg-description', cfg.description || '');
@@ -7979,6 +7984,20 @@ async function loadSiteGeneratorSettings() {
   }
 }
 
+// Tells the owner, truthfully, whether their site text can be machine-translated on this server.
+async function loadSiteTranslationNote() {
+  const el = document.getElementById('sg-translation-note');
+  if (!el) return;
+  try {
+    const s = await apiFetch('/me/translation-status');
+    if (!s) return;
+    el.style.display = 'block';
+    el.textContent = s.available
+      ? 'Translation engine ready. Fixed labels and your text can be shown in: ' + (s.pairs || []).map(p => p[0] + '→' + p[1]).join(', ')
+      : 'Translation engine is not set up on this server yet: fixed site labels are translated, but your own text stays in its original language.';
+  } catch (e) { el.style.display = 'none'; }
+}
+
 async function saveSiteGeneratorSettings() {
   const btn = document.querySelector('[onclick="saveSiteGeneratorSettings()"]');
   try {
@@ -7993,6 +8012,7 @@ async function saveSiteGeneratorSettings() {
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
       accent_color:     _accentColor,
+      language:         _getVal('sg-language') || '',
       hero_title:       (_getVal('sg-hero-title') || '').trim().slice(0, 80),
       hero_tagline:     (_getVal('sg-hero-tagline') || '').trim().slice(0, 160),
       description:      (_getVal('sg-description') || '').trim().slice(0, 600),
