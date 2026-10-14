@@ -257,6 +257,14 @@ def update_booking_status(
                     log.warning("update_booking_status: could not sync linked order=%s: %s",
                                 linked_order_id, exc_sync)
 
+        # Revenue/overview stats are cached for 60s — drop the cache so a
+        # cancelled/no-show amount disappears from the Overview immediately.
+        try:
+            from crud.analytics import _cache_invalidate_business
+            _cache_invalidate_business(user["business_id"])
+        except Exception:
+            pass
+
         return {"ok": True, "booking": updated_booking}
     except HTTPException: raise
     except Exception as exc: raise HTTPException(500, str(exc))
@@ -268,6 +276,11 @@ def cancel_booking_api(booking_id: int, user=Depends(require_business), _plan=De
     from services.booking_service import cancel_booking
     result = cancel_booking(booking_id, user["business_id"])
     if not result: raise HTTPException(404, "Booking not found")
+    try:
+        from crud.analytics import _cache_invalidate_business
+        _cache_invalidate_business(user["business_id"])
+    except Exception:
+        pass
     return {"ok": True, "cancelled": booking_id}
 
 

@@ -494,7 +494,9 @@ def get_dashboard_stats(business_id: int) -> dict:
     )
     customers = customers_res.data or []
 
-    total_revenue = round(sum(float(o.get("total_price") or 0) for o in orders), 2)
+    # Cancelled / refunded / no-show orders are not revenue.
+    total_revenue = round(sum(float(o.get("total_price") or 0) for o in orders
+                              if o.get("status") not in ("cancelled", "refunded", "no_show")), 2)
     total_orders  = len(orders)
     total_customers = len(customers)
 
@@ -508,7 +510,8 @@ def get_dashboard_stats(business_id: int) -> dict:
         raw_date = o.get("created_at", "")
         day = raw_date[:10] if raw_date else "unknown"
         orders_per_day[day] += 1
-        revenue_per_day[day] += float(o.get("total_price") or 0)
+        if o.get("status") not in ("cancelled", "refunded", "no_show"):
+            revenue_per_day[day] += float(o.get("total_price") or 0)
         status_counter[o.get("status", "pending")] += 1
 
         # Count products from product_name field
@@ -1248,7 +1251,8 @@ def get_business_stats(business_id: int) -> dict:
         total_orders   = len(orders)
         paid_orders    = sum(1 for o in orders if o.get("payment_status") == "paid")
         total_revenue  = sum(float(o.get("total_price") or 0)
-                            for o in orders if o.get("payment_status") == "paid")
+                            for o in orders if o.get("payment_status") == "paid"
+                            and o.get("status") not in ("cancelled", "refunded", "no_show"))
         pending_orders = sum(1 for o in orders
                             if o.get("status") in ("pending", "confirmed", "pending_cash"))
 

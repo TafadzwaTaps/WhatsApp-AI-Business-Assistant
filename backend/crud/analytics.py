@@ -194,10 +194,10 @@ def get_business_stats(business_id: int) -> dict:
         # was paid before the cancellation happened. The service/product
         # was never actually delivered, so it shouldn't read as revenue.
         paid_orders    = sum(1 for o in orders
-                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
+                             if o.get("payment_status") == "paid" and o.get("status") not in ("cancelled", "refunded", "no_show"))
         total_revenue  = sum(float(o.get("total_price") or 0)
                              for o in orders
-                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
+                             if o.get("payment_status") == "paid" and o.get("status") not in ("cancelled", "refunded", "no_show"))
         pending_orders = sum(1 for o in orders
                              if o.get("status") in ("pending", "confirmed", "pending_cash"))
 
