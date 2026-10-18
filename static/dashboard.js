@@ -570,6 +570,23 @@ function invalidateMeCache() {
 }
 
 // ── API ───────────────────────────────────────────────────
+// ── Outage banner (shown when the server is unreachable / 502-504) ─────────
+function _showOutageBanner() {
+  try {
+    if (document.getElementById('outage-banner')) return;
+    const b = document.createElement('div');
+    b.id = 'outage-banner';
+    b.setAttribute('role', 'alert');
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#1a1200;' +
+      'padding:10px 16px;text-align:center;font:600 13px Arial,sans-serif;';
+    b.textContent = '⚠️ System experiencing issues — our technicians are working on it. We\'ll reconnect automatically.';
+    document.body.appendChild(b);
+  } catch (_) {}
+}
+function _hideOutageBanner() {
+  try { const b = document.getElementById('outage-banner'); if (b) b.remove(); } catch (_) {}
+}
+
 async function apiFetch(path, opts={}, _retried=false) {
   // Guard: never fire API calls without a token — avoids 401 spam on page load
   if (!token && !opts._public) return null;
@@ -628,6 +645,12 @@ async function apiFetch(path, opts={}, _retried=false) {
       console.error('[apiFetch] 403', path, msg403);
       throw new Error(msg403);
     }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      // Gateway/server down (e.g. restart or outage) — friendly message + banner.
+      _showOutageBanner();
+      throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.');
+    }
+    _hideOutageBanner();
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
       try { const e = await res.json(); msg = e.detail || msg; } catch {}
@@ -636,7 +659,7 @@ async function apiFetch(path, opts={}, _retried=false) {
     }
     return res.json();
   } catch (err) {
-    if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
+    if (err instanceof TypeError) { _showOutageBanner(); throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.'); }
     throw err;
   }
 }
@@ -2227,7 +2250,7 @@ async function loadChatMessages(phone) {
     }
   } catch(e) {
     const el = document.getElementById('chat-msgs');
-    if (el) el.innerHTML = `<div class="empty">⚠ ${escHtml(e.message)}</div>`;
+    if (el) el.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
   }
 }
 
@@ -2321,7 +2344,7 @@ async function loadCustomers() {
     if (statTotal) statTotal.textContent = phones.length;
   } catch (e) {
     const rl = document.getElementById('recipient-list');
-    if (rl) rl.innerHTML = `<div class="empty">⚠ ${escHtml(e.message)}</div>`;
+    if (rl) rl.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
   }
 }
 
@@ -2915,50 +2938,28 @@ async function loadStripeSubscriptionStatus() {
   const upgradeBtn = document.getElementById('stripe-upgrade-btn');
   const manageBtn  = document.getElementById('stripe-manage-btn');
   const cancelBtn  = document.getElementById('stripe-cancel-btn');
-  const resumeBtn  = document.getElementById('stripe-resume-btn');
   try {
     const s = await apiFetch('/billing/status');
     if (!s) return;
     const tier   = (s.tier || 'free').charAt(0).toUpperCase() + (s.tier || 'free').slice(1);
-    const raw    = (s.billing_status || 'active').toLowerCase();
-    const status = raw === 'canceled' ? 'cancelled' : raw;      // backend spells it "cancelled"
-    const scheduled = !!s.cancel_at_period_end && status === 'active';
-    const fmt = d => d ? new Date(d).toLocaleDateString(undefined, { day:'numeric', month:'long', year:'numeric' }) : '';
-    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', unpaid:'#ff5252',
-                           paused:'var(--amber)', cancelled:'var(--text-dim)' };
-    const labels = { active: scheduled ? 'Cancelling' : 'Active', trialing:'Trial', past_due:'Payment required',
-                     unpaid:'Payment required', paused:'Paused', cancelled:'Cancelled' };
+    const status = s.billing_status || 'active';
+    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', canceled:'var(--text-dim)' };
     if (planLabel) { planLabel.textContent = `${tier} Plan`; planLabel.style.color = statusColors[status] || 'var(--text)'; }
-    if (statusEl)  { statusEl.textContent  = labels[status] || (status.charAt(0).toUpperCase()+status.slice(1).replace('_',' ')); statusEl.style.color = scheduled ? 'var(--amber)' : (statusColors[status] || 'var(--text-dim)'); }
+    if (statusEl)  { statusEl.textContent  = status.charAt(0).toUpperCase()+status.slice(1).replace('_',' '); statusEl.style.color = statusColors[status] || 'var(--text-dim)'; }
     if (trialEl) {
-      let msg = '', color = 'var(--green)';
       if (status === 'trialing' && s.trial_ends_at) {
         const days = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
-        msg = days > 0 ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade when you're ready.`
-                       : 'Trial ended. Upgrade to restore full access.';
-      } else if (scheduled) {
-        msg = s.status_message || `Your plan is set to end on ${fmt(s.access_ends_at || s.current_period_end) || 'the end of this billing period'}. You keep full access until then.`;
-        color = 'var(--amber)';
-      } else if (status === 'cancelled' && s.status_message) {
-        msg = s.status_message;
-        color = 'var(--text-dim)';
-      } else if (status === 'past_due' || status === 'unpaid') {
-        msg = 'Your last payment failed. Please update your payment method via Manage Subscription to keep your plan.';
-        color = '#ff5252';
-      } else if (status === 'active' && s.current_period_end) {
-        msg = `Next renewal: ${fmt(s.current_period_end)}`;
-        color = 'var(--text-dim)';
-      }
-      trialEl.style.display = msg ? 'block' : 'none';
-      trialEl.style.color = color;
-      trialEl.textContent = msg;
+        trialEl.style.display = 'block';
+        trialEl.textContent = days > 0
+          ? `✅ ${days} trial day${days!==1?'s':''} remaining. Upgrade from $5.99/mo when ready.`
+          : `Trial ended. Upgrade from $5.99/month to restore full access.`;
+      } else { trialEl.style.display = 'none'; }
     }
-    const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'cancelled';
-    const hasSub       = !!s.stripe_subscription_id && ['active','past_due','unpaid'].includes(status);
-    if (upgradeBtn) upgradeBtn.style.display = canUpgrade ? 'inline-flex' : 'none';
-    if (manageBtn)  manageBtn.style.display  = (hasSub || (s.stripe_customer_id && status !== 'trialing')) ? 'inline-flex' : 'none';
-    if (cancelBtn)  cancelBtn.style.display  = (hasSub && !scheduled) ? 'inline-flex' : 'none';
-    if (resumeBtn)  resumeBtn.style.display  = scheduled ? 'inline-flex' : 'none';
+    const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'canceled';
+    const hasActiveSub = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
+    if (upgradeBtn) upgradeBtn.style.display = canUpgrade   ? 'inline-flex' : 'none';
+    if (manageBtn)  manageBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
+    if (cancelBtn)  cancelBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
   } catch(e) { /* subscription status unavailable */ }
 }
 
@@ -2974,7 +2975,7 @@ async function stripeConnect() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Could not start Stripe setup') + '</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ Connect Stripe Account'; }
   }
@@ -2992,7 +2993,7 @@ async function stripeConnectDashboard() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Dashboard not available') + '</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📊 Open Stripe Dashboard'; }
   }
@@ -3040,49 +3041,25 @@ async function stripeManage() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ Portal not available — contact support.</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚙ Manage Subscription'; }
   }
 }
 
-let _billingBusy = false;   // blocks double submits of cancel/resume
-
 async function stripeCancel() {
-  if (_billingBusy) return;
-  if (!confirm('Cancel your subscription?\n\nYou keep full access until the end of your current paid billing period, then your account moves to the Free plan. Your data is kept.')) return;
+  if (!confirm('Cancel your subscription? You keep access until the end of your billing period.')) return;
   const btn = document.getElementById('stripe-cancel-btn');
   const statusEl = document.getElementById('stripe-action-status');
   try {
-    _billingBusy = true;
     if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
-    const r = await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
-    // The message comes from the backend, already localized and matched to what Stripe confirmed.
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ ' + escHtml((r && r.message) || '') + '</span>';
-    await loadStripeBillingStatus();
+    await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
+    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Subscription cancelled — access continues until period end.</span>';
+    setTimeout(loadStripeBillingStatus, 1500);
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
   } finally {
-    _billingBusy = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Cancel Plan'; }
-  }
-}
-
-async function stripeResume() {
-  if (_billingBusy) return;
-  const btn = document.getElementById('stripe-resume-btn');
-  const statusEl = document.getElementById('stripe-action-status');
-  try {
-    _billingBusy = true;
-    if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
-    const r = await apiFetch('/billing/resume', { method: 'POST' });
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ ' + escHtml((r && r.message) || '') + '</span>';
-    await loadStripeBillingStatus();
-  } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
-  } finally {
-    _billingBusy = false;
-    if (btn) { btn.disabled = false; btn.textContent = '↩ Keep My Plan'; }
   }
 }
 
@@ -4632,7 +4609,7 @@ async function loadInactive(days) {
       </div>`
     ).join('') + (data.length > 8 ? `<div style="color:var(--text-dim);font-size:10px;padding-top:6px;">+${data.length-8} more</div>` : '');
   } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${escHtml(e.message)}</div>`;
+    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${e.message}</div>`;
   }
 }
 
@@ -4763,7 +4740,7 @@ async function loadDrawerOrders(phone) {
       </div>`
     ).join('');
   } catch (e) {
-    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${escHtml(e.message)}</div>`;
+    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
   }
 }
 
@@ -5908,7 +5885,7 @@ async function loadBcCustomerPicker() {
     const sel = document.querySelector('input[name="bc-audience"]:checked');
     if (sel && sel.value === 'custom') updateBcRecipientPreview('custom');
   } catch (e) {
-    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${escHtml(e.message)}</div>`;
+    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${e.message}</div>`;
   }
 }
 
@@ -6009,7 +5986,7 @@ function updateBcRecipientPreview(audience) {
       return `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:3px 0;">${escHtml(display)}</div>`;
     }).join('');
   }).catch(e => {
-    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${escHtml(e.message)}</div>`;
+    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
     if (statSelected) statSelected.textContent = '—';
   });
 }
@@ -6720,7 +6697,7 @@ async function askDashHelp() {
     if (data.related?.length) html += `<div class="help-related">${data.related.map(r=>`<button class="help-related-chip" onclick="askDashHelpQ('Tell me about ${r.title}')">${r.title}</button>`).join('')}</div>`;
     body.innerHTML = html;
   } catch (e) {
-    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${escHtml(e.message)}</div>`;
+    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${e.message}</div>`;
   }
 }
 
@@ -6896,13 +6873,13 @@ async function submitReferralWithdrawal() {
       method: 'POST',
       body:   JSON.stringify({ paypal_email: email, amount }),
     });
-    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${escHtml(result.message)}</div>`;
+    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${result.message}</div>`;
     toast('✅ Payout requested!');
     // Refresh stats
     _refData = null;
     setTimeout(loadReferralTab, 1000);
   } catch(e) {
-    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${escHtml(e.message)}</span>`;
+    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${e.message}</span>`;
     toast(e.message, true);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '💸 Request Payout'; }
@@ -7959,8 +7936,6 @@ async function loadSiteGeneratorSettings() {
     if (_accentInp) _accentInp.value = _savedAccent || '#22c55e';
     if (_savedAccent) sgPreviewAccent(_savedAccent);
 
-    _setVal('sg-language', cfg.language || '');
-    loadSiteTranslationNote();
     _setVal('sg-hero-title', cfg.hero_title || '');
     _setVal('sg-hero-tagline', cfg.hero_tagline || '');
     _setVal('sg-description', cfg.description || '');
@@ -7984,20 +7959,6 @@ async function loadSiteGeneratorSettings() {
   }
 }
 
-// Tells the owner, truthfully, whether their site text can be machine-translated on this server.
-async function loadSiteTranslationNote() {
-  const el = document.getElementById('sg-translation-note');
-  if (!el) return;
-  try {
-    const s = await apiFetch('/me/translation-status');
-    if (!s) return;
-    el.style.display = 'block';
-    el.textContent = s.available
-      ? 'Translation engine ready. Fixed labels and your text can be shown in: ' + (s.pairs || []).map(p => p[0] + '→' + p[1]).join(', ')
-      : 'Translation engine is not set up on this server yet: fixed site labels are translated, but your own text stays in its original language.';
-  } catch (e) { el.style.display = 'none'; }
-}
-
 async function saveSiteGeneratorSettings() {
   const btn = document.querySelector('[onclick="saveSiteGeneratorSettings()"]');
   try {
@@ -8012,7 +7973,6 @@ async function saveSiteGeneratorSettings() {
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
       accent_color:     _accentColor,
-      language:         _getVal('sg-language') || '',
       hero_title:       (_getVal('sg-hero-title') || '').trim().slice(0, 80),
       hero_tagline:     (_getVal('sg-hero-tagline') || '').trim().slice(0, 160),
       description:      (_getVal('sg-description') || '').trim().slice(0, 600),
@@ -8215,7 +8175,7 @@ async function loadTrialBanner() {
           if (graceMsg && typeof ts.grace_hours_left === 'number') {
             const h = Math.max(0, Math.round(ts.grace_hours_left));
             graceMsg.textContent = `You have about ${h} hour${h===1?'':'s'} left before some features are restricted. `
-              + `Choose a plan from $4.99/month to keep everything running — all your data is safe.`;
+              + `Choose a plan from $5.99/month to keep everything running — all your data is safe.`;
           }
         }
       } else if (expiredBanner) {

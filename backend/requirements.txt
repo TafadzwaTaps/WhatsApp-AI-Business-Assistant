@@ -34,4 +34,3 @@ langdetect>=1.0.9
 # ── Testing (dev only — not required at runtime, safe to include) ──────────
 pytest>=8.0.0
 pytest-mock>=3.14.0
-argostranslate>=1.9.0

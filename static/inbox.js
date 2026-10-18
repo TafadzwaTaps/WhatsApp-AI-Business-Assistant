@@ -75,6 +75,23 @@ function toggleSidebar() {
 }
 
 /* ── API HELPER ─────────────────────────────────────────── */
+// ── Outage banner (shown when the server is unreachable / 502-504) ─────────
+function _showOutageBanner() {
+  try {
+    if (document.getElementById('outage-banner')) return;
+    const b = document.createElement('div');
+    b.id = 'outage-banner';
+    b.setAttribute('role', 'alert');
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#1a1200;' +
+      'padding:10px 16px;text-align:center;font:600 13px Arial,sans-serif;';
+    b.textContent = '⚠️ System experiencing issues — our technicians are working on it. We\'ll reconnect automatically.';
+    document.body.appendChild(b);
+  } catch (_) {}
+}
+function _hideOutageBanner() {
+  try { const b = document.getElementById('outage-banner'); if (b) b.remove(); } catch (_) {}
+}
+
 async function apiFetch(path, opts = {}) {
   // Merge headers properly — object spread (...opts) would otherwise REPLACE
   // the entire headers object if opts.headers is set, silently dropping
@@ -105,6 +122,11 @@ async function apiFetch(path, opts = {}) {
       window.location.href = '/dashboard';
       throw new Error('Unauthorized' + (detail ? `: ${detail}` : ''));
     }
+    if (res.status === 502 || res.status === 503 || res.status === 504) {
+      _showOutageBanner();
+      throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.');
+    }
+    _hideOutageBanner();
     if (!res.ok) {
       let msg = res.statusText || 'API error';
       try { const e = await res.json(); msg = e.detail || msg; } catch {}
@@ -114,7 +136,7 @@ async function apiFetch(path, opts = {}) {
     return res.json();
   } catch (err) {
     if (err.message && err.message.startsWith('Unauthorized')) throw err;
-    if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
+    if (err instanceof TypeError) { _showOutageBanner(); throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.'); }
     throw err;
   }
 }

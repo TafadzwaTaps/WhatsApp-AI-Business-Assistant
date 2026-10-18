@@ -1,0 +1,13 @@
+# OPTIONAL — Site Generator dynamic-content translation (Argos Translate).
+#
+# DELIBERATELY NOT in requirements.txt. Its dependency chain (PyTorch,
+# CTranslate2, ...) is ~1.5GB on disk and loading it plus a language model
+# takes several hundred MB of RAM. On a 512MB Render instance that caused
+# "Ran out of memory (used over 512MB)" crash loops (observed 2026-10-18,
+# always while rendering /site/<slug>).
+#
+# Install only on a host with >= 2GB RAM:
+#     pip install -r requirements-translation.txt
+# services/translation_service.py imports it lazily; without it, site text is
+# simply served in its original language (no errors).
+argostranslate>=1.9.0

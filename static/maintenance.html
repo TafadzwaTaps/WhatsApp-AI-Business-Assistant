@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="robots" content="noindex"/>
+<title>We'll be right back — WaziBot</title>
+<!-- Fully self-contained (no external CSS/JS/fonts) so it still renders when
+     everything else is down. Safe to paste into any host's custom error page. -->
+<style>
+  :root{--bg:#0a0f0d;--card:#111a15;--line:#1f3025;--text:#e8f5e9;--muted:#8fb097;--green:#22c55e;--amber:#f59e0b}
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;
+       background:var(--bg);color:var(--text);font-family:'Helvetica Neue',Arial,sans-serif}
+  .card{max-width:520px;width:100%;background:var(--card);border:1px solid var(--line);border-radius:16px;
+        padding:40px 32px;text-align:center}
+  .logo{font-size:22px;font-weight:800;color:var(--green);margin-bottom:28px}
+  .gear{font-size:44px;margin-bottom:8px;display:inline-block;animation:spin 6s linear infinite}
+  @media (prefers-reduced-motion:reduce){.gear{animation:none}}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h1{font-size:24px;margin:8px 0 12px}
+  p{color:var(--muted);line-height:1.65;font-size:15px;margin:0 0 14px}
+  .status{display:inline-flex;align-items:center;gap:8px;margin-top:10px;padding:8px 14px;border:1px solid var(--line);
+          border-radius:999px;font-size:13px;color:var(--text)}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--amber)}
+  .ok .dot{background:var(--green)}
+  button{margin-top:22px;background:var(--green);color:#000;border:0;border-radius:9px;padding:12px 26px;
+         font-weight:800;font-size:14px;cursor:pointer}
+  button:focus-visible{outline:2px solid var(--text);outline-offset:2px}
+  .small{font-size:12px;margin-top:22px;opacity:.75}
+</style>
+</head>
+<body>
+<main class="card" role="main">
+  <div class="logo">WaziBot</div>
+  <div class="gear" aria-hidden="true">⚙️</div>
+  <h1>We're experiencing issues</h1>
+  <p>Our servers are temporarily unavailable. Our technicians have been alerted and are working on it.</p>
+  <p>Your data is safe. Please try again in a few minutes — this page will reconnect automatically.</p>
+  <div class="status" id="status" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Checking connection…</span></div>
+  <div><button type="button" id="retry">Try again now</button></div>
+  <p class="small">Customers: your order or message is not lost — simply resend it shortly.</p>
+</main>
+<script>
+(function(){
+  var box=document.getElementById('status'), txt=document.getElementById('statusText'), tries=0, timer;
+  function back(){
+    // When opened directly as /static/maintenance.html go home; when served in place
+    // of a failed page, reload that same URL.
+    if (location.pathname.indexOf('maintenance.html') !== -1) location.href='/'; else location.reload();
+  }
+  function check(manual){
+    txt.textContent = manual ? 'Checking…' : txt.textContent;
+    var c = new AbortController(); var t = setTimeout(function(){c.abort()}, 6000);
+    fetch('/healthz',{cache:'no-store',signal:c.signal}).then(function(r){
+      clearTimeout(t);
+      if (r.ok) { box.className='status ok'; txt.textContent='Back online — reconnecting…'; setTimeout(back,600); }
+      else fail();
+    }).catch(function(){ clearTimeout(t); fail(); });
+  }
+  function fail(){
+    tries++; box.className='status';
+    var wait = Math.min(15 + tries*5, 60), left = wait;
+    txt.textContent='Still working on it — retrying in '+left+'s';
+    clearInterval(timer);
+    timer=setInterval(function(){
+      left--; if(left<=0){clearInterval(timer);check();} else txt.textContent='Still working on it — retrying in '+left+'s';
+    },1000);
+  }
+  document.getElementById('retry').addEventListener('click',function(){clearInterval(timer);check(true);});
+  check();
+})();
+</script>
+</body>
+</html>

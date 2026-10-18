@@ -270,13 +270,11 @@ async def site_page(slug: str):
 
     try:
         from services.site_generator import generate_site_html
-        from starlette.concurrency import run_in_threadpool
-        # Rendering does blocking DB calls and (first view per language) CPU-heavy
-        # machine translation - run it in a worker thread so one slow site can't
-        # freeze every other request on the server.
-        html = await run_in_threadpool(generate_site_html, slug)
+        html = generate_site_html(slug)
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)
-        from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="/static/store.html", status_code=302)
+        # Show the branded "experiencing issues" page (503, retry-able) rather than
+        # silently redirecting visitors somewhere unrelated.
+        from main import maintenance_response
+        return maintenance_response(503)

@@ -169,25 +169,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(SecurityHeadersMiddleware)
 
 
-# SECURITY: many routes do `raise HTTPException(500, str(exc))`, which sends raw
-# database / library error text (table names, SQL hints, stack fragments) to the
-# client. Log the real detail server-side and return a generic message for
-# 500/502/504. 4xx and 503 (intentional "not configured"/"paused" messages) keep
-# their original detail, and response headers are preserved.
-from starlette.exceptions import HTTPException as _StarletteHTTPException
-from fastapi.responses import JSONResponse as _JSONResponse
-
-
-@app.exception_handler(_StarletteHTTPException)
-async def _sanitised_http_exception_handler(request, exc):
-    detail = exc.detail
-    if exc.status_code in (500, 502, 504):
-        log.error("HTTP %s on %s %s: %s", exc.status_code, request.method, request.url.path, detail)
-        detail = "Internal server error. Please try again."
-    return _JSONResponse({"detail": detail}, status_code=exc.status_code,
-                         headers=getattr(exc, "headers", None))
-
-
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_handler(request, exc: RateLimitExceeded):
     # Logging fix: this used the raw X-Forwarded-For header directly rather
@@ -206,6 +187,51 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+# ── Outage handling ─────────────────────────────────────────────────────────
+# Lightweight liveness probe: no DB, no auth. Point Render's "Health Check Path"
+# at /healthz (Settings → Health Checks) so deploys only switch traffic once the
+# app is really up, and the maintenance page uses it to know when to reconnect.
+@app.get("/healthz", include_in_schema=False)
+def healthz():
+    return JSONResponse({"status": "ok"}, headers={"Cache-Control": "no-store"})
+
+
+_MAINTENANCE_FALLBACK = (
+    "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
+    "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
+    "<title>We'll be right back — WaziBot</title></head>"
+    "<body style='font-family:Arial,sans-serif;background:#0a0f0d;color:#e8f5e9;display:flex;"
+    "align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:24px'>"
+    "<div><h1>We're experiencing issues</h1>"
+    "<p>Our technicians are working on it. Please try again in a few minutes.</p></div></body></html>"
+)
+
+
+def maintenance_response(status_code: int = 503) -> "HTMLResponse":
+    """Branded 'system experiencing issues' page (never raises)."""
+    from fastapi.responses import HTMLResponse
+    try:
+        with open(os.path.join(STATIC_DIR, "maintenance.html"), encoding="utf-8") as fh:
+            body = fh.read()
+    except Exception:
+        body = _MAINTENANCE_FALLBACK
+    return HTMLResponse(body, status_code=status_code,
+                        headers={"Retry-After": "30", "Cache-Control": "no-store"})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    Last-resort handler. Browser page loads get the friendly maintenance page
+    instead of a bare error; API/fetch callers keep getting JSON so the
+    dashboard can show its own message.
+    """
+    log.error("unhandled_exception path=%s: %r", request.url.path, exc, exc_info=exc)
+    if "text/html" in (request.headers.get("accept") or ""):
+        return maintenance_response(503)
+    return JSONResponse(status_code=500, content={"detail": "Something went wrong on our side. Please try again shortly."})
 
 
 def _html(name: str) -> FileResponse:
