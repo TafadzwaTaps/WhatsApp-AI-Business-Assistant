@@ -201,6 +201,8 @@ def _gen_referral_code(length: int = 8) -> str:
 
 def get_or_create_referral_code(business_id: int) -> str:
     """Return the business's referral code, creating one if missing."""
+    if business_id is None:
+        return ""
     from core.db import supabase
     try:
         res = (
@@ -230,6 +232,14 @@ def get_referral_stats(business_id: int) -> dict:
     {referral_code, referral_link, total_referrals, converted, pending_reward}
     """
     from core.db import supabase
+
+    if business_id is None:   # no business in session (e.g. superadmin) — return an empty card
+        return {
+            "referral_code": "", "referral_link": "", "total_referrals": 0, "converted": 0,
+            "available_balance": 0.0, "pending_balance": 0.0, "total_withdrawn": 0.0,
+            "pending_reward": 0.0, "min_withdrawal": 5.00, "credit_per_referral": 0.20,
+            "can_withdraw": False,
+        }
 
     # Step 1: Always ensure the business has a code (never returns empty)
     try:

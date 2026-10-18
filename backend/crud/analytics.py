@@ -152,6 +152,8 @@ def get_low_stock_products(business_id: int) -> list[dict]:
     Return products where stock <= low_stock_threshold.
     Used for dashboard alerts and business-owner WhatsApp notifications.
     """
+    if business_id is None:
+        return []
     try:
         res = (
             supabase.table("products")
@@ -194,10 +196,10 @@ def get_business_stats(business_id: int) -> dict:
         # was paid before the cancellation happened. The service/product
         # was never actually delivered, so it shouldn't read as revenue.
         paid_orders    = sum(1 for o in orders
-                             if o.get("payment_status") == "paid" and o.get("status") not in ("cancelled", "refunded", "no_show"))
+                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
         total_revenue  = sum(float(o.get("total_price") or 0)
                              for o in orders
-                             if o.get("payment_status") == "paid" and o.get("status") not in ("cancelled", "refunded", "no_show"))
+                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
         pending_orders = sum(1 for o in orders
                              if o.get("status") in ("pending", "confirmed", "pending_cash"))
 
@@ -267,6 +269,8 @@ def get_stale_payment_orders(
     if statuses is None:
         statuses = ["awaiting_payment", "payment_review", "pending_cash"]
 
+    if business_id is None:
+        return []
     try:
         res = (
             supabase.table("orders")

@@ -407,6 +407,10 @@ def onboarding_status(user=Depends(require_business)):
 
     steps_done: dict[int, bool] = {1: False, 2: False, 3: False, 4: False, 5: False}
 
+    if bid is None:   # no business in session (e.g. superadmin) — skip DB lookups
+        return {"completed": 0, "total": 5, "percent": 0, "all_done": False,
+                "steps": steps_done, "next_step": None, "next_tip": None, "show_wizard": False}
+
     try:
         # Step 1: has at least one product
         products = crud.get_products(bid)

@@ -123,6 +123,8 @@ def create_product(business_id: int, product) -> dict:
 
 
 def get_products(business_id: int) -> list[dict]:
+    if business_id is None:   # e.g. superadmin session with no business — avoid "business_id=eq.null" (HTTP 400)
+        return []
     res = (
         supabase.table("products")
         .select("*")

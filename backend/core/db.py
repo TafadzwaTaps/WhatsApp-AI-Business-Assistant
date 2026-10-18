@@ -132,6 +132,14 @@ def _init() -> Client:
             "  ➜  Verify both values in Render → Environment are correct and saved."
         )
 
+    # Retry transient network errors (ReadError / Errno 11) on idempotent reads.
+    try:
+        from postgrest.base_request_builder import RequestConfig
+        from core.transport_retry import install as _install_retry
+        _install_retry(RequestConfig)
+    except Exception as exc:  # never block startup over this
+        log.warning("db: transient-error retry not installed: %s", exc)
+
     log.info("🟢 Supabase client initialised  url=%s…", url[:50])
     return client
 

@@ -110,6 +110,8 @@ def get_active_businesses() -> list[dict]:
 
 
 def get_business_by_id(business_id: int) -> Optional[dict]:
+    if business_id is None:   # no business in session (e.g. superadmin) — nothing to look up
+        return None
     res = (
         supabase.table("businesses")
         .select("*")
