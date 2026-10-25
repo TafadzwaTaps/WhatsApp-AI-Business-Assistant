@@ -142,6 +142,9 @@ app.add_middleware(
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
+        # Marks responses produced by the app itself (even deliberate 503s), so the
+        # Cloudflare Worker can tell them apart from a gateway/outage error page.
+        response.headers["X-WZ-App"] = "1"
         response.headers["X-Content-Type-Options"]  = "nosniff"
         response.headers["X-Frame-Options"]          = "SAMEORIGIN"
         response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"

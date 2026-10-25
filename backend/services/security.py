@@ -86,8 +86,22 @@ def get_client_ip(request) -> str:
     (e.g. a CDN in front of Render), this would need to trust the
     second-to-last value instead — see TRUSTED_PROXY_DEPTH below.
     """
-    import os
+    import os, hmac
     trusted_proxy_depth = int(os.getenv("TRUSTED_PROXY_DEPTH", "1"))
+
+    # Cloudflare in front of Render: our Cloudflare Worker stamps every request
+    # with X-WZ-Edge = EDGE_SHARED_SECRET. Only when that secret matches do we
+    # trust Cloudflare's CF-Connecting-IP header (a request that reaches Render
+    # directly, e.g. via the onrender.com URL, can't know the secret, so it
+    # can't forge its IP). With no EDGE_SHARED_SECRET set, behaviour is unchanged.
+    edge_secret = os.getenv("EDGE_SHARED_SECRET", "")
+    if edge_secret:
+        sent = request.headers.get("x-wz-edge", "")
+        if sent and hmac.compare_digest(sent.encode(), edge_secret.encode()):
+            cf_ip = request.headers.get("cf-connecting-ip", "").strip()
+            if cf_ip:
+                return cf_ip
+
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         parts = [p.strip() for p in xff.split(",") if p.strip()]
@@ -187,7 +201,6 @@ LIMITS = {
     # hammer availability checks with no cost. 10/min is generous for a
     # genuine customer booking an appointment, but blocks casual abuse.
     "booking":      {"max_calls": 10, "window": 60},    # 10/min per IP
-    "product_checkout": {"max_calls": 20, "window": 60},  # storefront Stripe sessions, per IP
 }
 
 
