@@ -2403,7 +2403,8 @@ This will send a WhatsApp message to each selected recipient.`)) return;
         : `Sent: <strong>${data.sent}</strong>  |  Failed: <strong>${data.failed}</strong>` +
           (data.failed_numbers && data.failed_numbers.length
             ? `<div style="font-size:10px;margin-top:6px;opacity:0.7;">Failed: ${data.failed_numbers.slice(0,5).join(', ')}${data.failed_numbers.length > 5 ? '…' : ''}</div>`
-            : '')
+            : '') +
+          (data.first_error ? `<div style="font-size:11px;margin-top:6px;">${escHtml(data.first_error)}</div>` : '')
       ) + viewReachedBtn;
     }
 

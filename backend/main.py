@@ -382,7 +382,7 @@ manager = ConnectionManager()
 
 
 # ── Shared WhatsApp sender ────────────────────────────────────────────────────
-def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> dict:
+def send_whatsapp(phone_number_id: str, token: str, to: str, message: str, _shared_fallback: bool = True) -> dict:
     """
     Send a WhatsApp text message via the Meta Cloud API.
 
@@ -447,6 +447,16 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> di
                     "❌ WhatsApp API %d (4xx — no retry)  code=%s  msg=%s",
                     resp.status_code, err.get("code"), err.get("message"),
                 )
+                # Code 100 / subcode 33 = the business's own phone-number ID
+                # (or its token's access to it) is invalid — typically a stale
+                # or mistyped ID left in Settings. Rather than dropping the
+                # message, retry ONCE through the shared WaziBot number.
+                if (_shared_fallback and err.get("code") == 100 and err.get("error_subcode") == 33
+                        and SHARED_PHONE_NUMBER_ID and SHARED_WA_TOKEN
+                        and (phone_number_id != SHARED_PHONE_NUMBER_ID or token != SHARED_WA_TOKEN)):
+                    log.warning("send_whatsapp: phone id %s is invalid for its token — retrying via the shared number. "
+                                "Fix the business's WhatsApp Phone Number ID in Settings.", phone_number_id)
+                    return send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, to, message, _shared_fallback=False)
                 return result
 
             # 5xx — log and retry

@@ -265,6 +265,8 @@ class CampaignService:
         sent    = 0
         skipped = 0
         failed  = 0
+        failed_numbers: list = []
+        first_error = ""
 
         try:
             from main import send_whatsapp as _send
@@ -293,6 +295,9 @@ class CampaignService:
             except Exception as exc:
                 log.warning("campaign: send failed  phone=%s  exc=%s", phone, exc)
                 failed += 1
+                failed_numbers.append(phone)
+                if not first_error:
+                    first_error = _friendly_send_error(exc)
 
         log.info(
             "campaign done  biz=%s  audience=%s  total=%d  sent=%d  skipped=%d  failed=%d",
@@ -305,9 +310,36 @@ class CampaignService:
             "sent":     sent,
             "skipped":  skipped,
             "failed":   failed,
+            "failed_numbers": failed_numbers,
+            "first_error": first_error,
             "dry_run":  False,
             "previews": previews,
         }
+
+
+def _friendly_send_error(exc) -> str:
+    """Turn a WhatsApp API error into a plain sentence the owner can act on."""
+    raw = ""
+    code = sub = None
+    try:
+        d = exc.args[0] if getattr(exc, "args", None) else None
+        if isinstance(d, dict):
+            code, sub, raw = d.get("code"), d.get("error_subcode"), str(d.get("message") or "")
+        else:
+            raw = str(exc)
+    except Exception:
+        raw = str(exc)
+    if code == 100 and sub == 33:
+        return ("Your WhatsApp Phone Number ID is not valid for your access token. "
+                "Open Settings and re-enter it, or switch to the shared WaziBot number.")
+    if code == 190:
+        return "Your WhatsApp access token has expired. Reconnect WhatsApp in Settings."
+    if code == 131047 or "24 hour" in raw or "re-engage" in raw.lower():
+        return ("WhatsApp only allows free-text messages to customers who messaged you in the last 24 hours. "
+                "Use an approved template for older customers.")
+    if "paused" in raw:
+        return "Sending is temporarily paused platform-wide. Please try again shortly."
+    return raw[:160] or "WhatsApp rejected the message."
 
 
 # ─────────────────────────────────────────────────────────────────────────────
