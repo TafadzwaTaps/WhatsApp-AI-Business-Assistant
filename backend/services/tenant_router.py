@@ -245,6 +245,32 @@ def parse_business_selection(text: str, businesses: list[dict]) -> Optional[dict
     return None
 
 
+# ── START keyword routing ────────────────────────────────────────────────────
+# The Marketing Kit link / QR pre-fills "START <BUSINESS-SLUG>". That keyword
+# must pick EXACTLY that business, even if the customer is already "sticky"
+# on another business — otherwise opening a business's own link shows
+# someone else's store.
+def _name_slug(name: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+
+
+def parse_start_keyword(text: str):
+    """'START DIGITAL-EDGE-SOLUTIONS' -> 'digital-edge-solutions'; else None."""
+    import re as _re
+    m = _re.match(r"^\s*start\s+(.+?)\s*$", text or "", _re.IGNORECASE)
+    if not m:
+        return None
+    slug = _name_slug(m.group(1))
+    return slug or None
+
+
+def match_start_keyword(slug: str, businesses: list[dict]) -> Optional[dict]:
+    """Exact slug match only (no fuzzy). Returns None if none or ambiguous."""
+    hits = [b for b in businesses if _name_slug(b.get("name", "")) == slug]
+    return hits[0] if len(hits) == 1 else None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN ROUTING FUNCTION — called from webhook
 # ─────────────────────────────────────────────────────────────────────────────
@@ -271,6 +297,18 @@ def resolve_business_for_shared_number(
         clear_selected_business(phone)
         picker = build_business_picker(active_businesses, platform_name)
         return None, picker
+
+    # ── Explicit "START <business>" keyword (Marketing Kit link / QR) ────────
+    # Overrides any previous selection. Exact match only — an unknown or
+    # ambiguous keyword shows the picker rather than guessing a business.
+    _kw = parse_start_keyword(text)
+    if _kw:
+        _hit = match_start_keyword(_kw, active_businesses)
+        if _hit:
+            set_selected_business(phone, _hit["id"], _hit["name"])
+            return _hit, ""
+        clear_selected_business(phone)
+        return None, build_business_picker(active_businesses, platform_name)
 
     # ── Already has a selected business ──────────────────────────────────────
     selected_id = get_selected_business_id(phone)

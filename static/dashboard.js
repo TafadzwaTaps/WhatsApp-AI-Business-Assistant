@@ -518,50 +518,11 @@ async function getCachedMe() {
       _setServiceMode(_isSvc);
       const _chk0 = document.getElementById('set-is-service-business');
       if (_chk0) { _chk0.checked = _isSvc; onBizTypeToggle(_isSvc, /*_skipSave=*/true); }
-      applyIndustryProductCategories(result.category);
     }
     return result;
   } catch (e) {
     return _meCache.data || null;
   }
-}
-
-// Product categories used to list EVERY industry group (Retail, Food,
-// Hospitality, Beauty, Healthcare, Automotive…) for every business, so a
-// hair salon had to scroll past hundreds of irrelevant entries. The
-// product category <select> is built from the same grouped list as the
-// store-category select in Settings → Profile, so once the store's
-// category is known we keep only the optgroup that contains it (a hair
-// salon -> "Beauty & Wellness"). Safe fallbacks: if the category is
-// empty, custom ("Other"), or not found in any group, nothing is hidden.
-// The full list is snapshotted once so a later category change in
-// Settings can re-filter from the original, not from an already-filtered list.
-const _prodCatOriginal = {};
-function applyIndustryProductCategories(storeCategory) {
-  // The edit-modal select is cloned from this one on first open (see
-  // openProdEdit) — reset it so the next open re-clones the filtered list.
-  const _editSel = document.getElementById('edit-prod-category');
-  if (_editSel) { _editSel.innerHTML = ''; delete _editSel.dataset.populated; }
-  ['product-category'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    if (!(id in _prodCatOriginal)) _prodCatOriginal[id] = sel.innerHTML;
-    const keep = sel.value;
-    sel.innerHTML = _prodCatOriginal[id];
-    const cat = (storeCategory || '').trim();
-    if (!cat) return;
-    const groups = Array.from(sel.querySelectorAll('optgroup'));
-    const match = groups.find(g => Array.from(g.querySelectorAll('option'))
-      .some(o => (o.value || o.textContent).trim().toLowerCase() === cat.toLowerCase()));
-    if (!match) return;               // custom/unknown category -> show everything
-    groups.forEach(g => { if (g !== match) g.remove(); });
-    if (keep && !Array.from(sel.options).some(o => (o.value || o.textContent) === keep)) {
-      // never lose an already-chosen value that falls outside the group
-      const o = document.createElement('option');
-      o.textContent = keep; sel.appendChild(o);
-    }
-    sel.value = keep;
-  });
 }
 
 function invalidateMeCache() {
@@ -570,23 +531,6 @@ function invalidateMeCache() {
 }
 
 // ── API ───────────────────────────────────────────────────
-// ── Outage banner (shown when the server is unreachable / 502-504) ─────────
-function _showOutageBanner() {
-  try {
-    if (document.getElementById('outage-banner')) return;
-    const b = document.createElement('div');
-    b.id = 'outage-banner';
-    b.setAttribute('role', 'alert');
-    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#1a1200;' +
-      'padding:10px 16px;text-align:center;font:600 13px Arial,sans-serif;';
-    b.textContent = '⚠️ System experiencing issues — our technicians are working on it. We\'ll reconnect automatically.';
-    document.body.appendChild(b);
-  } catch (_) {}
-}
-function _hideOutageBanner() {
-  try { const b = document.getElementById('outage-banner'); if (b) b.remove(); } catch (_) {}
-}
-
 async function apiFetch(path, opts={}, _retried=false) {
   // Guard: never fire API calls without a token — avoids 401 spam on page load
   if (!token && !opts._public) return null;
@@ -645,12 +589,6 @@ async function apiFetch(path, opts={}, _retried=false) {
       console.error('[apiFetch] 403', path, msg403);
       throw new Error(msg403);
     }
-    if (res.status === 502 || res.status === 503 || res.status === 504) {
-      // Gateway/server down (e.g. restart or outage) — friendly message + banner.
-      _showOutageBanner();
-      throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.');
-    }
-    _hideOutageBanner();
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
       try { const e = await res.json(); msg = e.detail || msg; } catch {}
@@ -659,7 +597,7 @@ async function apiFetch(path, opts={}, _retried=false) {
     }
     return res.json();
   } catch (err) {
-    if (err instanceof TypeError) { _showOutageBanner(); throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.'); }
+    if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
     throw err;
   }
 }
@@ -759,18 +697,7 @@ async function loadNeedsAttention() {
   try {
     const raw = await apiFetch(ROUTES.orders);
     const orders = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
-    // Bug fix: payment state lives in the order's payment_status column
-    // (that's the field crud.update_order_payment() actually writes during
-    // checkout), not the fulfillment-lifecycle `status` column — status
-    // only happens to equal "pending_cash" for cash orders specifically,
-    // and stays "pending" for an EcoCash/PayPal/BLIK order that's still
-    // awaiting payment. Filtering on `status` here meant this panel missed
-    // every non-cash pending order, while the Reminders/"pending payments"
-    // page (which does read payment_status) defaulted to a status list
-    // that itself excluded "pending_cash" — two different bugs that made
-    // the two screens disagree about the same orders. Both are now fixed
-    // to agree on payment_status as the one source of truth.
-    const awaitingPay = orders.filter(o => ['awaiting_payment','payment_review','pending_cash'].includes(o.payment_status)).length;
+    const awaitingPay = orders.filter(o => ['awaiting_payment','payment_review','pending_cash'].includes(o.status)).length;
     if (awaitingPay > 0) items.push({ icon: '💳', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders' });
     const toFulfill = orders.filter(o => ['confirmed','preparing','ready'].includes(o.status)).length;
     if (toFulfill > 0) items.push({ icon: '📦', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders' });
@@ -2561,8 +2488,6 @@ async function loadSettings() {
     _setVal('set-hours',         b.business_hours || '');
     _setVal('set-instagram',     b.instagram || '');
     _setVal('set-facebook',      b.facebook || '');
-    const _soc = (b.features_json && b.features_json.social_links) || {};
-    ['tiktok','telegram','x','youtube','linkedin'].forEach(k => _setVal('set-' + k, _soc[k] || ''));
     // Multi-language toggle — restore saved state from features_json
     const translationToggle = document.getElementById('set-translation-enabled');
     if (translationToggle) {
@@ -2659,14 +2584,7 @@ async function saveProfile() {
     // Fix 3: include owner_email — undefined is omitted by JSON.stringify so
     // an empty field sends nothing (no accidental email wipe)
     const _ownerEmail = (_getVal('set-owner-email') || '').trim() || undefined;
-    // Extra social links live in features_json.social_links (no migration);
-    // merge into the existing features_json so other keys are never wiped.
-    const _meNow = await apiFetch('/me').catch(() => ({}));
-    const _fjNow = (_meNow && _meNow.features_json) || {};
-    const _socialLinks = { ...(_fjNow.social_links || {}) };
-    ['tiktok','telegram','x','youtube','linkedin'].forEach(k => { _socialLinks[k] = (_getVal('set-' + k) || '').trim(); });
     await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({
-      features_json: { ..._fjNow, social_links: _socialLinks },
       name,
       category,
       description:     _getVal('set-description'),
@@ -2688,8 +2606,6 @@ async function saveProfile() {
     if (_rl && userRole !== 'superadmin') _rl.textContent = bizName;
     const hdr = document.getElementById('biz-name-header');
     if (hdr) hdr.textContent = '🟢 ' + bizName;
-    invalidateMeCache();
-    try { applyIndustryProductCategories(category); } catch(_) {}
     toast('✅ Profile saved');
   } catch(e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
@@ -3979,11 +3895,16 @@ async function loadAcquisitionStats() {
 // ── Marketing Kit ─────────────────────────────────────────────────────────────
 
 let _mktData = null;
+let _mktDataToken = null;   // session the cached kit belongs to
 
 async function loadMarketingKit() {
+  // Never reuse a kit cached under a different session/business
+  // (e.g. after "View as Business" or switching accounts).
+  if (_mktData && _mktDataToken !== token) { _mktData = null; }
   if (_mktData) { renderMarketingKit(_mktData); return; }
   try {
     _mktData = await apiFetch('/marketing/kit');
+    _mktDataToken = token;
     renderMarketingKit(_mktData);
     loadMarketingQR();
   } catch(e) { console.warn('Marketing kit load failed:', e.message); }
@@ -5335,8 +5256,7 @@ async function loadReminders() {
         <td><span style="color:${tierColor[tier]||'var(--text)'};font-family:var(--mono);font-size:11px;font-weight:700;">Tier ${tier}</span></td>
         <td style="font-family:var(--mono);font-size:11px;">${age}h ago</td>
         <td>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;color:var(--green);border-color:rgba(34,197,94,.35);" onclick="confirmReminderPaid(${o.order_id}, ${parseFloat(o.total_price||0)})">✅ Mark Paid</button>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;margin-left:4px;" onclick="nudgeOrder(${o.order_id})">📨 Nudge</button>
+          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="nudgeOrder(${o.order_id})">📨 Nudge</button>
           <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;margin-left:4px;" onclick="previewReminder(${o.order_id})">👁</button>
         </td>
       </tr>`;
@@ -5352,33 +5272,6 @@ async function nudgeOrder(orderId) {
     toast(r.ok ? '📨 Reminder sent!' : ('Failed: ' + r.error), !r.ok);
     loadReminders();
   } catch (e) { toast(e.message, true); }
-}
-
-// Bug fix: this page (Reminders / "stale payment orders") had a way to
-// nudge a customer who hasn't paid and a way to preview that nudge, but
-// no way to actually acknowledge a payment was received — cash above
-// all, since cash has no automatic webhook confirmation the way PayPal
-// does. An order would sit here forever even after being paid in person,
-// because nothing ever moved it out of awaiting_payment/pending_cash.
-// This reuses the same /payments/manual/confirm endpoint the Live
-// Inbox's "Mark Paid" quick action already uses: it sets payment_status
-// to "paid" and notifies the customer. Once paid, the order no longer
-// matches get_stale_payment_orders()'s pending-status filter, so a
-// refresh of this list clears it automatically — no separate "clear" step.
-async function confirmReminderPaid(orderId, totalPrice) {
-  const amount = parseFloat(totalPrice || 0);
-  if (!confirm(`Mark ORDER-${orderId} (${getCurrencySymbol()}${amount.toFixed(2)}) as PAID?\n\nThe customer will be notified their payment is confirmed.`)) return;
-  try {
-    await apiFetch(`/payments/manual/confirm`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ order_id: orderId, reference: `ORDER-${orderId}`, amount }),
-    });
-    toast(`✅ ORDER-${orderId} marked as paid`);
-    loadReminders();
-  } catch (e) {
-    toast('Failed: ' + e.message, true);
-  }
 }
 
 async function previewReminder(orderId) {
@@ -7936,11 +7829,6 @@ async function loadSiteGeneratorSettings() {
     if (_accentInp) _accentInp.value = _savedAccent || '#22c55e';
     if (_savedAccent) sgPreviewAccent(_savedAccent);
 
-    _setVal('sg-hero-title', cfg.hero_title || '');
-    _setVal('sg-hero-tagline', cfg.hero_tagline || '');
-    _setVal('sg-description', cfg.description || '');
-    _setVal('sg-cta-text', cfg.cta_text || '');
-    _setVal('sg-contact-title', cfg.contact_title || '');
     _setVal('sg-hours', cfg.business_hours || '');
     _setVal('sg-location', cfg.location || '');
 
@@ -7973,11 +7861,6 @@ async function saveSiteGeneratorSettings() {
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
       accent_color:     _accentColor,
-      hero_title:       (_getVal('sg-hero-title') || '').trim().slice(0, 80),
-      hero_tagline:     (_getVal('sg-hero-tagline') || '').trim().slice(0, 160),
-      description:      (_getVal('sg-description') || '').trim().slice(0, 600),
-      cta_text:         (_getVal('sg-cta-text') || '').trim().slice(0, 40),
-      contact_title:    (_getVal('sg-contact-title') || '').trim().slice(0, 60),
       business_hours:   _getVal('sg-hours') || '',
       location:         _getVal('sg-location') || '',
       show_hours:       document.getElementById('sg-show-hours')?.checked    ?? true,

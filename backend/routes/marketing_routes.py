@@ -35,6 +35,23 @@ def _slug_to_business_id(slug: str) -> tuple[int, str]:
         from core.db import supabase
         # Convert slug back to name pattern (flavoury-foods → flavoury foods)
         name_pattern = slug.replace("-", " ")
+        # Exact slug match first (punctuation-insensitive) so "digital-edge"
+        # can never resolve to "Digital Edge Solutions" or vice versa.
+        first = (slug.split("-")[0] or "").strip()
+        if first:
+            cand = (
+                supabase.table("businesses")
+                .select("id, name")
+                .ilike("name", f"%{first}%")
+                .eq("is_active", True)
+                .limit(200)
+                .execute()
+            )
+            want = re.sub(r"[^a-z0-9]+", "-", slug.lower()).strip("-")
+            exact = [b for b in (cand.data or [])
+                     if re.sub(r"[^a-z0-9]+", "-", (b.get("name") or "").lower()).strip("-") == want]
+            if len(exact) == 1:
+                return exact[0]["id"], exact[0].get("name", "")
         res = (
             supabase.table("businesses")
             .select("id, name")
