@@ -91,8 +91,8 @@ def qr_redirect(slug: str):
         try:
             from services.acquisition_service import record_qr_scan
             record_qr_scan(business_id)
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         wa_url = _build_wa_redirect(name)
     else:
         # Slug not found — redirect to WaziBot homepage
@@ -114,8 +114,8 @@ def link_click_redirect(slug: str):
         try:
             from services.acquisition_service import record_whatsapp_click
             record_whatsapp_click(business_id)
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         wa_url = _build_wa_redirect(name)
     else:
         wa_url = "https://wa.me/447774128484"

@@ -306,17 +306,9 @@ def _parse_duration(text: str) -> Optional[float]:
     return None
 
 
-def _hm(t) -> tuple:
-    """Parse 'HH:MM', 'HH:MM:SS' or 'HH:MM:SS+00' (Postgres TIME values come
-    back from Supabase with seconds) into (hour, minute). Raises ValueError
-    only for genuinely unparseable input."""
-    parts = str(t).strip().split("+")[0].split("-")[0].split(":")
-    return int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
-
-
 def _add_time(time_str: str, hours: float) -> str:
-    """Add hours to HH:MM(:SS) string, return HH:MM."""
-    h, mi = _hm(time_str)
+    """Add hours to HH:MM string, return HH:MM."""
+    h, mi = map(int, time_str.split(":"))
     total_mins = h * 60 + mi + int(hours * 60)
     return f"{(total_mins // 60) % 24:02d}:{total_mins % 60:02d}"
 
@@ -326,14 +318,7 @@ def _format_date(d: date) -> str:
 
 
 def _format_time(t: str) -> str:
-    # Accepts HH:MM and HH:MM:SS — the bookings table stores TIME columns
-    # which Postgres returns WITH seconds; the strict 2-part unpack used to
-    # raise here and turned every confirmed WhatsApp booking into the
-    # generic "thanks for contacting us" fallback.
-    try:
-        h, mi = _hm(t)
-    except Exception:
-        return str(t)
+    h, mi = map(int, t.split(":"))
     period = "AM" if h < 12 else "PM"
     h12    = h % 12 or 12
     return f"{h12}:{mi:02d} {period}"
@@ -698,8 +683,8 @@ def get_available_slots(
             biz_config = (biz_res.data or [{}])[0] if biz_res.data else {}
             hs = (biz_config.get("working_hours_start") or "08:00")[:5]
             he = (biz_config.get("working_hours_end")   or "17:00")[:5]
-            start_h, start_m = _hm(hs)
-            end_h,   end_m   = _hm(he)
+            start_h, start_m = map(int, hs.split(":"))
+            end_h,   end_m   = map(int, he.split(":"))
         except Exception as exc:
             log.warning("get_available_slots: could not load working hours, using default: %s", exc)
 
@@ -1210,8 +1195,8 @@ def get_upcoming_reminders(
                 bdt = datetime.fromisoformat(f"{b['booking_date']}T{b['start_time']}:00+00:00")
                 if now <= bdt <= future:
                     due.append(b)
-            except Exception:
-                pass
+            except Exception as _swallowed_exc:
+                from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         return due
     except Exception as exc:
         log.warning("get_upcoming_reminders error: %s", exc)

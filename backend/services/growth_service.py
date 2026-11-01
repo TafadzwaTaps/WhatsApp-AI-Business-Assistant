@@ -80,8 +80,8 @@ def get_trial_status(business: dict) -> dict:
             started = datetime.fromisoformat(trial_start_raw.replace("Z", "+00:00"))
             trial_ends = started + timedelta(days=TRIAL_DAYS)
             trial_ends_raw = trial_ends.isoformat()
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     if not trial_ends_raw:
         # No trial data — treat as unlimited free
@@ -184,8 +184,8 @@ def get_trial_reminders_due() -> list[dict]:
             else: continue
             row["reminder_tier"] = tier
             due.append(row)
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return due
 
 
@@ -201,8 +201,6 @@ def _gen_referral_code(length: int = 8) -> str:
 
 def get_or_create_referral_code(business_id: int) -> str:
     """Return the business's referral code, creating one if missing."""
-    if business_id is None:
-        return ""
     from core.db import supabase
     try:
         res = (
@@ -233,14 +231,6 @@ def get_referral_stats(business_id: int) -> dict:
     """
     from core.db import supabase
 
-    if business_id is None:   # no business in session (e.g. superadmin) — return an empty card
-        return {
-            "referral_code": "", "referral_link": "", "total_referrals": 0, "converted": 0,
-            "available_balance": 0.0, "pending_balance": 0.0, "total_withdrawn": 0.0,
-            "pending_reward": 0.0, "min_withdrawal": 5.00, "credit_per_referral": 0.20,
-            "can_withdraw": False,
-        }
-
     # Step 1: Always ensure the business has a code (never returns empty)
     try:
         code = get_or_create_referral_code(business_id)
@@ -258,8 +248,8 @@ def get_referral_stats(business_id: int) -> dict:
             supabase.table("businesses").update(
                 {"referral_code": code}
             ).eq("id", business_id).execute()
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     base_url = os.getenv("WAZIBOT_URL", "https://wazibothq.com")  # consistent with all other services
     link     = f"{base_url}/signup?ref={code}"

@@ -155,8 +155,8 @@ def run_cart_recovery(business_id: int) -> dict:
                     if age < CART_IDLE_SECONDS:
                         results["skipped"] += 1
                         continue
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
             # Check recovery cooldown (stored in state_data)
             last_recovery = sd.get("last_cart_recovery_at", 0)
@@ -180,8 +180,8 @@ def run_cart_recovery(business_id: int) -> dict:
                     sd["last_cart_recovery_at"] = now
                     supabase.table("carts").update({"state_data": sd}).eq(
                         "phone", phone).eq("business_id", business_id).execute()
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 results["sent"] += 1
                 log.info("Cart recovery sent  biz=%s  phone=%s", business_id, phone)
             else:

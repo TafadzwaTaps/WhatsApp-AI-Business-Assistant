@@ -197,8 +197,8 @@ def _ecocash_reminder(order: dict) -> str:
                 f"\n  Send to: *{eco_number}*"
                 + (f"\n  Name: _{eco_name}_" if eco_name else "")
             )
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return "\n\n💚 Please complete your *EcoCash* payment."
 
 
@@ -222,8 +222,8 @@ def _paypal_reminder(order: dict) -> str:
                 f"\n  Send to: *{paypal_email}*"
                 f"\n  Amount: *${float(order.get('total_price') or 0):.2f}*"
             )
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return "\n\n🌍 Please complete your *PayPal* payment."
 
 
@@ -251,8 +251,8 @@ def _resolve_wa_credentials(business: dict) -> tuple[str, str]:
     token    = ""
     try:
         token = crud.get_decrypted_token(business)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     if not phone_id or not token:
         shared_pid   = os.getenv("SHARED_PHONE_NUMBER_ID", "").strip()

@@ -434,8 +434,8 @@ def saas_set_tenant_tier(
                 business_id=business_id, previous_tier=prev_tier, new_tier=tier,
                 previous_status=prev_status, new_status="active", source="admin_override",
             )
-        except Exception:
-            pass  # never let cohort/churn logging block a real admin action
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         log_admin_action(
             actor_username=user.get("username"), action="business.tier_change",
             target_type="business", target_id=business_id, business_id=business_id,
@@ -446,46 +446,6 @@ def saas_set_tenant_tier(
         return {"ok": True, "business_id": business_id, "tier": tier}
     except Exception as exc:
         raise HTTPException(500, str(exc))
-
-
-# ── Billing diagnostics & reconciliation (SuperAdmin) ───────────────────────────
-
-@router.get("/admin/saas/billing/config-check")
-def saas_billing_config_check(user=Depends(require_superadmin)):
-    """Read-only Stripe configuration readiness (never returns key material)."""
-    from billing.stripe_service import billing_config_check
-    return billing_config_check()
-
-
-@router.get("/admin/saas/billing/reconcile")
-def saas_billing_reconcile(
-    request: Request,
-    fix: bool = False,
-    limit: int = 200,
-    user=Depends(require_superadmin),
-):
-    """
-    Compare local billing records with Stripe. READ-ONLY by default. With
-    fix=true it only re-syncs local subscription metadata from Stripe — it
-    never refunds, cancels, charges or creates subscriptions.
-    """
-    from billing.stripe_service import reconcile_billing
-    try:
-        result = reconcile_billing(fix=fix, limit=limit)
-    except Exception as exc:
-        log.error("billing reconcile error: %s", type(exc).__name__)
-        raise HTTPException(500, "Reconciliation failed — see server logs")
-    if "error" in result:
-        raise HTTPException(503, result["error"])
-    if fix:
-        log_admin_action(
-            actor_username=user.get("username"), action="billing.reconcile_fix",
-            target_type="billing", target_id=None, business_id=None,
-            reason=None, metadata={"repaired": result.get("repaired"), "checked": result.get("checked")},
-            ip_address=request.client.host if request.client else None,
-            user_agent=request.headers.get("user-agent"),
-        )
-    return result
 
 
 # ── Audit log, admin notes, risk flags ──────────────────────────────────────────

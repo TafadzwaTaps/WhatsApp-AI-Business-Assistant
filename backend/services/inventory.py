@@ -32,16 +32,29 @@ def get_product_by_name(business_id: int, name: str) -> dict | None:
     return res.data[0] if res.data else None
 
 
-def reduce_stock(product_id: int, quantity: int) -> dict:
+def reduce_stock(product_id: int, quantity: int, is_service_business: bool = False) -> dict:
     """
     Atomically reduce stock for a product.
     Raises ValueError if product not found or insufficient stock.
     Logs a warning when stock falls at or below low_stock_threshold.
+
+    is_service_business: when True, stock is never checked or reduced —
+    services (haircuts, consultations, bookings) don't have inventory in
+    the same sense a physical product does. This was previously the ONLY
+    stock-enforcement point in the whole booking flow that had no concept
+    of service businesses at all: the AI's own checks (menu display,
+    add-to-cart) had already been fixed to skip stock for services, but
+    order CREATION independently re-validated stock here and blocked the
+    booking anyway, after the customer had already gone through checkout.
     """
     product = get_product(product_id)
 
     if not product:
         raise ValueError(f"Product id={product_id} not found")
+
+    if is_service_business:
+        log.info("reduce_stock: service business — skipping stock check for '%s'", product.get("name"))
+        return product
 
     current = product.get("stock")
     if current is None:
@@ -69,12 +82,12 @@ def reduce_stock(product_id: int, quantity: int) -> dict:
     return product
 
 
-def reduce_stock_by_name(business_id: int, name: str, quantity: int) -> dict:
+def reduce_stock_by_name(business_id: int, name: str, quantity: int, is_service_business: bool = False) -> dict:
     """Reduce stock by product name within a business. Raises ValueError on failure."""
     product = get_product_by_name(business_id, name)
     if not product:
         raise ValueError(f"Product '{name}' not found in business id={business_id}")
-    return reduce_stock(product["id"], quantity)
+    return reduce_stock(product["id"], quantity, is_service_business)
 
 
 def restock_product(product_id: int, quantity: int) -> dict:

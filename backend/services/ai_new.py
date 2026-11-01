@@ -247,8 +247,8 @@ def generate_reply(
                 mem = _get_memory(phone, business_id)
                 mem["last_rating"] = rating
                 crud.save_user_memory(phone, business_id, mem)
-            except Exception:
-                pass
+            except Exception as _swallowed_exc:
+                from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
             follow_up = (
                 "We're sorry to hear that. We'll work on improving! 🙏"
                 if rating in ("poor", "average")
@@ -267,8 +267,8 @@ def generate_reply(
                 mem = _get_memory(phone, business_id)
                 mem["last_suggestion"] = text[:200]
                 crud.save_user_memory(phone, business_id, mem)
-            except Exception:
-                pass
+            except Exception as _swallowed_exc:
+                from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
             _reset_state(phone, business_id)
             return (
                 f"📝 *Thank you for your suggestion!*\n\n"
@@ -342,8 +342,8 @@ def generate_reply(
                         from workflows.order_lifecycle import update_order_status_supabase
                         try:
                             update_order_status_supabase(order_id, "pending")
-                        except Exception:
-                            pass
+                        except Exception as _swallowed_exc:
+                            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 except Exception as exc:
                     log.warning("order cancel update failed: %s", exc)
 
@@ -484,8 +484,8 @@ def generate_reply(
                 o = res.data[0]
                 if o.get("status") in ("paid", "confirmed", "delivered"):
                     recent_ref = f"ORDER-{o['id']}"
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         order_line = f"\n📦 Order *{recent_ref}* is being taken care of.\n" if recent_ref else "\n"
         _set_survey_state(phone, business_id)
@@ -518,8 +518,8 @@ def generate_reply(
                 .execute()
             )
             active_order = res.data[0] if res.data else None
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         if active_order:
             ref    = f"ORDER-{active_order['id']}"
@@ -901,8 +901,8 @@ def generate_reply(
                 _mem["customer_name"] = detected_name
                 crud.save_user_memory(phone, business_id, _mem)
                 log.info("introduction: name saved  name=%r  phone=%s", detected_name, phone)
-            except Exception:
-                pass
+            except Exception as _swallowed_exc:
+                from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         name_to_show = detected_name or "there"
         hint = f"*{products[0]['name']}*" if products else "something"
         return (
@@ -1022,7 +1022,7 @@ def generate_reply(
                     try:
                         from services.calendar_service import sync_booking
                         sync_booking(booking, business_name)
-                    except Exception: pass
+                    except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                     return format_booking_confirmation(booking, business_name)
                 return "⚠️ Could not save your booking. Please try again or contact us. 🙏"
             return "Please reply *yes* to confirm your booking or *no* to cancel."
@@ -1207,8 +1207,8 @@ def generate_reply(
                     fresh = crud.get_product_by_name(business_id, product["name"])
                     if fresh:
                         product = fresh
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
                 product_name = product["name"]
                 available    = product.get("stock")
@@ -1438,8 +1438,8 @@ def generate_reply(
                 if greeting:
                     try:
                         send_text_message(_phone_number_id, _wa_token, phone, greeting.strip())
-                    except Exception:
-                        pass
+                    except Exception as _swallowed_exc:
+                        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 result = send_catalog(_phone_number_id, _wa_token, phone, products, _currency_sym, page=0)
                 fallback = result.get("fallback_text")
                 if not fallback:
@@ -1501,8 +1501,8 @@ def generate_reply(
             try:
                 biz_row      = crud.get_business_by_id(business_id)
                 biz_category = (biz_row.get("category") or "").lower().strip() if biz_row else ""
-            except Exception:
-                pass
+            except Exception as _swallowed_exc:
+                from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         _FOOD_CATS   = {"food", "restaurant", "food & beverage", "café", "cafe",
                         "fast food", "takeaway", "takeout", "grocery"}
@@ -1566,8 +1566,8 @@ def generate_reply(
                 _mem["customer_name"] = detected_name
                 crud.save_user_memory(phone, business_id, _mem)
                 log.info("name captured (fallback)  name=%r  phone=%s", detected_name, phone)
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P10.5 — CONTEXTUAL ACTIVE ORDER QUERIES

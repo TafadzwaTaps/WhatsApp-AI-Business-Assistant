@@ -22,7 +22,7 @@ import logging
 import os
 import re
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 log    = logging.getLogger("wazibot")
@@ -157,8 +157,10 @@ def _safe_product(p: dict) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/api/directory")
-def api_directory():
+def api_directory(request: Request):
     """JSON: list of all publicly visible active businesses."""
+    from services.security import check as _public_rl
+    _public_rl("public_read", request)
     try:
         from core.db import supabase
         res = (
@@ -177,47 +179,25 @@ def api_directory():
 
 
 @router.get("/api/store/{slug}")
-def api_store(slug: str):
+def api_store(slug: str, request: Request):
     """JSON: public store data for one business."""
+    from services.security import check as _public_rl
+    _public_rl("public_read", request)
     try:
         from core.db import supabase
         name_pattern = _slug_to_name(slug)   # e.g. "flavoury-foods" → "flavoury foods"
 
         # M5/M8: try exact name match first (case-insensitive) to avoid matching
         # wrong business with similar name; fall back to ilike contains-match
-        res = (
-            supabase.table("businesses")
-            .select(_get_biz_public_fields())
-            .eq("is_active", True)
-            .ilike("name", name_pattern)       # exact ci match: "flavoury foods"
-            .limit(1)
-            .execute()
-        )
-        if not res.data:
-            # Fallback 1: contains match on space-expanded slug
-            res = (
-                supabase.table("businesses")
-                .select(_get_biz_public_fields())
-                .eq("is_active", True)
-                .ilike("name", f"%{name_pattern}%")
-                .limit(1)
-                .execute()
-            )
-        if not res.data:
-            # Fallback 2: try matching against the raw slug characters (no space expansion)
-            # Handles single-word names like "Firelilyfarrismum" whose slug is
-            # "firelilyfarrismum" — different from the space-expanded form
-            slug_compact = slug.replace("-", "")
-            res = (
-                supabase.table("businesses")
-                .select(_get_biz_public_fields())
-                .eq("is_active", True)
-                .ilike("name", f"%{slug_compact}%")
-                .limit(1)
-                .execute()
-            )
-        if not res.data:
+        # Exact slug match; only an unambiguous loose match is allowed as a
+        # fallback, so one business's link can never open another's store.
+        from core.slug import find_active_business_by_slug
+        _row = find_active_business_by_slug(supabase, slug, _get_biz_public_fields())
+        if not _row:
             raise HTTPException(404, f"Business '{slug}' not found")
+        class _Res:  # keeps the code below (res.data[0]) unchanged
+            data = [_row]
+        res = _Res()
         biz = _safe_biz(res.data[0])
 
         prod_res = (
@@ -249,8 +229,10 @@ def api_store(slug: str):
 # /store/{slug} and /menu/{slug} are served by main.py fallback routes.
 # Only /site/{slug} is unique to this router.
 @router.get("/site/{slug}", response_class=HTMLResponse, include_in_schema=False)
-async def site_page(slug: str):
+async def site_page(slug: str, request: Request):
     """AI-generated website for a business."""
+    from services.security import check as _public_rl
+    _public_rl("public_read", request)   # RateLimitExceeded -> 429 via the app handler
     # SuperAdmin 2.0 emergency control — platform-wide generated-site pause.
     # This is the ONLY rendering path for these sites in this codebase, so
     # this is genuinely the whole "website-gen" kill switch — pausing it
@@ -265,8 +247,8 @@ async def site_page(slug: str):
                 "<h2>Temporarily unavailable</h2><p>This site is undergoing brief maintenance. Please check back shortly.</p>"
                 "</body></html>", status_code=503,
             )
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     try:
         from services.site_generator import generate_site_html
@@ -274,7 +256,5 @@ async def site_page(slug: str):
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)
-        # Show the branded "experiencing issues" page (503, retry-able) rather than
-        # silently redirecting visitors somewhere unrelated.
-        from main import maintenance_response
-        return maintenance_response(503)
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url="/static/store.html", status_code=302)

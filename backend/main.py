@@ -142,9 +142,6 @@ app.add_middleware(
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
-        # Marks responses produced by the app itself (even deliberate 503s), so the
-        # Cloudflare Worker can tell them apart from a gateway/outage error page.
-        response.headers["X-WZ-App"] = "1"
         response.headers["X-Content-Type-Options"]  = "nosniff"
         response.headers["X-Frame-Options"]          = "SAMEORIGIN"
         response.headers["Referrer-Policy"]           = "strict-origin-when-cross-origin"
@@ -190,51 +187,6 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-
-
-# ── Outage handling ─────────────────────────────────────────────────────────
-# Lightweight liveness probe: no DB, no auth. Point Render's "Health Check Path"
-# at /healthz (Settings → Health Checks) so deploys only switch traffic once the
-# app is really up, and the maintenance page uses it to know when to reconnect.
-@app.get("/healthz", include_in_schema=False)
-def healthz():
-    return JSONResponse({"status": "ok"}, headers={"Cache-Control": "no-store"})
-
-
-_MAINTENANCE_FALLBACK = (
-    "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
-    "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
-    "<title>We'll be right back — WaziBot</title></head>"
-    "<body style='font-family:Arial,sans-serif;background:#0a0f0d;color:#e8f5e9;display:flex;"
-    "align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:24px'>"
-    "<div><h1>We're experiencing issues</h1>"
-    "<p>Our technicians are working on it. Please try again in a few minutes.</p></div></body></html>"
-)
-
-
-def maintenance_response(status_code: int = 503) -> "HTMLResponse":
-    """Branded 'system experiencing issues' page (never raises)."""
-    from fastapi.responses import HTMLResponse
-    try:
-        with open(os.path.join(STATIC_DIR, "maintenance.html"), encoding="utf-8") as fh:
-            body = fh.read()
-    except Exception:
-        body = _MAINTENANCE_FALLBACK
-    return HTMLResponse(body, status_code=status_code,
-                        headers={"Retry-After": "30", "Cache-Control": "no-store"})
-
-
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception):
-    """
-    Last-resort handler. Browser page loads get the friendly maintenance page
-    instead of a bare error; API/fetch callers keep getting JSON so the
-    dashboard can show its own message.
-    """
-    log.error("unhandled_exception path=%s: %r", request.url.path, exc, exc_info=exc)
-    if "text/html" in (request.headers.get("accept") or ""):
-        return maintenance_response(503)
-    return JSONResponse(status_code=500, content={"detail": "Something went wrong on our side. Please try again shortly."})
 
 
 def _html(name: str) -> FileResponse:
@@ -455,8 +407,8 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str) -> di
         if is_paused("whatsapp_send"):
             log.warning("send_whatsapp: SKIPPED — whatsapp_send is platform-paused")
             return {"error": "whatsapp_sending_paused"}
-    except Exception:
-        pass  # never let a controls-check failure block a real send
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     if not phone_number_id or not token:
         missing = [k for k, v in {"phone_number_id": phone_number_id, "token": token}.items() if not v]
@@ -545,8 +497,8 @@ def _log_event(event_type: str, **fields) -> None:
     try:
         kv = "  ".join(f"{k}={v!r}" for k, v in fields.items())
         log.info("EVENT %s  %s", event_type, kv)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
 
 # ── Inject runtime config into route modules ──────────────────────────────────
@@ -684,6 +636,12 @@ app.include_router(ux_router)
 # SaaS extension routers — only registered if import succeeded
 if billing_router:     app.include_router(billing_router)
 if saas_admin_router:  app.include_router(saas_admin_router)
+try:
+    from routes.admin_outreach_routes import router as admin_outreach_router
+    app.include_router(admin_outreach_router)
+    log.info("admin_outreach_router loaded")
+except Exception as _e:
+    log.warning("admin_outreach_routes failed: %s: %s", type(_e).__name__, _e)
 if onboarding_router:  app.include_router(onboarding_router)
 if marketplace_router: app.include_router(marketplace_router)
 if booking_public_router: app.include_router(booking_public_router)
@@ -748,11 +706,10 @@ except Exception as _deploy_check_exc:
 # the secret is actually set in Render's environment variables.
 if not WHATSAPP_APP_SECRET:
     log.error(
-        "🚨🚨🚨 SECURITY: WHATSAPP_APP_SECRET is NOT SET — webhook signature "
-        "verification is DISABLED. Anyone who discovers your webhook URL can "
-        "currently send fake WhatsApp events with no authentication. Set "
-        "WHATSAPP_APP_SECRET in Render's environment variables immediately. "
-        "This warning will repeat on every deploy until it is fixed."
+        "🚨🚨🚨 SECURITY: WHATSAPP_APP_SECRET is NOT SET — the WhatsApp webhook "
+        "now REJECTS all incoming messages (fail closed) until it is set. "
+        "Set WHATSAPP_APP_SECRET in Render's environment variables immediately "
+        "(or ALLOW_UNSIGNED_WEBHOOKS=1 for local development only)."
     )
 else:
     log.info("✅ SECURITY CHECK — WHATSAPP_APP_SECRET is configured, webhook signature verification active")

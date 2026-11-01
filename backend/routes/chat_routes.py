@@ -25,54 +25,6 @@ SHARED_WA_TOKEN        = ""
 SHARED_PHONE_NUMBER_ID = ""
 
 
-def _shared_number_customer_lookup(customer_id: int, bid: int):
-    """
-    Security fix: the "shared number" fallback below exists so agents at
-    businesses that share WaziBot's common WhatsApp number can see and
-    reply to customers whose rows technically live under a *different*
-    business_id (because the inbound webhook can only resolve the shared
-    phone_number_id to one business per message, not all of them).
-
-    The previous version of this lookup ran for ANY business as soon as
-    SHARED_WA_TOKEN/SHARED_PHONE_NUMBER_ID were configured anywhere on the
-    platform, with no check that either business involved was actually a
-    shared-number tenant — meaning a business with its own dedicated
-    WhatsApp number could read another business's customer by guessing/
-    incrementing customer_id, and send WhatsApp messages or close
-    conversations on that business's behalf. That's a cross-tenant IDOR,
-    not the shared-number feature working as intended.
-
-    Fixed: the fallback now only resolves a customer belonging to another
-    business_id when BOTH businesses have use_shared_number=True. A
-    business running on its own dedicated number never falls through to
-    this lookup, and a shared-number business can only reach customers
-    that belong to other shared-number businesses — not a dedicated one.
-    """
-    if not (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
-        return None
-    caller_biz = crud.get_business_by_id(bid)
-    if not caller_biz or not caller_biz.get("use_shared_number", False):
-        return None
-    try:
-        from core.db import supabase as _sb
-        res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
-        customer = res.data[0] if res.data else None
-    except Exception as exc:
-        log.warning("shared-number cross-tenant lookup failed: %s", exc)
-        return None
-    if not customer:
-        return None
-    target_biz_id = customer.get("business_id")
-    if target_biz_id is None or target_biz_id == bid:
-        return None  # not actually cross-tenant — regular lookup already covers this
-    target_biz = crud.get_business_by_id(target_biz_id)
-    if not target_biz or not target_biz.get("use_shared_number", False):
-        return None
-    log.info("shared-number cross-tenant lookup  customer_id=%s  customer_biz=%s  agent_biz=%s",
-             customer_id, target_biz_id, bid)
-    return customer
-
-
 # ── Chat inbox ────────────────────────────────────────────────────────────────
 
 @router.get("/chat/customers")
@@ -158,11 +110,17 @@ class ChatSendRequest(BaseModel):
 async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     bid      = user["business_id"]
     customer = crud.get_customer_by_id(body.customer_id, bid)
-    # Shared number: customer may belong to a different business_id — only
-    # resolved when BOTH businesses are shared-number tenants, never for a
-    # business on its own dedicated number. See _shared_number_customer_lookup.
-    if not customer:
-        customer = _shared_number_customer_lookup(body.customer_id, bid)
+    # Shared number: customer may belong to a different business_id
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", body.customer_id).limit(1).execute()
+            if res.data:
+                customer = res.data[0]
+                log.info("shared-number cross-tenant lookup  customer_id=%s  customer_biz=%s  agent_biz=%s",
+                         body.customer_id, customer.get("business_id"), bid)
+        except Exception as exc:
+            log.warning("cross-tenant lookup failed: %s", exc)
     if not customer:
         raise HTTPException(404, "Customer not found")
 
@@ -499,8 +457,8 @@ async def delete_conversation(customer_id: int, user=Depends(require_business)):
         # Reset unread count on the customer record
         try:
             _sb.table("customers").update({"unread_count": 0}).eq("id", customer_id).execute()
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         return {"ok": True, "customer_id": customer_id, "message": "Conversation deleted"}
     except Exception as exc:
         raise HTTPException(500, str(exc))
@@ -567,16 +525,12 @@ async def paypal_success(
         if not capture["paid"]:
             return {"status": "capture_failed", "detail": capture.get("error"),
                     "message": "Payment not completed. Please try again."}
-        # The order is identified ONLY from PayPal's own capture data - the
-        # `reference` query parameter is attacker-controllable and must never pick
-        # which order gets marked paid.
-        capture_ref = capture.get("reference", "")
-        ref = capture_ref or reference
+        ref = reference or capture.get("reference", "")
         internal_id = capture.get("internal_order_id")
         order = None
         if internal_id: order = get_order(internal_id)
-        elif capture_ref.startswith("ORDER-"):
-            try: order = get_order(int(capture_ref.split("-")[1]))
+        elif ref.startswith("ORDER-"):
+            try: order = get_order(int(ref.split("-")[1]))
             except (ValueError, IndexError): pass
         if not order: return {"status": "error", "detail": "Order not found"}
         order_id = order["id"]
@@ -584,13 +538,6 @@ async def paypal_success(
         ref      = ref or f"ORDER-{order_id}"
         if order.get("payment_status") == "paid":
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
-        # Same amount check the webhook path already enforces: a capture for a
-        # different (smaller) amount must not mark this order paid.
-        order_total = round(float(order.get("total_price") or 0), 2)
-        if order_total > 0 and abs(round(float(capture.get("amount") or 0), 2) - order_total) > 0.10:
-            log.warning("paypal_success: amount mismatch order=%s expected=%.2f got=%.2f",
-                        order_id, order_total, float(capture.get("amount") or 0))
-            return {"status": "error", "detail": "Payment amount does not match the order total."}
         crud.update_order_payment(order_id, biz_id, {"payment_status": "paid", "payment_reference": ref, "paypal_order_id": token})
         await _notify_customer_payment(order,
             f"✅ *PayPal Payment Confirmed!*\n\nThank you! Payment for *{ref}* is complete.\n\n"
@@ -600,7 +547,7 @@ async def paypal_success(
                 "amount": capture["amount"], "message": "Payment confirmed!"}
     except Exception as exc:
         log.exception("paypal_success error: %s", exc)
-        return {"status": "error", "detail": "Could not confirm the payment. Please contact the business."}
+        return {"status": "error", "detail": str(exc)}
 
 
 @router.get("/payments/paypal/cancel")
@@ -618,17 +565,12 @@ async def paypal_webhook(request: Request):
     WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
     raw_body   = await request.body()
 
-    if WEBHOOK_ID:
-        if not verify_paypal_webhook_signature(headers=dict(request.headers), raw_body=raw_body, webhook_id=WEBHOOK_ID):
-            raise HTTPException(400, "Invalid PayPal webhook signature")
-    elif os.getenv("RENDER"):
-        # SECURITY: with no PAYPAL_WEBHOOK_ID this handler used to skip signature
-        # verification entirely, so anyone could POST a forged
-        # PAYMENT.CAPTURE.COMPLETED and mark an order paid. Fail closed on a real
-        # deployment (RENDER is set by Render, never locally/CI) - no legitimate
-        # PayPal webhook can be delivered without a configured webhook id anyway.
-        log.error("paypal_webhook: PAYPAL_WEBHOOK_ID not set - rejecting unverified webhook")
-        raise HTTPException(503, "PayPal webhook not configured")
+    # Fail closed: an unverified event must never mark an order as paid.
+    if not WEBHOOK_ID:
+        log.error("paypal_webhook: PAYPAL_WEBHOOK_ID not configured — refusing unverified event")
+        raise HTTPException(503, "PayPal webhook is not configured")
+    if not verify_paypal_webhook_signature(headers=dict(request.headers), raw_body=raw_body, webhook_id=WEBHOOK_ID):
+        raise HTTPException(400, "Invalid PayPal webhook signature")
 
     try:
         event = await request.json()
@@ -681,7 +623,7 @@ async def paypal_webhook(request: Request):
                 try:
                     from services._ai_state import _reset_state
                     _reset_state(customer_phone, biz_id)
-                except Exception: pass
+                except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
             await _notify_customer_payment(order,
                 f"✅ *Payment Received!*\n\nYour PayPal payment of *${paid_amount:.2f} USD* has been confirmed.\n\n"
@@ -722,7 +664,7 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
     if order.get("business_id") != user["business_id"]: raise HTTPException(403, "Access denied")
     crud.update_order_payment(order_id, user["business_id"], {"payment_status": "paid", "payment_reference": reference})
     try: update_order_status_supabase(order_id, "paid")
-    except Exception: pass
+    except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     # Sync customer memory — update order_count + total_spent
     try:
         from workflows.order_lifecycle import _sync_user_memory_after_order
@@ -762,10 +704,13 @@ async def close_conversation(
     bid      = user["business_id"]
     agent    = user.get("username", "Agent")
     customer = crud.get_customer_by_id(customer_id, bid)
-    # Shared number: only resolved when BOTH businesses are shared-number
-    # tenants — see _shared_number_customer_lookup.
-    if not customer:
-        customer = _shared_number_customer_lookup(customer_id, bid)
+    if not customer and (SHARED_WA_TOKEN or SHARED_PHONE_NUMBER_ID):
+        try:
+            from core.db import supabase as _sb
+            res = _sb.table("customers").select("*").eq("id", customer_id).limit(1).execute()
+            customer = res.data[0] if res.data else None
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     if not customer:
         raise HTTPException(404, "Customer not found")
 

@@ -16,11 +16,8 @@ Security design:
   - Email enumeration protection: always returns same generic response
   - Rate limiting: 5 requests per IP per hour (enforced in routes)
 
-New passwords set through this flow are bcrypt-hashed via core.auth.
-hash_password() before being stored (see complete_password_reset() below)
-— core.auth.verify_password() only falls back to a plain hmac.compare_
-digest() comparison for legacy accounts whose password was never hashed
-in the first place; this reset flow never writes a new plaintext password.
+Passwords are stored plain-text per existing system (hmac.compare_digest).
+We match that pattern here — no hashing added, to preserve login compatibility.
 """
 from __future__ import annotations
 
@@ -341,8 +338,8 @@ def direct_password_reset(
             supabase.table("password_reset_tokens").update(
                 {"used_at": datetime.now(timezone.utc).isoformat()}
             ).eq("business_id", bid).is_("used_at", "null").execute()
-        except Exception:
-            pass  # non-critical
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         log.info("direct_reset: password updated biz=%s ip=%s", bid, ip_address)
         return {"ok": True}

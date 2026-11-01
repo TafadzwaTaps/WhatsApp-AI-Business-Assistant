@@ -135,8 +135,8 @@ def debug_verify_deploy(user=Depends(require_superadmin)):
                 }
             except Exception as e:
                 result["file_info"][name] = {"error": str(e)}
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     return result
 
@@ -292,7 +292,7 @@ async def push_lifecycle_update(
         raise HTTPException(422, f"Invalid status. Valid: {sorted(valid)}")
 
     try: crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
-    except Exception: pass
+    except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     status_map = {
         "preparing": "confirmed", "ready": "confirmed",
@@ -306,7 +306,7 @@ async def push_lifecycle_update(
     try:
         biz_row  = crud.get_business_by_id(bid)
         biz_name = biz_row.get("name", "") if biz_row else ""
-    except Exception: pass
+    except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     if data.message:
         customer_msg = data.message

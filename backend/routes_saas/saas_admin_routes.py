@@ -1,3 +1,7 @@
+# [NOT LIVE] This file is a stale duplicate and is NOT imported by the app.
+# The live module is: routes/saas_admin_routes.py
+# Edit that one. (tests/test_module_twins.py guards this.)
+# 
 """
 routes/saas_admin_routes.py — WaziBot SaaS Admin Layer
 

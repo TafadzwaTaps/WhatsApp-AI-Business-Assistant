@@ -195,5 +195,5 @@ def _update_gcal_id(booking_id, gcal_id: str) -> None:
         supabase.table("bookings").update(
             {"gcal_event_id": gcal_id}
         ).eq("id", booking_id).execute()
-    except Exception:
-        pass  # Column may not exist yet — non-fatal
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)

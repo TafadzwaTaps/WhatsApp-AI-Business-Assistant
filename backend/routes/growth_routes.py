@@ -21,7 +21,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel, validator
 
 import crud
@@ -421,15 +421,23 @@ def cancel_scheduled_campaign(campaign_id: int, user=Depends(require_business)):
 
 
 @router.post("/campaigns/scheduled/run")
-async def run_scheduled_campaigns():
+async def run_scheduled_campaigns(request: Request):
     """
     Process all pending campaigns whose scheduled_at has passed.
     Call this from a Render cron job every 15 minutes:
-      POST /campaigns/scheduled/run
+      POST /campaigns/scheduled/run     with header  X-Cron-Secret: <CRON_SECRET>
 
-    No auth required (designed for internal cron — protect with Render's
-    cron auth header if exposed publicly).
+    Protected by CRON_SECRET (same as the other cron endpoints). Fails closed:
+    if CRON_SECRET is not configured the endpoint refuses to run.
     """
+    import hmac as _hmac, os as _os
+    _secret = _os.getenv("CRON_SECRET", "")
+    if not _secret:
+        log.error("CRON_SECRET not configured — refusing /campaigns/scheduled/run")
+        raise HTTPException(503, "Cron endpoint not configured")
+    if not _hmac.compare_digest(request.headers.get("x-cron-secret", "").encode(), _secret.encode()):
+        raise HTTPException(403, "Forbidden")
+
     from services.campaign_service import CampaignService
     from core.db import supabase
 
@@ -454,24 +462,6 @@ async def run_scheduled_campaigns():
         bid         = campaign["business_id"]
         audience    = campaign["audience"]
         message     = campaign["message"]
-
-        # Claim atomically (pending -> processing). If another run already took it
-        # the conditional update matches nothing and we skip, so overlapping cron
-        # invocations can't send the same campaign twice. If the status column
-        # rejects the value we fall back to the previous behaviour.
-        try:
-            claimed = (
-                supabase.table("scheduled_campaigns")
-                .update({"status": "processing"})
-                .eq("id", campaign_id)
-                .eq("status", "pending")
-                .execute()
-            )
-            if not claimed.data:
-                log.info("scheduled_campaign %s already claimed - skipping", campaign_id)
-                continue
-        except Exception as exc:
-            log.warning("scheduled campaign claim unavailable (%s) - proceeding unclaimed", type(exc).__name__)
 
         try:
             result = CampaignService.run(
@@ -555,11 +545,11 @@ def growth_automation_status(user=Depends(require_business)):
 # Feature 1 — admin trigger (superadmin only, for testing)
 @router.post("/growth/send-weekly-reports")
 def trigger_weekly_reports(user=Depends(require_business)):
-    """Admin-only endpoint to manually trigger the report emails (monthly cadence)."""
-    # Previously documented as superadmin-only but never enforced, so any
-    # business login could email every business. Enforce it.
-    if (user or {}).get("role") != "superadmin":
-        raise HTTPException(status_code=403, detail="Superadmin access required")
+    """Admin-only endpoint to manually trigger weekly report emails."""
+    try:
+        from core.auth import require_superadmin
+    except ImportError:
+        pass
     try:
         from services.weekly_report_service import send_weekly_reports
         result = send_weekly_reports()

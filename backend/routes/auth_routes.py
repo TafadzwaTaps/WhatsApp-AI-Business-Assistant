@@ -160,24 +160,6 @@ def signup(data: SignupRequest, request: Request):
                     "An account with that email address already exists. "
                     "Please log in or use a different email."
                 )
-            # Trial-reset guard: "name+tag@x.com" is the same mailbox as "name@x.com",
-            # so an existing account on either form blocks the other.
-            _base, _, _dom = _signup_email.partition("@")
-            _root = _base.split("+", 1)[0]
-            if _dom and _root:
-                _alias = (
-                    _sdb.table("businesses")
-                    .select("id")
-                    .or_(f"owner_email.ilike.{_root}@{_dom},owner_email.ilike.{_root}+%@{_dom}")
-                    .limit(1)
-                    .execute()
-                )
-                if _alias.data:
-                    raise HTTPException(
-                        400,
-                        "An account with that email address already exists. "
-                        "Please log in or use a different email."
-                    )
         except HTTPException:
             raise
         except Exception as _ee:
@@ -328,25 +310,6 @@ def login(data: LoginRequest, request: Request):
     if not biz.get("is_active", True):
         raise HTTPException(403, "Account suspended. Contact support.")
 
-    # Security hardening: core.auth.verify_password() still accepts legacy
-    # plaintext passwords for backward compatibility (any account created
-    # before bcrypt hashing was added). A plaintext match here means this
-    # account's password has been sitting in the DB unhashed ever since —
-    # transparently upgrading it to a bcrypt hash on the very next
-    # successful login (the only moment we legitimately have the plaintext
-    # password in hand) closes that without requiring a forced reset or
-    # changing anything the business sees. Best-effort: never blocks login
-    # if the write fails.
-    stored_pw = biz.get("owner_password", "")
-    if stored_pw and not stored_pw.startswith(("$2b$", "$2a$", "$2y$")):
-        try:
-            # crud.update_business accepts a plain dict (falls back to
-            # dict(data) when the argument has no .dict() method).
-            crud.update_business(biz["id"], {"owner_password": hash_password(data.password)})
-            log.info("login: upgraded legacy plaintext password to bcrypt  business_id=%s", biz["id"])
-        except Exception as exc:
-            log.warning("login: legacy password upgrade failed (non-fatal)  business_id=%s  error=%s", biz["id"], exc)
-
     clear_failed_logins(ip, username)
     clear_account_login_lockout(username)
     log.info("🔑 Login: %s", biz["owner_username"])
@@ -363,7 +326,8 @@ class RefreshRequest(BaseModel):
 
 
 @router.post("/auth/refresh")
-def refresh_token_endpoint(data: RefreshRequest):
+def refresh_token_endpoint(data: RefreshRequest, request: Request):
+    _rate_check("refresh", request)
     try:
         payload = decode_token(data.refresh_token)
     except HTTPException:
@@ -447,59 +411,3 @@ def email_unsubscribe(business_id: int, token: str):
         "<p><a href='/'>Return to WaziBot</a></p>"
         "</div></body></html>"
     )
-
-
-# ── Monthly-report opt-out ────────────────────────────────────────────────────
-# GET only shows a confirmation page (mail scanners/prefetchers follow links, so
-# a GET must not change anything); the POST from that page performs the opt-out.
-# Sets the same features_json.pref_weekly_reports flag the dashboard
-# Preferences toggle uses, so both stay in sync.
-def _report_page(title: str, body: str) -> str:
-    return (
-        "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
-        "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
-        f"<title>{title} — WaziBot</title>"
-        "<style>body{font-family:Arial,sans-serif;background:#0a0f0d;color:#e8f5e9;"
-        "display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;}"
-        ".box{text-align:center;max-width:420px;padding:32px;}a{color:#22c55e;}"
-        "button{background:#22c55e;color:#000;border:0;border-radius:9px;padding:12px 24px;"
-        "font-weight:800;cursor:pointer;font-size:14px}</style></head><body><div class='box'>"
-        f"{body}</div></body></html>"
-    )
-
-
-@router.get("/email/unsubscribe-reports", response_class=HTMLResponse)
-def email_unsubscribe_reports_page(business_id: int, token: str):
-    from services.email_service import verify_report_unsub_token
-    if not verify_report_unsub_token(business_id, token):
-        raise HTTPException(400, "Invalid or expired link.")
-    return _report_page("Stop reports", (
-        "<h2>Stop monthly reports?</h2>"
-        "<p>You will no longer receive the monthly performance summary email. "
-        "You can turn it back on any time in Dashboard → Profile → Preferences.</p>"
-        f"<form method='post' action='/email/unsubscribe-reports?business_id={int(business_id)}&token={token}'>"
-        "<button type='submit'>Yes, stop the reports</button></form>"
-    ))
-
-
-@router.post("/email/unsubscribe-reports", response_class=HTMLResponse)
-def email_unsubscribe_reports(business_id: int, token: str):
-    from services.email_service import verify_report_unsub_token
-    if not verify_report_unsub_token(business_id, token):
-        raise HTTPException(400, "Invalid or expired link.")
-    try:
-        from core.db import supabase
-        res = (supabase.table("businesses").select("features_json")
-               .eq("id", business_id).limit(1).execute())
-        fj = (res.data[0].get("features_json") if res.data else None) or {}
-        fj["pref_weekly_reports"] = False
-        supabase.table("businesses").update({"features_json": fj}).eq("id", business_id).execute()
-        log.info("email: business_id=%s opted out of monthly reports", business_id)
-    except Exception as exc:
-        log.warning("email: report opt-out persist failed business_id=%s: %s", business_id, exc)
-        raise HTTPException(500, "Could not save your choice. Please turn reports off in Dashboard → Preferences.")
-    return _report_page("Reports stopped", (
-        "<h2>Reports turned off</h2>"
-        "<p>You won't receive the monthly report anymore. Order and account emails are unaffected.</p>"
-        "<p><a href='/'>Return to WaziBot</a></p>"
-    ))

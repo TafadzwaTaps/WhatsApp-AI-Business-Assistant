@@ -462,8 +462,8 @@ def clear_customer_messages(customer_id: int, business_id: int) -> int:
                     .eq("business_id", business_id) \
                     .eq("phone", cust["phone"]) \
                     .execute()
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         # Reset unread badge
         supabase.table("customers") \

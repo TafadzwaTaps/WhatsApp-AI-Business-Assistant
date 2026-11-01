@@ -136,8 +136,8 @@ def upload_backup(business_id: int, zip_bytes: bytes) -> str:
     path = f"{business_id}/{timestamp}.zip"
     try:
         supabase.storage.create_bucket(BACKUP_BUCKET, options={"public": False})
-    except Exception:
-        pass  # already exists, or this Supabase project restricts bucket creation — upload attempt below is the real check
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     supabase.storage.from_(BACKUP_BUCKET).upload(
         path, zip_bytes, {"content-type": "application/zip", "upsert": "true"},
     )

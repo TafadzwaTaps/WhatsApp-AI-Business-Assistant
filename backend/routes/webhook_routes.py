@@ -49,8 +49,8 @@ def _get_customer_state_for_log(phone: str, business_id: int) -> str:
         )
         if res.data:
             return (res.data[0].get("state_data") or {}).get("state", "unknown")
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return "unknown"
 
 
@@ -64,7 +64,10 @@ async def verify_webhook(request: Request):
     challenge = p.get("hub.challenge", "")
     log.info("🔔 Webhook verify  mode=%r  token_match=%s  challenge=%r",
              mode, token == VERIFY_TOKEN, challenge)
-    if mode == "subscribe" and token == VERIFY_TOKEN:
+    # The documented placeholder value is public knowledge, so it is never
+    # accepted: set VERIFY_TOKEN to your own random value (and the same value
+    # in Meta's webhook settings).
+    if mode == "subscribe" and token == VERIFY_TOKEN and VERIFY_TOKEN != "myverifytoken123":
         return PlainTextResponse(content=challenge, status_code=200)
     raise HTTPException(403, "Webhook verification failed — token mismatch")
 
@@ -217,8 +220,8 @@ async def receive_message(request: Request):
                     crud.create_message(_cust["id"],
                                 get_selected_business_id(customer_phone) or 0,
                                 text, "incoming", wa_message_id=wa_message_id)
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 return {"status": "ok"}
 
             business, direct_reply = resolve_business_for_shared_number(
@@ -232,8 +235,8 @@ async def receive_message(request: Request):
                     crud.create_message(cust_any["id"], 0, text, "incoming",
                                         wa_message_id=wa_message_id)
                     crud.create_message(cust_any["id"], 0, direct_reply, "outgoing")
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 return {"status": "ok"}
 
             if direct_reply and business:
@@ -244,8 +247,8 @@ async def receive_message(request: Request):
                     cust_confirmed = crud.get_or_create_customer(customer_phone, business["id"])
                     crud.create_message(cust_confirmed["id"], business["id"],
                                         direct_reply, "outgoing", sender_type="ai")
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 # Replace the customer's text with "hi" so generate_reply sends
                 # a proper welcome rather than treating "2" as an order attempt
                 text = "hi"
@@ -288,8 +291,8 @@ async def receive_message(request: Request):
     try:
         from services.acquisition_service import record_conversation_started
         record_conversation_started(business["id"], customer_phone)
-    except Exception:
-        pass  # analytics must never crash the webhook
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # STEP 5: Save incoming message
     in_msg: dict = {}
@@ -311,8 +314,8 @@ async def receive_message(request: Request):
             "event": "new_message", "customer_id": customer["id"],
             "phone": customer_phone, "message": in_msg,
         })
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # STEP 6: Generate AI reply
     try:
@@ -712,8 +715,8 @@ async def receive_message(request: Request):
             "event": "new_message", "customer_id": customer["id"],
             "phone": customer_phone, "message": out_msg,
         })
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # STEP 8: Send via WhatsApp API
     if not reply:
@@ -744,7 +747,19 @@ class PaymentConfirmRequest(BaseModel):
 
 
 @router.post("/payment/webhook")
-async def payment_webhook(data: PaymentConfirmRequest):
+async def payment_webhook(data: PaymentConfirmRequest, request: Request):
+    # Authentication: this endpoint can mark an order as paid, so it must only
+    # accept calls from a trusted payment provider/integration that knows the
+    # shared secret. Fails closed when PAYMENT_WEBHOOK_SECRET is not configured.
+    import hmac as _hmac
+    _expected = os.getenv("PAYMENT_WEBHOOK_SECRET", "").strip()
+    if not _expected:
+        log.error("payment_webhook: PAYMENT_WEBHOOK_SECRET not configured — refusing request")
+        raise HTTPException(503, "Payment webhook is not configured")
+    _given = request.headers.get("X-Payment-Webhook-Secret", "")
+    if not _hmac.compare_digest(_given.encode(), _expected.encode()):
+        log.warning("payment_webhook: bad secret  ip=%s", request.headers.get("x-forwarded-for", "?"))
+        raise HTTPException(403, "Forbidden")
     reference = (data.reference or "").strip().upper()
     if not reference.startswith("ORDER-"):
         raise HTTPException(400, f"Invalid reference. Expected ORDER-{{id}}, got: {reference}")
@@ -772,8 +787,8 @@ async def payment_webhook(data: PaymentConfirmRequest):
     })
     try:
         update_order_status_supabase(order_id, "paid")
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     phone = order.get("customer_phone", "")
     if phone and biz_id:
@@ -826,9 +841,6 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
     token_param = websocket.query_params.get("token", "")
     try:
         payload = decode_token(token_param)
-        if payload.get("type") == "refresh":          # refresh tokens never authenticate
-            await websocket.close(code=4001)
-            return
         if payload.get("business_id") != business_id and payload.get("role") != "superadmin":
             await websocket.close(code=4001)
             return
@@ -844,7 +856,7 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
                 msg = json.loads(raw) if raw else {}
                 if msg.get("type") == "ping":
                     await websocket.send_text(json.dumps({"type": "pong"}))
-            except Exception:
-                pass
+            except Exception as _swallowed_exc:
+                from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     except WebSocketDisconnect:
         manager.disconnect(websocket, business_id)

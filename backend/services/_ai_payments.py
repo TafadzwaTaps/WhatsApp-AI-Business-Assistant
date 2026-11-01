@@ -60,8 +60,8 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
         ord_row = get_order(order_id)
         if ord_row:
             total = float(ord_row.get("total_price") or 0)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     order = {
         "id":              order_id,
@@ -508,8 +508,8 @@ def _process_payment(
                 try:
                     from services._ai_state import _reset_state as _rs
                     _rs(phone, business_id)
-                except Exception:
-                    pass
+                except Exception as _swallowed_exc:
+                    from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
                 return (
                     f"⚠️ Sorry, *{m.group(1)}* is no longer available and was your "
                     f"only cart item — your cart is now empty.\n\n"
@@ -539,8 +539,8 @@ def _process_payment(
             _write_state_data(phone, business_id, {
                 "session": {**session, "checkout_fail_count": fail_count}
             })
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         if fail_count >= 2:
             # Use the same handoff pattern as the existing "talk to a human"

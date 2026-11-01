@@ -932,8 +932,8 @@ def apply_currency_conversion(
     try:
         from crud.analytics import _cache_invalidate_business
         _cache_invalidate_business(bid)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     return {
         "ok":            True,
@@ -976,8 +976,8 @@ def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
     try:
         from crud.orders import notify_owner_new_order
         notify_owner_new_order(user["business_id"], order)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return {"message": "Order created", "order_id": order.get("id"),
             "order": order, "invoice": generate_invoice_text(order)}
 
@@ -1121,8 +1121,8 @@ def crm_update_customer_name(phone: str, body: CustomerNameUpdate, user=Depends(
         try:
             from crud.analytics import _cache_invalidate_business
             _cache_invalidate_business(user["business_id"])
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         return {"ok": True, "phone": phone, "customer_name": updated.get("customer_name", name)}
     except Exception as exc:
         log.error("crm_update_customer_name failed phone=%s: %s", phone, exc)
@@ -1164,7 +1164,7 @@ async def campaign_send(body: CampaignRequest, request: Request, user=Depends(re
             from services.events import Events
             Events.emit("broadcast_sent", {"business_id": bid, "audience": body.audience,
                                             "sent": result["sent"], "failed": result.get("failed", 0)})
-        except Exception: pass
+        except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         # SuperAdmin 2.0 (Phase 10) — persist the send for platform-wide
         # campaign-abuse detection. Best-effort, never blocks a real send.
         try:
@@ -1173,7 +1173,7 @@ async def campaign_send(body: CampaignRequest, request: Request, user=Depends(re
                 business_id=bid, audience=body.audience,
                 recipient_count=result["sent"], message_length=len(body.message),
             )
-        except Exception: pass
+        except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return result
 
 
@@ -1765,8 +1765,8 @@ def crm_backfill_from_chats(user=Depends(require_business)):
         try:
             from crud.analytics import _cache_invalidate_business
             _cache_invalidate_business(bid)
-        except Exception:
-            pass
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
         return {
             "ok":                True,

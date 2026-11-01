@@ -86,22 +86,8 @@ def get_client_ip(request) -> str:
     (e.g. a CDN in front of Render), this would need to trust the
     second-to-last value instead — see TRUSTED_PROXY_DEPTH below.
     """
-    import os, hmac
+    import os
     trusted_proxy_depth = int(os.getenv("TRUSTED_PROXY_DEPTH", "1"))
-
-    # Cloudflare in front of Render: our Cloudflare Worker stamps every request
-    # with X-WZ-Edge = EDGE_SHARED_SECRET. Only when that secret matches do we
-    # trust Cloudflare's CF-Connecting-IP header (a request that reaches Render
-    # directly, e.g. via the onrender.com URL, can't know the secret, so it
-    # can't forge its IP). With no EDGE_SHARED_SECRET set, behaviour is unchanged.
-    edge_secret = os.getenv("EDGE_SHARED_SECRET", "")
-    if edge_secret:
-        sent = request.headers.get("x-wz-edge", "")
-        if sent and hmac.compare_digest(sent.encode(), edge_secret.encode()):
-            cf_ip = request.headers.get("cf-connecting-ip", "").strip()
-            if cf_ip:
-                return cf_ip
-
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
         parts = [p.strip() for p in xff.split(",") if p.strip()]
@@ -112,6 +98,64 @@ def get_client_ip(request) -> str:
             idx = max(0, len(parts) - trusted_proxy_depth)
             return parts[idx]
     return getattr(request.client, "host", "unknown")
+
+
+# ── Optional shared storage (survives restarts, works across instances) ─────
+# Enable with env RATE_LIMIT_BACKEND=supabase after running
+# backend/sql/rate_limit_shared.sql in Supabase. If the database call fails
+# (or the table is missing) we silently fall back to the in-memory counters
+# below, and retry the shared store after a short pause — so enabling this
+# can never take the API down.
+_SHARED_SKIP = {"webhook", "ai_reply"}   # high-volume: keep in memory only
+_shared_down_until = 0.0
+
+
+def _shared_enabled() -> bool:
+    import os as _o
+    return _o.getenv("RATE_LIMIT_BACKEND", "").strip().lower() == "supabase" and time.time() >= _shared_down_until
+
+
+def _shared_mark_down(exc) -> None:
+    global _shared_down_until
+    _shared_down_until = time.time() + 60
+    log.warning("rate_limit: shared store unavailable, using in-memory for 60s: %s", exc)
+
+
+def _shared_hit(key: str, window: int):
+    """Atomically count a hit; returns the count in the current window, or None."""
+    if not _shared_enabled():
+        return None
+    try:
+        from core.db import supabase
+        res = supabase.rpc("rl_hit", {"p_key": key[:200], "p_window": int(window)}).execute()
+        d = res.data
+        return int(d[0] if isinstance(d, list) and d else d)
+    except Exception as exc:
+        _shared_mark_down(exc)
+        return None
+
+
+def _shared_peek(key: str, window: int):
+    if not _shared_enabled():
+        return None
+    try:
+        from core.db import supabase
+        res = supabase.rpc("rl_peek", {"p_key": key[:200], "p_window": int(window)}).execute()
+        d = res.data
+        return int(d[0] if isinstance(d, list) and d else d)
+    except Exception as exc:
+        _shared_mark_down(exc)
+        return None
+
+
+def _shared_clear(key: str) -> None:
+    if not _shared_enabled():
+        return
+    try:
+        from core.db import supabase
+        supabase.rpc("rl_clear", {"p_key": key[:200]}).execute()
+    except Exception as exc:
+        _shared_mark_down(exc)
 
 
 def rate_limit(
@@ -139,6 +183,15 @@ def rate_limit(
         ip  = get_client_ip(request)
         key = f"{limit_name}:{ip}:{key_suffix}"
         now = time.time()
+
+        if limit_name not in _SHARED_SKIP:
+            _n = _shared_hit(key, window_seconds)
+            if _n is not None:
+                if _n > max_calls:
+                    log.warning("rate_limit: EXCEEDED (shared)  limit=%s  ip=%s  calls=%d  max=%d",
+                                limit_name, ip, _n, max_calls)
+                    raise RateLimitExceeded(limit_name, retry_after=window_seconds)
+                return
 
         with _rate_lock:
             window = _rate_store[key]
@@ -201,6 +254,12 @@ LIMITS = {
     # hammer availability checks with no cost. 10/min is generous for a
     # genuine customer booking an appointment, but blocks casual abuse.
     "booking":      {"max_calls": 10, "window": 60},    # 10/min per IP
+    # Public endpoints that previously had no limit at all
+    "public_ask":   {"max_calls": 20, "window": 60},    # help-bot questions
+    "checkout":     {"max_calls": 10, "window": 60},    # storefront payment sessions
+    "public_read":  {"max_calls": 120,"window": 60},    # public store/site/directory pages
+    "reset":        {"max_calls": 10, "window": 60},    # reset-token validate/submit
+    "refresh":      {"max_calls": 30, "window": 60},    # token refresh
 }
 
 
@@ -395,6 +454,7 @@ def record_failed_login_ip(ip: str) -> None:
     with _ip_login_lock:
         _ip_login_fails[ip].append(now)
         _ip_login_fails[ip] = [t for t in _ip_login_fails[ip] if now - t < _IP_LOGIN_WINDOW]
+    _shared_hit(f"loginip:{ip}", _IP_LOGIN_WINDOW)
 
 
 def check_ip_login_limit(ip: str) -> None:
@@ -410,6 +470,9 @@ def check_ip_login_limit(ip: str) -> None:
     with _ip_login_lock:
         recent = [t for t in _ip_login_fails[ip] if now - t < _IP_LOGIN_WINDOW]
         _ip_login_fails[ip] = recent
+    _sn = _shared_peek(f"loginip:{ip}", _IP_LOGIN_WINDOW)
+    if _sn is not None and _sn > len(recent):
+        recent = [0.0] * _sn
     if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_IP:
         log.warning("login_ip_limit: EXCEEDED  ip=%s  count=%d", ip, len(recent))
         _persist_security_event("ip_login_flagged", ip=ip, metadata={"failed_attempts": len(recent)})
@@ -426,6 +489,7 @@ def record_failed_login_account(username: str) -> None:
         _account_login_fails[key].append(now)
         window = LOGIN_LOCKOUT_MINUTES * 60
         _account_login_fails[key] = [t for t in _account_login_fails[key] if now - t < window]
+    _shared_hit(f"loginacct:{key}", LOGIN_LOCKOUT_MINUTES * 60)
 
 
 def check_account_login_lockout(username: str) -> None:
@@ -442,6 +506,9 @@ def check_account_login_lockout(username: str) -> None:
     with _account_login_lock:
         recent = [t for t in _account_login_fails[key] if now - t < window]
         _account_login_fails[key] = recent
+    _sn = _shared_peek(f"loginacct:{key}", window)
+    if _sn is not None and _sn > len(recent):
+        recent = [0.0] * _sn
     if len(recent) >= LOGIN_MAX_ATTEMPTS_PER_ACCOUNT:
         log.warning("login_account_lockout: EXCEEDED  username=%s  count=%d", username, len(recent))
         _persist_security_event("account_lockout", username=username, metadata={"failed_attempts": len(recent)})
@@ -457,6 +524,7 @@ def clear_account_login_lockout(username: str) -> None:
     key = username.lower()
     with _account_login_lock:
         _account_login_fails.pop(key, None)
+    _shared_clear(f"loginacct:{key}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -546,29 +614,19 @@ def verify_meta_signature(
     and compare in constant time.
 
     Returns True if valid, False otherwise.
-    If app_secret is not configured, returns True in local/test environments
-    (dev mode — logged as warning) so nothing here breaks local development
-    or the test suite, which deliberately runs with it unset. On Render,
-    this now fails CLOSED instead: an unset WHATSAPP_APP_SECRET on an
-    actual deployment previously meant anyone could POST a fake,
-    unauthenticated WhatsApp webhook event to /webhook — impersonating
-    customers, injecting fake messages/orders — with main.py's own startup
-    log loudly warning about exactly this ("webhook signature verification
-    is DISABLED") without the request path ever actually enforcing it.
-    `RENDER` is set automatically by Render on every deployed service and
-    never set locally or in CI, so this distinguishes "really in
-    production" from "dev/test" without needing a new env var to configure.
+    If app_secret is not configured the request is REJECTED (fail closed),
+    because otherwise anyone who finds the webhook URL could send forged
+    customer messages. For local development only, set the environment
+    variable ALLOW_UNSIGNED_WEBHOOKS=1 to skip verification.
     """
     if not app_secret:
-        import os as _os_webhook
-        if _os_webhook.getenv("RENDER"):
-            log.error("webhook_signature: WHATSAPP_APP_SECRET not set — "
-                       "rejecting webhook request in production. Set "
-                       "WHATSAPP_APP_SECRET in Render env vars.")
-            _record_webhook_sig_failure()
-            return False
-        log.warning("webhook_signature: WHATSAPP_APP_SECRET not set — skipping signature verification (dev mode)")
-        return True
+        import os as _os
+        if _os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "").strip() == "1":
+            log.warning("webhook_signature: WHATSAPP_APP_SECRET not set — ALLOW_UNSIGNED_WEBHOOKS=1, skipping verification (dev only)")
+            return True
+        log.critical("webhook_signature: WHATSAPP_APP_SECRET not set — rejecting webhook request. "
+                     "Set WHATSAPP_APP_SECRET in the environment.")
+        return False
 
     if not signature_header:
         log.warning("webhook_signature: X-Hub-Signature-256 header missing")
@@ -798,13 +856,13 @@ def get_security_snapshot() -> dict:
     active_rate_limit_buckets = 0
     try:
         duplicate_message_fingerprints_active = len(_msg_seen)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     try:
         with _rate_lock:
             active_rate_limit_buckets = sum(1 for v in _rate_store.values() if v)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     return {
         "locked_accounts":            locked_accounts,

@@ -36,13 +36,13 @@ def create_order(business_id: int, order) -> dict:
     try:
         from crud.analytics import _cache_invalidate_business
         _cache_invalidate_business(business_id)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     # Sprint 1: Notify business owner — fail silently, never blocks order creation
     try:
         notify_owner_new_order(business_id, created)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     return created
 
 

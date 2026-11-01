@@ -188,7 +188,7 @@ def build_business_picker(businesses: list[dict], platform_name: str = "WaziBot"
 
     lines = []
     for i, biz in enumerate(businesses, 1):
-        category = biz.get("category", "").strip()
+        category = (biz.get("category") or "").strip()
         cat_tag  = f" _{category}_" if category else ""
         lines.append(f"  {i}️⃣  *{biz['name']}*{cat_tag}")
 

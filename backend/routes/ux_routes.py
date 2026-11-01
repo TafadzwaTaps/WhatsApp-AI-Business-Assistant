@@ -192,8 +192,8 @@ def handoff_summary(customer_id: int, user=Depends(require_business)):
             direction = "Customer" if m.get("direction") == "incoming" else "WaziBot"
             text      = (m.get("text") or "")[:100]
             recent_msgs.append(f"[{direction}] {text}")
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # Pending payment summary
     pending_summary = ""
@@ -360,8 +360,10 @@ class HelpQuestion(BaseModel):
 
 
 @router.post("/support/ask")
-def ask_support(body: HelpQuestion):  # public — no auth needed
+def ask_support(body: HelpQuestion, request: Request):  # public — no auth needed
     """Answer a help question using the WaziBot knowledge base."""
+    from services.security import check as _public_rl
+    _public_rl("public_ask", request)
     from services.support_assistant import answer_help_question
     if not body.question or len(body.question.strip()) < 2:
         raise HTTPException(400, "Question too short")
@@ -406,10 +408,6 @@ def onboarding_status(user=Depends(require_business)):
     bid = user["business_id"]
 
     steps_done: dict[int, bool] = {1: False, 2: False, 3: False, 4: False, 5: False}
-
-    if bid is None:   # no business in session (e.g. superadmin) — skip DB lookups
-        return {"completed": 0, "total": 5, "percent": 0, "all_done": False,
-                "steps": steps_done, "next_step": None, "next_tip": None, "show_wizard": False}
 
     try:
         # Step 1: has at least one product

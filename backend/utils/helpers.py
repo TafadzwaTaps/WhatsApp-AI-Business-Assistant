@@ -38,5 +38,5 @@ def log_event(event_type: str, **fields) -> None:
     try:
         kv = "  ".join(f"{k}={v!r}" for k, v in fields.items())
         log.info("EVENT %s  %s", event_type, kv)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)

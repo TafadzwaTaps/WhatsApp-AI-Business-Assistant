@@ -80,7 +80,9 @@ def forgot_password(data: ForgotPasswordRequest, request: Request):
 
 
 @router.post("/auth/validate-reset-token")
-def validate_reset_token(data: ValidateTokenRequest):
+def validate_reset_token(data: ValidateTokenRequest, request: Request):
+    from services.security import check as _public_rl
+    _public_rl("reset", request)
     """
     Check whether a reset token is valid, unexpired, and unused.
     Called by the reset-password page on load to show valid/expired state.
@@ -101,6 +103,8 @@ def reset_password(data: ResetPasswordRequest, request: Request):
     Complete the password reset.
     Validates token, checks password strength and match, updates password.
     """
+    from services.security import check as _public_rl
+    _public_rl("reset", request)
     # Rate limit resets too (prevent brute force on tokens)
     try:
         from services.security import rate_limit

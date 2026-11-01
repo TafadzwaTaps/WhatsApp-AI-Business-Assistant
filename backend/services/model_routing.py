@@ -113,8 +113,8 @@ def classify_route(
         from services._ai_intent import _is_status_query
         if _is_status_query(t):
             return ROUTE_NONE
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # Customer complaint -> full LLM.
     try:
@@ -123,8 +123,8 @@ def classify_route(
         )
         if is_serious_complaint(t) or is_sensitive_issue(t) or is_booking_conflict_complaint(t):
             return ROUTE_FULL
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # Complex recommendation (price objection / complement / gift-occasion
     # sales conversation) -> full LLM.
@@ -134,8 +134,8 @@ def classify_route(
         )
         if is_price_objection(t) or is_complement_query(t) or is_gift_occasion_statement(t):
             return ROUTE_FULL
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     # Complex multilingual conversation -> full LLM. A short non-English
     # message ("hola", "merci") still doesn't need one; a longer free-text

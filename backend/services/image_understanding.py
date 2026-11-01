@@ -261,8 +261,8 @@ def _parse_and_validate(raw: str) -> Optional[dict]:
         if is_injection_attempt(description):
             log.warning("image_understanding: description looked like an injection attempt — discarding")
             return {"intent": "unclear", "description": "", "certain": False}
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
     certain = bool(parsed.get("certain")) if isinstance(parsed.get("certain"), bool) else False
 
