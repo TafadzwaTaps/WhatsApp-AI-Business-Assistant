@@ -2522,6 +2522,7 @@ async function loadSettings() {
       _setVal('set-paypal-email',   pay.paypal_email   || '');
       _setVal('set-banktransfer-details', pay.bank_transfer_details || '');
       _setVal('set-blik-number',    pay.blik_number    || '');
+      try { _applyPaymentToggles(pay); } catch (_) {}
       const statusEl = document.getElementById('payment-settings-status');
       if (statusEl) {
         const parts = [];
@@ -2760,6 +2761,36 @@ async function saveBlikSettings() {
     await apiFetch('/me/payment-settings/blik', { method: 'POST', body: JSON.stringify({ blik_number: number }) });
     toast('✅ BLIK number saved — customers will send to ' + number);
   } catch(e) { toast('Failed: ' + e.message, true); }
+  finally { setLoading(btn, false); }
+}
+
+// ── Checkout payment toggles ─────────────────────────────────────────────
+function _applyPaymentToggles(pay) {
+  const t = (pay && pay.payment_toggles) || {};
+  const cfg = {
+    ecocash: !!pay.ecocash_configured, banktransfer: !!pay.bank_transfer_configured,
+    blik: !!pay.blik_configured, paypal: !!pay.paypal_configured,
+  };
+  ['ecocash', 'banktransfer', 'blik', 'paypal', 'cash'].forEach(k => {
+    const cb = document.getElementById('pt-' + k);
+    if (cb) cb.checked = t[k] !== false;
+    const hint = document.getElementById('pt-' + k + '-hint');
+    if (hint) hint.textContent = (k !== 'cash' && !cfg[k]) ? '(not set up yet — won\'t show)' : '';
+  });
+}
+
+async function savePaymentToggles() {
+  const toggles = {};
+  ['ecocash', 'banktransfer', 'blik', 'paypal', 'cash'].forEach(k => {
+    const cb = document.getElementById('pt-' + k);
+    if (cb) toggles[k] = !!cb.checked;
+  });
+  const btn = document.querySelector('[onclick="savePaymentToggles()"]');
+  try {
+    setLoading(btn, true);
+    await apiFetch('/me/payment-settings/toggles', { method: 'POST', body: JSON.stringify({ toggles }) });
+    toast('✅ Checkout payment options saved');
+  } catch (e) { toast('Failed: ' + e.message, true); }
   finally { setLoading(btn, false); }
 }
 
@@ -6950,9 +6981,44 @@ function closeBulkModal() {
 
 // ── Phase 6: Edit product modal ───────────────────────────
 
+let _pendingEditImgDataUrl = null;
+let _editImgRemoved = false;
+
+function _showEditProdImage(src) {
+  const img = document.getElementById('edit-prod-img-preview');
+  const empty = document.getElementById('edit-prod-img-empty');
+  const rm = document.getElementById('edit-prod-img-remove');
+  if (img)   { img.src = src || ''; img.style.display = src ? 'block' : 'none'; }
+  if (empty) empty.style.display = src ? 'none' : 'flex';
+  if (rm)    rm.style.display = src ? 'inline-flex' : 'none';
+}
+
+function onEditProdImagePicked(event) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/')) { toast('Please select an image file', true); return; }
+  if (file.size > 5 * 1024 * 1024) { toast('Image must be under 5MB', true); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    _pendingEditImgDataUrl = e.target.result;
+    _editImgRemoved = false;
+    _showEditProdImage(_pendingEditImgDataUrl);
+  };
+  reader.readAsDataURL(file);
+}
+
+function removeEditProdImage() {
+  _pendingEditImgDataUrl = null;
+  _editImgRemoved = true;
+  const f = document.getElementById('edit-prod-img-file'); if (f) f.value = '';
+  _showEditProdImage('');
+}
+
 function openProdEdit(id) {
   const p = _allProducts.find(x => x.id === id);
   if (!p) { toast('Product not found', true); return; }
+  _pendingEditImgDataUrl = null; _editImgRemoved = false;
+  try { const f = document.getElementById('edit-prod-img-file'); if (f) f.value = ''; _showEditProdImage(p.image_url || ''); } catch (_) {}
   document.getElementById('edit-prod-id').value    = p.id;
   document.getElementById('edit-prod-name').value  = p.name  || '';
   document.getElementById('edit-prod-price').value = p.price || '';
@@ -6993,7 +7059,7 @@ async function saveProdEdit() {
   const status= document.getElementById('edit-prod-status').value;
   if (!name || isNaN(price)) { toast('Name and price are required', true); return; }
   const payload = { name, price, status };
-  if (desc)           payload.description = desc;
+  payload.description = desc;   // empty string clears it
   if (stock !== '')   payload.stock = parseInt(stock, 10);
   const lowStockEl = document.getElementById('edit-prod-low-stock-threshold');
   const lowStockVal = lowStockEl ? lowStockEl.value : '';
@@ -7006,9 +7072,13 @@ async function saveProdEdit() {
       _pendingEditImgDataUrl,
       name.toLowerCase().replace(/[^a-z0-9]/g, '_') + '_edit_' + Date.now()
     );
+    if (!editImgUrl || String(editImgUrl).startsWith('data:')) { toast('Image upload failed — please try again', true); return; }
     payload.image_url = editImgUrl;
     _pendingEditImgDataUrl = null;
+  } else if (_editImgRemoved) {
+    payload.image_url = null;
   }
+  _editImgRemoved = false;
   try {
     await apiFetch(`${ROUTES.products}/${id}`, {
       method: 'PATCH',

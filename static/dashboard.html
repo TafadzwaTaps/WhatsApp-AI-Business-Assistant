@@ -597,7 +597,7 @@
       <span style="font-size:18px;flex-shrink:0;">⏰</span>
       <div style="flex:1;font-family:var(--mono);font-size:12px;color:var(--text-dim);">
         <strong style="color:var(--amber);">Your trial has ended.</strong>
-        <span id="trial-grace-message">Choose a plan from $4.99/month to keep your business running — all your data is safe.</span>
+        <span id="trial-grace-message">Choose a plan from $5.99/month to keep your business running — all your data is safe.</span>
       </div>
       <a href="/static/pricing.html"
          style="background:var(--amber);color:#000;font-weight:800;font-size:12px;
@@ -1432,7 +1432,19 @@
             </div>
           </div>
           <div style="margin-top:10px;">
-            <label style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Description</label>
+            <label style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Image</label>
+            <div style="display:flex;gap:12px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+              <img id="edit-prod-img-preview" alt="" style="width:72px;height:72px;object-fit:contain;background:var(--surface2);border:1px solid var(--border);border-radius:8px;display:none;"/>
+              <div id="edit-prod-img-empty" style="width:72px;height:72px;border:1px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--text-dim);">📦</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-ghost" onclick="document.getElementById('edit-prod-img-file').click()">📷 Change image</button>
+                <button type="button" class="btn btn-ghost" id="edit-prod-img-remove" onclick="removeEditProdImage()" style="display:none;">🗑 Remove</button>
+              </div>
+              <input type="file" id="edit-prod-img-file" accept="image/jpeg,image/png,image/webp" style="display:none;" onchange="onEditProdImagePicked(event)"/>
+            </div>
+          </div>
+          <div style="margin-top:10px;">
+            <label style="font-size:11px;font-family:var(--mono);color:var(--text-dim);">Description <span style="font-weight:400;">(optional — shown to customers on WhatsApp)</span></label>
             <textarea id="edit-prod-desc" rows="2" style="width:100%;margin-top:6px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--mono);font-size:12px;outline:none;resize:vertical;"></textarea>
           </div>
         </div>
@@ -2095,22 +2107,13 @@
               <div class="form-group"><label>Instagram</label><input type="text" id="set-instagram" placeholder="@yourbiz"/></div>
               <div class="form-group"><label>Facebook</label><input type="text" id="set-facebook" placeholder="facebook.com/yourbiz"/></div>
             </div>
-            <div class="form-row">
-              <div class="form-group"><label>TikTok</label><input type="text" id="set-tiktok" placeholder="@yourbiz"/></div>
-              <div class="form-group"><label>Telegram</label><input type="text" id="set-telegram" placeholder="@yourbiz or t.me/yourbiz"/></div>
-            </div>
-            <div class="form-row">
-              <div class="form-group"><label>X (Twitter)</label><input type="text" id="set-x" placeholder="@yourbiz"/></div>
-              <div class="form-group"><label>YouTube</label><input type="text" id="set-youtube" placeholder="@yourchannel"/></div>
-            </div>
-            <div class="form-group"><label>LinkedIn</label><input type="text" id="set-linkedin" placeholder="linkedin.com/company/yourbiz"/></div>
             <!-- H5: shown when owner_email is missing; dismissed via localStorage -->
             <div id="email-missing-banner" style="display:none;
                  background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);
                  border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;">
               <strong style="color:var(--amber);">📧 Add your email address</strong>
               <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:4px;line-height:1.6;">
-                Your email is used for monthly reports, order notifications, and account recovery.
+                Your email is used for weekly reports, order notifications, and account recovery.
               </div>
               <div class="form-group" style="margin-top:10px;">
                 <input type="email" id="set-owner-email"
@@ -2495,8 +2498,8 @@
               </div>
               <div class="up-pref-row">
                 <div>
-                  <div class="up-pref-label">📊 Monthly Reports</div>
-                  <div class="up-pref-sub">Monthly summary of orders, revenue, and activity — turn off to stop receiving it</div>
+                  <div class="up-pref-label">📊 Weekly Reports</div>
+                  <div class="up-pref-sub">Weekly summary of orders, revenue, and activity</div>
                 </div>
                 <label class="up-toggle"><input type="checkbox" id="pref-weekly-reports" onchange="upPrefChanged()"/><span class="up-toggle-knob"></span></label>
               </div>
@@ -2610,6 +2613,22 @@
           </div>
         </div>
         <div class="panel">
+          <div class="panel-header"><div class="panel-title">✅ Show at checkout</div></div>
+          <div class="panel-body">
+            <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.6;">
+              Choose which payment methods customers see on WhatsApp under "How would you like to pay?". A method only appears once you have set it up above.
+            </div>
+            <div id="pay-toggle-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;">
+              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-ecocash" checked/> 💚 EcoCash <span id="pt-ecocash-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-banktransfer" checked/> 🏦 Bank Transfer <span id="pt-banktransfer-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-blik" checked/> 📲 BLIK <span id="pt-blik-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-paypal" checked/> 🌍 PayPal <span id="pt-paypal-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
+              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-cash" checked/> 💵 Cash</label>
+            </div>
+            <button class="btn btn-primary" onclick="savePaymentToggles()">Save checkout options</button>
+          </div>
+        </div>
+        <div class="panel">
           <div class="panel-header">
             <div class="panel-title">💳 Online Payments</div>
             <span id="stripe-badge" style="font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:20px;background:var(--surface2);color:var(--text-dim);">Loading…</span>
@@ -2704,7 +2723,6 @@
                 <button class="btn btn-primary" id="stripe-upgrade-btn" onclick="stripeUpgrade()" style="display:none;">⚡ View Pricing Plans</button>
                 <button class="btn btn-ghost"   id="stripe-manage-btn"  onclick="stripeManage()"  style="display:none;">⚙ Manage Subscription</button>
                 <button class="btn btn-ghost"   id="stripe-cancel-btn"  onclick="stripeCancel()"  style="display:none;color:var(--red,#ff5252);">Cancel Plan</button>
-                <button class="btn btn-ghost"   id="stripe-resume-btn"  onclick="stripeResume()"  style="display:none;">↩ Keep My Plan</button>
               </div>
             </div>
 
@@ -3214,29 +3232,6 @@
               </div>
             </div>
 
-            <div class="form-group" style="margin-top:18px;">
-              <label>Site Language <span style="opacity:.6;font-weight:400;">(the language you write your site text in)</span></label>
-              <select id="sg-language" style="margin-top:4px;">
-                <option value="">Auto-detect</option>
-                <option value="en">English</option>
-                <option value="pl">Polski</option>
-                <option value="fr">Français</option>
-                <option value="pt">Português</option>
-                <option value="es">Español</option>
-                <option value="de">Deutsch</option>
-                <option value="ar">العربية</option>
-              </select>
-              <div id="sg-translation-note" style="display:none;margin-top:6px;font-size:11px;opacity:.75;"></div>
-            </div>
-
-            <div class="form-group" style="margin-top:18px;">
-              <label>Site Text <span style="opacity:.6;font-weight:400;">(leave blank to keep the default wording)</span></label>
-              <input type="text" id="sg-hero-title" maxlength="80" placeholder="Headline (defaults to your business name)" style="margin-top:4px;"/>
-              <input type="text" id="sg-hero-tagline" maxlength="160" placeholder="Tagline under the headline" style="margin-top:8px;"/>
-              <textarea id="sg-description" maxlength="600" rows="3" placeholder="About text" style="margin-top:8px;width:100%;"></textarea>
-              <input type="text" id="sg-cta-text" maxlength="40" placeholder="Main button text (e.g. Order on WhatsApp)" style="margin-top:8px;"/>
-              <input type="text" id="sg-contact-title" maxlength="60" placeholder="Contact section title (e.g. Visit us)" style="margin-top:8px;"/>
-            </div>
             <div class="form-group" style="margin-top:18px;">
               <label>Business Hours <span style="opacity:.6;font-weight:400;">(shown on site if filled in)</span></label>
               <input type="text" id="sg-hours" placeholder="e.g. 8:00 AM – 8:00 PM" style="margin-top:4px;"/>
@@ -3908,6 +3903,7 @@
 <div class="toast" id="toast"></div>
 
 <script src="/static/dashboard.js"></script>
+<script src="/static/admin_outreach.js"></script>
 
   <!-- ═══ Feature 9: FIRST ORDER CELEBRATION MODAL ═══════════════════════ -->
   <div id="first-order-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);

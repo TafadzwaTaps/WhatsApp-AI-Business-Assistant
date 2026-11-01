@@ -1671,7 +1671,7 @@ def _generate_reply_core(
         else:
             method = _detect_payment_method(text)
 
-        if method in ("ecocash", "paypal", "cash", "banktransfer", "blik"):
+        if method in ("ecocash", "paypal", "cash", "banktransfer", "blik") and method in _menu_methods:
             # Defense-in-depth: re-check restriction here too, since this is
             # the actual order-creation point. Covers any path that reaches
             # the checkout state without passing through the "checkout"
@@ -2625,9 +2625,11 @@ def _generate_reply_core(
                     _pq_available = _resolve_stock(_pq_match, _is_service_biz)
                     if _pq_is_price:
                         _pq_stock_note = " — currently out of stock" if _pq_available == 0 else ""
+                        _pq_d = (_pq_match.get("description") or "").strip()
+                        _pq_desc = f"\n_{_pq_d[:200]}_" if _pq_d else ""
                         return (
                             f"💰 *{_pq_match['name']}* is {_currency_sym}{float(_pq_match['price']):.2f}"
-                            f"{_pq_stock_note}.\n\n"
+                            f"{_pq_stock_note}.{_pq_desc}\n\n"
                             f"_Type the item name to add it to your cart._"
                         )
                     if _pq_available == 0:
@@ -3020,7 +3022,9 @@ def _generate_reply_core(
             s = _resolve_stock(p, _is_service_biz)
             if s is not None and s <= 5:
                 note = f"  ⚠️ _only {s} left_"
-            lines.append(f"  {i+1}. *{p['name']}* — {_currency_sym}{float(p['price']):.2f}{note}")
+            _d = (p.get("description") or "").strip()
+            _dl = f"\n      _{_d[:80]}{'…' if len(_d) > 80 else ''}_" if _d else ""
+            lines.append(f"  {i+1}. *{p['name']}* — {_currency_sym}{float(p['price']):.2f}{note}{_dl}")
 
         recs     = _recommend(phone, business_id, products)
         rec_text = ""

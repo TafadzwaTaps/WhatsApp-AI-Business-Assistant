@@ -205,7 +205,10 @@ def _build_payment_menu(cart: list, business_id: int, currency_sym: str = "$",
         f"You're almost there! 😊\n\n"
         f"How would you like to pay?\n\n"
         + "\n".join(options) +
-        "\n\n_Reply with the number or name — e.g. *1*, *ecocash*, *paypal*, *cash*_\n"
+        "\n\n_Reply with the number or name — e.g. *1*"
+        + "".join(f", *{n}*" for n in [{"ecocash": "ecocash", "paypal": "paypal", "banktransfer": "bank",
+                                          "blik": "blik", "cash": "cash"}[m] for m in methods][:3])
+        + "_\n"
         "_Type *cancel* to go back._"
     )
 

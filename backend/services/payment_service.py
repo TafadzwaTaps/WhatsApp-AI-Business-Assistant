@@ -146,7 +146,21 @@ def available_methods(order: dict = None) -> list[str]:
     order   = order or {}
     methods: list[str] = []
 
-    eco_number, _ = _biz_ecocash(order)
+    # When called for a specific business (checkout menu), only THAT
+    # business's own configured methods count. The platform-wide env
+    # fallbacks (ECOCASH_NUMBER, PAYPAL_*) used to leak into every
+    # business's menu — e.g. a Poland barber offering the platform's
+    # EcoCash. Callers without a business_id keep the legacy behaviour.
+    per_business = order.get("business_id") is not None
+    if per_business:
+        eco_number = (order.get("ecocash_number") or order.get("payment_number") or "").strip()
+        paypal_email = (order.get("paypal_email") or "").strip()
+        paypal_ok = bool(paypal_email)
+    else:
+        eco_number, _ = _biz_ecocash(order)
+        paypal_email, _ = _biz_paypal_email(order)
+        paypal_ok = bool(paypal_email or _env("PAYPAL_CLIENT_ID"))
+
     if eco_number:
         methods.append("ecocash")
 
@@ -156,11 +170,18 @@ def available_methods(order: dict = None) -> list[str]:
     if (order.get("blik_number") or "").strip():
         methods.append("blik")
 
-    paypal_email, _ = _biz_paypal_email(order)
-    if paypal_email or _env("PAYPAL_CLIENT_ID"):
+    if paypal_ok:
         methods.append("paypal")
 
     methods.append("cash")
+
+    # Owner toggles (Settings → Payments → "Show at checkout"). A method the
+    # owner switched off is hidden. At least one method always remains, so
+    # customers can never be left with an empty menu.
+    toggles = order.get("payment_toggles")
+    if isinstance(toggles, dict) and toggles:
+        enabled = [m for m in methods if toggles.get(m) is not False]
+        methods = enabled or ["cash"]
     return methods
 
 
