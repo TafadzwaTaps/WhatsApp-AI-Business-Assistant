@@ -697,10 +697,17 @@ async function loadNeedsAttention() {
   try {
     const raw = await apiFetch(ROUTES.orders);
     const orders = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
-    const awaitingPay = orders.filter(o => ['awaiting_payment','payment_review','pending_cash'].includes(o.status)).length;
-    if (awaitingPay > 0) items.push({ icon: '💳', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders' });
-    const toFulfill = orders.filter(o => ['confirmed','preparing','ready'].includes(o.status)).length;
-    if (toFulfill > 0) items.push({ icon: '📦', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders' });
+    // "Awaiting payment" = orders still waiting for money: status awaiting_payment
+    // or payment_review, and not already marked paid. (pending_cash is a CASH order
+    // the business has already confirmed — it is not waiting on a payment step, so
+    // it used to inflate this number while the Orders page showed none.)
+    const _notPaid = o => (o.payment_status || '').toLowerCase() !== 'paid';
+    const _awaitingList = orders.filter(o => ['awaiting_payment','payment_review'].includes(o.status) && _notPaid(o));
+    const awaitingPay = _awaitingList.length;
+    const _awaitingFilter = _awaitingList.some(o => o.status === 'awaiting_payment') ? 'awaiting_payment' : 'payment_review';
+    if (awaitingPay > 0) items.push({ icon: '💳', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders', orderStatus: _awaitingFilter });
+    const toFulfill = orders.filter(o => ['pending_cash','confirmed','preparing','ready'].includes(o.status)).length;
+    if (toFulfill > 0) items.push({ icon: '📦', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders', orderStatus: 'all' });
   } catch (_) { /* omit this signal rather than show a fake number */ }
 
   try {
@@ -727,8 +734,19 @@ async function loadNeedsAttention() {
   body.innerHTML = items.map(i => `
     <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;">
       <span>${i.icon} ${escHtml(i.text)}</span>
-      <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="showSection('${i.section}', null)">Review →</button>
+      <button class="btn btn-ghost" style="font-size:11px;padding:4px 10px;" onclick="${i.section === 'orders' ? `attentionOpenOrders('${i.orderStatus || 'all'}')` : `showSection('${i.section}', null)`}">Review →</button>
     </div>`).join('');
+}
+
+// "Review →" on an Orders item opens Orders already filtered to what was counted
+// (or reset to All), so the list always matches the number on the overview.
+function attentionOpenOrders(status) {
+  showSection('orders', null);
+  setTimeout(() => {
+    const sel = document.getElementById('order-status-filter');
+    if (sel && Array.from(sel.options).some(o => o.value === status)) sel.value = status;
+    filterOrdersByStatus(status);
+  }, 350);
 }
 
 // Accessibility: ESC closes the customer/order drawers, wherever the focus is.
