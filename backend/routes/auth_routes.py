@@ -302,6 +302,15 @@ def login(data: LoginRequest, request: Request):
         return {**_token_pair(SUPER_ADMIN_USERNAME, "superadmin"), "role": "superadmin"}
 
     biz = crud.get_business_by_username(username)
+    if not biz and "@" in username:
+        # Sign in with email address: pick the owner account whose password matches.
+        try:
+            for cand in crud.get_businesses_by_email(username):
+                if cand.get("owner_password") and verify_password(data.password, cand["owner_password"]):
+                    biz = cand
+                    break
+        except Exception as exc:
+            log.warning("login: email lookup failed: %s", exc)
     if not biz or not verify_password(data.password, biz["owner_password"]):
         record_failed_login(ip, username)
         record_failed_login_ip(ip)
@@ -410,4 +419,49 @@ def email_unsubscribe(business_id: int, token: str):
         "You'll still get essential account emails (receipts, payment and security notices).</p>"
         "<p><a href='/'>Return to WaziBot</a></p>"
         "</div></body></html>"
+    )
+
+
+# ── Address-scoped unsubscribe (linked from EVERY outgoing email) ────────────
+def _unsub_page(title: str, msg: str) -> str:
+    return (
+        "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
+        f"<title>{title} — WaziBot</title>"
+        "<style>body{font-family:Arial,sans-serif;background:#0a0f0d;color:#e8f5e9;"
+        "display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}"
+        ".box{text-align:center;max-width:420px;padding:32px;}a{color:#22c55e;}</style>"
+        f"</head><body><div class='box'><h2>{title}</h2><p>{msg}</p>"
+        "<p><a href='/'>Return to WaziBot</a></p></div></body></html>"
+    )
+
+
+def _opt_out_address(email: str) -> None:
+    """Flag marketing opt-out on every business owned by this email (fail-soft)."""
+    try:
+        from core.db import supabase
+        e = (email or "").strip().lower()
+        res = supabase.table("businesses").select("id,features_json,owner_email").ilike("owner_email", e).execute()
+        for row in (res.data or []):
+            if (row.get("owner_email") or "").strip().lower() != e:
+                continue
+            fj = row.get("features_json") if isinstance(row.get("features_json"), dict) else {}
+            fj = dict(fj)
+            fj["marketing_emails_opt_out"] = True
+            supabase.table("businesses").update({"features_json": fj}).eq("id", row["id"]).execute()
+        log.info("email: address unsubscribed")
+    except Exception as exc:
+        log.warning("email: address unsubscribe persist failed: %s", exc)
+
+
+@router.api_route("/email/unsubscribe-address", methods=["GET", "POST"], response_class=HTMLResponse)
+def email_unsubscribe_address(email: str, token: str):
+    """GET = link click, POST = RFC 8058 one-click from the mail client."""
+    from services.email_service import verify_address_token
+    if not verify_address_token(email, token):
+        raise HTTPException(400, "Invalid or expired unsubscribe link.")
+    _opt_out_address(email)
+    return _unsub_page(
+        "You're unsubscribed",
+        "You won't receive promotional emails from WaziBot at this address anymore. "
+        "You'll still get essential account emails (receipts, payment and security notices).",
     )

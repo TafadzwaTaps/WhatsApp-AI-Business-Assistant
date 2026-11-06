@@ -61,6 +61,15 @@ def get_business_by_username(username: str) -> Optional[dict]:
     return _one("businesses", res)
 
 
+def get_businesses_by_email(email: str) -> list:
+    """All businesses whose owner_email matches (case-insensitive, exact)."""
+    e = (email or "").strip().lower()
+    if "@" not in e:
+        return []
+    res = supabase.table("businesses").select("*").ilike("owner_email", e).limit(10).execute()
+    return [r for r in (res.data or []) if (r.get("owner_email") or "").strip().lower() == e]
+
+
 def get_business_by_phone_id(phone_id: str) -> Optional[dict]:
     res = (
         supabase.table("businesses")

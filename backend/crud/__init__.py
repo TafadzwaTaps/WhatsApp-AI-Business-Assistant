@@ -24,6 +24,7 @@ from crud._helpers import _now, _one  # noqa: F401
 from crud.businesses import (  # noqa: F401
     create_business,
     get_business_by_username,
+    get_businesses_by_email,
     get_business_by_phone_id,
     get_all_businesses,
     get_active_businesses,
