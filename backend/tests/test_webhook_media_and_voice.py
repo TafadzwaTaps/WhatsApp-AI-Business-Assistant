@@ -79,8 +79,9 @@ def _envelope(msg_obj: dict) -> dict:
 
 @pytest.fixture
 def client(monkeypatch, fake_supabase):
-    # Signature check: empty app secret makes verify_meta_signature() a
-    # deliberate no-op (dev-mode passthrough) — see services/security.py.
+    # Signature check: empty app secret fails closed unless the opt-in dev
+    # bypass ALLOW_UNSIGNED_WEBHOOKS=1 is set — see services/security.py.
+    monkeypatch.setenv("ALLOW_UNSIGNED_WEBHOOKS", "1")
     monkeypatch.setattr(webhook_routes, "WHATSAPP_APP_SECRET", "")
     monkeypatch.setattr(webhook_routes, "SHARED_WA_TOKEN", "")
     monkeypatch.setattr(webhook_routes, "manager", MagicMock(broadcast=AsyncMock()))
@@ -260,11 +261,13 @@ def test_empty_media_with_no_id_and_no_caption_still_handled(client, monkeypatch
 # ── 6. Webhook verification (GET /webhook) ──────────────────────────────────
 
 def test_webhook_verify_succeeds_with_matching_token(monkeypatch):
-    monkeypatch.setattr(webhook_routes, "VERIFY_TOKEN", "myverifytoken123")
+    # The documented placeholder token is intentionally never accepted, so use
+    # a non-placeholder value here.
+    monkeypatch.setattr(webhook_routes, "VERIFY_TOKEN", "test-verify-token-xyz")
     client = TestClient(_build_app())
     resp = client.get("/webhook", params={
         "hub.mode": "subscribe",
-        "hub.verify_token": "myverifytoken123",
+        "hub.verify_token": "test-verify-token-xyz",
         "hub.challenge": "challenge-abc-123",
     })
     assert resp.status_code == 200

@@ -137,12 +137,20 @@ def test_shared_number_lookup_noop_when_not_configured_at_all(monkeypatch):
 
 # ── 2. WhatsApp webhook signature — fail-closed on Render when unset ───────
 
-def test_webhook_signature_fails_open_without_render_env(monkeypatch):
+def test_webhook_signature_unsigned_allowed_only_with_explicit_dev_flag(monkeypatch):
+    """With no app secret, verification passes only via opt-in ALLOW_UNSIGNED_WEBHOOKS=1."""
     from services.security import verify_meta_signature
     monkeypatch.delenv("RENDER", raising=False)
-    # Local/CI — unchanged dev-mode behavior, matches existing tests that
-    # rely on this (test_webhook_intent_engine.py, test_webhook_media_and_voice.py).
+    # Opt-in dev bypass (used by the webhook test fixtures).
+    monkeypatch.setenv("ALLOW_UNSIGNED_WEBHOOKS", "1")
     assert verify_meta_signature(b"payload", "", "") is True
+
+
+def test_webhook_signature_fails_closed_when_secret_unset_and_no_flag(monkeypatch):
+    from services.security import verify_meta_signature
+    monkeypatch.delenv("RENDER", raising=False)
+    monkeypatch.delenv("ALLOW_UNSIGNED_WEBHOOKS", raising=False)
+    assert verify_meta_signature(b"payload", "", "") is False
 
 
 def test_webhook_signature_fails_closed_on_render_when_unset(monkeypatch):

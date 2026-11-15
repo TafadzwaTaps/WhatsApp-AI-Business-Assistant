@@ -59,6 +59,7 @@ def _text_msg(text, wa_id="wamid.1"):
 
 @pytest.fixture
 def client(monkeypatch, fake_supabase):
+    monkeypatch.setenv("ALLOW_UNSIGNED_WEBHOOKS", "1")  # opt-in dev bypass; default is fail-closed
     monkeypatch.setattr(webhook_routes, "WHATSAPP_APP_SECRET", "")
     monkeypatch.setattr(webhook_routes, "SHARED_WA_TOKEN", "")
     monkeypatch.setattr(webhook_routes, "manager", MagicMock(broadcast=AsyncMock()))
