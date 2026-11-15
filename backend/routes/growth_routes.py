@@ -455,7 +455,7 @@ async def run_scheduled_campaigns(request: Request):
         due = res.data or []
     except Exception as exc:
         log.error("run_scheduled_campaigns: fetch error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": "Could not fetch scheduled campaigns"}
 
     for campaign in due:
         campaign_id = campaign["id"]

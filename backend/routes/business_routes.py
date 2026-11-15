@@ -200,7 +200,8 @@ def test_whatsapp_connection(user=Depends(require_business)):
             return {"ok": True, "reason": "Connected to Meta API ✅"}
         return {"ok": False, "reason": resp.json().get("error", {}).get("message", "Unknown")}
     except Exception as exc:
-        return {"ok": False, "reason": str(exc)}
+        log.warning("whatsapp connection check failed: %s", exc)
+        return {"ok": False, "reason": "Could not reach Meta API"}
 
 
 # ── Payment settings ──────────────────────────────────────────────────────────
@@ -762,7 +763,9 @@ def create_product(product: ProductCreate, user=Depends(require_business)):
     try:
         created = crud.create_product(bid, product)
     except ValueError as exc: raise HTTPException(422, str(exc))
-    except RuntimeError as exc: raise HTTPException(500, str(exc))
+    except RuntimeError as exc:
+        log.error("create_product failed biz=%s: %s", bid, exc)
+        raise HTTPException(500, "Could not create product. Please try again.")
     return created
 
 
@@ -779,7 +782,9 @@ def update_product(product_id: int, data: dict, user=Depends(require_business)):
 def delete_product(product_id: int, user=Depends(require_business)):
     try:
         p = crud.delete_product(product_id, user["business_id"])
-    except RuntimeError as exc: raise HTTPException(500, str(exc))
+    except RuntimeError as exc:
+        log.error("delete_product failed product=%s: %s", product_id, exc)
+        raise HTTPException(500, "Could not delete product. Please try again.")
     if not p: raise HTTPException(404, f"Product {product_id} not found or access denied")
     return {"deleted": product_id, "name": p.get("name", "")}
 
@@ -1323,7 +1328,8 @@ async def notify_low_stock_to_owner(user=Depends(require_business)):
         result = send_whatsapp(phone_id, token, owner_phone, msg)
         return {"ok": "error" not in result, "products_alerted": len(low)}
     except Exception as exc:
-        raise HTTPException(500, str(exc))
+        log.error("low-stock alert failed: %s", exc)
+        raise HTTPException(500, "Could not send low-stock alert. Please try again.")
 
 
 

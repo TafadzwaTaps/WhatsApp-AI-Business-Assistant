@@ -443,7 +443,7 @@ def cleanup_orphaned_carts(request: Request):
         return {"ok": True, "deleted": deleted}
     except Exception as exc:
         log.error("cart-cleanup error: %s", exc)
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Cart cleanup failed")
 
 
 @router.post("/billing/purge-deleted-accounts")

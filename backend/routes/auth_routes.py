@@ -6,7 +6,7 @@ Routes: POST /auth/signup, POST /auth/login, POST /auth/refresh, POST /auth/chan
 
 from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, validator
+from pydantic import BaseModel, Field, validator
 
 import crud
 from core.auth import (
@@ -336,8 +336,8 @@ class RefreshRequest(BaseModel):
 
 
 class ChangePasswordRequest(BaseModel):
-    current_password: str
-    new_password:     str
+    current_password: str = Field(..., max_length=128)
+    new_password:     str = Field(..., max_length=128)
 
 
 @router.post("/auth/change-password")
@@ -348,19 +348,23 @@ def change_password(data: ChangePasswordRequest, request: Request, user: dict = 
     client input). Sets password_changed_at in the same update so previously
     issued tokens are invalidated, exactly like the password-reset flow.
     """
-    _rate_limit("change_password", request, 5, 60)
-
     business_id = user.get("business_id")
+    _rate_limit("change_password", request, 5, 60, key_suffix=str(business_id))
+
     if user.get("role") != "business" or business_id is None or user.get("impersonated_by"):
         raise HTTPException(403, "Password change is not available for this account")
 
     biz = crud.get_business_by_id(business_id)
-    if not biz or not verify_password(data.current_password, biz.get("owner_password") or ""):
+    stored_hash = (biz or {}).get("owner_password") or ""
+    if (not biz or not data.current_password or not stored_hash
+            or not verify_password(data.current_password, stored_hash)):
         raise HTTPException(400, "Current password is incorrect")
 
     pw_ok, pw_msg = check_password_strength(data.new_password)
     if not pw_ok:
         raise HTTPException(400, pw_msg)
+    if len(data.new_password.encode("utf-8")) > 72:
+        raise HTTPException(400, "New password is too long (max 72 bytes in UTF-8; shorten it or use fewer non-ASCII characters)")
     if data.new_password == data.current_password:
         raise HTTPException(400, "New password must be different from current")
 
@@ -379,8 +383,8 @@ def change_password(data: ChangePasswordRequest, request: Request, user: dict = 
         import core.auth as _ca
         _ca._pwd_ts_cache.pop(business_id, None)
         _ca._active_cache.pop(business_id, None)
-    except Exception:
-        pass
+    except Exception as _swallowed_exc:
+        from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     log.info("change_password: updated biz=%s", business_id)
     return {"ok": True, "message": "Password updated"}
 
