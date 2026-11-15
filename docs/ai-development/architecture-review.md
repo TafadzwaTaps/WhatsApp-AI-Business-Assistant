@@ -155,3 +155,11 @@ Weak/absent: webhook idempotency/duplicates/batching, concurrency (state, stock)
 8. Installed `stripe` SDK version on Render; Meta's current Graph version support window.
 9. Whether `/auth/change-password` was intentionally removed (feature gap) or lost.
 10. Whether to keep dead duplicates (list in §1) or approve their removal later.
+
+---
+
+## Addendum (2026-11-15): owner-supplied schema and later findings
+- **H1 partly resolved:** the owner supplied the table schema (31 tables; not yet stored in the repo). Indexes, RLS, FK `ON DELETE` rules and RPC definitions are still unknown (the dump omits them).
+- **H2 revised:** `messages.wa_message_id` is `UNIQUE`, so the concurrent-duplicate race is mitigated at DB level. Message loss from save-before-reply and unsafe fallbacks remain (see `phase1-completion-report.md` §8).
+- **New:** no composite unique constraint is visible for `customers/carts/user_memory (phone,business_id)` although ~20 call sites upsert on it (verify indexes); many tenant tables lack an FK to `businesses` (orphan data after purge); money columns are `double precision`.
+- **Corrections to earlier statements:** commit `506cbaa` (owner-confirmed rollback) removed several guards that earlier sections described as "done well" (PayPal success checks, shared-number customer lookup, Stripe dedupe, store-page escaping, `/healthz`, global 5xx handler). Current verified status is in `phase1-completion-report.md` §6–§7.
