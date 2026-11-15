@@ -51,3 +51,28 @@ Approved by user: Phase 0 + safe Phase 1 (items 1.1, 1.3, 1.4, 1.7). App changes
 
 ### Remaining risks
 See `architecture-review.md` and the groups above. Nothing deployed; no migrations; no production access.
+
+---
+
+## 2026-11-15 — Phase 1c: restore removed guards (branch `phase1c-restore-guards`)
+Approved by user ("Approve 1c", 11 items; PayPal/Stripe excluded). Restored from git history by specific hunks, keeping Phase 1 and the intentional hardening from `506cbaa`. Reviewed independently by security and QA.
+
+| Item | Change | Files |
+|---|---|---|
+| 1 | Superadmin-only gate on `/growth/send-weekly-reports` | `routes/growth_routes.py` |
+| 2 | `_shared_number_customer_lookup` in `/chat/send` and close-conversation | `routes/chat_routes.py` |
+| 3 | Global sanitiser for HTTP errors >= 500 (503 and 4xx preserved) | `main.py` |
+| 4 | 10 MB CSV cap and 64 KB `features_json` 413 cap | `routes/business_routes.py` |
+| 5, 6 | Store-page escaping (`_wzEsc`, JSON-escaped buy-now args, `_wa_url` quoting, strict accent colour, JSON-LD) and socials/hero overrides; script-embedded i18n JSON now escaped (found by security review) | `services/site_generator.py` |
+| 7 | `_hm()` for Postgres TIME values in booking | `services/booking_service.py` |
+| 8 | `business_id=None` guards | `crud/businesses.py`, `services/growth_service.py`, `routes/ux_routes.py` |
+| 9 | Report job uses the current address-scoped unsubscribe link; opt-out also sets `pref_weekly_reports=False` | `services/weekly_report_service.py`, `routes/auth_routes.py` |
+| 10 | `/healthz`, maintenance page, `X-WZ-App` header, edge-IP trust (`EDGE_SHARED_SECRET`); `/site/{slug}` errors return maintenance 503 | `main.py`, `services/security.py`, `routes/marketplace_routes.py` |
+| 11a | Legacy plaintext password re-hashed to bcrypt on login | `routes/auth_routes.py` |
+| 11b | WebSocket rejects refresh tokens | `routes/webhook_routes.py` |
+
+Tests: 942+ passed; failures reduced from 44 to 11 (QA: 0 tests pass at HEAD but fail now; ~39 flipped to pass; node worker 9/9). New tests: `test_phase1c_websocket_refresh_rejected.py`, `test_phase1c_site_script_escaping.py`.
+
+Remaining 11 failures: PayPal x3 and Stripe x2 (need separate approval); old per-business report-unsubscribe x3 (removed design, owner decision); SEO x2 (stale tests of unregistered `routes/seo_routes.py`; live `main.py` handlers are correct); `test_no_silent_except_pass_left` (expansion_routes 265/282, translation_service 269/300 — pre-existing). Two billing test modules still cannot be collected.
+
+Open items from security review (not changed, need decisions): unsubscribe token falls back to a public constant if `SECRET_KEY` is unset (`email_service.py`) — confirm `SECRET_KEY` on Render; unsubscribe GET opts out immediately (link scanners); shared-number lookup lets shared tenants reach each other's customers by sequential id; caps checked after buffering; `theme_colour` unvalidated; catch-all error responses lack security headers; browser 500s shown as 503 maintenance; `update_me` Stripe-section preservation and `_sanitize_site_settings` (removed in d17c930) not restored.

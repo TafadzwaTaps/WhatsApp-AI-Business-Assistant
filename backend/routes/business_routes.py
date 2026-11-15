@@ -150,10 +150,16 @@ _SYM_TO_ISO: dict = {
     "SGD": "SGD", "RM": "MYR",
 }
 
+_FEATURES_JSON_MAX_BYTES = 64_000
+
+
 @router.patch("/me")
 def update_me(data: BusinessUpdate, user=Depends(require_business)):
     safe = data.dict(exclude_none=True)
     safe.pop("is_active", None)
+    if isinstance(safe.get("features_json"), dict):
+        if len(__import__("json").dumps(safe["features_json"], default=str).encode("utf-8")) > _FEATURES_JSON_MAX_BYTES:
+            raise HTTPException(413, "Settings are too large to save.")
     new_phone_id = safe.get("whatsapp_phone_id")
     if new_phone_id:
         existing = crud.get_business_by_phone_id(new_phone_id)
@@ -1566,6 +1572,8 @@ async def import_products_csv(
         raw_bytes = await file.read()
         if not raw_bytes:
             raise HTTPException(400, "Uploaded file is empty.")
+        if len(raw_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(400, "File too large. Maximum size is 10MB.")
         text = ""
         for enc in ("utf-8-sig", "utf-8", "latin-1"):
             try:

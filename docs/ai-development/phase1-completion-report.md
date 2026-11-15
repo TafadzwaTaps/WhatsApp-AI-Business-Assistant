@@ -74,7 +74,7 @@ Open integration issues (UI/back-end, none breaks existing features):
 9. WebSocket no longer rejects refresh tokens (506cbaa removed check).
 10. `/healthz`, `maintenance_response`, `X-WZ-App` header, edge-IP trust (`EDGE_SHARED_SECRET`/`CF-Connecting-IP`) removed → maintenance page health check 404s; rate limits key on Cloudflare edge IP unless `TRUSTED_PROXY_DEPTH` is set correctly.
 11. Legacy plaintext login branch remains; login no longer upgrades legacy passwords to bcrypt (506cbaa). Count of non-bcrypt rows unknown.
-12. SEO: robots no longer disallows dashboard/admin; sitemap lacks `/signup` (undetermined if intended).
+12. ~~SEO: robots no longer disallows dashboard/admin~~ **Corrected:** the live handlers in `main.py:237-275` do disallow `/dashboard`, `/inbox`, `/onboarding`, `/config/public` and list `/signup`. The two SEO tests target `routes/seo_routes.py`, which is never registered in `main.py` (stale tests on a dead module). Remaining real issue: the sitemap lists `/solutions*` pages that do not exist.
 13. Rate-limit RPCs (`rl_hit/rl_peek/rl_clear`): SQL file added then deleted; if `RATE_LIMIT_BACKEND=supabase`, failures silently fall back to per-process limits.
 ### LOW
 Per-process auth/pwd caches; `/debug/env`/`supabase` still show 30–50 chars of Supabase URL (superadmin); unpinned dependencies; `python-jose`; CORS defaults; upload MIME trust; `ilike` wildcards (incl. owner_email lookup `crud/businesses.py:69`).
@@ -85,7 +85,7 @@ Per-process auth/pwd caches; `/debug/env`/`supabase` still show 30–50 chars of
 | Intentionally reverted feature (506cbaa/d17c930) | ~38 | Booking `_hm` (3, **functional risk: Postgres TIME breaks booking confirmation**); cloudflare edge/X-WZ-App (2); monthly-report unsubscribe (6, **CAN-SPAM/email job probably sends nothing**); `/healthz`+maintenance+global handler (4+1); shared-number lookup (5); Stripe idempotency (2); legacy-password upgrade on login (1); CSV cap (1); site_generator socials/overrides (4); buy-now/cart escaping (5+1, XSS); PayPal success guards (2); `business_id=None` guards (3). Resolution per item: restore code **or** owner-approved removal of the test — never loosen assertions. |
 | Genuine regression | 2 | Manual-trigger superadmin gate (security, HIGH); `except: pass` sites — `auth_routes.py:386` (**ours**), `expansion_routes.py:265,282`, `translation_service.py:269,300`. |
 | Stale test | 1–2 | PayPal webhook "dev mode unchanged" vs current fail-closed 503 (owner decides). |
-| Unknown | 2 | SEO sitemap/robots. |
+| Stale test (reclassified from Unknown) | 2 | SEO sitemap/robots tests exercise unregistered `routes/seo_routes.py`; live `main.py` output is correct. Fix is test-side (point at the app) — owner approval not needed for the app. |
 Missing tests for Phase 1: generic-error bodies for each edited endpoint, caplog check that causes are still logged, WhatsApp-test response shape, CSV cap, PayPal/Stripe guards, billing lifecycle (uncollectable).
 
 ## 8. Remaining message-loss & concurrency risks (AI/WhatsApp review; no webhook processing changed)
