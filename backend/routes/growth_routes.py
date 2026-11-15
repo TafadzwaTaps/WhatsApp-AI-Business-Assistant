@@ -417,7 +417,7 @@ def cancel_scheduled_campaign(campaign_id: int, user=Depends(require_business)):
         raise
     except Exception as exc:
         log.error("cancel_scheduled_campaign error: %s", exc)
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Internal server error")
 
 
 @router.post("/campaigns/scheduled/run")

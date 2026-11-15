@@ -87,11 +87,10 @@ class _LoggingOAuth2PasswordBearer(OAuth2PasswordBearer):
             import logging as _al
             _al.getLogger("wazibot.auth").warning(
                 "AUTH FAILED: reason=missing_or_malformed_auth_header  "
-                "path=%s  method=%s  header_present=%s  header_preview=%s",
+                "path=%s  method=%s  header_present=%s",
                 request.url.path,
                 request.method,
                 bool(auth_header),
-                (auth_header[:20] + "…") if auth_header else "(none)",
             )
             raise
 

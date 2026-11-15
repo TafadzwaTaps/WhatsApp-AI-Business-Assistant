@@ -212,7 +212,5 @@ def reset_password_direct(data: DirectResetRequest, request: Request):
 
 
 def _get_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:45]
-    return getattr(getattr(request, "client", None), "host", "")[:45]
+    from services.security import get_client_ip
+    return (get_client_ip(request) or "")[:45]

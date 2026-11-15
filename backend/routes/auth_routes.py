@@ -1,10 +1,10 @@
 """
 routes/auth_routes.py — Authentication endpoints.
 
-Routes: POST /auth/signup, POST /auth/login, POST /auth/refresh
+Routes: POST /auth/signup, POST /auth/login, POST /auth/refresh, POST /auth/change-password
 """
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, validator
 
@@ -27,6 +27,7 @@ from services.security import (
     check_ip_login_limit, check_account_login_lockout,
     record_failed_login_ip, record_failed_login_account,
     clear_account_login_lockout,
+    rate_limit as _rate_limit,
 )
 from routes._deps import log
 
@@ -332,6 +333,56 @@ def login(data: LoginRequest, request: Request):
 
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password:     str
+
+
+@router.post("/auth/change-password")
+def change_password(data: ChangePasswordRequest, request: Request, user: dict = Depends(get_current_user)):
+    """Change the authenticated business owner's password.
+
+    Scoped strictly to the business_id in the verified JWT (never email or
+    client input). Sets password_changed_at in the same update so previously
+    issued tokens are invalidated, exactly like the password-reset flow.
+    """
+    _rate_limit("change_password", request, 5, 60)
+
+    business_id = user.get("business_id")
+    if user.get("role") != "business" or business_id is None or user.get("impersonated_by"):
+        raise HTTPException(403, "Password change is not available for this account")
+
+    biz = crud.get_business_by_id(business_id)
+    if not biz or not verify_password(data.current_password, biz.get("owner_password") or ""):
+        raise HTTPException(400, "Current password is incorrect")
+
+    pw_ok, pw_msg = check_password_strength(data.new_password)
+    if not pw_ok:
+        raise HTTPException(400, pw_msg)
+    if data.new_password == data.current_password:
+        raise HTTPException(400, "New password must be different from current")
+
+    from datetime import datetime, timezone
+    from core.db import supabase
+    try:
+        supabase.table("businesses").update({
+            "owner_password":      hash_password(data.new_password),
+            "password_changed_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", business_id).execute()
+    except Exception as exc:
+        log.error("change_password: update failed biz=%s: %s", business_id, exc)
+        raise HTTPException(500, "Could not update password. Please try again.")
+
+    try:  # drop this process's cached auth state so old tokens are rejected now
+        import core.auth as _ca
+        _ca._pwd_ts_cache.pop(business_id, None)
+        _ca._active_cache.pop(business_id, None)
+    except Exception:
+        pass
+    log.info("change_password: updated biz=%s", business_id)
+    return {"ok": True, "message": "Password updated"}
 
 
 @router.post("/auth/refresh")

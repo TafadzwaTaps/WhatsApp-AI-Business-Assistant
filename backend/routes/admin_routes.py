@@ -42,10 +42,10 @@ def debug_env(user=Depends(require_superadmin)):
     supa_url   = os.getenv("SUPABASE_URL", "")
     supa_key   = os.getenv("SUPABASE_KEY", "")
     return {
-        "FERNET_KEY":   f"{fernet_key[:8]}…({len(fernet_key)} chars)" if fernet_key else "❌ NOT SET",
-        "SECRET_KEY":   f"{secret_key[:4]}…({len(secret_key)} chars)" if secret_key else "❌ NOT SET",
-        "SUPABASE_URL": f"{supa_url[:30]}…" if supa_url else "❌ NOT SET",
-        "SUPABASE_KEY": f"{supa_key[:8]}…({len(supa_key)} chars)" if supa_key else "❌ NOT SET",
+        "FERNET_KEY":   "✅ set" if fernet_key else "❌ NOT SET",
+        "SECRET_KEY":   "✅ set" if secret_key else "❌ NOT SET",
+        "SUPABASE_URL": "✅ set" if supa_url else "❌ NOT SET",
+        "SUPABASE_KEY": "✅ set" if supa_key else "❌ NOT SET",
         "VERIFY_TOKEN": "✅ set" if os.getenv("VERIFY_TOKEN") else "⚠ using default",
     }
 
@@ -150,7 +150,7 @@ def debug_token(user=Depends(require_superadmin)):
         ct = encrypt_token(test)
         pt = decrypt_token(ct)
         ok = pt == test
-        return {"ok": ok, "ciphertext_prefix": ct[:12] + "…",
+        return {"ok": ok, "ciphertext_prefix": "set" if ct else "unset",
                 "round_trip": "✅ PASS" if ok else "❌ FAIL"}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
@@ -173,7 +173,7 @@ def debug_webhook(user=Depends(require_business)):
     try:
         token = crud.get_decrypted_token(business)
         steps["token_decrypts"] = bool(token)
-        steps["token_tail"]     = "…" + token[-6:] if token else "empty"
+        steps["token_tail"]     = "set" if token else "empty"
     except Exception as exc:
         steps["token_decrypts"] = False
         steps["token_error"]    = str(exc)
@@ -594,7 +594,8 @@ def platform_stats(user=Depends(require_superadmin)):
             "shared_number_id":  SHARED_PHONE_NUMBER_ID or "not configured",
         }
     except Exception as exc:
-        raise HTTPException(500, str(exc))
+        log.error("platform stats error: %s", exc)
+        raise HTTPException(500, "Internal server error")
 
 
 @router.get("/platform/customer/{phone}/session")

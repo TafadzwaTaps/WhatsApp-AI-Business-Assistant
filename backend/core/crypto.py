@@ -95,8 +95,7 @@ def _bootstrap() -> Fernet:
         _fatal(f"FERNET_KEY is not valid URL-safe base64: {exc}")
 
     instance = Fernet(raw.encode())
-    # Log prefix only — enough to verify the right key is loaded without leaking it
-    log.info("🔑 FERNET_KEY loaded OK  prefix=%s…  total_len=%d", raw[:8], len(raw))
+    log.info("FERNET_KEY loaded")
     return instance
 
 
@@ -132,11 +131,11 @@ def encrypt_token(plaintext: str) -> str:
         return ""
 
     if is_encrypted(plaintext):
-        log.debug("encrypt_token: value already encrypted — returning as-is (prefix=%s…)", plaintext[:8])
+        log.debug("encrypt_token: value already encrypted — returning as-is")
         return plaintext
 
     ct = _fernet.encrypt(plaintext.encode()).decode()
-    log.info("encrypt_token: success  ciphertext_prefix=%s…", ct[:12])
+    log.info("encrypt_token: success")
     return ct
 
 
@@ -166,20 +165,19 @@ def decrypt_token(ciphertext: str, *, allow_plaintext: bool = True) -> str:
     if not is_encrypted(ciphertext):
         if allow_plaintext:
             log.warning(
-                "decrypt_token: value is plaintext, not Fernet-encrypted "
-                "(prefix=%s…). Returning raw. Re-save via Settings to encrypt.",
-                ciphertext[:8],
+                "decrypt_token: value is plaintext, not Fernet-encrypted. "
+                "Returning raw. Re-save via Settings to encrypt."
             )
             return ciphertext
         raise TokenDecryptionError(
-            f"Value (prefix={ciphertext[:8]}…) is not Fernet-encrypted and "
+            "Value is not Fernet-encrypted and "
             "allow_plaintext=False."
         )
 
     # ── Normal decryption path ────────────────────────────────────────────────
     try:
         pt = _fernet.decrypt(ciphertext.encode()).decode()
-        log.debug("decrypt_token: success  plain_prefix=%s…", pt[:6])
+        log.debug("decrypt_token: success")
         return pt
 
     except InvalidToken:

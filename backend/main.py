@@ -578,32 +578,32 @@ try:
     from routes_saas.billing_routes import router as billing_router
     log.info("SaaS billing_router loaded")
 except Exception as _e:
-    log.warning("SaaS billing_routes failed: %s: %s", type(_e).__name__, _e)
+    log.error("SaaS billing_routes failed: %s: %s", type(_e).__name__, _e)
 
 try:
     from routes.saas_admin_routes import router as saas_admin_router
     log.info("SaaS saas_admin_router loaded")
 except Exception as _e:
-    log.warning("SaaS saas_admin_routes failed: %s: %s", type(_e).__name__, _e)
+    log.error("SaaS saas_admin_routes failed: %s: %s", type(_e).__name__, _e)
 
 try:
     from routes.onboarding_routes import router as onboarding_router
     log.info("SaaS onboarding_router loaded")
 except Exception as _e:
-    log.warning("SaaS onboarding_routes failed: %s: %s", type(_e).__name__, _e)
+    log.error("SaaS onboarding_routes failed: %s: %s", type(_e).__name__, _e)
 
 try:
     from routes.marketplace_routes import router as marketplace_router
     log.info("SaaS marketplace_router loaded")
 except Exception as _e:
-    log.warning("SaaS marketplace_routes failed: %s: %s", type(_e).__name__, _e)
+    log.error("SaaS marketplace_routes failed: %s: %s", type(_e).__name__, _e)
 
 booking_public_router = None
 try:
     from routes.booking_routes import router as booking_public_router
     log.info("Public booking_router loaded")
 except Exception as _e:
-    log.warning("Public booking_routes failed: %s: %s", type(_e).__name__, _e)
+    log.error("Public booking_routes failed: %s: %s", type(_e).__name__, _e)
 
 _SAAS_ROUTERS_LOADED = any([billing_router, saas_admin_router, onboarding_router, marketplace_router, booking_public_router])
 if _SAAS_ROUTERS_LOADED:
@@ -635,7 +635,7 @@ try:
     app.include_router(marketing_router)
     log.info("marketing_router loaded")
 except Exception as _e:
-    log.warning("marketing_routes failed to load: %s", _e)
+    log.error("marketing_routes failed to load: %s", _e)
 
 app.include_router(business_router)
 app.include_router(chat_router)
@@ -651,7 +651,7 @@ try:
     app.include_router(admin_outreach_router)
     log.info("admin_outreach_router loaded")
 except Exception as _e:
-    log.warning("admin_outreach_routes failed: %s: %s", type(_e).__name__, _e)
+    log.error("admin_outreach_routes failed: %s: %s", type(_e).__name__, _e)
 if onboarding_router:  app.include_router(onboarding_router)
 if marketplace_router: app.include_router(marketplace_router)
 if booking_public_router: app.include_router(booking_public_router)
@@ -677,7 +677,14 @@ try:
 except Exception as _brs_err:
     log.warning("booking_reminder_scheduler: failed to start (non-fatal): %s", _brs_err)
 
-log.info("🚀 WaziBot API started — %d route modules registered", 8)
+# 9 core routers are imported unconditionally above; the rest are optional.
+_registered_modules = 9 + sum(
+    1 for _r in (billing_router, saas_admin_router, onboarding_router,
+                 marketplace_router, booking_public_router,
+                 globals().get("marketing_router"), globals().get("admin_outreach_router"))
+    if _r is not None
+)
+log.info("🚀 WaziBot API started — %d route modules registered", _registered_modules)
 
 # ── Deployment consistency check ────────────────────────────────────────────
 # This exact mismatch has broken checkout multiple times: order_lifecycle.py
