@@ -6,6 +6,7 @@ Routes: GET /webhook, POST /webhook, POST /payment/webhook,
         GET /invoice/{order_id}, WS /ws/chat/{business_id}
 """
 
+import hmac
 import json
 import os
 import logging
@@ -36,6 +37,12 @@ _log_event           = None  # set by main.py
 INVOICES_DIR         = ""    # set by main.py
 
 
+def _mask_phone(phone) -> str:
+    """Log-safe phone: keep only the last 4 digits (e.g. '***1234')."""
+    s = str(phone or "")
+    return ("***" + s[-4:]) if len(s) > 4 else "***"
+
+
 def _get_customer_state_for_log(phone: str, business_id: int) -> str:
     try:
         from core.db import supabase as _sb
@@ -62,12 +69,14 @@ async def verify_webhook(request: Request):
     mode      = p.get("hub.mode", "")
     token     = p.get("hub.verify_token", "")
     challenge = p.get("hub.challenge", "")
-    log.info("🔔 Webhook verify  mode=%r  token_match=%s  challenge=%r",
-             mode, token == VERIFY_TOKEN, challenge)
+    log.info("🔔 Webhook verify request  mode=%r", mode)
     # The documented placeholder value is public knowledge, so it is never
     # accepted: set VERIFY_TOKEN to your own random value (and the same value
     # in Meta's webhook settings).
-    if mode == "subscribe" and token == VERIFY_TOKEN and VERIFY_TOKEN != "myverifytoken123":
+    _token_ok = hmac.compare_digest(
+        (token or "").encode("utf-8"), (VERIFY_TOKEN or "").encode("utf-8")
+    ) if VERIFY_TOKEN else False
+    if mode == "subscribe" and _token_ok and VERIFY_TOKEN != "myverifytoken123":
         return PlainTextResponse(content=challenge, status_code=200)
     raise HTTPException(403, "Webhook verification failed — token mismatch")
 
@@ -161,8 +170,8 @@ async def receive_message(request: Request):
             log.warning("Webhook: missing required fields")
             return {"status": "ok"}
 
-        log.info("📩 STEP 1 OK  wa_id=%s  from=%s  text=%r",
-                 wa_message_id, customer_phone, text)
+        log.info("📩 STEP 1 OK  wa_id=%s  from=%s  type=%s  len=%d",
+                 wa_message_id, _mask_phone(customer_phone), msg_type, len(text))
     except Exception as exc:
         log.error("📥 STEP 1 FAIL: %s", exc)
         return {"status": "ok"}
@@ -180,7 +189,13 @@ async def receive_message(request: Request):
         from services.tenant_router import (
             is_shared_number, resolve_business_for_shared_number, is_switch_request,
         )
-        # These were added in a later deploy — safe fallback if not yet present
+        # NOTE (Phase 1 audit): tenant_router currently does NOT define
+        # is_businesses_help_request or _category_icon, and build_business_picker
+        # has a different signature (no current_name/title). The import below
+        # therefore always raises ImportError and the stubs are used:
+        # is_businesses_help_request() always returns False, so the
+        # "Business Directory" branch further down is currently INERT (never
+        # runs, cannot crash, never swallows a reply). Do not rely on it.
         try:
             from services.tenant_router import (
                 is_businesses_help_request, build_business_picker, _category_icon,
@@ -190,7 +205,7 @@ async def receive_message(request: Request):
             def build_business_picker(b, p="WaziBot", current_name=""): return ""
             def _category_icon(c): return "🏪"
         if is_shared_number(phone_number_id):
-            log.info("📋 STEP 2 — shared number  phone=%s", customer_phone)
+            log.info("📋 STEP 2 — shared number  phone=%s", _mask_phone(customer_phone))
             active_businesses = crud.get_active_businesses()
 
             # Phase 7: Directory command — show full business directory
@@ -365,7 +380,7 @@ async def receive_message(request: Request):
             # below (language detection, generate_reply, etc.) exactly
             # like any typed message.
             text = voice_transcript
-            log.info("🎤 voice note transcribed  phone=%s  text=%r", customer_phone, text)
+            log.info("🎤 voice note transcribed  phone=%s  len=%d", _mask_phone(customer_phone), len(text))
 
         # ── Multi-language: explicit customer language-switch request ──────
         # New module, additive only — never touches generate_reply() or the
@@ -423,7 +438,7 @@ async def receive_message(request: Request):
                 _translated_text = translate_incoming_to_english(text, _customer_lang)
                 if _translated_text != text:
                     log.info("incoming translation applied  phone=%s  lang=%s",
-                              customer_phone, _customer_lang)
+                              _mask_phone(customer_phone), _customer_lang)
                     text = _translated_text
         except Exception as exc:
             log.debug("translate_incoming_to_english failed (ignored): %s", exc)
@@ -721,7 +736,7 @@ async def receive_message(request: Request):
     # STEP 8: Send via WhatsApp API
     if not reply:
         log.info("📤 STEP 8 SKIP — empty reply  phone=%s  state=%s",
-                 customer_phone, _get_customer_state_for_log(customer_phone, business["id"]))
+                 _mask_phone(customer_phone), _get_customer_state_for_log(customer_phone, business["id"]))
         return {"status": "ok"}
 
     if token:

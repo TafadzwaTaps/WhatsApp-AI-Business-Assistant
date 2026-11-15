@@ -42,10 +42,10 @@ def debug_env(user=Depends(require_superadmin)):
     supa_url   = os.getenv("SUPABASE_URL", "")
     supa_key   = os.getenv("SUPABASE_KEY", "")
     return {
-        "FERNET_KEY":   f"{fernet_key[:8]}…({len(fernet_key)} chars)" if fernet_key else "❌ NOT SET",
-        "SECRET_KEY":   f"{secret_key[:4]}…({len(secret_key)} chars)" if secret_key else "❌ NOT SET",
-        "SUPABASE_URL": f"{supa_url[:30]}…" if supa_url else "❌ NOT SET",
-        "SUPABASE_KEY": f"{supa_key[:8]}…({len(supa_key)} chars)" if supa_key else "❌ NOT SET",
+        "FERNET_KEY":   "✅ set" if fernet_key else "❌ NOT SET",
+        "SECRET_KEY":   "✅ set" if secret_key else "❌ NOT SET",
+        "SUPABASE_URL": "✅ set" if supa_url else "❌ NOT SET",
+        "SUPABASE_KEY": "✅ set" if supa_key else "❌ NOT SET",
         "VERIFY_TOKEN": "✅ set" if os.getenv("VERIFY_TOKEN") else "⚠ using default",
     }
 
@@ -53,7 +53,7 @@ def debug_env(user=Depends(require_superadmin)):
 @router.get("/debug/security")
 def debug_security(user=Depends(require_superadmin)):
     return {
-        "webhook_signature_verification": "enabled" if WHATSAPP_APP_SECRET else "disabled (WHATSAPP_APP_SECRET not set)",
+        "webhook_signature_verification": "enabled" if WHATSAPP_APP_SECRET else "DISABLED - WHATSAPP_APP_SECRET not set: webhooks are rejected (fail closed) unless ALLOW_UNSIGNED_WEBHOOKS=1 (dev only)",
         "rate_limiting":   "enabled",
         "security_headers": "enabled",
         "password_policy": "min 8 chars, letter+digit required",
@@ -82,7 +82,8 @@ def debug_supabase(user=Depends(require_superadmin)):
         return {"ok": True, "message": "Supabase connection working ✅",
                 "url": url[:50] + "…", "rows": len(res.data)}
     except Exception as exc:
-        return {"ok": False, "error": str(exc), "url": url[:50] + "…",
+        log.error("debug_supabase: connection check failed: %s", exc)
+        return {"ok": False, "error": "Supabase connection check failed (see server logs)", "url": url[:50] + "…",
                 "action": "Check Supabase project is active at https://supabase.com/dashboard"}
 
 
@@ -108,7 +109,8 @@ def debug_verify_deploy(user=Depends(require_superadmin)):
             "has_null_safe_category_fix": '(biz.get("category") or "")' in src,
         }
     except Exception as exc:
-        result["build_business_picker"] = {"error": str(exc)}
+        log.error("debug_verify_deploy: build_business_picker: %s", exc)
+        result["build_business_picker"] = {"error": "inspection failed (see server logs)"}
 
     try:
         import crud
@@ -118,7 +120,8 @@ def debug_verify_deploy(user=Depends(require_superadmin)):
             "has_currency_symbol_fix": "currency_symbol" in src,
         }
     except Exception as exc:
-        result["get_active_businesses"] = {"error": str(exc)}
+        log.error("debug_verify_deploy: get_active_businesses: %s", exc)
+        result["get_active_businesses"] = {"error": "inspection failed (see server logs)"}
 
     # File modification timestamps — helps spot stale builds
     try:
@@ -134,7 +137,8 @@ def debug_verify_deploy(user=Depends(require_superadmin)):
                     "modified": os.path.getmtime(fpath) if fpath else None,
                 }
             except Exception as e:
-                result["file_info"][name] = {"error": str(e)}
+                log.error("debug_verify_deploy: file_info %s: %s", name, e)
+                result["file_info"][name] = {"error": "inspection failed (see server logs)"}
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
@@ -150,10 +154,11 @@ def debug_token(user=Depends(require_superadmin)):
         ct = encrypt_token(test)
         pt = decrypt_token(ct)
         ok = pt == test
-        return {"ok": ok, "ciphertext_prefix": ct[:12] + "…",
+        return {"ok": ok, "ciphertext_prefix": "set" if ct else "unset",
                 "round_trip": "✅ PASS" if ok else "❌ FAIL"}
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"ok": False, "error": str(exc)})
+        log.error("debug_token: encrypt/decrypt round trip failed: %s", exc)
+        return JSONResponse(status_code=500, content={"ok": False, "error": "Token encryption check failed (see server logs)"})
 
 
 @router.get("/debug/webhook")
@@ -173,16 +178,18 @@ def debug_webhook(user=Depends(require_business)):
     try:
         token = crud.get_decrypted_token(business)
         steps["token_decrypts"] = bool(token)
-        steps["token_tail"]     = "…" + token[-6:] if token else "empty"
+        steps["token_tail"]     = "set" if token else "empty"
     except Exception as exc:
         steps["token_decrypts"] = False
-        steps["token_error"]    = str(exc)
+        log.error("debug_webhook: token decrypt failed biz=%s: %s", bid, exc)
+        steps["token_error"]    = "Token could not be decrypted (see server logs)"
     try:
         products = crud.get_products(bid)
         steps["products_count"] = len(products)
     except Exception as exc:
         steps["products_count"] = 0
-        steps["products_error"] = str(exc)
+        log.error("debug_webhook: products fetch failed biz=%s: %s", bid, exc)
+        steps["products_error"] = "Products could not be loaded (see server logs)"
     if token and business.get("whatsapp_phone_id"):
         try:
             resp = http_requests.get(
@@ -193,7 +200,8 @@ def debug_webhook(user=Depends(require_business)):
             steps["whatsapp_api_ok"]     = resp.status_code == 200
         except Exception as exc:
             steps["whatsapp_api_ok"]    = False
-            steps["whatsapp_api_error"] = str(exc)
+            log.error("debug_webhook: WhatsApp API check failed biz=%s: %s", bid, exc)
+            steps["whatsapp_api_error"] = "WhatsApp API request failed (see server logs)"
     steps["overall"] = "✅ ALL GOOD" if all([
         steps["has_phone_id"], steps.get("token_decrypts"),
         steps.get("products_count", 0) > 0, steps.get("whatsapp_api_ok"),
@@ -325,7 +333,8 @@ async def push_lifecycle_update(
             if token and phone_id:
                 wa_result = send_whatsapp(phone_id, token, phone, customer_msg)
         except Exception as exc:
-            wa_result = {"error": str(exc)}
+            log.error("admin order notify failed biz=%s: %s", bid, exc)
+            wa_result = {"error": "notification failed"}
 
     if new_status in ("delivered", "completed") and phone:
         try:
@@ -423,7 +432,9 @@ async def admin_cancel_order(order_id: int, data: OrderAdminAction, user=Depends
     if not order or order.get("business_id") != bid:
         raise HTTPException(404, f"Order {order_id} not found")
     try: update_order_status_supabase(order_id, "cancelled")
-    except Exception as exc: raise HTTPException(422, str(exc))
+    except Exception as exc:
+        log.warning("admin_cancel_order: status update rejected order=%s: %s", order_id, exc)
+        raise HTTPException(422, "Order cannot be cancelled from its current status")
     crud.update_order_payment(order_id, bid, {"payment_status": "cancelled"})
     ref    = f"ORDER-{order_id}"
     reason = data.note or "Your order has been cancelled."
@@ -440,7 +451,9 @@ async def admin_refund_order(order_id: int, data: OrderAdminAction, user=Depends
     if not order or order.get("business_id") != bid:
         raise HTTPException(404, f"Order {order_id} not found")
     try: update_order_status_supabase(order_id, "refunded")
-    except Exception as exc: raise HTTPException(422, str(exc))
+    except Exception as exc:
+        log.warning("admin_refund_order: status update rejected order=%s: %s", order_id, exc)
+        raise HTTPException(422, "Order cannot be refunded from its current status")
     crud.update_order_payment(order_id, bid, {"payment_status": "refunded"})
     ref   = f"ORDER-{order_id}"
     note  = data.note or "Your refund has been processed."
@@ -594,7 +607,8 @@ def platform_stats(user=Depends(require_superadmin)):
             "shared_number_id":  SHARED_PHONE_NUMBER_ID or "not configured",
         }
     except Exception as exc:
-        raise HTTPException(500, str(exc))
+        log.error("platform stats error: %s", exc)
+        raise HTTPException(500, "Internal server error")
 
 
 @router.get("/platform/customer/{phone}/session")

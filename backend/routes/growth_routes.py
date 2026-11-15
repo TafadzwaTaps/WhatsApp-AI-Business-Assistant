@@ -417,7 +417,7 @@ def cancel_scheduled_campaign(campaign_id: int, user=Depends(require_business)):
         raise
     except Exception as exc:
         log.error("cancel_scheduled_campaign error: %s", exc)
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Internal server error")
 
 
 @router.post("/campaigns/scheduled/run")
@@ -455,7 +455,7 @@ async def run_scheduled_campaigns(request: Request):
         due = res.data or []
     except Exception as exc:
         log.error("run_scheduled_campaigns: fetch error: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return {"ok": False, "error": "Could not fetch scheduled campaigns"}
 
     for campaign in due:
         campaign_id = campaign["id"]

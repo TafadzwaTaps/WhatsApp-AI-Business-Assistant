@@ -461,7 +461,8 @@ async def delete_conversation(customer_id: int, user=Depends(require_business)):
             from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         return {"ok": True, "customer_id": customer_id, "message": "Conversation deleted"}
     except Exception as exc:
-        raise HTTPException(500, str(exc))
+        log.error("delete_conversation error: %s", exc)
+        raise HTTPException(500, "Internal server error")
 
 
 @router.delete("/chat/messages/{message_id}")

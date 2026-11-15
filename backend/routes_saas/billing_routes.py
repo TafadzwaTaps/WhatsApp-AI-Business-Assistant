@@ -30,6 +30,12 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _cron_secret_ok(provided: str, expected: str) -> bool:
+    """Constant-time CRON_SECRET comparison (bytes, so non-ASCII can't raise)."""
+    import hmac
+    return hmac.compare_digest((provided or "").encode("utf-8"), (expected or "").encode("utf-8"))
+
+
 
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
@@ -350,7 +356,7 @@ def send_trial_warnings(request: Request):
     if not secret:
         log.error("🚨 CRON_SECRET not configured — refusing to run this endpoint unauthenticated")
         raise HTTPException(503, "Cron endpoint not configured")
-    if request.headers.get("x-cron-secret") != secret:
+    if not _cron_secret_ok(request.headers.get("x-cron-secret", ""), secret):
         raise HTTPException(403, "Forbidden")
 
     from core.db import supabase
@@ -417,7 +423,7 @@ def cleanup_orphaned_carts(request: Request):
     if not secret:
         log.error("🚨 CRON_SECRET not configured — refusing to run this endpoint unauthenticated")
         raise HTTPException(503, "Cron endpoint not configured")
-    if request.headers.get("x-cron-secret") != secret:
+    if not _cron_secret_ok(request.headers.get("x-cron-secret", ""), secret):
         raise HTTPException(403, "Forbidden")
 
     from core.db import supabase
@@ -437,7 +443,7 @@ def cleanup_orphaned_carts(request: Request):
         return {"ok": True, "deleted": deleted}
     except Exception as exc:
         log.error("cart-cleanup error: %s", exc)
-        raise HTTPException(500, str(exc))
+        raise HTTPException(500, "Cart cleanup failed")
 
 
 @router.post("/billing/purge-deleted-accounts")
@@ -455,7 +461,7 @@ def purge_deleted_accounts(request: Request):
     if not secret:
         log.error("🚨 CRON_SECRET not configured — refusing to run this endpoint unauthenticated")
         raise HTTPException(503, "Cron endpoint not configured")
-    if request.headers.get("x-cron-secret") != secret:
+    if not _cron_secret_ok(request.headers.get("x-cron-secret", ""), secret):
         raise HTTPException(403, "Forbidden")
 
     from services.account_deletion import purge_due_accounts
