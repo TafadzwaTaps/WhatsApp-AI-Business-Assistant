@@ -259,6 +259,55 @@ function setWsStatus(cls, label) {
   if (lbl) lbl.textContent = label;
 }
 
+/* ── U5: triage helpers (pure) ──────────────────────────── */
+let triageMode = 'all';          // 'all' | 'human' | 'ai'
+const _handoffMeta = {};         // customerId -> { reason, priority }
+
+function classifyConversation(c) {
+  c = c || {};
+  const inHandoff = !!c.in_handoff || c.handoff_state === 'human_handoff';
+  const awaiting  = (c.unread_count || 0) > 0 && c.last_direction !== 'outgoing';
+  return (inHandoff || awaiting) ? 'human' : 'ai';
+}
+
+function filterConversations(list, mode) {
+  const arr = Array.isArray(list) ? list : [];
+  if (mode !== 'human' && mode !== 'ai') return arr;
+  return arr.filter(c => classifyConversation(c) === mode);
+}
+
+function countConversations(list) {
+  const arr = Array.isArray(list) ? list : [];
+  const human = filterConversations(arr, 'human').length;
+  return { all: arr.length, human, ai: arr.length - human };
+}
+
+function updateTriageUI(counts) {
+  ['all', 'human', 'ai'].forEach(m => {
+    const b = document.getElementById('triage-' + m);
+    const n = document.getElementById('triage-count-' + m);
+    if (n && counts) n.textContent = String(counts[m]);
+    if (b) {
+      b.classList.toggle('active', triageMode === m);
+      b.setAttribute('aria-pressed', triageMode === m ? 'true' : 'false');
+    }
+  });
+}
+
+function setTriage(mode) {
+  triageMode = (mode === 'human' || mode === 'ai') ? mode : 'all';
+  renderContacts(allConversations);
+}
+
+function updateHandoffStateLine(isHandoff) {
+  const el = document.getElementById('chat-state-line');
+  if (!el) return;
+  el.classList.toggle('is-human', !!isHandoff);
+  el.textContent = isHandoff
+    ? 'You are handling this chat — AI paused'
+    : 'AI is handling this chat';
+}
+
 /* ── CONVERSATIONS SIDEBAR ──────────────────────────────── */
 async function loadConversations(showSkeleton = true) {
   try {
@@ -322,6 +371,9 @@ function renderContacts(convos) {
   } else if (activeFilter === 'recent') {
     filtered = filtered.slice(0, 20);
   }
+  // U5: triage chips (counts reflect the loaded list, before search)
+  updateTriageUI(countConversations(safe));
+  filtered = filterConversations(filtered, triageMode);
   // Full-text search: phone + customer_name + last_message
   const search = q;
   if (search) {
@@ -332,6 +384,15 @@ function renderContacts(convos) {
     );
   }
 
+  if (!filtered.length && !search && triageMode !== 'all' && safe.length) {
+    const human = triageMode === 'human';
+    list.innerHTML = `<div class="empty-state">
+      <div class="empty-state-icon" aria-hidden="true"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-${human ? 'user' : 'chat'}"/></svg></div>
+      <div class="empty-state-title">${human ? 'Nothing needs you right now' : 'AI is not handling any chats'}</div>
+      <div class="empty-state-hint">${human ? 'No chats are waiting for a human reply.' : 'Every chat is waiting on a person.'}</div>
+    </div>`;
+    return;
+  }
   if (!filtered.length) {
     const emptyMsg = search
       ? `No results for "<strong>${escHtml(search)}</strong>"`
@@ -348,12 +409,19 @@ function renderContacts(convos) {
     const div = document.createElement('div');
     div.className = 'contact-item' + (c.customer_id === currentCustomerId ? ' active' : '');
     div.dataset.customerId = c.customer_id;
+    div.setAttribute('role', 'button'); div.tabIndex = 0;
     div.onclick = () => openChat(c.customer_id, c.phone || '', c.last_seen || '');
     const isHandoff = c.in_handoff || c.handoff_state === 'human_handoff';
     div.className = ['contact-item',
       c.customer_id === currentCustomerId ? 'active' : '',
       isHandoff ? 'handoff-active' : '',
+      classifyConversation(c) === 'human' ? 'needs-human' : '',
     ].filter(Boolean).join(' ');
+    const _reason = String(c.handoff_reason || (_handoffMeta[c.customer_id] || {}).reason || '');
+    const statusChip = isHandoff
+      ? `<span class="status-chip is-human"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>Human</span>`
+        + (_reason ? `<span class="status-chip reason" title="${escHtml(_reason)}">${escHtml(_reason)}</span>` : '')
+      : `<span class="status-chip is-ai"><span class="status-dot" aria-hidden="true"></span>AI</span>`;
 
     // Highlight search match in phone display.
     // Security fix: this used to run the <mark> replace on the RAW phone
@@ -372,10 +440,11 @@ function renderContacts(convos) {
       : escapedPhone;
 
     div.innerHTML = `
-      <div class="contact-avatar">${isHandoff ? '🔴' : '👤'}</div>
+      <div class="contact-avatar" aria-hidden="true">${isHandoff ? '<svg class="ic ic-red" aria-hidden="true" focusable="false"><use href="#i-dot"/></svg>' : '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-user"/></svg>'}</div>
       <div class="contact-info">
         <div class="contact-phone">${displayPhone}</div>
         <div class="contact-preview">${c.last_direction === 'outgoing' ? '🤖 ' : ''}${escHtml(formatMessagePreview(c.last_message))}</div>
+        <div class="contact-status">${statusChip}</div>
       </div>
       <div class="contact-meta">
         <div class="contact-time">${formatTime(c.last_message_at)}</div>
@@ -547,6 +616,7 @@ function updateHandoffUI(isHandoff) {
       ? btn.dataset.originalTitle
       : `${btn.dataset.originalTitle} — switch to 👤 Agent mode first`;
   });
+  updateHandoffStateLine(isHandoff);
 }
 
 async function toggleHandoff() {
@@ -945,6 +1015,112 @@ function formatTime(iso) {
   } catch { return '—'; }
 }
 
+// ── U2b accessibility helpers (additive; markup/keyboard behaviour only) ──
+// 1) ONE delegated keydown: Enter/Space on role="button" / [data-kbd-click]
+//    elements that are not native controls triggers click().
+// 2) ONE shared dialog helper: remember/restore focus, move focus in on open,
+//    Escape closes via the dialog's existing close function, Tab is trapped
+//    inside aria-modal dialogs. Dialogs keep showing/hiding exactly as before;
+//    open/close is detected from their existing class/style change.
+const _A11Y_FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const _A11Y_DIALOG_CLOSERS = { 'close-conv-modal': 'closeCloseConversationModal' };
+const _a11yDialogStack = [];
+
+function _a11yIsNative(el) {
+  const t = String((el && el.tagName) || '').toLowerCase();
+  return t === 'button' || t === 'a' || t === 'input' || t === 'select' || t === 'textarea' || t === 'summary';
+}
+
+function _a11yKbdClick(e) {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return false;
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const t = e.target;
+  if (!t || typeof t.matches !== 'function' || !t.matches('[role="button"],[data-kbd-click]')) return false;
+  if (_a11yIsNative(t) || t.isContentEditable) return false;
+  e.preventDefault(); // stops Space from scrolling the page
+  t.click();
+  return true;
+}
+
+function _a11yFocusables(root) {
+  return Array.from(root.querySelectorAll(_A11Y_FOCUSABLE))
+    .filter(el => !el.disabled && !el.hidden && (typeof el.getClientRects !== 'function' || el.getClientRects().length > 0));
+}
+
+function _a11yTrapTab(e, root) {
+  if (!root || e.key !== 'Tab') return false;
+  const f = _a11yFocusables(root);
+  if (!f.length) { e.preventDefault(); if (typeof root.focus === 'function') root.focus(); return true; }
+  const first = f[0], last = f[f.length - 1], a = document.activeElement;
+  const outside = !root.contains(a);
+  if (e.shiftKey && (a === first || a === root || outside)) { e.preventDefault(); last.focus(); return true; }
+  if (!e.shiftKey && (a === last || outside)) { e.preventDefault(); first.focus(); return true; }
+  return false;
+}
+
+function _a11yIsDialogOpen(el) {
+  return !!(el && ((el.classList && el.classList.contains('open')) || (el.style && el.style.display && el.style.display !== 'none')));
+}
+
+function _a11yDialogOpened(el) {
+  if (!el || _a11yDialogStack.some(d => d.el === el)) return;
+  _a11yDialogStack.push({ el, prev: document.activeElement });
+  // Skip when the existing open helper already moved focus into the dialog.
+  if (el.contains(document.activeElement)) return;
+  const f = _a11yFocusables(el);
+  if (f.length) f[0].focus();
+  else { if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1'); el.focus(); }
+}
+
+function _a11yDialogClosed(el) {
+  const i = _a11yDialogStack.findIndex(d => d.el === el);
+  if (i < 0) return;
+  const prev = _a11yDialogStack.splice(i, 1)[0].prev;
+  const a = document.activeElement;
+  const lost = !a || a === document.body || el.contains(a);
+  if (lost && prev && prev !== document.body && typeof prev.focus === 'function' && document.contains(prev)) prev.focus();
+}
+
+function _a11yTopDialog() {
+  for (let i = _a11yDialogStack.length - 1; i >= 0; i--) {
+    if (_a11yIsDialogOpen(_a11yDialogStack[i].el)) return _a11yDialogStack[i].el;
+  }
+  return null;
+}
+
+function _a11yEscape(e) {
+  if (e.key !== 'Escape' || e.defaultPrevented) return false;
+  const el = _a11yTopDialog();
+  const fn = el && _A11Y_DIALOG_CLOSERS[el.id];
+  if (fn && typeof window[fn] === 'function') { window[fn](); return true; }
+  if (el && el.hasAttribute('data-a11y-esc-hide')) { el.style.display = 'none'; return true; }
+  return false;
+}
+
+document.addEventListener('keydown', e => {
+  if (_a11yKbdClick(e)) return;
+  if (_a11yEscape(e)) return;
+  const top = _a11yTopDialog();
+  if (top && top.getAttribute('aria-modal') === 'true') _a11yTrapTab(e, top);
+});
+
+if (typeof MutationObserver !== 'undefined') {
+  const _a11yState = new WeakMap();
+  new MutationObserver(recs => {
+    const seen = new Set();
+    recs.forEach(r => {
+      const el = r.target;
+      if (seen.has(el) || !el.getAttribute || el.getAttribute('role') !== 'dialog' || el.hasAttribute('data-a11y-self')) return;
+      seen.add(el);
+      const now = _a11yIsDialogOpen(el);
+      if (!!_a11yState.get(el) === now) return;
+      _a11yState.set(el, now);
+      if (now) _a11yDialogOpened(el); else _a11yDialogClosed(el);
+    });
+  }).observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
+}
+// ── U2b end ──
+
 /* ── TOAST ──────────────────────────────────────────────── */
 let toastTimer;
 
@@ -954,8 +1130,10 @@ function showToast(msg, isError = false) {
     t = document.createElement('div');
     t.id = 'toast';
     t.className = 'toast hidden';
+    t.setAttribute('aria-atomic', 'true');
     document.body.appendChild(t);
   }
+  t.setAttribute('role', isError ? 'alert' : 'status'); t.setAttribute('aria-live', isError ? 'assertive' : 'polite');
   t.textContent = msg;
   t.style.borderLeftColor = isError ? 'var(--red)' : 'var(--green)';
   t.style.color = isError ? 'var(--red)' : 'var(--green)';
@@ -1379,7 +1557,7 @@ function openHandoffReasonModal() {
   if (!modal || !grid) return;
 
   grid.innerHTML = HANDOFF_REASONS.map(r =>
-    `<div class="reason-chip ${r === _selectedReason ? 'selected' : ''}"
+    `<div class="reason-chip ${r === _selectedReason ? 'selected' : ''}" role="button" tabindex="0"
           onclick="selectReason('${r}')">${r}</div>`
   ).join('');
 
@@ -1389,7 +1567,7 @@ function openHandoffReasonModal() {
   _handoffPriority = 'normal';
   if (prioGrid) {
     prioGrid.innerHTML = HANDOFF_PRIORITIES.map(p =>
-      `<div class="reason-chip ${p.value === _handoffPriority ? 'selected' : ''}"
+      `<div class="reason-chip ${p.value === _handoffPriority ? 'selected' : ''}" role="button" tabindex="0"
             onclick="selectPriority('${p.value}')" data-priority="${p.value}">${p.label}</div>`
     ).join('');
   }
@@ -1452,6 +1630,7 @@ async function confirmHandoffWithReason() {
       body:    JSON.stringify({ reason, priority: _handoffPriority }),
     });
     currentHandoffState = true;
+    _handoffMeta[currentCustomerId] = { reason, priority: _handoffPriority };
     updateHandoffUI(true);
     showToast(`👤 Agent mode — ${reason}`);
     await loadConvSummary(currentCustomerId);
@@ -1474,6 +1653,59 @@ async function confirmHandoffWithReason() {
   };
 })();
 
+// U5: "Return to AI" undo — wraps the toggle; same endpoints as the original flow.
+(function() {
+  const _prev = window.toggleHandoff;
+  let undoTimer = null;
+  function hideUndo() {
+    clearTimeout(undoTimer);
+    const t = document.getElementById('undo-toast');
+    if (t) t.remove();
+  }
+  function showUndo(cid, meta) {
+    hideUndo();
+    const base = document.getElementById('toast');
+    if (base) base.classList.add('hidden');
+    const t = document.createElement('div');
+    t.id = 'undo-toast';
+    t.className = 'toast toast-undo';
+    t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); t.setAttribute('aria-atomic', 'true');
+    const span = document.createElement('span');
+    span.textContent = 'AI mode resumed';
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'toast-undo-btn'; b.textContent = 'Undo';
+    b.onclick = async () => {
+      b.disabled = true;
+      try {
+        if (meta && meta.reason) {
+          await apiFetch(`/chat/handoff/${cid}/request-with-reason`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reason: meta.reason, priority: meta.priority || 'normal' }),
+          });
+        } else {
+          await apiFetch(`/chat/handoff/${cid}/request`, { method: 'POST' });
+        }
+        hideUndo();
+        if (cid === currentCustomerId) { currentHandoffState = true; updateHandoffUI(true); }
+        showToast('👤 Agent mode restored — AI paused.');
+        loadConversations(false).catch(() => {});
+      } catch (e) {
+        hideUndo();
+        showToast('Undo failed: ' + e.message, true);
+      }
+    };
+    t.appendChild(span); t.appendChild(b);
+    document.body.appendChild(t);
+    undoTimer = setTimeout(hideUndo, 8000);
+  }
+  window.toggleHandoff = async function() {
+    const cid = currentCustomerId, was = currentHandoffState;
+    const meta = cid ? Object.assign({}, _handoffMeta[cid] || {}) : null;
+    await _prev.apply(this, arguments);
+    if (cid && was && !currentHandoffState) showUndo(cid, meta);
+  };
+})();
+
 // Conversation summary
 async function loadConvSummary(customerId) {
   const panel = document.getElementById('conv-summary-panel');
@@ -1482,6 +1714,7 @@ async function loadConvSummary(customerId) {
 
   try {
     const data = await apiFetch(`/chat/handoff/${customerId}/summary`);
+    if (data && data.handoff_reason) _handoffMeta[customerId] = { reason: data.handoff_reason, priority: data.handoff_priority || 'normal' };
     const chips = [
       data.segment === 'vip'   ? `<span class="conv-summary-chip vip">⭐ VIP</span>` :
       data.segment === 'loyal' ? `<span class="conv-summary-chip loyal">💚 Loyal</span>` : '',
@@ -1656,15 +1889,15 @@ document.addEventListener('keydown', e => {
 /* ── Phase 5: Command Palette ── */
 
 const CMD_COMMANDS = [
-  { icon: '💬', label: 'Open Inbox',         sub: 'View all conversations',    action: () => {} },
-  { icon: '📞', label: 'View Customers',      sub: 'Browse CRM customer list',  action: () => window.open('/dashboard#customers','_self') },
-  { icon: '📣', label: 'Create Campaign',     sub: 'Send a targeted message',   action: () => window.open('/dashboard#campaigns','_self') },
-  { icon: '📦', label: 'View Orders',         sub: 'See pending and recent orders', action: () => window.open('/dashboard#orders','_self') },
-  { icon: '📊', label: 'Open Analytics',      sub: 'Revenue and stats',         action: () => window.open('/dashboard#analytics','_self') },
-  { icon: '📋', label: 'View Inventory',      sub: 'Products and stock',        action: () => window.open('/dashboard#inventory','_self') },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg>', label: 'Open Inbox',         sub: 'View all conversations',    action: () => {} },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-customers"/></svg>', label: 'View Customers',      sub: 'Browse CRM customer list',  action: () => window.open('/dashboard#customers','_self') },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg>', label: 'Create Campaign',     sub: 'Send a targeted message',   action: () => window.open('/dashboard#campaigns','_self') },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-products"/></svg>', label: 'View Orders',         sub: 'See pending and recent orders', action: () => window.open('/dashboard#orders','_self') },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-overview"/></svg>', label: 'Open Analytics',      sub: 'Revenue and stats',         action: () => window.open('/dashboard#analytics','_self') },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-clipboard"/></svg>', label: 'View Inventory',      sub: 'Products and stock',        action: () => window.open('/dashboard#inventory','_self') },
   { icon: '⭐', label: 'Show VIP Customers',  sub: 'High-value customer list',  action: () => window.open('/dashboard#customers?segment=vip','_self') },
-  { icon: '🔴', label: 'Handoff Queue',       sub: 'Conversations needing agent', action: () => setFilter('handoff') },
-  { icon: '💳', label: 'Pending Payments',    sub: 'Orders awaiting payment',   action: () => window.open('/dashboard#payments','_self') },
+  { icon: '<svg class="ic ic-red" aria-hidden="true" focusable="false"><use href="#i-dot"/></svg>', label: 'Handoff Queue',       sub: 'Conversations needing agent', action: () => setFilter('handoff') },
+  { icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-card"/></svg>', label: 'Pending Payments',    sub: 'Orders awaiting payment',   action: () => window.open('/dashboard#payments','_self') },
   { icon: '💡', label: 'Growth Opportunities', sub: 'Retention and revenue insights', action: () => window.open('/dashboard#overview','_self') },
   { icon: '❓', label: 'Ask for Help',        sub: 'Open the support assistant', action: () => { closeCmd(); toggleHelp(); } },
   { icon: '🔍', label: 'Search Conversations', sub: 'Find a customer',          action: () => document.getElementById('search-input')?.focus() },
@@ -1703,7 +1936,7 @@ function renderCmdResults() {
   }
 
   box.innerHTML = _cmdFiltered.map((c, i) => `
-    <div class="cmd-result ${i === _cmdActive ? 'active' : ''}" onclick="execCmd(${i})">
+    <div class="cmd-result ${i === _cmdActive ? 'active' : ''}" role="button" tabindex="0" onclick="execCmd(${i})">
       <span class="cmd-result-icon">${c.icon}</span>
       <div>
         <div class="cmd-result-text">${escHtml(c.label)}</div>

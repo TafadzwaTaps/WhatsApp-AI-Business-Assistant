@@ -1651,3 +1651,403 @@ body {
   .cmd-results { max-height: 50vh; }
   .reason-chip { font-size: 11px; padding: 9px 8px; }
 }
+
+/* ═══ UI SYSTEM v2 — U1 accessibility & interaction ═══
+   Additive section (appended). Remove this whole block to revert U1.
+   Keeps the existing green-on-dark brand; dark + light themes both covered. */
+
+/* 8. z-index scale (tokens only; existing z-index values unchanged for now) */
+:root {
+  --z-base: 1;
+  --z-dropdown: 50;
+  --z-sticky: 100;
+  --z-sidebar: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-toast: 600;
+  --z-tooltip: 700;
+  --focus-ring: var(--green);
+}
+
+/* 7. Utilities */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.skip-link {
+  position: absolute;
+  left: 8px; top: -100px;
+  z-index: 10000;
+  padding: 10px 16px;
+  background: var(--green);
+  color: #000;
+  font-weight: 700;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: top 0.15s ease;
+}
+.skip-link:focus, .skip-link:focus-visible { top: 8px; }
+
+/* 1. Focus ring */
+:is(a, button, summary, select, textarea, input, [role="button"], [role="tab"], [role="menuitem"], [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+:is(input[type="checkbox"], input[type="radio"]):focus-visible { outline-offset: 3px; }
+:is(input, textarea, select):focus-visible { outline-offset: 1px; }
+
+/* 2. Reduced motion — stop decorative motion; slow (not remove) spinners */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto !important; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  .spin {
+    animation-duration: 1.8s !important;
+    animation-iteration-count: infinite !important;
+  }
+}
+
+/* 5. Button states (colour/background/border/opacity/transform only; no layout shift) */
+:is(.btn, .btn-login, .btn-logout, .send-btn, .qa-btn, .icon-btn, .filter-btn, .clear-btn, .handoff-banner-btn) {
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+:is(.btn, .btn-login, .btn-logout):active:not(:disabled):not([aria-disabled="true"]):not(.loading) { transform: translateY(0) scale(0.98); }
+:is(.btn, .btn-login, .btn-logout, .send-btn, .qa-btn, .icon-btn, .filter-btn, .clear-btn, .handoff-banner-btn):is(:disabled, [aria-disabled="true"]) {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+:is(.btn, .btn-login, .btn-logout, .send-btn, .qa-btn, .icon-btn):is(:disabled, [aria-disabled="true"]):hover { transform: none; }
+.btn-primary:is(:disabled, [aria-disabled="true"]):hover { background: var(--green); }
+.btn-ghost:is(:disabled, [aria-disabled="true"]):hover,
+.btn-purple:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
+:is(.btn, .btn-login, .btn-logout, .send-btn, .qa-btn).loading {
+  opacity: 0.7;
+  cursor: progress;
+  pointer-events: none;
+  transform: none;
+}
+.btn-primary:active:not(:disabled):not(.loading) { background: var(--green-dim); }
+.btn-ghost:active:not(:disabled):not(.loading) { background: rgba(239, 68, 68, 0.18); }
+.btn-purple:active:not(:disabled):not(.loading) { background: rgba(167, 139, 250, 0.35); }
+body.light { --focus-ring: #15803d; }
+
+/* 4a. Contrast: --text-muted failed 4.5:1 (dark #3d5e43 = 2.3-2.65; light #9ab0a0 = 2.06-2.31). Same hue, adjusted. */
+:root { --text-muted: #5e9167; }
+body.light { --text-muted: #5a7361; }
+
+/* 6. cursor:pointer for clickable classes (and not-allowed when disabled) */
+:is(.contact-item, .filter-btn, .icon-btn, .clear-btn, .qa-btn, .send-btn, .reason-chip, .modal-close, .help-quick-link, .help-related-chip,
+    .help-panel-send, .help-panel-close, .help-fab, .handoff-banner-btn, .chat-header-back, .btn-back, .btn-handoff-confirm,
+    .btn-handoff-cancel, .agent-note-save, .agent-note-header, .cmd-result, .load-more-btn, .new-msg-indicator,
+    .modal-overlay, .cmd-overlay, [role="button"], summary, select, label[for]) { cursor: pointer; }
+:is(button, input, select, textarea, [role="button"])[disabled],
+[role="button"][aria-disabled="true"] { cursor: not-allowed; }
+
+/* 3. Touch targets + mobile form fields (desktop with a fine pointer is unchanged) */
+@media (pointer: coarse), (max-width: 768px) {
+  :is(.btn-back, .filter-btn, .icon-btn, .clear-btn, .send-btn, .qa-btn, .reason-chip, .modal-close, .help-quick-link,
+      .help-related-chip, .help-panel-send, .help-panel-close, .handoff-banner-btn, .chat-header-back, .btn-handoff-confirm,
+      .btn-handoff-cancel, .agent-note-save, .load-more-btn, .contact-item, .cmd-result, .handoff-reason-actions button) { min-height: 44px; }
+  :is(.icon-btn, .modal-close, .help-panel-close, .chat-header-back, .send-btn) { min-width: 44px; }
+  .help-fab { min-width: 48px; min-height: 48px; }
+  :is(.btn-back, .filter-btn, .icon-btn, .clear-btn, .send-btn, .qa-btn, .reason-chip, .modal-close, .help-panel-close,
+      .help-panel-send, .handoff-banner-btn, .chat-header-back, .agent-note-save, .load-more-btn,
+      .handoff-reason-actions button) { display: inline-flex; align-items: center; justify-content: center; }
+  .chat-actions, .quick-actions-bar, .handoff-reason-actions { gap: 8px; }
+  :is(input, select, textarea):not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]) {
+    font-size: 16px !important;
+  }
+  input:is([type="checkbox"], [type="radio"]) { width: 20px; height: 20px; }
+  label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
+    min-height: 44px; display: inline-flex; align-items: center; gap: 8px;
+  }
+}
+
+/* 4. Text legibility: 9-11.5px content labels raised to 12px (same selectors as the originals).
+   Intentionally kept small: .unread-badge, .topbar-unread-badge (counters), .cmd-shortcut (key-hint chip). */
+.ws-indicator { font-size: 12px; }
+.btn-back { font-size: 12px; }
+.filter-btn { font-size: 12px; }
+.contact-preview { font-size: 12px; }
+.contact-time { font-size: 12px; }
+.no-selection .ns-sub { font-size: 12px; }
+.chat-status { font-size: 12px; }
+.icon-btn { font-size: 12px; }
+.date-sep { font-size: 12px; }
+.msg-time { font-size: 12px; }
+.msg-status { font-size: 12px; }
+.load-more-btn { font-size: 12px; }
+.msg-sender-label { font-size: 12px; }
+.handoff-banner { font-size: 12px; }
+.handoff-banner { font-size: 12px; }
+.payment-verify-banner { font-size: 12px; }
+.handoff-banner-btn { font-size: 12px; }
+.clear-btn { font-size: 12px; }
+.qa-btn { font-size: 12px; }
+.handoff-banner-meta { font-size: 12px; }
+.conv-summary-panel { font-size: 12px; }
+.conv-summary-chip { font-size: 12px; }
+.conv-summary-ai-note { font-size: 12px; }
+.conv-summary-ai-note pre { font-size: 12px; }
+.agent-note-header { font-size: 12px; }
+.agent-note-item { font-size: 12px; }
+.agent-note-meta { font-size: 12px; }
+.agent-note-input { font-size: 12px; }
+.agent-note-save { font-size: 12px; }
+.help-related-chip { font-size: 12px; }
+.help-quick-link { font-size: 12px; }
+.cmd-result-sub { font-size: 12px; }
+.cmd-section-hdr { font-size: 12px; }
+.cmd-footer { font-size: 12px; }
+@media (max-width: 380px) {
+  .new-msg-indicator { font-size: 12px; }
+}
+@media (max-width: 600px) {
+  .qa-btn { font-size: 12px; }
+}
+@media (max-width: 700px) {
+  .reason-chip { font-size: 12px; }
+}
+
+/* ═══ UI SYSTEM v2 — U2 visual polish ═══
+   Additive section (appended). Remove this whole block to revert U2.
+   Brand, fonts and layout unchanged; all colours derive from existing variables. */
+
+/* 1. Design tokens (--ease already defined above; not redefined) */
+:root {
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+  --space-5: 24px; --space-6: 32px; --space-7: 48px; --space-8: 64px;
+  --radius-sm: 6px; --radius-md: 10px; --radius-lg: 16px;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-2: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --shadow-3: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --dur-fast: 150ms; --dur-med: 250ms;
+  --fs-label: 12px; --fs-body: 13px; --fs-h3: 15px; --fs-h2: 18px;
+}
+html { color-scheme: dark; }
+body.light {
+  --shadow-1: 0 1px 2px rgba(16, 36, 26, 0.06);
+  --shadow-2: 0 4px 14px rgba(16, 36, 26, 0.08);
+  --shadow-3: 0 12px 40px rgba(16, 36, 26, 0.14);
+}
+html:has(body.light) { color-scheme: light; }
+
+/* 4. Reusable empty / loading states */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-2); padding: var(--space-6) var(--space-4); text-align: center;
+  color: var(--text-dim); font-family: var(--mono);
+}
+.empty-state-icon {
+  width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%; font-size: 20px; line-height: 1; color: var(--green);
+  background: var(--green-glow); border: 1px solid color-mix(in srgb, var(--green) 30%, var(--border));
+}
+.empty-state-title { font-family: var(--sans); font-size: var(--fs-h3); font-weight: 700; color: var(--text); }
+.empty-state-hint { font-size: var(--fs-label); line-height: 1.6; max-width: 36ch; color: var(--text-dim); }
+
+.skeleton-line, .skeleton-card, .skeleton-row {
+  display: block;
+  background: linear-gradient(90deg, var(--surface2) 25%, color-mix(in srgb, var(--green) 9%, var(--surface2)) 50%, var(--surface2) 75%);
+  background-size: 200% 100%;
+  animation: ui-shimmer 1.4s linear infinite;
+}
+.skeleton-line { height: 12px; width: 100%; border-radius: var(--radius-sm); margin-bottom: var(--space-2); }
+.skeleton-line.short { width: 40%; }
+.skeleton-card { min-height: 112px; border-radius: var(--radius-md); border: 1px solid var(--border); }
+.skeleton-row { height: 40px; border-radius: var(--radius-sm); margin-bottom: var(--space-2); }
+@keyframes ui-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Menus / tooltips (new reusable classes; z-index from tokens) */
+.ui-dropdown-menu, .ui-tooltip {
+  background: var(--surface); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-md); box-shadow: var(--shadow-2);
+  animation: ui-pop var(--dur-fast) var(--ease);
+}
+.ui-dropdown-menu { position: absolute; z-index: var(--z-dropdown); min-width: 160px; padding: var(--space-1); }
+.ui-tooltip { position: absolute; z-index: var(--z-tooltip); padding: var(--space-1) var(--space-2); font-family: var(--mono); font-size: var(--fs-label); pointer-events: none; }
+
+@keyframes ui-pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes ui-fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* Form helper / error text */
+.form-hint, .field-help { font-family: var(--mono); font-size: var(--fs-label); line-height: 1.5; color: var(--text-dim); }
+.field-error { font-family: var(--mono); font-size: var(--fs-label); line-height: 1.5; color: var(--red); }
+
+/* Scrollbars, selection */
+html { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text-dim) 45%, transparent) transparent; }
+::selection { background: color-mix(in srgb, var(--green) 30%, transparent); color: var(--text); }
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line, .skeleton-card, .skeleton-row,
+  .ui-dropdown-menu, .ui-tooltip { animation: none !important; }
+}
+
+/* Modal (handoff reason), toast */
+.handoff-reason-modal.open { animation: ui-fade var(--dur-med) var(--ease); }
+.handoff-reason-modal.open .handoff-reason-box { animation: ui-pop var(--dur-med) var(--ease); }
+.handoff-reason-box { border-radius: var(--radius-lg); box-shadow: var(--shadow-3); }
+@supports (backdrop-filter: blur(1px)) {
+  .handoff-reason-modal.open { backdrop-filter: blur(3px); }
+}
+.toast { box-shadow: var(--shadow-2); }
+@media (max-width: 640px) {
+  .toast {
+    left: var(--space-4); right: var(--space-4); margin-inline: auto; width: fit-content;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+    max-width: calc(100vw - 2 * var(--space-4));
+  }
+}
+
+/* Form disabled / error states (inbox inputs keep their own look) */
+input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+[aria-invalid="true"], input.error, select.error, textarea.error { border-color: var(--red); }
+
+/* ═══ UI SYSTEM v2 — U3 responsive ═══
+   Additive section (appended). Remove this whole block to revert U3. */
+
+/* Viewport height: dvh so the composer stays above the on-screen keyboard (vh/% fallback above) */
+@supports (height: 100dvh) {
+  html, body { height: 100dvh; }
+}
+
+/* Topbar: safe-areas, no overflow on narrow phones */
+.topbar { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); min-width: 0; }
+.topbar-left, .topbar-right { min-width: 0; }
+@media (max-width: 899px) {
+  .hamburger { min-width: 44px; min-height: 44px; }
+  .theme-toggle { min-width: 44px; min-height: 44px; }
+  .sidebar { max-width: 100vw; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  .contact-list { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+  .chat-messages { overscroll-behavior: contain; }
+  .filter-row, .clear-row { flex-wrap: wrap; }
+}
+@media (max-width: 480px) {
+  .btn-back { padding: 5px 8px; }
+  .topbar-right { gap: 6px; }
+  .chat-header { flex-wrap: wrap; }
+  .chat-info { flex-basis: 120px; }
+}
+
+/* Message bubbles: never wider than the panel; long URLs and names wrap */
+.msg { min-width: 0; }
+.bubble { max-width: 100%; overflow-wrap: anywhere; }
+.bubble img, .bubble video { max-width: 100%; height: auto; }
+.msg-sender-label, .chat-phone, .chat-status { overflow-wrap: anywhere; }
+
+/* Composer: safe-area padding, sticky above keyboard */
+.send-box { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); padding-left: max(14px, env(safe-area-inset-left, 0px)); padding-right: max(14px, env(safe-area-inset-right, 0px)); }
+@media (max-width: 700px) {
+  .send-box { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+  .agent-notes-panel { max-height: 30vh; max-height: 30dvh; }
+  .quick-actions-bar { scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
+  .qa-btn { white-space: nowrap; flex-shrink: 0; scroll-snap-align: start; }
+}
+
+/* Floating help: keep clear of composer, safe-area, toast */
+@media (max-width: 700px) {
+  .help-fab { bottom: calc(80px + env(safe-area-inset-bottom, 0px)); right: calc(14px + env(safe-area-inset-right, 0px)); }
+  .help-panel { bottom: calc(140px + env(safe-area-inset-bottom, 0px)); max-height: calc(100vh - 160px); max-height: calc(100dvh - 160px); }
+  .cmd-box { max-height: 100dvh; padding-bottom: env(safe-area-inset-bottom, 0px); }
+}
+
+/* Handoff modal: internal scroll, fits short viewports */
+.handoff-reason-modal { padding: 12px; overflow-y: auto; }
+.handoff-reason-box { max-height: 100vh; max-height: 100dvh; overflow-y: auto; max-width: 100%; }
+@media (max-width: 480px) { .handoff-reason-actions { flex-wrap: wrap; } }
+
+/* End-conversation dialog (#close-conv-modal): its classes had no rules in this stylesheet; display is toggled inline by JS */
+.modal-overlay { position: fixed; inset: 0; z-index: 200; background: rgba(0, 0, 0, 0.6); align-items: center; justify-content: center; padding: 12px; overflow-y: auto; }
+.modal-box { width: min(92vw, 420px); max-height: 100vh; max-height: 100dvh; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow-lg); color: var(--text); }
+.modal-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 14px 16px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 14px; }
+.modal-body { padding: 16px; }
+.modal-footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
+.modal-close { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; min-width: 32px; min-height: 32px; font-size: 18px; line-height: 1; cursor: pointer; }
+.modal-footer .btn { padding: 9px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface2); color: var(--text); font-family: var(--mono); font-size: 12px; cursor: pointer; }
+.modal-footer .btn-ghost { background: transparent; }
+
+/* Hover-only affordances */
+@media (hover: none) {
+  .send-btn:hover, .help-fab:hover { transform: none; }
+}
+
+/* Landscape phones: keep composer and messages usable */
+@media (max-height: 480px) and (orientation: landscape) {
+  .quick-actions-bar, .conv-summary-panel { display: none !important; }
+  .agent-notes-panel { max-height: 25vh; max-height: 25dvh; }
+  .help-fab { bottom: 12px; }
+}
+
+/* Very small phones */
+@media (max-width: 360px) {
+  .topbar-logo { font-size: 15px; }
+  .topbar-divider { display: none; }
+  .ws-indicator { display: none; }
+  .filter-btn { padding: 6px 8px; }
+  .msg { max-width: 92%; }
+}
+
+/* ═══ UI SYSTEM v2 — U4 icons ═══ */
+.ic{width:1.15em;height:1.15em;vertical-align:-0.2em;flex:none;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+.ic-red{color:var(--red,#ef4444)}
+
+/* ═══ UI SYSTEM v2 — U5 inbox experience ═══ */
+.triage-row { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 8px; }
+.triage-chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; min-height: 30px;
+  background: var(--surface2, transparent); color: var(--text-dim, inherit);
+  border: 1px solid var(--border, rgba(128,128,128,.3)); border-radius: 999px;
+  font-family: var(--mono); font-size: 12px; cursor: pointer;
+}
+.triage-chip:hover { color: var(--text); }
+.triage-chip.active, .triage-chip[aria-pressed="true"] { border-color: var(--green); color: var(--green); background: rgba(34,197,94,.12); }
+.triage-chip[data-triage="human"].active { border-color: var(--amber); color: var(--amber); background: rgba(245,158,11,.12); }
+.triage-count { font-weight: 700; padding: 0 6px; border-radius: 999px; background: rgba(128,128,128,.2); }
+body.light .triage-chip.active, body.light .triage-chip[aria-pressed="true"] { color: #15803d; border-color: #15803d; }
+body.light .triage-chip[data-triage="human"].active { color: #92400e; border-color: #b45309; background: rgba(245,158,11,.16); }
+
+.contact-status { display: flex; align-items: center; gap: 5px; margin-top: 3px; min-width: 0; }
+.status-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; line-height: 1.5; white-space: nowrap; flex: none;
+  border: 1px solid transparent;
+}
+.status-chip.is-ai { color: var(--green); background: rgba(34,197,94,.1); border-color: rgba(34,197,94,.3); }
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+.status-chip.is-human { color: var(--amber); background: rgba(245,158,11,.12); border-color: rgba(245,158,11,.4); }
+.status-chip.reason { flex: 0 1 auto; min-width: 0; max-width: 120px; overflow: hidden; text-overflow: ellipsis; display: inline-block; color: var(--text-dim, inherit); border-color: rgba(128,128,128,.3); font-weight: 500; }
+body.light .status-chip.is-ai { color: #15803d; }
+body.light .status-dot { background: #15803d; }
+body.light .status-chip.is-human { color: #92400e; }
+
+.contact-item.needs-human { position: relative; box-shadow: inset 3px 0 0 var(--amber); }
+.contact-item.needs-human .contact-phone { font-weight: 800; }
+body.light .contact-item.needs-human { box-shadow: inset 3px 0 0 #b45309; }
+
+.chat-state-line { font-size: 11px; color: var(--green); margin-top: 2px; }
+.chat-state-line.is-human { color: var(--amber); }
+body.light .chat-state-line { color: #15803d; }
+body.light .chat-state-line.is-human { color: #92400e; }
+
+.toast.toast-undo { display: flex; align-items: center; gap: 12px; opacity: 1; transform: none; }
+.toast-undo-btn {
+  background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px;
+  padding: 4px 10px; font: inherit; font-weight: 700; cursor: pointer; min-height: 28px;
+}
+.toast-undo-btn:disabled { opacity: .5; cursor: default; }
+@media (prefers-reduced-motion: no-preference) {
+  .contact-item.needs-human { transition: box-shadow .2s ease, background .2s ease; }
+}
