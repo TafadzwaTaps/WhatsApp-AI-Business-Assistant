@@ -572,6 +572,76 @@ async def upload_avatar(
     return {"ok": True, "avatar_url": public_url}
 
 
+@router.post("/me/upload-site-logo")
+async def upload_site_logo(
+    request: Request,
+    file: UploadFile = File(...),
+    user=Depends(require_business),
+):
+    """Upload a logo for the public website. Stored at features_json.site_generator.logo_url
+    and used instead of the initial-letter placeholder. Same storage/moderation as avatars."""
+    bid = user["business_id"]
+    allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+    ct = file.content_type or "image/jpeg"
+    if ct not in allowed:
+        raise HTTPException(400, f"File type {ct} not supported. Use JPEG, PNG, or WebP.")
+
+    import uuid as _uuid
+    from core.db import supabase
+    import os as _os
+
+    data = await file.read()
+    if len(data) > 3 * 1024 * 1024:
+        raise HTTPException(400, "File too large. Maximum 3 MB.")
+
+    from services.content_moderation import screen_upload
+    from services.security import get_client_ip
+    ok, err = screen_upload(
+        data=data, content_type=ct, filename=file.filename or "",
+        business_id=bid, username=user.get("username"), ip=get_client_ip(request),
+        endpoint="/me/upload-site-logo",
+    )
+    if not ok:
+        raise HTTPException(422, err)
+
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}.get(ct, "jpg")
+    safe_name = f"logos/{bid}_{_uuid.uuid4().hex[:8]}.{ext}"
+    try:
+        supabase.storage.from_("product-images").upload(
+            safe_name, data, {"content-type": ct, "upsert": "true"}
+        )
+    except Exception as exc:
+        log.error("site logo upload error: %s", exc)
+        raise HTTPException(500, "Logo upload failed")
+
+    public_url = f"{_os.getenv('SUPABASE_URL', '')}/storage/v1/object/public/product-images/{safe_name}"
+    _save_site_logo(bid, public_url)
+    log.info("site logo uploaded  biz=%s  path=%s", bid, safe_name)
+    return {"ok": True, "logo_url": public_url}
+
+
+@router.delete("/me/site-logo")
+def remove_site_logo(user=Depends(require_business)):
+    """Remove the uploaded website logo (the site falls back to the initial-letter mark)."""
+    _save_site_logo(user["business_id"], "")
+    return {"ok": True, "logo_url": ""}
+
+
+def _save_site_logo(bid: int, url: str) -> None:
+    b = crud.get_business_by_id(bid) or {}
+    fj = dict(b.get("features_json") or {})
+    sg = dict(fj.get("site_generator") or {})
+    if url:
+        sg["logo_url"] = url
+    else:
+        sg.pop("logo_url", None)
+    fj["site_generator"] = sg
+
+    class _D:
+        def dict(self, **_): return {"features_json": fj}
+    crud.update_business(bid, _D())
+
+
 # ── Account deletion ─────────────────────────────────────────────────────────
 
 class DeleteAccountRequest(BaseModel):

@@ -461,7 +461,22 @@ def _get_site_settings(features_json: dict | None) -> dict:
         "hero_tagline":   _clip_text(cfg.get("hero_tagline"), 160),
         "cta_text":       _clip_text(cfg.get("cta_text"),     40),
         "contact_title":  _clip_text(cfg.get("contact_title"), 60),
+        # Optional uploaded logo for the public site (replaces the initial-letter
+        # placeholder). Only an http(s) URL is accepted; anything else is ignored.
+        "logo_url":       _safe_logo_url(cfg.get("logo_url")),
     }
+
+
+def _safe_logo_url(v) -> str:
+    """Return v if it is a plain http(s) URL (no whitespace/quotes), else ''."""
+    if not isinstance(v, str):
+        return ""
+    v = v.strip()
+    if len(v) > 600 or not v.lower().startswith(("https://", "http://")):
+        return ""
+    if any(c.isspace() or c in "\"'<>\\" for c in v):
+        return ""
+    return v
 
 
 def _clip_text(v, limit: int) -> str:
@@ -1035,7 +1050,8 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     hero_title  = _e(_custom_title or biz.get("name", "Our Business"))
     raw_tagline = settings.get("hero_tagline") or biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
     tagline     = _e(raw_tagline)
-    logo_url    = biz.get("logo_url", "")
+    # Logo uploaded in the website-generator settings wins over the business-level one.
+    logo_url    = (settings or {}).get("logo_url") or biz.get("logo_url", "")
 
     # Translation fix: the hero tagline ("Order Barbershop on WhatsApp") and
     # the category badge ("Barbershop") are business-supplied/derived free

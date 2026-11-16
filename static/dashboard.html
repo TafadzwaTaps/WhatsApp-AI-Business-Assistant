@@ -1575,27 +1575,27 @@
             <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <label class="audience-chip">
                 <input type="radio" name="bc-audience" value="all" checked onchange="onBcAudienceChange()"/>
-                <span>Everyone</span>
+                <span><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-customers"/></svg> Everyone</span>
               </label>
               <label class="audience-chip">
                 <input type="radio" name="bc-audience" value="inactive_30d" onchange="onBcAudienceChange()"/>
-                <span>😴 Haven't ordered in 30 days</span>
+                <span><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg> Haven't ordered in 30 days</span>
               </label>
               <label class="audience-chip">
                 <input type="radio" name="bc-audience" value="vip" onchange="onBcAudienceChange()"/>
-                <span>⭐ VIP customers only</span>
+                <span><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-star"/></svg> VIP customers only</span>
               </label>
               <label class="audience-chip">
                 <input type="radio" name="bc-audience" value="new" onchange="onBcAudienceChange()"/>
-                <span>👋 New customers only</span>
+                <span><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-user"/></svg> New customers only</span>
               </label>
               <label class="audience-chip">
                 <input type="radio" name="bc-audience" value="unpaid" onchange="onBcAudienceChange()"/>
-                <span>⏳ Unpaid orders</span>
+                <span><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-wallet"/></svg> Unpaid orders</span>
               </label>
               <label class="audience-chip">
                 <input type="radio" name="bc-audience" value="custom" onchange="onBcAudienceChange()"/>
-                <span>✅ Selected customers</span>
+                <span><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-check"/></svg> Selected customers</span>
               </label>
             </div>
             <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:8px;">
@@ -1603,20 +1603,22 @@
             </div>
 
             <!-- Customer picker — shown only when "Selected customers" is chosen -->
-            <div id="bc-customer-picker" style="display:none;margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--surface2);">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                <input type="text" id="bc-picker-search" placeholder="Search by name or phone…"
-                       oninput="renderCustomerPicker()"
-                       style="flex:1;background:var(--surface);border:1px solid var(--border);border-radius:6px;
-                              padding:6px 10px;color:var(--text);font-family:var(--mono);font-size:12px;margin-right:8px;" aria-label="Search by name or phone…"/>
-                <button type="button" class="panel-action" style="font-size:11px;padding:4px 10px;" onclick="bcSelectAll(true)">Select all</button>
-                <button type="button" class="panel-action" style="font-size:11px;padding:4px 10px;margin-left:6px;" onclick="bcSelectAll(false)">Clear</button>
+            <div id="bc-customer-picker" class="bcp" style="display:none;">
+              <div class="bcp-toolbar">
+                <div class="bcp-search"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-search"/></svg>
+                  <input type="text" id="bc-picker-search" placeholder="Search by name or phone…" oninput="renderCustomerPicker()" aria-label="Search customers by name or phone" autocomplete="off"/>
+                </div>
+                <div class="bcp-bulk">
+                  <button type="button" class="panel-action" onclick="bcSelectAll(true)">Select all</button>
+                  <button type="button" class="panel-action" onclick="bcSelectAll(false)">Clear</button>
+                </div>
               </div>
-              <div id="bc-picker-list" style="max-height:220px;overflow-y:auto;display:flex;flex-direction:column;gap:4px;">
-                <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px;">Loading customers…</div>
+              <div id="bc-picker-count" class="bcp-count" role="status" aria-live="polite">0 selected</div>
+              <div id="bc-picker-list" class="bcp-list" role="group" aria-label="Customers">
+                <div class="bcp-msg">Loading customers…</div>
               </div>
             </div>
-          </div>
+                    </div>
 
           <button class="btn btn-primary" id="broadcast-send-btn" onclick="sendBroadcastSimple()" style="width:100%;padding:14px;font-size:14px;">
             <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg> Send Message
@@ -1634,8 +1636,8 @@
             Your message will appear here…
           </div>
           <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-family:var(--mono);font-size:12px;color:var(--text-dim);line-height:2;">
-            <div>📱 Recipients: <span id="stat-selected" style="color:var(--green);font-weight:700;">—</span></div>
-            <div>📬 Last sent: <span id="stat-last">Never</span></div>
+            <div><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-phone"/></svg> Recipients: <span id="stat-selected" style="color:var(--green);font-weight:700;">—</span></div>
+            <div><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-mail"/></svg> Last sent: <span id="stat-last">Never</span></div>
           </div>
           <!-- Live recipient list — shows exactly who will receive the message -->
           <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
@@ -2620,13 +2622,34 @@
             <div style="font-size:11px;color:var(--text-dim);font-family:var(--mono);margin-bottom:12px;line-height:1.6;">
               Choose which payment methods customers see on WhatsApp under "How would you like to pay?". A method only appears once you have set it up above.
             </div>
-            <div id="pay-toggle-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;">
-              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-ecocash" checked/> 💚 EcoCash <span id="pt-ecocash-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
-              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-banktransfer" checked/> 🏦 Bank Transfer <span id="pt-banktransfer-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
-              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-blik" checked/> 📲 BLIK <span id="pt-blik-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
-              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-paypal" checked/> 🌍 PayPal <span id="pt-paypal-hint" style="color:var(--text-dim);font-size:11px;"></span></label>
-              <label style="display:flex;gap:8px;align-items:center;"><input type="checkbox" id="pt-cash" checked/> 💵 Cash</label>
+            <div id="pay-toggle-list" class="pt-list" role="group" aria-label="Payment methods shown at checkout">
+              <label class="pt-row" for="pt-ecocash" data-method="ecocash">
+                <span class="pt-icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-heart"/></svg></span>
+                <span class="pt-text"><span class="pt-name">EcoCash</span><span id="pt-ecocash-hint" class="pt-hint"></span></span>
+                <span class="toggle-switch"><input type="checkbox" id="pt-ecocash" checked onchange="_ptUpdateSummary()"/><span class="toggle-slider"></span></span>
+              </label>
+              <label class="pt-row" for="pt-banktransfer" data-method="banktransfer">
+                <span class="pt-icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-building"/></svg></span>
+                <span class="pt-text"><span class="pt-name">Bank Transfer</span><span id="pt-banktransfer-hint" class="pt-hint"></span></span>
+                <span class="toggle-switch"><input type="checkbox" id="pt-banktransfer" checked onchange="_ptUpdateSummary()"/><span class="toggle-slider"></span></span>
+              </label>
+              <label class="pt-row" for="pt-blik" data-method="blik">
+                <span class="pt-icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-phone"/></svg></span>
+                <span class="pt-text"><span class="pt-name">BLIK</span><span id="pt-blik-hint" class="pt-hint"></span></span>
+                <span class="toggle-switch"><input type="checkbox" id="pt-blik" checked onchange="_ptUpdateSummary()"/><span class="toggle-slider"></span></span>
+              </label>
+              <label class="pt-row" for="pt-paypal" data-method="paypal">
+                <span class="pt-icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-globe"/></svg></span>
+                <span class="pt-text"><span class="pt-name">PayPal</span><span id="pt-paypal-hint" class="pt-hint"></span></span>
+                <span class="toggle-switch"><input type="checkbox" id="pt-paypal" checked onchange="_ptUpdateSummary()"/><span class="toggle-slider"></span></span>
+              </label>
+              <label class="pt-row" for="pt-cash" data-method="cash">
+                <span class="pt-icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-wallet"/></svg></span>
+                <span class="pt-text"><span class="pt-name">Cash</span><span id="pt-cash-hint" class="pt-hint pt-hint-ok">Always available</span></span>
+                <span class="toggle-switch"><input type="checkbox" id="pt-cash" checked onchange="_ptUpdateSummary()"/><span class="toggle-slider"></span></span>
+              </label>
             </div>
+            <div id="pt-summary" class="pt-summary" role="status" aria-live="polite"></div>
             <button class="btn btn-primary" onclick="savePaymentToggles()">Save checkout options</button>
           </div>
         </div>
@@ -3234,6 +3257,19 @@
               </div>
             </div>
 
+            <div class="form-group sg-logo-group" style="margin-top:18px;">
+              <label for="sg-logo-file">Website Logo <span style="opacity:.6;font-weight:400;">(optional — replaces the initial-letter mark)</span></label>
+              <div class="sg-logo-row">
+                <div class="sg-logo-preview" id="sg-logo-preview" aria-hidden="true"><span id="sg-logo-initial">W</span><img id="sg-logo-img" alt="" style="display:none;"/></div>
+                <div class="sg-logo-actions">
+                  <input type="file" id="sg-logo-file" accept="image/png,image/jpeg,image/webp,image/gif" style="display:none;" onchange="sgUploadLogo(this)"/>
+                  <button type="button" class="btn btn-ghost" id="sg-logo-upload-btn" onclick="document.getElementById('sg-logo-file').click()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-upload"/></svg> Upload logo</button>
+                  <button type="button" class="btn btn-ghost" id="sg-logo-remove-btn" onclick="sgRemoveLogo()" style="display:none;"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-trash"/></svg> Remove</button>
+                  <div class="sg-logo-hint" id="sg-logo-status" role="status" aria-live="polite">PNG, JPG or WebP · max 3 MB · square works best. Without a logo your site shows the first letter of your business name.</div>
+                </div>
+              </div>
+            </div>
+
             <div class="form-group" style="margin-top:18px;">
               <label for="sg-hours">Business Hours <span style="opacity:.6;font-weight:400;">(shown on site if filled in)</span></label>
               <input type="text" id="sg-hours" placeholder="e.g. 8:00 AM – 8:00 PM" style="margin-top:4px;"/>
@@ -3748,18 +3784,19 @@
 
   <div id="section-reminders" class="section">
     <div class="topbar">
-      <div class="page-title">⏳ <span>Payment Reminders</span></div>
+      <div class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg> <span>Payment Reminders</span></div>
       <button class="btn btn-primary" onclick="sendAllReminders()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-send"/></svg> Send All Reminders</button>
     </div>
 
-    <div class="stats-grid" style="margin-bottom:16px;">
+    <p class="rem-intro">Orders where the customer started checkout but hasn't paid yet. Reminders escalate in three steps &mdash; a gentle nudge, a firm follow-up, then a final warning &mdash; and you can also nudge any order by hand.</p>
+    <div class="stats-grid rem-stats" style="margin-bottom:16px;">
       <div class="stat-card" style="border-color:rgba(245,158,11,0.4);">
-        <div class="stat-label">⏱ Tier 1 (1h+)</div>
+        <div class="stat-label"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg> Tier 1 (1h+)</div>
         <div class="stat-value" id="rem-t1-count" style="color:var(--amber);">—</div>
         <div class="stat-sub">Gentle nudge</div>
       </div>
       <div class="stat-card" style="border-color:rgba(249,115,22,0.4);">
-        <div class="stat-label">⏰ Tier 2 (3h+)</div>
+        <div class="stat-label"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg> Tier 2 (3h+)</div>
         <div class="stat-value" id="rem-t2-count" style="color:#f97316;">—</div>
         <div class="stat-sub">Firm reminder</div>
       </div>
@@ -3781,10 +3818,10 @@
         <button class="panel-action" onclick="loadReminders()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg> Refresh</button>
       </div>
       <div class="panel-body">
-        <table>
+        <div class="table-scroll"><table class="rem-table">
           <thead><tr><th scope="col">Order</th><th scope="col">Customer</th><th scope="col">Total</th><th scope="col">Method</th><th scope="col">Tier</th><th scope="col">Age</th><th scope="col">Actions</th></tr></thead>
           <tbody id="reminders-table-body"></tbody>
-        </table>
+        </table></div>
         <div id="reminders-result" style="margin-top:10px;"></div>
       </div>
     </div>

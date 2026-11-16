@@ -1947,26 +1947,42 @@ function _renderProductGrid(products) {
     grid.innerHTML = '<div class="empty" style="grid-column:1/-1;text-align:center;padding:24px;">📦 No products found<br><span style="font-size:11px;color:var(--text-dim);">Try adjusting your search or filters, or add a new product above.</span></div>';
     return;
   }
-  grid.innerHTML = products.map(p => `
-    <div class="product-card" role="button" tabindex="0" style="${_selectedProductIds.has(p.id)?'border-color:var(--green);':''}" onclick="toggleProductSelect(${p.id},!_selectedProductIds.has(${p.id}))">
+  const _ic = n => `<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-${n}"/></svg>`;
+  grid.innerHTML = products.map(p => {
+    const sel = _selectedProductIds.has(p.id);
+    let stock = '';
+    if (!window.IS_SERVICE_BUSINESS && typeof p.stock === 'number') {
+      const cls = p.stock === 0 ? 'out' : (p.stock <= 5 ? 'low' : 'ok');
+      const txt = p.stock === 0 ? 'Out of stock' : (p.stock <= 5 ? `Low · ${p.stock} left` : `${p.stock} in stock`);
+      stock = `<span class="pc2-stock pc2-stock-${cls}">${txt}</span>`;
+    }
+    const nm = escHtml(p.name || '—');
+    return `
+    <div class="product-card pc2 ${sel ? 'is-selected' : ''}" data-pid="${p.id}" role="button" tabindex="0" aria-pressed="${sel}" aria-label="${nm} — select" style="${sel ? 'border-color:var(--green);' : ''}" onclick="toggleProductSelect(${p.id},!_selectedProductIds.has(${p.id}))">
       <div class="product-card-img">
         ${p.image_url
-          ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.parentNode.textContent='📦'">`
-          : '📦'}
+          ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" loading="lazy" onerror="this.parentNode.classList.add('pc2-noimg');this.parentNode.innerHTML='${_ic('products')}'">`
+          : `<span class="pc2-noimg-ic">${_ic('products')}</span>`}
+        <span class="pc2-check" aria-hidden="true">${_ic('check')}</span>
+        <span class="pc2-status">${typeof _prodStatusBadge === 'function' ? _prodStatusBadge(p) : ''}</span>
       </div>
       <div class="product-card-body">
-        <div class="product-card-name">${escHtml(p.name||'—')}</div>
-        <div class="product-card-price">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</div>
-        ${window.IS_SERVICE_BUSINESS ? '' : (typeof p.stock === 'number' ? `<div style="font-size:10px;font-family:var(--mono);color:${p.stock<=5?'var(--amber)':'var(--text-dim)'};margin-top:3px;">${p.stock<=5&&p.stock>0?'⚠ Low: ':''}${p.stock === 0?'Out of stock':`${p.stock} in stock`}</div>` : '')}
-        <div style="display:flex;gap:6px;margin-top:8px;">
-          <button class="btn btn-ghost" style="flex:1;font-size:10px;padding:5px;" onclick="event.stopPropagation();openProdEdit(${p.id})">✎ Edit</button>
-          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();viewOrdersForProduct(${p.id})" title="View orders for this product">🧾</button>
-          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();viewCustomersForProduct(${p.id})" title="See who bought this">👥</button>
-          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();duplicateProduct(${p.id})" title="Duplicate">⧉</button>
-          <button class="btn btn-ghost" style="font-size:10px;padding:5px 8px;" onclick="event.stopPropagation();deleteProduct(${p.id})" title="Delete">✕</button>
+        <div class="product-card-name" title="${nm}">${nm}</div>
+        ${p.category ? `<div class="pc2-cat">${escHtml(p.category)}</div>` : ''}
+        <div class="pc2-row">
+          <span class="product-card-price">${getCurrencySymbol()}${(p.price||0).toFixed(2)}</span>
+          ${stock}
+        </div>
+        <div class="pc2-actions">
+          <button class="pc2-edit" onclick="event.stopPropagation();openProdEdit(${p.id})">${_ic('edit')} Edit</button>
+          <button class="pc2-ibtn" aria-label="View orders for ${nm}" onclick="event.stopPropagation();viewOrdersForProduct(${p.id})" title="View orders for this product">${_ic('file')}</button>
+          <button class="pc2-ibtn" aria-label="See who bought ${nm}" onclick="event.stopPropagation();viewCustomersForProduct(${p.id})" title="See who bought this">${_ic('customers')}</button>
+          <button class="pc2-ibtn" aria-label="Duplicate ${nm}" onclick="event.stopPropagation();duplicateProduct(${p.id})" title="Duplicate">${_ic('copy')}</button>
+          <button class="pc2-ibtn pc2-del" aria-label="Delete ${nm}" onclick="event.stopPropagation();deleteProduct(${p.id})" title="Delete">${_ic('trash')}</button>
         </div>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 // ── IMAGE UPLOAD HELPERS ──────────────────────────────────
@@ -2935,9 +2951,33 @@ function _applyPaymentToggles(pay) {
   ['ecocash', 'banktransfer', 'blik', 'paypal', 'cash'].forEach(k => {
     const cb = document.getElementById('pt-' + k);
     if (cb) cb.checked = t[k] !== false;
+    const needsSetup = (k !== 'cash' && !cfg[k]);
     const hint = document.getElementById('pt-' + k + '-hint');
-    if (hint) hint.textContent = (k !== 'cash' && !cfg[k]) ? '(not set up yet — won\'t show)' : '';
+    if (hint && k !== 'cash') {
+      hint.textContent = needsSetup ? "Not set up yet — won't show to customers" : 'Ready';
+      hint.className = 'pt-hint ' + (needsSetup ? 'pt-hint-warn' : 'pt-hint-ok');
+    }
+    const row = cb && cb.closest('.pt-row');
+    if (row) row.classList.toggle('pt-needs-setup', needsSetup);
   });
+  _ptUpdateSummary();
+}
+
+// "N of 5 methods will show at checkout" — counts only methods that are both switched on and set up.
+function _ptUpdateSummary() {
+  const el = document.getElementById('pt-summary');
+  if (!el) return;
+  const keys = ['ecocash', 'banktransfer', 'blik', 'paypal', 'cash'];
+  let live = 0;
+  keys.forEach(k => {
+    const cb = document.getElementById('pt-' + k);
+    const row = cb && cb.closest('.pt-row');
+    if (cb && cb.checked && !(row && row.classList.contains('pt-needs-setup'))) live++;
+  });
+  el.textContent = live === 0
+    ? 'No payment method will be offered at checkout. Turn one on and set it up above.'
+    : live + ' of ' + keys.length + ' methods will show at checkout.';
+  el.classList.toggle('pt-summary-warn', live === 0);
 }
 
 async function savePaymentToggles() {
@@ -5497,21 +5537,25 @@ async function loadReminders() {
     if (nb) { nb.textContent = orders.length; nb.style.display = orders.length > 0 ? 'inline-flex' : 'none'; }
 
     if (!tbody) return;
-    if (!orders.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty">✅ No pending payments.</div></td></tr>'; return; }
-    const tierColor = { 1:'var(--amber)', 2:'#f97316', 3:'var(--red)' };
+    if (!orders.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="empty rem-empty"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-check"/></svg><strong>All caught up</strong><span>No orders are waiting on payment.</span></div></td></tr>'; return; }
+    const tierLabel = { 1:'Gentle', 2:'Firm', 3:'Final' };
     tbody.innerHTML = orders.map(o => {
-      const tier = o.reminder_tier || 1;
-      const age  = o.created_at ? Math.round((Date.now() - new Date(o.created_at).getTime()) / 3600000) : '?';
+      const tier = [1,2,3].includes(o.reminder_tier) ? o.reminder_tier : 1;
+      const hrs  = o.created_at ? Math.max(0, Math.round((Date.now() - new Date(o.created_at).getTime()) / 3600000)) : null;
+      const age  = hrs === null ? '—' : (hrs >= 48 ? Math.floor(hrs / 24) + 'd ago' : hrs >= 24 ? '1d ' + (hrs - 24) + 'h ago' : hrs + 'h ago');
+      const oid  = Number(o.order_id);
       return `<tr>
         <td><span class="badge badge-amber">#${o.order_id||'—'}</span></td>
-        <td style="font-family:var(--mono);font-size:11px;">${escHtml(o.customer_phone||'—')}</td>
+        <td style="font-family:var(--mono);font-size:12px;">${escHtml(o.customer_phone||'—')}</td>
         <td><span class="badge badge-green">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}</span></td>
-        <td style="font-family:var(--mono);font-size:11px;">${escHtml(o.payment_method||'—')}</td>
-        <td><span style="color:${tierColor[tier]||'var(--text)'};font-family:var(--mono);font-size:11px;font-weight:700;">Tier ${tier}</span></td>
-        <td style="font-family:var(--mono);font-size:11px;">${age}h ago</td>
+        <td style="font-family:var(--mono);font-size:12px;">${escHtml(o.payment_method||'—')}</td>
+        <td><span class="rem-tier rem-tier-${tier}"><span class="rem-tier-dot" aria-hidden="true"></span>Tier ${tier} · ${tierLabel[tier]}</span></td>
+        <td><span class="rem-age${tier === 3 ? ' rem-age-hot' : ''}">${age}</span></td>
         <td>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;" onclick="nudgeOrder(${o.order_id})">📨 Nudge</button>
-          <button class="btn btn-ghost" style="font-size:11px;padding:4px 8px;margin-left:4px;" onclick="previewReminder(${o.order_id})">👁</button>
+          <div class="rem-actions">
+            <button class="btn btn-ghost rem-btn" onclick="nudgeOrder(${oid})" aria-label="Send reminder for order ${oid}"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-send"/></svg> Nudge</button>
+            <button class="btn btn-ghost rem-btn rem-btn-icon" onclick="previewReminder(${oid})" aria-label="Preview reminder for order ${oid}" title="Preview the message"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-eye"/></svg></button>
+          </div>
         </td>
       </tr>`;
     }).join('');
@@ -6036,34 +6080,45 @@ async function loadBcCustomerPicker() {
   }
 }
 
-function renderCustomerPicker() {
-  const list   = document.getElementById('bc-picker-list');
-  const search = (document.getElementById('bc-picker-search') || {}).value || '';
-  if (!list) return;
+function _bcInitial(c) {
+  return ((c.customer_name || c.phone || '?').toString().trim().replace(/^\+/, '')[0] || '?').toUpperCase();
+}
 
-  const q = search.trim().toLowerCase();
-  const filtered = _bcAllCustomers.filter(c => {
-    if (!q) return true;
-    return (c.phone || '').toLowerCase().includes(q) ||
-           (c.customer_name || '').toLowerCase().includes(q);
-  });
+function _bcFilterCustomers() {
+  const q = ((document.getElementById('bc-picker-search') || {}).value || '').trim().toLowerCase();
+  return _bcAllCustomers.filter(c => !q ||
+    (c.phone || '').toLowerCase().includes(q) || (c.customer_name || '').toLowerCase().includes(q));
+}
+
+function _bcUpdatePickerCount() {
+  const el = document.getElementById('bc-picker-count');
+  if (!el) return;
+  const n = _bcSelectedPhones.size, total = _bcAllCustomers.length;
+  el.textContent = n ? `${n} selected of ${total}` : `None selected · ${total} customer${total !== 1 ? 's' : ''}`;
+  el.classList.toggle('bcp-count-on', n > 0);
+}
+
+function renderCustomerPicker() {
+  const list = document.getElementById('bc-picker-list');
+  if (!list) return;
+  const filtered = _bcFilterCustomers();
+  _bcUpdatePickerCount();
 
   if (!filtered.length) {
-    list.innerHTML = '<div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px;">No customers found.</div>';
+    list.innerHTML = '<div class="bcp-msg">No customers found.</div>';
     return;
   }
 
   list.innerHTML = filtered.map(c => {
-    const checked = _bcSelectedPhones.has(c.phone) ? 'checked' : '';
-    const label   = c.customer_name ? `${escHtml(c.customer_name)} — ${escHtml(c.phone)}` : escHtml(c.phone);
+    const on   = _bcSelectedPhones.has(c.phone);
+    const name = c.customer_name ? escHtml(c.customer_name) : '';
     return `
-      <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-family:var(--mono);font-size:12px;"
-             onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
-        <input type="checkbox" data-bc-phone="${escHtml(c.phone)}" ${checked}
-               onchange="toggleBcCustomer(${jsArg(c.phone)}, this.checked)"
-               style="cursor:pointer;"/>
-        <span>${label}</span>
-        ${c.order_count ? `<span style="margin-left:auto;color:var(--text-dim);font-size:10px;">${c.order_count} orders</span>` : ''}
+      <label class="bcp-row${on ? ' is-on' : ''}">
+        <input type="checkbox" data-bc-phone="${escHtml(c.phone)}" ${on ? 'checked' : ''}
+               onchange="toggleBcCustomer(${jsArg(c.phone)}, this.checked); this.closest('.bcp-row').classList.toggle('is-on', this.checked)"/>
+        <span class="bcp-avatar" aria-hidden="true">${escHtml(_bcInitial(c))}</span>
+        <span class="bcp-who"><span class="bcp-name">${name || escHtml(c.phone)}</span>${name ? `<span class="bcp-phone">${escHtml(c.phone)}</span>` : ''}</span>
+        ${c.order_count ? `<span class="bcp-orders">${c.order_count} order${c.order_count !== 1 ? 's' : ''}</span>` : ''}
       </label>`;
   }).join('');
 }
@@ -6071,17 +6126,12 @@ function renderCustomerPicker() {
 function toggleBcCustomer(phone, checked) {
   if (checked) _bcSelectedPhones.add(phone);
   else _bcSelectedPhones.delete(phone);
+  _bcUpdatePickerCount();
   updateBcRecipientPreview('custom');
 }
 
 function bcSelectAll(selectAll) {
-  const search = (document.getElementById('bc-picker-search') || {}).value || '';
-  const q = search.trim().toLowerCase();
-  const visible = _bcAllCustomers.filter(c => {
-    if (!q) return true;
-    return (c.phone || '').toLowerCase().includes(q) ||
-           (c.customer_name || '').toLowerCase().includes(q);
-  });
+  const visible = _bcFilterCustomers();
   visible.forEach(c => {
     if (selectAll) _bcSelectedPhones.add(c.phone);
     else _bcSelectedPhones.delete(c.phone);
@@ -6102,8 +6152,8 @@ function updateBcRecipientPreview(audience) {
     const chosen = _bcAllCustomers.filter(c => _bcSelectedPhones.has(c.phone));
     if (statSelected) statSelected.textContent = chosen.length;
     recipientListEl.innerHTML = chosen.length
-      ? chosen.map(c => `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:3px 0;">${escHtml(c.customer_name || c.phone)}</div>`).join('')
-      : '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">No customers selected yet.</div>';
+      ? chosen.map(c => `<div class="bcr-item"><span class="bcp-avatar" aria-hidden="true">${escHtml(_bcInitial(c))}</span><span class="bcr-name">${escHtml(c.customer_name || c.phone)}</span><button type="button" class="bcr-x" aria-label="Remove ${escHtml(c.customer_name || c.phone)}" onclick="toggleBcCustomer(${jsArg(c.phone)}, false); renderCustomerPicker();"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-close"/></svg></button></div>`).join('')
+      : '<div class="bcp-msg">No customers selected yet. Tick customers on the left to build your list.</div>';
     return;
   }
 
@@ -6130,7 +6180,7 @@ function updateBcRecipientPreview(audience) {
     }
     recipientListEl.innerHTML = list.map(c => {
       const display = c.customer_name || c.customer_phone || c.phone || '—';
-      return `<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);padding:3px 0;">${escHtml(display)}</div>`;
+      return `<div class="bcr-item"><span class="bcp-avatar" aria-hidden="true">${escHtml((String(display).replace(/^\+/, '')[0] || '?').toUpperCase())}</span><span class="bcr-name">${escHtml(display)}</span></div>`;
     }).join('');
   }).catch(e => {
     recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
@@ -7129,13 +7179,25 @@ setTimeout(() => { if (typeof token !== 'undefined' && token) maybeShowReferralN
 function toggleProductSelect(id, checked) {
   if (checked) _selectedProductIds.add(id);
   else _selectedProductIds.delete(id);
+  _syncProductCardSelection();
   _updateBulkBar();
+}
+
+// Reflect selection on grid cards immediately (cards otherwise only restyle on re-render).
+function _syncProductCardSelection() {
+  document.querySelectorAll('#products-grid .pc2').forEach(c => {
+    const on = _selectedProductIds.has(Number(c.dataset.pid));
+    c.classList.toggle('is-selected', on);
+    c.setAttribute('aria-pressed', on ? 'true' : 'false');
+    c.style.borderColor = on ? 'var(--green)' : '';
+  });
 }
 
 function toggleSelectAllProducts(checked) {
   const visible = _allProducts.filter(() => true); // filtered subset
   visible.forEach(p => checked ? _selectedProductIds.add(p.id) : _selectedProductIds.delete(p.id));
   document.querySelectorAll('.prod-cb').forEach(cb => { cb.checked = checked; });
+  _syncProductCardSelection();
   _updateBulkBar();
 }
 
@@ -7144,6 +7206,7 @@ function clearProductSelection() {
   const allCb = document.getElementById('prod-select-all');
   if (allCb) allCb.checked = false;
   document.querySelectorAll('.prod-cb').forEach(cb => { cb.checked = false; });
+  _syncProductCardSelection();
   _updateBulkBar();
 }
 
@@ -8138,8 +8201,64 @@ async function loadSiteGeneratorSettings() {
     if (showReviews)  showReviews.checked  = !!cfg.show_reviews;
     if (showOrdering) showOrdering.checked = cfg.show_ordering !== false;
     if (showMap)      showMap.checked      = !!cfg.show_map;
+    sgRenderLogo(cfg.logo_url || '', biz.name);
   } catch (e) {
     console.warn('loadSiteGeneratorSettings:', e.message);
+  }
+}
+
+// ── Website logo (optional replacement for the initial-letter mark) ──────────
+function sgRenderLogo(url, name) {
+  const img = document.getElementById('sg-logo-img');
+  const ini = document.getElementById('sg-logo-initial');
+  const rm  = document.getElementById('sg-logo-remove-btn');
+  if (!img || !ini) return;
+  ini.textContent = ((name || '').trim()[0] || 'W').toUpperCase();
+  if (url && /^https?:\/\//i.test(url)) {
+    img.src = url; img.style.display = 'block'; ini.style.display = 'none';
+    if (rm) rm.style.display = '';
+  } else {
+    img.removeAttribute('src'); img.style.display = 'none'; ini.style.display = '';
+    if (rm) rm.style.display = 'none';
+  }
+}
+
+async function sgUploadLogo(input) {
+  const file = input?.files?.[0];
+  if (!file) return;
+  const status = document.getElementById('sg-logo-status');
+  if (file.size > 3 * 1024 * 1024) { if (status) status.textContent = 'File too large — maximum 3 MB.'; input.value = ''; return; }
+  if (status) status.textContent = 'Uploading…';
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const token = localStorage.getItem('wazi_token') || '';
+    const resp = await fetch('/me/upload-site-logo', { method: 'POST', headers: { 'Authorization': 'Bearer ' + token }, body: form });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || !data.logo_url) throw new Error(formatApiDetail(data.detail, 'Upload failed'));
+    invalidateMeCache();
+    const biz = await getCachedMe().catch(() => null);
+    sgRenderLogo(data.logo_url, biz && biz.name);
+    if (status) status.textContent = 'Logo saved. Your public site now uses it.';
+    showToast('Website logo updated');
+  } catch (e) {
+    if (status) status.textContent = 'Upload failed: ' + (e.message || 'try again');
+  } finally {
+    input.value = '';
+  }
+}
+
+async function sgRemoveLogo() {
+  const status = document.getElementById('sg-logo-status');
+  try {
+    await apiFetch('/me/site-logo', { method: 'DELETE' });
+    invalidateMeCache();
+    const biz = await getCachedMe().catch(() => null);
+    sgRenderLogo('', biz && biz.name);
+    if (status) status.textContent = 'Logo removed. Your site shows the initial-letter mark again.';
+    showToast('Website logo removed');
+  } catch (e) {
+    if (status) status.textContent = 'Could not remove logo: ' + (e.message || 'try again');
   }
 }
 
@@ -8153,6 +8272,7 @@ async function saveSiteGeneratorSettings() {
     const _accentRaw   = (document.getElementById('sg-accent-color')?.value || '').trim();
     const _accentColor = (_accentRaw && _accentRaw !== '#22c55e') ? _accentRaw : '';
     features['site_generator'] = {
+      ...(features['site_generator'] || {}),   // keep logo_url and any other saved site keys
       theme_style:     _sgSelectedTheme,
       font:             _getVal('sg-font-select') || 'inter',
       layout:           _sgSelectedLayout,
