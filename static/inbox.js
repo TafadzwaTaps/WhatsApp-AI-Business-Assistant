@@ -997,6 +997,11 @@ function escHtml(s) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+// Safe JS string-literal argument for a double-quoted inline handler attribute
+// (escHtml alone leaves ' and \ live inside a JS string): onclick="fn(${jsArg(v)})"
+function jsArg(s) {
+  return escHtml(JSON.stringify(String(s == null ? '' : s)).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029'));
+}
 
 function formatTime(iso) {
   if (!iso) return '—';
@@ -1558,7 +1563,7 @@ function openHandoffReasonModal() {
 
   grid.innerHTML = HANDOFF_REASONS.map(r =>
     `<div class="reason-chip ${r === _selectedReason ? 'selected' : ''}" role="button" tabindex="0"
-          onclick="selectReason('${r}')">${r}</div>`
+          onclick="selectReason(${jsArg(r)})">${escHtml(r)}</div>`
   ).join('');
 
   // Reset to 'normal' each time the modal opens, same as the reason grid
@@ -1568,7 +1573,7 @@ function openHandoffReasonModal() {
   if (prioGrid) {
     prioGrid.innerHTML = HANDOFF_PRIORITIES.map(p =>
       `<div class="reason-chip ${p.value === _handoffPriority ? 'selected' : ''}" role="button" tabindex="0"
-            onclick="selectPriority('${p.value}')" data-priority="${p.value}">${p.label}</div>`
+            onclick="selectPriority(${jsArg(p.value)})" data-priority="${escHtml(p.value)}">${escHtml(p.label)}</div>`
     ).join('');
   }
 
@@ -1870,7 +1875,7 @@ async function askHelp() {
     }
     if (data.related?.length) {
       html += `<div class="help-related">${data.related.map(r =>
-        `<button class="help-related-chip" onclick="askHelpQ('Tell me about ${escHtml(r.title)}')">${escHtml(r.title)}</button>`
+        `<button class="help-related-chip" onclick="askHelpQ(${jsArg('Tell me about ' + r.title)})">${escHtml(r.title)}</button>`
       ).join('')}</div>`;
     }
     body.innerHTML = html;

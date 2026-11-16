@@ -134,6 +134,14 @@ def get_me(user=Depends(require_business)):
     b.setdefault("ecocash_number",     None)
     b.setdefault("paypal_email",       None)
     b.setdefault("cash_enabled",       False)
+    # Additive readiness flags (booleans only — no payment details exposed
+    # beyond what this response already returns) so the dashboard can count
+    # every payment method when judging "payments ready".
+    _has = lambda v: bool(str(v).strip()) if v is not None else False
+    b["ecocash_configured"]       = _has(b.get("ecocash_number"))
+    b["paypal_configured"]        = _has(b.get("paypal_email"))
+    b["bank_transfer_configured"] = _has(b.get("bank_transfer_details"))
+    b["blik_configured"]          = _has(b.get("blik_number"))
     return b
 
 

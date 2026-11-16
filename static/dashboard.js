@@ -1447,7 +1447,7 @@ async function loadPlatformControls() {
           <td>${escHtml(f.label)}</td>
           <td><span class="badge ${f.paused?'badge-red':'badge-green'}">${f.paused?'PAUSED':'Running'}</span></td>
           <td><button class="btn btn-ghost" style="${f.paused?'':'color:var(--red);border-color:rgba(239,68,68,0.3);'}"
-                onclick="togglePauseFlag('${f.flag}', ${!f.paused}, '${escHtml(f.label)}')">${f.paused?'Resume':'Pause'}</button></td>
+                onclick="togglePauseFlag(${jsArg(f.flag)}, ${!f.paused}, ${jsArg(f.label)})">${f.paused?'Resume':'Pause'}</button></td>
         </tr>`).join('');
     }
     if (maintEl) {
@@ -1467,7 +1467,7 @@ async function loadPlatformControls() {
           <td>${escHtml(f.name)}</td>
           <td><span class="badge ${f.enabled?'badge-green':'badge-red'}">${f.enabled?'Enabled':'Disabled'}</span></td>
           <td style="color:var(--text-dim);font-size:11px;">${f.updated_by?('@'+escHtml(f.updated_by)):'—'}</td>
-          <td><button class="btn btn-ghost" onclick="setFeatureFlag('${escHtml(f.name)}', ${!f.enabled})">${f.enabled?'Disable':'Enable'}</button></td>
+          <td><button class="btn btn-ghost" onclick="setFeatureFlag(${jsArg(f.name)}, ${!f.enabled})">${f.enabled?'Disable':'Enable'}</button></td>
         </tr>`).join('') : `<tr><td colspan="4"><div class="empty">No feature flags set yet.</div></td></tr>`;
     }
   } catch (e) {
@@ -2194,7 +2194,7 @@ function _renderConversationList(list_data) {
     const lastDir = c.last_direction || c.direction || '';
     const lastAt = c.last_message_at || c.created_at || c.timestamp || null;
     const unread = c.unread_count || 0;
-    return `<div class="contact-item ${phone===activePhone?'active':''}" role="button" tabindex="0" onclick="openChat('${escHtml(phone)}',this)">
+    return `<div class="contact-item ${phone===activePhone?'active':''}" role="button" tabindex="0" onclick="openChat(${jsArg(phone)},this)">
     <div class="contact-phone">${escHtml(phone)}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
     <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(formatMessagePreview(lastMsg))}</div>
     <div class="contact-time">${fmtTime(lastAt)}</div>
@@ -2224,7 +2224,7 @@ async function openChat(phone, el) {
       <div style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;">
         <button class="panel-action" style="font-size:11px;" onclick="viewCustomerFromChat()" title="View in Customers">👤 Customer</button>
         <button class="panel-action" style="font-size:11px;" onclick="viewOrdersFromChat()" title="View this customer's orders">🛒 Orders</button>
-        <button class="panel-action" style="font-size:11px;" onclick="openChat('${phoneEsc}',null)" aria-label="Refresh conversation" title="Refresh">↻</button>
+        <button class="panel-action" style="font-size:11px;" onclick="openChat(${jsArg(phone)},null)" aria-label="Refresh conversation" title="Refresh">↻</button>
       </div>
     </div>
     <div class="chat-messages" id="chat-msgs"><div class="empty">Loading...</div></div>
@@ -2473,7 +2473,7 @@ function renderRecipientList(customers, showCheckboxes) {
     if (showCheckboxes) {
       return `<label style="display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;border-bottom:1px solid var(--border);">
         <input type="checkbox" ${isChecked ? 'checked' : ''} data-phone="${escHtml(c.phone)}"
-          onchange="toggleRecipient('${escHtml(c.phone)}',this.checked)"
+          onchange="toggleRecipient(${jsArg(c.phone)},this.checked)"
           style="accent-color:var(--green);cursor:pointer;width:14px;height:14px;flex-shrink:0;"/>
         <span style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">📱 ${escHtml(c.phone)}${label}</span>
       </label>`;
@@ -3601,6 +3601,12 @@ function escHtml(s){
     .replace(/</g,'&lt;')
     .replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;');
+}
+// Safe JS string-literal argument for a double-quoted inline handler attribute:
+//   onclick="fn(${jsArg(value)})"  — escHtml alone leaves ' and \ live inside the
+// JS string, so the value is JSON-encoded first, then HTML-escaped for the attribute.
+function jsArg(s){
+  return escHtml(JSON.stringify(String(s == null ? '' : s)).replace(/</g,'\\u003c').replace(/\u2028/g,'\\u2028').replace(/\u2029/g,'\\u2029'));
 }
 
 // Non-text WhatsApp messages are stored as a fixed placeholder token
@@ -5226,7 +5232,7 @@ function _renderBookingsCalendar(bookings) {
     body.innerHTML = `<div class="bk-cal-grid bk-cal-grid-week">` + days.map(d => {
       const ds = _bkDateStr(d);
       const items = byDate[ds] || [];
-      return `<div class="bk-cal-cell ${ds === todayStr ? 'bk-cal-today' : ''}" role="button" tabindex="0" aria-label="New booking on ${escHtml(ds)}" onclick="_bkCalEmptyClick('${ds}')">
+      return `<div class="bk-cal-cell ${ds === todayStr ? 'bk-cal-today' : ''}" role="button" tabindex="0" aria-label="New booking on ${escHtml(ds)}" onclick="_bkCalEmptyClick(${jsArg(ds)})">
         <div class="bk-cal-daynum">${d.toLocaleDateString(undefined,{weekday:'short'})} ${d.getDate()}</div>
         <div class="bk-cal-chips">${items.map(chip).join('') || ''}</div>
       </div>`;
@@ -5249,7 +5255,7 @@ function _renderBookingsCalendar(bookings) {
       const otherMonth = d.getMonth() !== first.getMonth();
       const shown = items.slice(0, 3);
       const more = items.length - shown.length;
-      return `<div class="bk-cal-cell ${otherMonth ? 'bk-cal-other-month' : ''} ${ds === todayStr ? 'bk-cal-today' : ''}" role="button" tabindex="0" aria-label="New booking on ${escHtml(ds)}" onclick="_bkCalEmptyClick('${ds}')">
+      return `<div class="bk-cal-cell ${otherMonth ? 'bk-cal-other-month' : ''} ${ds === todayStr ? 'bk-cal-today' : ''}" role="button" tabindex="0" aria-label="New booking on ${escHtml(ds)}" onclick="_bkCalEmptyClick(${jsArg(ds)})">
         <div class="bk-cal-daynum">${d.getDate()}</div>
         <div class="bk-cal-chips">${shown.map(chip).join('')}${more > 0 ? `<div class="bk-cal-more">+${more} more</div>` : ''}</div>
       </div>`;
@@ -5937,7 +5943,7 @@ async function loadTemplates() {
     const tpls = await apiFetch(ROUTES.templates);
     if (!Array.isArray(tpls)) return;
     container.innerHTML = tpls.map(t =>
-      `<div class="template-card" role="button" tabindex="0" data-id="${escHtml(t.id)}" onclick="selectTemplate('${escHtml(t.id)}', this)">
+      `<div class="template-card" role="button" tabindex="0" data-id="${escHtml(t.id)}" onclick="selectTemplate(${jsArg(t.id)}, this)">
         <div class="template-icon">${t.icon || '🏪'}</div>
         <div class="template-name">${escHtml(t.name)}</div>
       </div>`
@@ -6054,7 +6060,7 @@ function renderCustomerPicker() {
       <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:6px;cursor:pointer;font-family:var(--mono);font-size:12px;"
              onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
         <input type="checkbox" data-bc-phone="${escHtml(c.phone)}" ${checked}
-               onchange="toggleBcCustomer('${escHtml(c.phone)}', this.checked)"
+               onchange="toggleBcCustomer(${jsArg(c.phone)}, this.checked)"
                style="cursor:pointer;"/>
         <span>${label}</span>
         ${c.order_count ? `<span style="margin-left:auto;color:var(--text-dim);font-size:10px;">${c.order_count} orders</span>` : ''}
@@ -6555,7 +6561,7 @@ function renderGrowthCard(data) {
         <div style="font-size:13px;font-weight:600;color:var(--text,#e8f5e9);">${escHtml(w.title)}</div>
         <div style="font-size:11px;color:var(--text-dim,#6b8f71);margin-top:2px;">${escHtml(w.value)}</div>
       </div>
-      <button onclick="window.open('${w.endpoint}','_blank')" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border,#2a3830);background:transparent;color:var(--green,#22c55e);cursor:pointer;white-space:nowrap;flex-shrink:0;">${escHtml(w.action)}</button>
+      <button onclick="window.open(${jsArg(w.endpoint)},'_blank')" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border,#2a3830);background:transparent;color:var(--green,#22c55e);cursor:pointer;white-space:nowrap;flex-shrink:0;">${escHtml(w.action)}</button>
     </div>
   `).join('');
 
@@ -6647,7 +6653,7 @@ function renderOnboardingWizard(data) {
         <div class="wizard-next-title">Step ${tip.step}: ${escHtml(tip.title)}</div>
         <div class="wizard-next-desc">${escHtml(tip.description || '')}</div>
       </div>
-      <button class="wizard-action" onclick="showSection('${tip.action_section || 'overview'}', null)">${escHtml(tip.action || 'Go →')}</button>
+      <button class="wizard-action" onclick="showSection(${jsArg(tip.action_section || 'overview')}, null)">${escHtml(tip.action || 'Go →')}</button>
     </div>` : ''}
   `;
 
@@ -6735,7 +6741,7 @@ async function loadSuccessNudges() {
     container.style.marginBottom = '12px';
 
     container.innerHTML = wins.map(w => `
-      <div class="nudge-bar" role="button" tabindex="0" onclick="window.open('${w.endpoint}','_blank')">
+      <div class="nudge-bar" role="button" tabindex="0" onclick="window.open(${jsArg(w.endpoint)},'_blank')">
         <span class="nudge-bar-icon">${w.priority === 'high' ? '🔴' : '🟡'}</span>
         <div class="nudge-bar-text">${escHtml(w.title)} — <em>${escHtml(w.value)}</em></div>
         <span class="nudge-bar-action">${escHtml(w.action)} →</span>
@@ -6838,7 +6844,7 @@ async function askDashHelp() {
     let html = `<div class="help-answer">${(data.answer||'').replace(/\*(.*?)\*/g,'<strong>$1</strong>')}</div>`;
     if (data.steps?.length) html += `<ol class="help-steps">${data.steps.map(s=>`<li>${s}</li>`).join('')}</ol>`;
     if (data.tips?.length)  html += data.tips.map(t=>`<div class="help-tip">💡 ${t}</div>`).join('');
-    if (data.related?.length) html += `<div class="help-related">${data.related.map(r=>`<button class="help-related-chip" onclick="askDashHelpQ('Tell me about ${r.title}')">${r.title}</button>`).join('')}</div>`;
+    if (data.related?.length) html += `<div class="help-related">${data.related.map(r=>`<button class="help-related-chip" onclick="askDashHelpQ(${jsArg('Tell me about ' + r.title)})">${escHtml(r.title)}</button>`).join('')}</div>`;
     body.innerHTML = html;
   } catch (e) {
     body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${e.message}</div>`;
@@ -7370,7 +7376,7 @@ async function viewCustomersForProduct(id) {
           <div style="font-size:13px;font-weight:600;">${escHtml(c.customer_name || c.phone)}</div>
           <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);">${escHtml(c.phone)} · ${c.order_count} order${c.order_count!==1?'s':''} · ${getCurrencySymbol()}${parseFloat(c.total_spent||0).toFixed(2)}</div>
         </div>
-        <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="viewCrmForHandoffRow('${escHtml(c.phone).replace(/'/g,"\\'")}');closeProductCustomersModal();" title="View CRM record">👤 CRM</button>
+        <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px;" onclick="viewCrmForHandoffRow(${jsArg(c.phone)});closeProductCustomersModal();" title="View CRM record">👤 CRM</button>
       </div>`).join('');
   } catch (e) {
     // Same visual pattern as _errorBlock(), but that helper calls its retry
@@ -7706,8 +7712,8 @@ async function loadHandoffStats() {
                   <td style="padding:10px 12px;font-size:12px">${escHtml(p.handoff_reason || 'Manual')}</td>
                   <td style="padding:10px 12px;font-size:12px;${urgency}">${wait}</td>
                   <td style="padding:10px 12px;white-space:nowrap;">
-                    <button class="btn btn-ghost" style="font-size:11px;padding:3px 7px;" onclick="openInboxForHandoffRow('${escHtml(p.phone).replace(/'/g,"\\'")}')" title="Open this chat in Live Inbox">💬 Open</button>
-                    <button class="btn btn-ghost" style="font-size:11px;padding:3px 7px;margin-left:4px;" onclick="viewCrmForHandoffRow('${escHtml(p.phone).replace(/'/g,"\\'")}')" title="View CRM record">👤 CRM</button>
+                    <button class="btn btn-ghost" style="font-size:11px;padding:3px 7px;" onclick="openInboxForHandoffRow(${jsArg(p.phone)})" title="Open this chat in Live Inbox">💬 Open</button>
+                    <button class="btn btn-ghost" style="font-size:11px;padding:3px 7px;margin-left:4px;" onclick="viewCrmForHandoffRow(${jsArg(p.phone)})" title="View CRM record">👤 CRM</button>
                   </td>
                 </tr>`;
               }).join('')}

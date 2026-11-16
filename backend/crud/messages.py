@@ -301,6 +301,7 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
     # Look up which phones are currently in human_handoff state
     # so the inbox can show the 🔴 Handoff filter and badge correctly.
     handoff_phones = set()
+    handoff_reasons: dict = {}
     try:
         cart_res = (
             supabase.table("carts")
@@ -312,6 +313,11 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
             sd = row.get("state_data") or {}
             if sd.get("state") == "human_handoff":
                 handoff_phones.add(row.get("phone"))
+                # Reason is stored top-level by the manual handoff route and
+                # under `session` by the AI-triggered handoff; accept both.
+                sess = sd.get("session") if isinstance(sd.get("session"), dict) else {}
+                reason = sd.get("handoff_reason") or sess.get("handoff_reason") or ""
+                handoff_reasons[row.get("phone")] = str(reason)[:200]
     except Exception as exc:
         log.debug("get_chat_conversations: handoff lookup failed: %s", exc)
 
@@ -332,6 +338,7 @@ def get_chat_conversations(business_id: int, filter_unread: bool = False) -> lis
             "last_status":     last.get("status", "sent"),
             "in_handoff":      phone in handoff_phones,
             "handoff_state":   "human_handoff" if phone in handoff_phones else None,
+            "handoff_reason":  handoff_reasons.get(phone, "") if phone in handoff_phones else "",
         })
 
     # Sort by REAL last activity, most recent first. `last_message_at`
