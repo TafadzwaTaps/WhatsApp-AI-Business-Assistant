@@ -320,6 +320,16 @@ def login(data: LoginRequest, request: Request):
     if not biz.get("is_active", True):
         raise HTTPException(403, "Account suspended. Contact support.")
 
+    # Transparently upgrade a legacy plaintext password to bcrypt on the one
+    # moment the plaintext is in hand. Best-effort: never blocks login.
+    stored_pw = biz.get("owner_password", "")
+    if stored_pw and not stored_pw.startswith(("$2b$", "$2a$", "$2y$")):
+        try:
+            crud.update_business(biz["id"], {"owner_password": hash_password(data.password)})
+            log.info("login: upgraded legacy plaintext password to bcrypt  business_id=%s", biz["id"])
+        except Exception as _swallowed_exc:
+            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
+
     clear_failed_logins(ip, username)
     clear_account_login_lockout(username)
     log.info("🔑 Login: %s", biz["owner_username"])
@@ -502,6 +512,7 @@ def _opt_out_address(email: str) -> None:
             fj = row.get("features_json") if isinstance(row.get("features_json"), dict) else {}
             fj = dict(fj)
             fj["marketing_emails_opt_out"] = True
+            fj["pref_weekly_reports"] = False   # the monthly report email links here too
             supabase.table("businesses").update({"features_json": fj}).eq("id", row["id"]).execute()
         log.info("email: address unsubscribed")
     except Exception as exc:

@@ -213,7 +213,7 @@ def send_weekly_reports() -> dict:
 
     try:
         from core.db import supabase
-        from services.email_service import _send, _base_template, report_unsubscribe_url
+        from services.email_service import _send, _base_template, unsubscribe_address_url
 
         # Fetch all active businesses with an email address
         res = (
@@ -254,7 +254,7 @@ def send_weekly_reports() -> dict:
                 stats    = _get_weekly_stats(biz_id, start, end)
                 dash_url = f"{_BASE_URL}/dashboard"
                 body     = _build_report_html(biz_name, stats, dash_url, period,
-                                              report_unsubscribe_url(biz_id))
+                                              unsubscribe_address_url(email))
                 html     = _base_template(f"Monthly Report — {biz_name}", body)
 
                 ok = _send(

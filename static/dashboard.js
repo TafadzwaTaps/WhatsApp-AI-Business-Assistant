@@ -531,9 +531,36 @@ function invalidateMeCache() {
 }
 
 // ── API ───────────────────────────────────────────────────
+// Set once a password change succeeded: all of this user's tokens are now
+// invalid, so suppress further API calls (and their error toasts) until logout.
+let _pwSigningOut = false;
+
+// Turn a server `detail` (string | list of pydantic errors | object) into text.
+function formatApiDetail(detail, fallback) {
+  const fb = fallback || '';
+  if (detail === undefined || detail === null || detail === '') return fb;
+  if (typeof detail === 'string') return detail;
+  const clean = s => String(s).replace(/^Value error,\s*/i, '');
+  if (Array.isArray(detail)) {
+    const parts = detail.map(d => {
+      if (typeof d === 'string') return clean(d);
+      if (d && typeof d === 'object' && d.msg) return clean(d.msg);
+      return '';
+    }).filter(Boolean);
+    return parts.length ? parts.join('; ') : fb;
+  }
+  if (typeof detail === 'object') {
+    if (detail.message) return clean(detail.message);
+    if (detail.msg) return clean(detail.msg);
+    return fb;
+  }
+  return String(detail);
+}
+
 async function apiFetch(path, opts={}, _retried=false) {
   // Guard: never fire API calls without a token — avoids 401 spam on page load
   if (!token && !opts._public) return null;
+  if (_pwSigningOut && !opts._public) return null;
   // FIX: _retried flag prevents infinite refresh loops — one retry max.
   // If the refreshed token also gets a 401, logout() is called once.
 
@@ -585,13 +612,13 @@ async function apiFetch(path, opts={}, _retried=false) {
         return null;  // caller receives null — same as auth failure, no logout
       }
       // Not a plan error — throw normally so caller handles it
-      const msg403 = (typeof detail === 'string' ? detail : detail.message) || res.statusText || 'Forbidden';
+      const msg403 = formatApiDetail(detail, res.statusText || 'Forbidden');
       console.error('[apiFetch] 403', path, msg403);
       throw new Error(msg403);
     }
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
-      try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      try { const e = await res.json(); msg = formatApiDetail(e.detail, msg); } catch {}
       console.error('[apiFetch] error', path, res.status, msg);
       throw new Error(msg);
     }
@@ -611,32 +638,32 @@ function buildSidebar() {
     const _rb=document.getElementById('sidebar-role-badge'); if(_rb) _rb.innerHTML='<span class="badge badge-purple">SUPERADMIN</span>';
     nav.innerHTML = `
       <div class="nav-section">Platform</div>
-      <button class="nav-item admin-item active" onclick="showSection('admin-overview',this);closeSidebar()"><span class="icon">🌐</span> Overview <span class="status-dot"></span></button>
-      <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon">🏢</span> Businesses</button>
-      <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon">🛡️</span> Audit & Abuse</button>
-      <button class="nav-item admin-item" onclick="showSection('admin-controls',this);closeSidebar()"><span class="icon">🚨</span> Platform Controls</button>
-      <button class="nav-item admin-item" onclick="showSection('admin-cohorts',this);closeSidebar()"><span class="icon">📈</span> Cohorts & Churn</button>`;
+      <button class="nav-item admin-item active" aria-current="page" onclick="showSection('admin-overview',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-globe"/></svg></span> Overview <span class="status-dot"></span></button>
+      <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-building"/></svg></span> Businesses</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg></span> Audit & Abuse</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-controls',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-alert-circle"/></svg></span> Platform Controls</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-cohorts',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-trending"/></svg></span> Cohorts & Churn</button>`;
   } else {
     const _rl2=document.getElementById('sidebar-role-label'); if(_rl2) _rl2.textContent=bizName||'Business';
     const _rb2=document.getElementById('sidebar-role-badge'); if(_rb2) _rb2.innerHTML='<span class="badge badge-green">BUSINESS</span>';
     if(bizName){const _bnh=document.getElementById('biz-name-header');if(_bnh)_bnh.textContent='🟢 '+bizName;}
     nav.innerHTML = `
       <div class="nav-section">Dashboard</div>
-      <button class="nav-item active" onclick="showSection('overview',this);closeSidebar()"><span class="icon">📊</span> Overview <span class="status-dot"></span></button>
-      <button class="nav-item" onclick="showSection('orders',this);closeSidebar()"><span class="icon">🛒</span> Orders</button>
-      <button class="nav-item" onclick="showSection('products',this);closeSidebar()"><span class="icon">📦</span> Products</button>
-      <button class="nav-item" onclick="showSection('crm',this);closeSidebar()"><span class="icon">👥</span> Customers <span id="nav-crm-badge" class="nav-badge" style="display:none"></span></button>
-      <button class="nav-item" data-gated="true" onclick="_navGuard('reminders',this);closeSidebar()"><span class="icon">⏳</span> Reminders <span id="nav-rem-badge" class="nav-badge nav-badge-amber" style="display:none"></span></button>
-      <button class="nav-item" data-gated="true" onclick="_navGuard('conversations',this);closeSidebar()"><span class="icon">💬</span> Conversations</button>
-      <button class="nav-item" data-gated="true" onclick="_navGuard('__inbox__',this);closeSidebar()"><span class="icon">📥</span> Live Inbox</button>
-      <button class="nav-item" data-gated="true" onclick="_navGuard('handoff',this);closeSidebar()"><span class="icon">👤</span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
-      <button class="nav-item" data-gated="true" onclick="_navGuard('growth-automation',this);closeSidebar()"><span class="icon">🚀</span> Growth</button>
-      <button class="nav-item" data-gated="true" onclick="_navGuard('broadcast',this);closeSidebar()"><span class="icon">📢</span> Campaigns</button>
-      <button class="nav-item" onclick="showSection('bookings',this);closeSidebar()"><span class="icon">🗓️</span> Bookings</button>
-      <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon">⚙️</span> Settings</button>
-      <button class="nav-item" onclick="showSection('marketing-kit',this);loadMarketingKit();closeSidebar()"><span class="icon">📣</span> Marketing Kit</button>
+      <button class="nav-item active" aria-current="page" onclick="showSection('overview',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-overview"/></svg></span> Overview <span class="status-dot"></span></button>
+      <button class="nav-item" onclick="showSection('orders',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-orders"/></svg></span> Orders</button>
+      <button class="nav-item" onclick="showSection('products',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-products"/></svg></span> Products</button>
+      <button class="nav-item" onclick="showSection('crm',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-customers"/></svg></span> Customers <span id="nav-crm-badge" class="nav-badge" style="display:none"></span></button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('reminders',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg></span> Reminders <span id="nav-rem-badge" class="nav-badge nav-badge-amber" style="display:none"></span></button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('conversations',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg></span> Conversations</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('__inbox__',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-inbox"/></svg></span> Live Inbox</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('handoff',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-user"/></svg></span> Handoff <span id="nav-handoff-badge" class="nav-badge nav-badge-red" style="display:none"></span></button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('growth-automation',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-rocket"/></svg></span> Growth</button>
+      <button class="nav-item" data-gated="true" onclick="_navGuard('broadcast',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg></span> Campaigns</button>
+      <button class="nav-item" onclick="showSection('bookings',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-calendar"/></svg></span> Bookings</button>
+      <button class="nav-item" onclick="showSection('settings',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-settings"/></svg></span> Settings</button>
+      <button class="nav-item" onclick="showSection('marketing-kit',this);loadMarketingKit();closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg></span> Marketing Kit</button>
       <div class="nav-section">Growth</div>
-      <button class="nav-item" onclick="showSection('settings',this);switchSettingsTab('referrals',null);loadReferralTab();closeSidebar()"><span class="icon">🔗</span> Referrals <span id="nav-ref-badge" class="nav-badge nav-badge-green" style="display:none"></span></button>`;
+      <button class="nav-item" onclick="showSection('settings',this);switchSettingsTab('referrals',null);loadReferralTab();closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-link"/></svg></span> Referrals <span id="nav-ref-badge" class="nav-badge nav-badge-green" style="display:none"></span></button>`;
   }
 }
 
@@ -662,6 +689,7 @@ function showSection(name, btn) {
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
   document.getElementById('section-' + name).classList.add('active');
   if (btn) btn.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => { if (n.classList.contains('active')) n.setAttribute('aria-current','page'); else n.removeAttribute('aria-current'); });
   if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
   if (name==='admin-audit') { loadAdminAudit(); loadCampaignUsage(); }
   if (name==='admin-controls') loadPlatformControls();
@@ -705,28 +733,28 @@ async function loadNeedsAttention() {
     const _awaitingList = orders.filter(o => ['awaiting_payment','payment_review'].includes(o.status) && _notPaid(o));
     const awaitingPay = _awaitingList.length;
     const _awaitingFilter = _awaitingList.some(o => o.status === 'awaiting_payment') ? 'awaiting_payment' : 'payment_review';
-    if (awaitingPay > 0) items.push({ icon: '💳', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders', orderStatus: _awaitingFilter });
+    if (awaitingPay > 0) items.push({ icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-card"/></svg>', text: `${awaitingPay} order${awaitingPay!==1?'s':''} awaiting payment`, section: 'orders', orderStatus: _awaitingFilter });
     const toFulfill = orders.filter(o => ['pending_cash','confirmed','preparing','ready'].includes(o.status)).length;
-    if (toFulfill > 0) items.push({ icon: '📦', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders', orderStatus: 'all' });
+    if (toFulfill > 0) items.push({ icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-products"/></svg>', text: `${toFulfill} order${toFulfill!==1?'s':''} need fulfillment`, section: 'orders', orderStatus: 'all' });
   } catch (_) { /* omit this signal rather than show a fake number */ }
 
   try {
     const raw = await apiFetch(ROUTES.products);
     const products = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
     const lowStock = products.filter(p => _isProdOos(p) || _isProdLowStock(p)).length;
-    if (lowStock > 0) items.push({ icon: '⚠️', text: `${lowStock} product${lowStock!==1?'s':''} low or out of stock`, section: 'products' });
+    if (lowStock > 0) items.push({ icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-alert"/></svg>', text: `${lowStock} product${lowStock!==1?'s':''} low or out of stock`, section: 'products' });
   } catch (_) {}
 
   try {
     const hf = await apiFetch('/analytics/handoff-stats');
-    if (hf && hf.active_count > 0) items.push({ icon: '🔴', text: `${hf.active_count} customer${hf.active_count!==1?'s':''} waiting for human help`, section: 'handoff' });
+    if (hf && hf.active_count > 0) items.push({ icon: '<svg class="ic ic-red" aria-hidden="true" focusable="false"><use href="#i-dot"/></svg>', text: `${hf.active_count} customer${hf.active_count!==1?'s':''} waiting for human help`, section: 'handoff' });
   } catch (_) {}
 
   try {
     const raw = await apiFetch(ROUTES.conversations);
     const convos = Array.isArray(raw) ? raw : (raw && raw.data ? raw.data : []);
     const unread = convos.reduce((s,c) => s + (c.unread_count||0), 0);
-    if (unread > 0) items.push({ icon: '💬', text: `${unread} unread conversation${unread!==1?'s':''}`, section: 'conversations' });
+    if (unread > 0) items.push({ icon: '<svg class="ic" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg>', text: `${unread} unread conversation${unread!==1?'s':''}`, section: 'conversations' });
   } catch (_) {}
 
   if (!items.length) { panel.style.display = 'none'; return; }
@@ -780,9 +808,122 @@ function _restoreFocusFromDrawer() {
   _lastFocusedBeforeDrawer = null;
 }
 
+// ── U2b accessibility helpers (additive; markup/keyboard behaviour only) ──
+// 1) ONE delegated keydown: Enter/Space on role="button" / [data-kbd-click]
+//    elements that are not native controls triggers click().
+// 2) ONE shared dialog helper: remember/restore focus, move focus in on open,
+//    Escape closes via the dialog's existing close function, Tab is trapped
+//    inside aria-modal dialogs. Dialogs keep showing/hiding exactly as before;
+//    open/close is detected from their existing class/style change.
+const _A11Y_FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]):not([type="hidden"]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+const _A11Y_DIALOG_CLOSERS = {
+  'add-business-modal': 'closeModal', 'currency-convert-modal': 'closeCurrencyConvertModal',
+  'sa-biz-detail-modal': 'closeAdminBizDetail', 'prod-edit-modal': 'closeProdEdit',
+  'prod-bulk-modal': 'closeBulkModal', 'prod-customers-modal': 'closeProductCustomersModal',
+  'delete-account-modal': 'closeDeleteAccountModal', 'create-booking-modal': 'closeCreateBookingModal',
+  'booking-detail-modal': 'closeBookingDetailModal',
+};
+const _a11yDialogStack = [];
+
+function _a11yIsNative(el) {
+  const t = String((el && el.tagName) || '').toLowerCase();
+  return t === 'button' || t === 'a' || t === 'input' || t === 'select' || t === 'textarea' || t === 'summary';
+}
+
+function _a11yKbdClick(e) {
+  if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return false;
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const t = e.target;
+  if (!t || typeof t.matches !== 'function' || !t.matches('[role="button"],[data-kbd-click]')) return false;
+  if (_a11yIsNative(t) || t.isContentEditable) return false;
+  e.preventDefault(); // stops Space from scrolling the page
+  t.click();
+  return true;
+}
+
+function _a11yFocusables(root) {
+  return Array.from(root.querySelectorAll(_A11Y_FOCUSABLE))
+    .filter(el => !el.disabled && !el.hidden && (typeof el.getClientRects !== 'function' || el.getClientRects().length > 0));
+}
+
+function _a11yTrapTab(e, root) {
+  if (!root || e.key !== 'Tab') return false;
+  const f = _a11yFocusables(root);
+  if (!f.length) { e.preventDefault(); if (typeof root.focus === 'function') root.focus(); return true; }
+  const first = f[0], last = f[f.length - 1], a = document.activeElement;
+  const outside = !root.contains(a);
+  if (e.shiftKey && (a === first || a === root || outside)) { e.preventDefault(); last.focus(); return true; }
+  if (!e.shiftKey && (a === last || outside)) { e.preventDefault(); first.focus(); return true; }
+  return false;
+}
+
+function _a11yIsDialogOpen(el) {
+  return !!(el && ((el.classList && el.classList.contains('open')) || (el.style && el.style.display && el.style.display !== 'none')));
+}
+
+function _a11yDialogOpened(el) {
+  if (!el || _a11yDialogStack.some(d => d.el === el)) return;
+  _a11yDialogStack.push({ el, prev: document.activeElement });
+  // Skip when the existing open helper already moved focus into the dialog.
+  if (el.contains(document.activeElement)) return;
+  const f = _a11yFocusables(el);
+  if (f.length) f[0].focus();
+  else { if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1'); el.focus(); }
+}
+
+function _a11yDialogClosed(el) {
+  const i = _a11yDialogStack.findIndex(d => d.el === el);
+  if (i < 0) return;
+  const prev = _a11yDialogStack.splice(i, 1)[0].prev;
+  const a = document.activeElement;
+  const lost = !a || a === document.body || el.contains(a);
+  if (lost && prev && prev !== document.body && typeof prev.focus === 'function' && document.contains(prev)) prev.focus();
+}
+
+function _a11yTopDialog() {
+  for (let i = _a11yDialogStack.length - 1; i >= 0; i--) {
+    if (_a11yIsDialogOpen(_a11yDialogStack[i].el)) return _a11yDialogStack[i].el;
+  }
+  return null;
+}
+
+function _a11yEscape(e) {
+  if (e.key !== 'Escape' || e.defaultPrevented) return false;
+  const el = _a11yTopDialog();
+  const fn = el && _A11Y_DIALOG_CLOSERS[el.id];
+  if (fn && typeof window[fn] === 'function') { window[fn](); return true; }
+  if (el && el.hasAttribute('data-a11y-esc-hide')) { el.style.display = 'none'; return true; }
+  return false;
+}
+
+document.addEventListener('keydown', e => {
+  if (_a11yKbdClick(e)) return;
+  if (_a11yEscape(e)) return;
+  const top = _a11yTopDialog();
+  if (top && top.getAttribute('aria-modal') === 'true') _a11yTrapTab(e, top);
+});
+
+if (typeof MutationObserver !== 'undefined') {
+  const _a11yState = new WeakMap();
+  new MutationObserver(recs => {
+    const seen = new Set();
+    recs.forEach(r => {
+      const el = r.target;
+      if (seen.has(el) || !el.getAttribute || el.getAttribute('role') !== 'dialog' || el.hasAttribute('data-a11y-self')) return;
+      seen.add(el);
+      const now = _a11yIsDialogOpen(el);
+      if (!!_a11yState.get(el) === now) return;
+      _a11yState.set(el, now);
+      if (now) _a11yDialogOpened(el); else _a11yDialogClosed(el);
+    });
+  }).observe(document.documentElement, { attributes: true, subtree: true, attributeFilter: ['class', 'style'] });
+}
+// ── U2b end ──
+
 // ── TOAST ─────────────────────────────────────────────────
 function toast(msg, isError=false) {
   const t = document.getElementById('toast');
+  t.setAttribute('role', isError ? 'alert' : 'status'); t.setAttribute('aria-live', isError ? 'assertive' : 'polite');
   t.textContent = msg;
   t.style.borderLeftColor = isError ? 'var(--red)' : 'var(--green)';
   t.style.color = isError ? 'var(--red)' : 'var(--green)';
@@ -1012,7 +1153,7 @@ function renderBizTable(businesses, bodyId, showActions) {
   if (!tbody) return;
   const biz = Array.isArray(businesses) ? businesses : [];
   if (!biz.length) { tbody.innerHTML=`<tr><td colspan="6"><div class="empty">No businesses match your filters.</div></td></tr>`; return; }
-  tbody.innerHTML = biz.map(b => `<tr style="cursor:pointer;" onclick="openAdminBizDetail(${b.id})" title="Click for details">
+  tbody.innerHTML = biz.map(b => `<tr tabindex="0" data-kbd-click style="cursor:pointer;" onclick="openAdminBizDetail(${b.id})" title="Click for details">
     <td><span class="badge badge-purple">#${b.id}</span></td>
     <td><strong>${escHtml(b.name||'—')}</strong></td>
     <td><span class="badge badge-amber">${escHtml(b.owner_username||'—')}</span></td>
@@ -1567,7 +1708,7 @@ function renderOrders(orders, bodyId, showStatus) {
     const checkboxCell = withCheckbox
       ? `<td onclick="event.stopPropagation();"><input type="checkbox" class="order-checkbox" data-id="${o.id}" ${_selectedOrderIds.has(o.id)?'checked':''} onchange="toggleOrderSelect(${o.id})" aria-label="Select order #${o.id}"/></td>`
       : '';
-    return `<tr onclick="openOrderDrawer(${o.id})" style="cursor:pointer;" title="Click to view order details">
+    return `<tr tabindex="0" data-kbd-click onclick="openOrderDrawer(${o.id})" style="cursor:pointer;" title="Click to view order details">
     ${checkboxCell}
     <td><span class="badge badge-amber">#${o.id||'—'}</span></td>
     <td>${escHtml(o.customer_phone||'—')}</td>
@@ -1807,7 +1948,7 @@ function _renderProductGrid(products) {
     return;
   }
   grid.innerHTML = products.map(p => `
-    <div class="product-card" style="${_selectedProductIds.has(p.id)?'border-color:var(--green);':''}" onclick="toggleProductSelect(${p.id},!_selectedProductIds.has(${p.id}))">
+    <div class="product-card" role="button" tabindex="0" style="${_selectedProductIds.has(p.id)?'border-color:var(--green);':''}" onclick="toggleProductSelect(${p.id},!_selectedProductIds.has(${p.id}))">
       <div class="product-card-img">
         ${p.image_url
           ? `<img src="${escHtml(p.image_url)}" alt="${escHtml(p.name||'')}" onerror="this.parentNode.textContent='📦'">`
@@ -2053,7 +2194,7 @@ function _renderConversationList(list_data) {
     const lastDir = c.last_direction || c.direction || '';
     const lastAt = c.last_message_at || c.created_at || c.timestamp || null;
     const unread = c.unread_count || 0;
-    return `<div class="contact-item ${phone===activePhone?'active':''}" onclick="openChat('${escHtml(phone)}',this)">
+    return `<div class="contact-item ${phone===activePhone?'active':''}" role="button" tabindex="0" onclick="openChat('${escHtml(phone)}',this)">
     <div class="contact-phone">${escHtml(phone)}${unread>0?` <span class="badge badge-green">${unread}</span>`:''}</div>
     <div class="contact-preview">${lastDir==='incoming'||lastDir==='in'?'👤':'🤖'} ${escHtml(formatMessagePreview(lastMsg))}</div>
     <div class="contact-time">${fmtTime(lastAt)}</div>
@@ -2686,12 +2827,13 @@ function showPlanUpgradeModal(detail) {
   if (!modal) {
     modal = document.createElement('div');
     modal.id = 'plan-upgrade-modal';
+    modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.setAttribute('aria-labelledby', 'pum-title'); modal.setAttribute('data-a11y-esc-hide', '');
     modal.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;align-items:center;justify-content:center;';
     modal.innerHTML = `
       <div style="background:var(--surface);border:1px solid rgba(245,158,11,0.5);
                   border-radius:20px;padding:40px 36px;max-width:400px;width:90%;
                   text-align:center;box-shadow:0 0 48px rgba(245,158,11,0.15);">
-        <div style="font-size:44px;margin-bottom:14px;">🔒</div>
+        <div style="font-size:44px;margin-bottom:14px;" aria-hidden="true">🔒</div>
         <h2 id="pum-title" style="font-size:20px;font-weight:800;margin-bottom:10px;color:var(--text);">
           Upgrade Required
         </h2>
@@ -2730,7 +2872,7 @@ async function saveEcoCashSettings() {
   const number = _getVal('set-ecocash-number').trim();
   const name   = _getVal('set-ecocash-name').trim();
   if (!number) { toast('Enter your EcoCash number', true); return; }
-  if (number.length < 7) { toast('Include country code — e.g. +263...', true); return; }
+  if (number.length < 7) { toast('Include the country code, e.g. +44 7700 900123', true); return; }
   if (!name)   { toast('Enter the registered account name', true); return; }
   const btn = document.querySelector('[onclick="saveEcoCashSettings()"]');
   try {
@@ -2822,6 +2964,21 @@ async function savePaymentToggles() {
 async function loadStripeBillingStatus() {
   // Load both Connect status and subscription status in parallel
   await Promise.all([loadStripeConnectStatus(), loadStripeSubscriptionStatus()]);
+}
+
+// True when the business has any customer-facing payment method configured.
+function hasPaymentMethodConfigured(biz) {
+  const b = biz || {};
+  const filled = v => typeof v === 'string' ? v.trim().length > 0 : !!v;
+  const stripeOk = b.stripe_connected === true || b.stripe_connect_status === 'active' ||
+    b.stripe_connect_status === 'connected' || b.stripe_charges_enabled === true ||
+    !!(b.stripe_connect && (b.stripe_connect.connected || b.stripe_connect.charges_enabled));
+  return !!(
+    filled(b.ecocash_number) || filled(b.paypal_email) || filled(b.bank_transfer_details) ||
+    filled(b.blik_number) || b.cash_enabled === true || b.pickup_enabled === true ||
+    b.ecocash_configured === true || b.paypal_configured === true ||
+    b.bank_transfer_configured === true || b.blik_configured === true || stripeOk
+  );
 }
 
 async function loadStripeConnectStatus() {
@@ -3329,27 +3486,47 @@ function checkNewPassword() {
   }
 }
 
+// Pure client-side check mirroring backend rules. Returns '' when valid.
+function validateNewPasswordInput(current, newPw, confirmPw) {
+  if (!current)                 return 'Enter your current password';
+  if (newPw.length < 8)         return 'New password must be at least 8 characters';
+  if (newPw.length > 128)       return 'New password must be at most 128 characters';
+  if (!/[A-Z]/.test(newPw))     return 'New password needs an uppercase letter';
+  if (!/[0-9]/.test(newPw))     return 'New password needs a number';
+  if (new TextEncoder().encode(newPw).length > 72)
+                                return 'New password is too long (max 72 bytes — shorten it or use fewer special/non-English characters)';
+  if (newPw !== confirmPw)      return 'New passwords do not match';
+  if (newPw === current)        return 'New password must be different from current';
+  return '';
+}
+
 async function changePassword() {
   const current = document.getElementById('sec-pass-current')?.value || '';
   const newPw   = document.getElementById('sec-pass-new')?.value || '';
   const confirm = document.getElementById('sec-pass-confirm')?.value || '';
   const statusEl= document.getElementById('sec-change-status');
+  const showErr = (m) => {
+    if (statusEl) { statusEl.textContent = '❌ ' + m; statusEl.style.color = '#ef4444'; }
+    toast(m, true);
+  };
+  if (_pwSigningOut) return;
 
-  if (!current)              { toast('Enter your current password', true); return; }
-  if (newPw.length < 8)      { toast('New password must be at least 8 characters', true); return; }
-  if (!/[A-Z]/.test(newPw))  { toast('New password needs an uppercase letter', true); return; }
-  if (!/[0-9]/.test(newPw))  { toast('New password needs a number', true); return; }
-  if (newPw !== confirm)     { toast('New passwords do not match', true); return; }
-  if (newPw === current)     { toast('New password must be different from current', true); return; }
+  const invalid = validateNewPasswordInput(current, newPw, confirm);
+  if (invalid) { showErr(invalid); return; }
 
-  const btn = document.querySelector('[onclick="changePassword()"]');
+  const btn = document.getElementById('sec-pass-btn') || document.querySelector('[onclick="changePassword()"]');
+  const setBusy = (b) => { setLoading(btn, b); if (btn) { btn.disabled = b; btn.setAttribute('aria-busy', b ? 'true' : 'false'); } };
+  let succeeded = false;
   try {
-    setLoading(btn, true);
+    setBusy(true);
     if (statusEl) statusEl.textContent = '';
-    await apiFetch('/auth/change-password', {
+    const res = await apiFetch('/auth/change-password', {
       method: 'POST',
       body:   JSON.stringify({ current_password: current, new_password: newPw })
     });
+    if (!res) { showErr('Session expired — please sign in again.'); return; }
+    succeeded = true;
+    _pwSigningOut = true;   // stop pollers; tokens are now invalid
     // Clear fields on success
     ['sec-pass-current','sec-pass-new','sec-pass-confirm'].forEach(id => {
       const el = document.getElementById(id); if (el) el.value = '';
@@ -3358,13 +3535,16 @@ async function changePassword() {
       const s = document.getElementById('pw-seg' + i);
       if (s) s.style.background = 'var(--border)';
     });
-    if (statusEl) { statusEl.textContent = '✅ Password updated successfully.'; statusEl.style.color = 'var(--green)'; }
-    toast('✅ Password updated');
+    const okMsg = 'Password updated — signing you out so you can log in with your new password…';
+    if (statusEl) { statusEl.textContent = '✅ ' + okMsg; statusEl.style.color = 'var(--green)'; }
+    toast('✅ ' + okMsg);
+    setTimeout(logout, 1800);
   } catch(e) {
-    if (statusEl) { statusEl.textContent = '❌ ' + e.message; statusEl.style.color = '#ef4444'; }
-    toast('Failed: ' + e.message, true);
+    let m = e.message || 'Request failed';
+    if (/too many requests|rate limit/i.test(m)) m = 'Too many attempts — please wait a minute and try again.';
+    showErr(m);
   }
-  finally { setLoading(btn, false); }
+  finally { if (!succeeded) setBusy(false); }
 }
 
 function setTheme(theme, silent=false) {
@@ -3503,8 +3683,8 @@ function _upRender(data) {
   up('up-bio',           p.bio          || '');
 
   // Selects
-  _upSetSelect('up-country',     p.country   || '');
-  _upSetSelect('up-timezone',    p.timezone  || 'Africa/Harare');
+  _upSetSelect('up-country',     chooseDefaultCountry(p.country, _browserLang(), _selectValues('up-country')));
+  _upSetSelect('up-timezone',    chooseDefaultTimezone(p.timezone, _browserTz(), _selectValues('up-timezone')));
   _upSetSelect('up-language',    p.language  || 'en');
   _upSetSelect('up-date-format', p.date_format || 'DD/MM/YYYY');
 
@@ -3546,6 +3726,23 @@ function _upRender(data) {
   _setChk('pref-weekly-reports',       prefs.weekly_reports);
   _setChk('pref-system-alerts',        prefs.system_alerts);
 }
+
+// Globalisation helpers: a saved value always wins; otherwise infer from the browser.
+function chooseDefaultTimezone(saved, browserTz, options) {
+  if (saved) return saved;
+  const list = Array.isArray(options) ? options : [];
+  return (browserTz && list.indexOf(browserTz) !== -1) ? browserTz : 'UTC';
+}
+function chooseDefaultCountry(saved, lang, options) {
+  if (saved) return saved;
+  const list = Array.isArray(options) ? options : [];
+  const m = /[-_]([A-Za-z]{2})\b/.exec(lang || '');
+  const region = m ? m[1].toUpperCase() : '';
+  return (region && list.indexOf(region) !== -1) ? region : '';
+}
+function _browserTz() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } }
+function _browserLang() { try { return (navigator.languages && navigator.languages[0]) || navigator.language || ''; } catch (e) { return ''; } }
+function _selectValues(id) { const el = document.getElementById(id); return el ? Array.from(el.options).map(o => o.value) : []; }
 
 function _upSetSelect(id, val) {
   const el = document.getElementById(id);
@@ -4327,7 +4524,7 @@ async function loadCampaignTemplateSuggestions() {
     high_spenders:"Hey {name}! 💰 You're one of our best customers. {business} has something special for you — type menu!",
   };
   if (suggestions[audience]) {
-    container.innerHTML = `<div style="background:rgba(34,197,94,0.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:10px;cursor:pointer;" onclick="document.getElementById('broadcast-msg').value=this.dataset.msg;updatePreview();" data-msg="${escHtml(suggestions[audience])}">
+    container.innerHTML = `<div style="background:rgba(34,197,94,0.06);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:10px;cursor:pointer;" role="button" tabindex="0" onclick="document.getElementById('broadcast-msg').value=this.dataset.msg;updatePreview();" data-msg="${escHtml(suggestions[audience])}">
       💡 Suggested: <em style="color:var(--text);">${escHtml(suggestions[audience].slice(0,80))}...</em>
     </div>`;
   } else {
@@ -4882,7 +5079,7 @@ function _renderBookingsTable(bookings) {
     return;
   }
   tbody.innerHTML = sorted.map(b => `
-    <tr style="cursor:pointer;" onclick="openBookingDetail(${b.id})" title="Click to view/edit">
+    <tr tabindex="0" data-kbd-click style="cursor:pointer;" onclick="openBookingDetail(${b.id})" title="Click to view/edit">
       <td>${escHtml(b.booking_date || '')}<br/><span style="color:var(--text-dim);font-size:11px;">${escHtml(b.start_time || '')}</span></td>
       <td>${escHtml(b.customer_name || b.customer_phone || '—')}${b.customer_name ? `<br/><span style="color:var(--text-dim);font-size:11px;">${escHtml(b.customer_phone || '')}</span>` : ''}</td>
       <td>${escHtml(b.service_name || '—')}</td>
@@ -5004,6 +5201,7 @@ function _renderBookingsCalendar(bookings) {
 
   const chip = (b) => `
     <div class="bk-cal-chip bk-cal-chip-${_BK_STATUS_BADGE[b.status] || 'badge-amber'}"
+         role="button" tabindex="0"
          onclick="event.stopPropagation();openBookingDetail(${b.id})"
          title="${escHtml((b.customer_name || b.customer_phone || 'Booking'))} — ${escHtml(b.service_name || '')}">
       ${escHtml(b.start_time || '')} ${escHtml(b.customer_name || b.customer_phone || 'Booking')}
@@ -5028,7 +5226,7 @@ function _renderBookingsCalendar(bookings) {
     body.innerHTML = `<div class="bk-cal-grid bk-cal-grid-week">` + days.map(d => {
       const ds = _bkDateStr(d);
       const items = byDate[ds] || [];
-      return `<div class="bk-cal-cell ${ds === todayStr ? 'bk-cal-today' : ''}" onclick="_bkCalEmptyClick('${ds}')">
+      return `<div class="bk-cal-cell ${ds === todayStr ? 'bk-cal-today' : ''}" role="button" tabindex="0" aria-label="New booking on ${escHtml(ds)}" onclick="_bkCalEmptyClick('${ds}')">
         <div class="bk-cal-daynum">${d.toLocaleDateString(undefined,{weekday:'short'})} ${d.getDate()}</div>
         <div class="bk-cal-chips">${items.map(chip).join('') || ''}</div>
       </div>`;
@@ -5051,7 +5249,7 @@ function _renderBookingsCalendar(bookings) {
       const otherMonth = d.getMonth() !== first.getMonth();
       const shown = items.slice(0, 3);
       const more = items.length - shown.length;
-      return `<div class="bk-cal-cell ${otherMonth ? 'bk-cal-other-month' : ''} ${ds === todayStr ? 'bk-cal-today' : ''}" onclick="_bkCalEmptyClick('${ds}')">
+      return `<div class="bk-cal-cell ${otherMonth ? 'bk-cal-other-month' : ''} ${ds === todayStr ? 'bk-cal-today' : ''}" role="button" tabindex="0" aria-label="New booking on ${escHtml(ds)}" onclick="_bkCalEmptyClick('${ds}')">
         <div class="bk-cal-daynum">${d.getDate()}</div>
         <div class="bk-cal-chips">${shown.map(chip).join('')}${more > 0 ? `<div class="bk-cal-more">+${more} more</div>` : ''}</div>
       </div>`;
@@ -5514,7 +5712,7 @@ function renderKanban(orders) {
         // uses, with a real dropdown, instead of a second status-change UX.
         const paid = (o.payment_status || 'pending') === 'paid';
         return `
-        <div class="kanban-card" onclick="openOrderDrawer(${o.id})">
+        <div class="kanban-card" role="button" tabindex="0" onclick="openOrderDrawer(${o.id})">
           <div class="kanban-card-id">#${o.id}</div>
           <div class="kanban-card-name">${escHtml(o.customer_phone||'—')}</div>
           <div class="kanban-card-total">${getCurrencySymbol()}${parseFloat(o.total_price||0).toFixed(2)}
@@ -5739,12 +5937,12 @@ async function loadTemplates() {
     const tpls = await apiFetch(ROUTES.templates);
     if (!Array.isArray(tpls)) return;
     container.innerHTML = tpls.map(t =>
-      `<div class="template-card" data-id="${escHtml(t.id)}" onclick="selectTemplate('${escHtml(t.id)}', this)">
+      `<div class="template-card" role="button" tabindex="0" data-id="${escHtml(t.id)}" onclick="selectTemplate('${escHtml(t.id)}', this)">
         <div class="template-icon">${t.icon || '🏪'}</div>
         <div class="template-name">${escHtml(t.name)}</div>
       </div>`
     ).join('') +
-    `<div class="template-card" data-id="default" onclick="selectTemplate('default', this)">
+    `<div class="template-card" role="button" tabindex="0" data-id="default" onclick="selectTemplate('default', this)">
       <div class="template-icon">🏪</div>
       <div class="template-name">General</div>
     </div>`;
@@ -6537,7 +6735,7 @@ async function loadSuccessNudges() {
     container.style.marginBottom = '12px';
 
     container.innerHTML = wins.map(w => `
-      <div class="nudge-bar" onclick="window.open('${w.endpoint}','_blank')">
+      <div class="nudge-bar" role="button" tabindex="0" onclick="window.open('${w.endpoint}','_blank')">
         <span class="nudge-bar-icon">${w.priority === 'high' ? '🔴' : '🟡'}</span>
         <div class="nudge-bar-text">${escHtml(w.title)} — <em>${escHtml(w.value)}</em></div>
         <span class="nudge-bar-action">${escHtml(w.action)} →</span>
@@ -6564,6 +6762,7 @@ function injectDashboardHelp() {
   fab.id = 'dash-help-fab';
   fab.className = 'help-fab';
   fab.title = 'Ask WaziBot for help';
+  fab.setAttribute('aria-label', 'Ask WaziBot for help');
   fab.textContent = '?';
   fab.onclick = toggleDashHelp;
   document.body.appendChild(fab);
@@ -6572,6 +6771,7 @@ function injectDashboardHelp() {
   const panel = document.createElement('div');
   panel.id = 'dash-help-panel';
   panel.className = 'help-panel';
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'false'); panel.setAttribute('aria-label', 'Ask WaziBot');
   panel.innerHTML = `
     <div class="help-panel-header">
       💬 Ask WaziBot
@@ -6598,12 +6798,13 @@ function injectDashboardHelp() {
   const cmdOverlay = document.createElement('div');
   cmdOverlay.id = 'dash-cmd-overlay';
   cmdOverlay.className = 'cmd-overlay';
+  cmdOverlay.setAttribute('role', 'dialog'); cmdOverlay.setAttribute('aria-modal', 'true'); cmdOverlay.setAttribute('aria-label', 'Command palette');
   cmdOverlay.onclick = e => { if (e.target === cmdOverlay) closeDashCmd(); };
   cmdOverlay.innerHTML = `
     <div class="cmd-box">
       <div class="cmd-input-row">
-        <span class="cmd-icon">⌘</span>
-        <input class="cmd-input" id="dash-cmd-input" placeholder="Search or type a command…"
+        <span class="cmd-icon" aria-hidden="true">⌘</span>
+        <input class="cmd-input" id="dash-cmd-input" placeholder="Search or type a command…" aria-label="Search commands"
                oninput="renderDashCmdResults()" onkeydown="dashCmdKeyDown(event)" autocomplete="off">
       </div>
       <div class="cmd-results" id="dash-cmd-results"></div>
@@ -6676,7 +6877,7 @@ function renderDashCmdResults() {
   const box = document.getElementById('dash-cmd-results');
   if (!box) return;
   box.innerHTML = _dashCmdFiltered.map((c, i) => `
-    <div class="cmd-result ${i === _dashCmdActive ? 'active' : ''}" onclick="execDashCmd(${i})">
+    <div class="cmd-result ${i === _dashCmdActive ? 'active' : ''}" role="button" tabindex="0" onclick="execDashCmd(${i})">
       <span class="cmd-result-icon">${c.icon}</span>
       <div class="cmd-result-text">${c.label}</div>
     </div>`).join('');
@@ -7613,7 +7814,7 @@ async function loadHealthWidget() {
       {
         key:     'payment',
         label:   'Payment Method Configured',
-        ok:      !!(biz?.ecocash_number || biz?.paypal_email || biz?.cash_enabled),
+        ok:      hasPaymentMethodConfigured(biz),
         guidance:'Add a payment method so customers know how to pay.',
         action:  "showSection('settings',null);switchSettingsTab('payment',null)",
       },

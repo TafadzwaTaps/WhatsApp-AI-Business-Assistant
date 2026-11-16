@@ -1,0 +1,27 @@
+const fs=require('fs');
+const src=fs.readFileSync(process.argv[2],'utf8');
+function grab(re,n){const m=src.match(re);if(!m)throw new Error(n+' not found');return m[0];}
+const tz=new Function(grab(/function chooseDefaultTimezone\([\s\S]*?\n\}\n/,'tz')+';return chooseDefaultTimezone;')();
+const co=new Function(grab(/function chooseDefaultCountry\([\s\S]*?\n\}\n/,'co')+';return chooseDefaultCountry;')();
+const pay=new Function(grab(/function hasPaymentMethodConfigured\([\s\S]*?\n\}\n/,'pay')+';return hasPaymentMethodConfigured;')();
+const eq=(a,b,l)=>{if(a!==b)throw new Error(l+': got '+JSON.stringify(a)+' expected '+JSON.stringify(b));};
+eq(pay({ecocash_number:'+263771234567'}),true,'ecocash');
+eq(pay({paypal_email:'a@b.co'}),true,'paypal');
+eq(pay({blik_number:'123456'}),true,'blik');
+eq(pay({bank_transfer_details:'IBAN X'}),true,'bank');
+eq(pay({cash_enabled:true}),true,'cash');
+eq(pay({stripe_connect_status:'active'}),true,'stripe');
+eq(pay({}),false,'none');
+eq(pay(null),false,'null');
+eq(pay({ecocash_number:'  ',cash_enabled:false}),false,'blank');
+const opts=['Africa/Harare','Europe/London','UTC'];
+eq(tz('Africa/Harare','Europe/London',opts),'Africa/Harare','saved wins');
+eq(tz('','Europe/London',opts),'Europe/London','browser');
+eq(tz('','Asia/Tokyo',opts),'UTC','unknown');
+eq(tz(undefined,'',opts),'UTC','empty');
+const c=['ZW','GB','US'];
+eq(co('ZW','en-GB',c),'ZW','saved country');
+eq(co('','en-GB',c),'GB','browser country');
+eq(co('','fr-FR',c),'','unknown country');
+eq(co('','en',c),'','no region');
+console.log('globalization OK');

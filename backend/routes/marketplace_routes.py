@@ -256,5 +256,12 @@ async def site_page(slug: str, request: Request):
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)
-        from fastapi.responses import RedirectResponse
-        return RedirectResponse(url="/static/store.html", status_code=302)
+        # Show the branded maintenance page (503) instead of redirecting to an
+        # unrelated static store page; lazy import avoids a circular import.
+        try:
+            from main import maintenance_response
+            return maintenance_response(503)
+        except Exception as _imp_exc:   # never turn a handled error into a 500
+            log.warning("maintenance_response unavailable: %s", _imp_exc)
+            return HTMLResponse("<h1>We are working on it</h1><p>Please try again shortly.</p>",
+                                status_code=503, headers={"Retry-After": "30"})

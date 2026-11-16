@@ -136,7 +136,9 @@ def _e(s: str) -> str:
 def _wa_url(phone: str, text: str = "") -> str:
     """Build a wa.me URL. phone may include +263 prefix or be blank."""
     number = re.sub(r"[^\d]", "", phone or "")
-    encoded = text.replace(" ", "%20").replace("'", "%27").replace("!", "%21")
+    # SECURITY: percent-encode everything (quotes, <, >, &, ...) so a business name
+    # cannot break out of the href attribute this URL is placed in.
+    encoded = quote(text or "", safe="")
     if number:
         return f"https://wa.me/{number}?text={encoded}"
     return f"https://wa.me/?text={encoded}"
@@ -453,7 +455,72 @@ def _get_site_settings(features_json: dict | None) -> dict:
         # Custom accent colour — overrides the theme's default accent when set.
         # Stored as a hex string e.g. "#ff6b35". Empty string = use theme default.
         "accent_color":   cfg.get("accent_color",   ""),
+        # Owner-editable text overrides (limited, per-site). Empty = keep the
+        # existing default copy. Length-capped here; HTML-escaped at render.
+        "hero_title":     _clip_text(cfg.get("hero_title"),   80),
+        "hero_tagline":   _clip_text(cfg.get("hero_tagline"), 160),
+        "cta_text":       _clip_text(cfg.get("cta_text"),     40),
+        "contact_title":  _clip_text(cfg.get("contact_title"), 60),
     }
+
+
+def _clip_text(v, limit: int) -> str:
+    """Whitespace-normalised, length-limited plain text ('' if not a string)."""
+    if not isinstance(v, str):
+        return ""
+    return " ".join(v.split())[:limit]
+
+
+# Social platforms the owner can link from their site. Each value in
+# features_json.social_links is a handle or URL; _social_url() turns it into
+# a safe https URL on the platform's own domain (never an arbitrary scheme).
+SOCIAL_PLATFORMS = {
+    "instagram": ("📸", "Instagram", "https://instagram.com/{h}"),
+    "facebook":  ("📘", "Facebook",  "https://facebook.com/{h}"),
+    "tiktok":    ("🎵", "TikTok",    "https://tiktok.com/@{h}"),
+    "telegram":  ("✈️", "Telegram",  "https://t.me/{h}"),
+    "x":         ("𝕏",  "X",         "https://x.com/{h}"),
+    "youtube":   ("▶️", "YouTube",   "https://youtube.com/@{h}"),
+    "linkedin":  ("💼", "LinkedIn",  "https://linkedin.com/company/{h}"),
+}
+
+
+def _social_url(platform: str, value) -> str:
+    """Normalise a handle/URL to https://<platform domain>/<handle>; '' if invalid."""
+    if platform not in SOCIAL_PLATFORMS or not isinstance(value, str):
+        return ""
+    v = value.strip()
+    if not v or len(v) > 200:
+        return ""
+    tmpl = SOCIAL_PLATFORMS[platform][2]
+    domain = tmpl.split("/")[2].replace("www.", "")
+    if re.match(r"^https?://", v, re.I):
+        host = (re.match(r"^https?://([^/?#]+)", v, re.I).group(1) or "").lower().replace("www.", "")
+        if host == domain or host.endswith("." + domain) or (platform == "x" and host.endswith("twitter.com")) \
+                or (platform == "telegram" and host in ("t.me", "telegram.me")):
+            return v if len(v) <= 200 and not re.search(r"[\s\"'<>]", v) else ""
+        return ""
+    handle = v.lstrip("@").strip("/")
+    # also tolerate "domain/handle" pasted without scheme
+    handle = re.sub(r"^(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}/", "", handle, flags=re.I).lstrip("@")
+    if not re.match(r"^[A-Za-z0-9._\-]{1,64}$", handle):
+        return ""
+    return tmpl.format(h=handle)
+
+
+def _social_links_html(biz: dict) -> str:
+    fj = biz.get("features_json") or {}
+    links = dict(fj.get("social_links") or {}) if isinstance(fj, dict) else {}
+    # Legacy instagram/facebook columns still count when no explicit link set
+    for k in ("instagram", "facebook"):
+        if not links.get(k) and biz.get(k):
+            links[k] = biz.get(k)
+    out = []
+    for key, (icon, label, _t) in SOCIAL_PLATFORMS.items():
+        url = _social_url(key, links.get(key))
+        if url:
+            out.append(f'<a class="social-link" href="{_e(url)}" target="_blank" rel="noopener noreferrer">{icon} {label}</a>')
+    return f'<div class="social-links">{"".join(out)}</div>' if out else ""
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -852,8 +919,15 @@ def _i18n_script(dynamic_i18n: Optional[dict] = None) -> str:
     viewport — a full document.querySelectorAll pass covers offscreen
     content too.
     """
-    i18n_json = json.dumps(SITE_I18N, ensure_ascii=False)
-    dyn_json  = json.dumps(dynamic_i18n or {}, ensure_ascii=False)
+    # Tenant-controlled text lives in dynamic_i18n, so neutralise anything that
+    # could close the <script> element or otherwise break out of the JSON.
+    def _script_safe(obj):
+        return (json.dumps(obj, ensure_ascii=False)
+                .replace("<", "\\u003c").replace(">", "\\u003e")
+                .replace("&", "\\u0026")
+                .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    i18n_json = _script_safe(SITE_I18N)
+    dyn_json  = _script_safe(dynamic_i18n or {})
     supported = json.dumps([c for c, _, _ in SITE_I18N_LANGS])
     rtl_langs = json.dumps(sorted(SITE_I18N_RTL_LANGS))
     return f'''
@@ -957,7 +1031,9 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     name        = _e(biz.get("name", "Our Business"))  # protected — never translated
     raw_category= biz.get("category", "") or ""
     category    = _e(raw_category)
-    raw_tagline = biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
+    _custom_title = settings.get("hero_title") or ""
+    hero_title  = _e(_custom_title or biz.get("name", "Our Business"))
+    raw_tagline = settings.get("hero_tagline") or biz.get("tagline") or settings.get("description") or f"Order {raw_category or 'products'} on WhatsApp"
     tagline     = _e(raw_tagline)
     logo_url    = biz.get("logo_url", "")
 
@@ -980,6 +1056,10 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
         if logo_url else
         f'<div class="hero-logo-placeholder">{name[0].upper() if name else "W"}</div>'
     )
+    _title_attr = ""
+    if _custom_title:
+        _register_dynamic_text(f"hero_title_{biz_id or 'x'}", _custom_title, biz_id)
+        _title_attr = f' data-i18n-dyn="hero_title_{biz_id or "x"}"'
     cat_badge = f'<span class="cat-badge" data-i18n-dyn="{category_key}">{category}</span>' if category else ""
 
     chips = []
@@ -992,9 +1072,15 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     # Route hero CTA through /go/{slug} to track WhatsApp link clicks (acquisition analytics)
     _hero_slug = _name_to_slug(biz.get("name", ""))
     wa_href = f"/go/{_e(_hero_slug)}" if _hero_slug else _wa_url(wa_phone, f"Hi! I'd like to order from {biz.get('name','')}")
+    _cta_label = (
+        f'<span data-i18n-dyn="cta_text_{biz_id or "x"}">{_e(settings["cta_text"])}</span>' if settings.get("cta_text")
+        else f'<span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span>'
+    )
+    if settings.get("cta_text"):
+        _register_dynamic_text(f"cta_text_{biz_id or 'x'}", settings["cta_text"], biz_id)
     cta = (
         f'<a class="hero-cta" href="{wa_href}" rel="noopener">'
-        f'💬 <span data-i18n="hero_cta">{SITE_I18N["en"]["hero_cta"]}</span></a>'
+        f'💬 {_cta_label}</a>'
     ) if settings["show_ordering"] else ""
 
     # Service businesses get an additional "Book an Appointment" CTA
@@ -1013,7 +1099,7 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
     <div class="hero-inner">
       {logo_html}
       {cat_badge}
-      <h1 class="hero-title">{name}</h1>
+      <h1 class="hero-title"{_title_attr}>{hero_title}</h1>
       <p class="hero-tagline" data-i18n-dyn="{tagline_key}">{tagline}</p>
       {chips_html}
       {cta}
@@ -1087,10 +1173,14 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
     _verb = "book" if is_service else "order"
     order_text = f"Hi! I'd like to {_verb} {p.get('name','')} from {biz_name}" if biz_name else f"Hi! I'd like to {_verb} {p.get('name','')}"
 
-    buy_now_js = (
-        f"wzBuyNow({business_id},{repr(str(p.get('id','')))},{repr(str(name))},{price},'{_e(currency_sym)}')"
-        if business_id else ""
-    )
+    # SECURITY: build the JS call from RAW values with json.dumps (valid JS string
+    # literals; ensure_ascii escapes U+2028/2029), then HTML-escape the whole
+    # expression once for the attribute (<, >, & and quotes). Never repr() an
+    # already-HTML-escaped value: the browser decodes entities before running it.
+    buy_now_js = _e(
+        f"wzBuyNow({int(business_id)},{json.dumps(str(p.get('id','')))},"
+        f"{json.dumps(str(p.get('name','Product')))},{price},{json.dumps(str(currency_sym))})"
+    ) if business_id else ""
     _buy_key = "pay_btn" if is_service else "buy_now"
     buy_label = f'💳 <span data-i18n="{_buy_key}">{SITE_I18N["en"][_buy_key]}</span>'
     buy_btn = (
@@ -1121,7 +1211,7 @@ def _category_filter_html(products: list) -> str:
     pills = ['<button class="cat-pill active" data-filter="all" onclick="_wzFilter(this,\'all\')">All</button>']
     for c in cats:
         pills.append(
-            f'<button class="cat-pill" data-filter="{_e(c)}" onclick="_wzFilter(this,\'{_e(c)}\')">{_e(c)}</button>'
+            f'<button class="cat-pill" data-filter="{_e(c)}" onclick="{_e("_wzFilter(this," + json.dumps(str(c)) + ")")}">{_e(c)}</button>'
         )
     return f'<div class="cat-filters">{"".join(pills)}</div>'
 
@@ -1279,11 +1369,18 @@ def _contact_html(biz: dict, settings: dict, wa_phone: str) -> str:
             f'</div>'
         )
 
+    if settings.get("contact_title"):
+        _register_dynamic_text(f"contact_title_{biz.get('id','x')}", settings["contact_title"], biz.get("id"))
+    _contact_title = (
+        f'<span data-i18n-dyn="contact_title_{biz.get("id","x")}">{_e(settings["contact_title"])}</span>' if settings.get("contact_title")
+        else '<span data-i18n="get_in_touch">Get In Touch</span>'
+    )
     return f"""
   <section class="contact-section" id="contact">
     <div class="section-inner contact-inner">
-      <h2 class="section-title">📬 <span data-i18n="get_in_touch">Get In Touch</span></h2>
+      <h2 class="section-title">📬 {_contact_title}</h2>
       <div class="contact-details">{items_html}</div>
+      {_social_links_html(biz)}
       {map_html}
       <a class="wa-cta-big" href="{wa_href}" target="_blank" rel="noopener">
         💬 <span data-i18n="message_us">Message Us on WhatsApp</span>
@@ -1311,12 +1408,14 @@ def _seo_tags(name: str, category: str, tagline: str, slug: str) -> str:
     title = f"{_e(name)} | {_e(category)}" if category else _e(name)
     desc  = _e(tagline[:160])
     url   = f"https://wazibothq.com/site/{slug}"
-    json_ld = (
-        '{"@context":"https://schema.org","@type":"LocalBusiness",'
-        f'"name":"{_e(name)}","description":"{desc}","url":"{url}"'
-        + (f',"@type":"{_e(category)}"' if category else "")
-        + "}"
-    )
+    # Structured data from KNOWN facts only, built with json.dumps (the previous
+    # hand-assembled string was invalid JSON for some names and had a duplicate
+    # "@type" key). "<" is neutralised so it can never close the script tag.
+    ld = {"@context": "https://schema.org", "@type": "LocalBusiness", "name": name,
+          "description": tagline[:160], "url": url}
+    if category:
+        ld["additionalType"] = category
+    json_ld = json.dumps(ld, ensure_ascii=False).replace("<", "\\u003c")
     return f"""  <title>{title}</title>
   <meta name="description" content="{desc}">
   <meta property="og:title" content="{_e(name)}">
@@ -1418,6 +1517,9 @@ body{{font-family:{font_stack};background:var(--bg);color:var(--text);line-heigh
 .prod-card:hover{{transform:translateY(-4px);
                   box-shadow:0 12px 40px var(--shadow)}}
 .prod-card.hidden{{display:none!important}}
+.social-links{{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:18px 0}}
+.social-link{{padding:8px 14px;border:1px solid var(--surface2);border-radius:999px;color:inherit;text-decoration:none;font-size:14px;background:var(--surface2)}}
+.social-link:hover{{border-color:var(--brand)}}
 .prod-img{{width:100%;height:200px;object-fit:contain;background:var(--surface2)}}
 .prod-img-ph{{width:100%;height:200px;background:var(--surface2);
               display:flex;align-items:center;justify-content:center;font-size:48px}}
@@ -1536,7 +1638,8 @@ def _buy_now_html(biz_id: int, currency_sym: str, currency_code: str, palette: d
     border = p["border"]
     curr   = currency_code.lower()[:3] if currency_code else "usd"
     # Escape currency symbol for safe JS string embedding
-    sym_js = currency_sym.replace("\\", "\\\\").replace("'", "\\'")
+    # JSON-escape (quotes, backslashes, newlines) and neutralise "</script>".
+    sym_js = json.dumps(str(currency_sym))[1:-1].replace("'", "\\'").replace("</", "<\\/")
     return f"""
 <div id="wz-cart-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:{bg};border-radius:16px;padding:28px;width:min(420px,94vw);max-height:90vh;overflow-y:auto;">
@@ -1565,6 +1668,12 @@ var _wzCurrSym = '{sym_js}';
 var _wzCurrCode= '{curr}';
 var _wzCart    = [];
 
+function _wzEsc(s) {{
+  return String(s).replace(/[&<>"']/g, function(c) {{
+    return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}}[c];
+  }});
+}}
+
 function wzBuyNow(bizId, prodId, prodName, price, currSym) {{
   _wzCart = [{{ id: prodId, name: prodName, price: parseFloat(price), quantity: 1 }}];
   _wzShowCart(currSym || _wzCurrSym);
@@ -1579,8 +1688,8 @@ function _wzShowCart(sym) {{
   itemsEl.innerHTML = _wzCart.map(function(i) {{
     total += i.price * i.quantity;
     return '<div style="display:flex;justify-content:space-between;padding:8px 0;">'
-      + '<span>' + i.name + '</span>'
-      + '<span style="font-weight:600">' + sym + (i.price * i.quantity).toFixed(2) + '</span>'
+      + '<span>' + _wzEsc(i.name) + '</span>'
+      + '<span style="font-weight:600">' + _wzEsc(sym) + (i.price * i.quantity).toFixed(2) + '</span>'
       + '</div>';
   }}).join('');
   if (totalEl) totalEl.textContent = sym + total.toFixed(2);
@@ -1599,7 +1708,7 @@ function wzCheckout() {{
     headers: {{ 'Content-Type': 'application/json' }},
     body: JSON.stringify({{
       business_id: _wzBizId,
-      items:    _wzCart.map(function(i) {{ return {{ name: i.name, price: i.price, quantity: i.quantity }}; }}),
+      items:    _wzCart.map(function(i) {{ return {{ id: i.id, name: i.name, price: i.price, quantity: i.quantity }}; }}),
       currency: _wzCurrCode
     }})
   }})
@@ -1730,7 +1839,7 @@ def generate_site_html(slug: str) -> str:
     # Custom accent colour: user-picked hex overrides theme default.
     # Falls back to theme accent → business theme_colour → safe green.
     custom_accent = settings.get("accent_color", "").strip()
-    if custom_accent and custom_accent.startswith("#") and len(custom_accent) in (4, 7):
+    if custom_accent and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", custom_accent):
         theme       = custom_accent
         theme_dark  = _hex_darken(custom_accent, 25)
     else:
