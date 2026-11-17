@@ -858,6 +858,9 @@ async def _handle_one_message(data: dict) -> dict:
         if "error" in result:
             _log_event("wa.failed", phone=customer_phone, biz=business["id"],
                        error=result["error"])
+            # Record the failure on the stored reply so the inbox shows it as undelivered.
+            if isinstance(out_msg, dict) and out_msg.get("id"):
+                await run_in_threadpool(crud.messages.mark_message_failed, out_msg["id"])
         else:
             msg_id = (result.get("messages") or [{}])[0].get("id", "?")
             _log_event("wa.sent", phone=customer_phone, biz=business["id"],
@@ -867,6 +870,8 @@ async def _handle_one_message(data: dict) -> dict:
                 await run_in_threadpool(crud.messages.set_message_wa_id, out_msg["id"], msg_id)
     else:
         log.error("📤 STEP 8 FAIL — No token for '%s'", business["name"])
+        if isinstance(out_msg, dict) and out_msg.get("id"):
+            await run_in_threadpool(crud.messages.mark_message_failed, out_msg["id"])
 
     return {"status": "ok"}
 

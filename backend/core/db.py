@@ -121,6 +121,19 @@ def _init() -> Client:
     _validate_supabase_key(key)
 
     try:
+        import base64 as _b64, json as _json
+        _p = key.split(".")[1]
+        _role = _json.loads(_b64.urlsafe_b64decode(_p + "=" * (-len(_p) % 4))).get("role", "?")
+        if _role == "service_role":
+            log.info("Supabase backend key role: service_role")
+        else:
+            log.critical("Supabase backend key role is %r, expected 'service_role'. The app relies on the "
+                         "service_role key; with anything else, locking down Row Level Security policies "
+                         "will break it.", _role)
+    except Exception:
+        log.warning("Could not read the Supabase key's role claim")
+
+    try:
         client = create_client(url, key)
     except Exception as exc:
         _fatal(

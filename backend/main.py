@@ -356,16 +356,35 @@ def store_fallback(slug: str):    return _html("store.html")
 @app.get("/menu/{slug}", include_in_schema=False)
 def menu_fallback(slug: str):     return _html("store.html")
 
+def _jwt_role(token: str) -> str:
+    """The unverified `role` claim of a Supabase JWT ('anon', 'service_role', ...), '' if unreadable.
+    Used only to REFUSE to publish a privileged key - never to trust one."""
+    import base64, json as _j
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        return str(_j.loads(base64.urlsafe_b64decode(payload)).get("role", ""))
+    except Exception:
+        return ""
+
+
 @app.get("/config/public")
 def public_config():
-    """Return public frontend config (Supabase anon key, URL).
-    Only the anon key is exposed — never the service_role key.
+    """Return public frontend config (Supabase URL + anon key).
+
+    SECURITY: this endpoint is unauthenticated. It used to fall back to SUPABASE_KEY -
+    the service_role key, which bypasses all Row Level Security - whenever
+    SUPABASE_ANON_KEY was unset. Only a key whose JWT role is exactly "anon" is ever
+    published; anything else (including a misconfigured service_role value) is withheld.
     """
     import os
+    anon = os.getenv("SUPABASE_ANON_KEY", "").strip()
+    if anon and (_jwt_role(anon) != "anon" or anon == os.getenv("SUPABASE_KEY", "").strip()):
+        log.error("/config/public: SUPABASE_ANON_KEY does not hold an anon-role key - NOT publishing it")
+        anon = ""
     return {
         "supabase_url":       os.getenv("SUPABASE_URL", ""),
-        "supabase_anon_key":  os.getenv("SUPABASE_ANON_KEY", "")
-                               or os.getenv("SUPABASE_KEY", ""),
+        "supabase_anon_key":  anon,
     }
 @app.get("/inbox")
 def inbox():      return _html("inbox.html")

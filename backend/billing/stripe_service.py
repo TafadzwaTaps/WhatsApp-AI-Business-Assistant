@@ -1127,6 +1127,18 @@ def create_product_checkout_session(
         return {"error": "No items provided"}
 
     try:
+        # A buyer can only pay a merchant who has finished Stripe Connect onboarding.
+        # Without a connected, charge-enabled account the money would land in the
+        # platform's own balance, so refuse instead of silently collecting it.
+        status = get_connect_account_status(business_id)
+        if not (status.get("connected") and status.get("charges_enabled") and status.get("account_id")):
+            log.info("Product checkout refused: merchant not connected  business=%s", business_id)
+            return {
+                "error": "This store hasn't finished setting up card payments yet. "
+                         "Please order via WhatsApp or try again later.",
+                "code": "merchant_not_connected",
+            }
+
         # Stripe requires amounts in the smallest currency unit.
         # Most currencies: multiply by 100 (e.g. $5.99 → 599 cents).
         # Zero-decimal currencies: use the value as-is (e.g. ¥599 → 599).
@@ -1184,11 +1196,9 @@ def create_product_checkout_session(
         if customer_email:
             params["customer_email"] = customer_email
 
-        status = get_connect_account_status(business_id)
-        if status.get("connected") and status.get("charges_enabled"):
-            params["payment_intent_data"] = {
-                "transfer_data": {"destination": status["account_id"]},
-            }
+        params["payment_intent_data"] = {
+            "transfer_data": {"destination": status["account_id"]},
+        }
 
         session = stripe.checkout.Session.create(**params)
         log.info("Product checkout session created  business=%s", business_id)

@@ -391,7 +391,7 @@ def billing_product_checkout(body: ProductCheckoutRequest, request: Request):
         cancel_url     = body.cancel_url,
     )
     if "error" in result:
-        raise HTTPException(400, result["error"])
+        raise HTTPException(409 if result.get("code") == "merchant_not_connected" else 400, result["error"])
     return result
 
 

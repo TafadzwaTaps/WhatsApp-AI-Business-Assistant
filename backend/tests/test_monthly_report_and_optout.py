@@ -38,6 +38,7 @@ class _Rec:
     def table(self, n): self._t = n; return self
     def select(self, *a, **k): return self
     def eq(self, *a, **k): return self
+    def ilike(self, *a, **k): return self
     def gte(self, *a, **k): return self
     def lt(self, *a, **k): return self
     def gt(self, *a, **k): return self
@@ -71,7 +72,9 @@ def test_default_opted_in_business_gets_monthly_email_with_unsubscribe(run):
     assert res["sent"] == 1
     to, subject, html = sent[0]
     assert "Monthly Report" in subject and "Weekly" not in subject
-    assert "/email/unsubscribe-reports?business_id=2&token=" in html
+    # Every outgoing email (the monthly report included) carries the address-scoped
+    # unsubscribe link; it is what a recipient who wants no more email clicks.
+    assert "/email/unsubscribe-address?email=b%40x.com&token=" in html
     assert fake.updates and "last_monthly_report" in fake.updates[0]["features_json"]
 
 def test_not_sent_twice_for_same_month(run):
@@ -97,26 +100,29 @@ def client():
     return TestClient(main.app)
 
 
-def test_unsubscribe_get_changes_nothing_and_post_opts_out(client, monkeypatch):
-    from services.email_service import _report_unsub_token
-    fake = _Rec([{"features_json": {"keep": 1}}])
+def test_address_unsubscribe_opts_out_every_business_of_that_address(client, monkeypatch):
+    from services.email_service import _address_token
+    fake = _Rec([{"id": 9, "owner_email": "Owner@X.com", "features_json": {"keep": 1}},
+                 {"id": 10, "owner_email": "someone-else@x.com", "features_json": {}}])
     monkeypatch.setattr(sys.modules["core.db"], "supabase", fake, raising=False)
-    tok = _report_unsub_token(9)
+    tok = _address_token("owner@x.com")
+    for method in (client.get, client.post):          # link click and RFC 8058 one-click
+        fake.updates.clear()
+        r = method(f"/email/unsubscribe-address?email=owner%40x.com&token={tok}")
+        assert r.status_code == 200 and "unsubscribed" in r.text.lower()
+        assert len(fake.updates) == 1                  # only the matching owner, not the other address
+        fj = fake.updates[0]["features_json"]
+        assert fj["keep"] == 1 and fj["pref_weekly_reports"] is False and fj["marketing_emails_opt_out"] is True
 
-    g = client.get(f"/email/unsubscribe-reports?business_id=9&token={tok}")
-    assert g.status_code == 200 and "<form" in g.text and fake.updates == []
 
-    p = client.post(f"/email/unsubscribe-reports?business_id=9&token={tok}")
-    assert p.status_code == 200
-    assert fake.updates[0]["features_json"] == {"keep": 1, "pref_weekly_reports": False}
-
-
-def test_unsubscribe_rejects_bad_or_wrong_scope_token(client, monkeypatch):
-    from services.email_service import _unsubscribe_token   # marketing token
-    fake = _Rec([{"features_json": {}}])
+def test_address_unsubscribe_rejects_bad_or_wrong_scope_token(client, monkeypatch):
+    from services.email_service import _unsubscribe_token, _address_token   # business-scoped token must not work
+    fake = _Rec([{"id": 9, "owner_email": "owner@x.com", "features_json": {}}])
     monkeypatch.setattr(sys.modules["core.db"], "supabase", fake, raising=False)
-    assert client.post("/email/unsubscribe-reports?business_id=9&token=bad").status_code == 400
-    assert client.post(f"/email/unsubscribe-reports?business_id=9&token={_unsubscribe_token(9)}").status_code == 400
+    assert client.post("/email/unsubscribe-address?email=owner%40x.com&token=bad").status_code == 400
+    assert client.post(f"/email/unsubscribe-address?email=owner%40x.com&token={_unsubscribe_token(9)}").status_code == 400
+    # a valid token for a DIFFERENT address must not unsubscribe this one
+    assert client.post(f"/email/unsubscribe-address?email=owner%40x.com&token={_address_token('other@x.com')}").status_code == 400
     assert fake.updates == []
 
 
