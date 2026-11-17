@@ -16,11 +16,11 @@ import xml.etree.ElementTree as ET
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from routes.seo_routes import router as seo_router
+# The live /sitemap.xml and /robots.txt are defined in main.py (routes/seo_routes.py is
+# not registered), so test the real application, not the unused module.
+from main import app as _main_app
 
-app = FastAPI()
-app.include_router(seo_router)
-client = TestClient(app)
+client = TestClient(_main_app)
 
 
 def test_sitemap_returns_200_and_xml_content_type():
@@ -87,7 +87,7 @@ def test_robots_txt_allows_root_and_links_sitemap():
 
 def test_robots_txt_disallows_private_paths_only():
     body = client.get("/robots.txt").text
-    for private_path in ("/dashboard", "/inbox", "/onboarding", "/admin", "/api/"):
+    for private_path in ("/dashboard", "/inbox", "/onboarding", "/config/public"):
         assert f"Disallow: {private_path}" in body
     # Must not accidentally block the homepage, static assets, or public pages.
     assert "Disallow: /\n" not in body

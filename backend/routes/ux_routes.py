@@ -515,14 +515,16 @@ def platform_health(user=Depends(require_business)):
             wa_msg    = "No WhatsApp credentials configured"
         checks["whatsapp"] = {"status": wa_status, "message": wa_msg}
     except Exception as exc:
-        checks["whatsapp"] = {"status": "red", "message": str(exc)}
+        log.warning("health check: whatsapp check failed: %s", exc)
+        checks["whatsapp"] = {"status": "red", "message": "WhatsApp check failed"}
 
     # AI / conversation engine
     try:
         from services.ai import generate_reply  # noqa: F401
         checks["ai"] = {"status": "green", "message": "AI engine loaded ✓"}
     except Exception as exc:
-        checks["ai"] = {"status": "red", "message": f"AI engine error: {exc}"}
+        log.warning("health check: AI engine failed to load: %s", exc)
+        checks["ai"] = {"status": "red", "message": "AI engine failed to load"}
         overall = "red"
 
     # Supabase / DB
@@ -531,7 +533,8 @@ def platform_health(user=Depends(require_business)):
         supabase.table("businesses").select("id").eq("id", bid).limit(1).execute()
         checks["database"] = {"status": "green", "message": "Database connected ✓"}
     except Exception as exc:
-        checks["database"] = {"status": "red", "message": f"Database error: {exc}"}
+        log.warning("health check: database check failed: %s", exc)
+        checks["database"] = {"status": "red", "message": "Database check failed"}
         overall = "red"
 
     # Payment config
@@ -545,7 +548,8 @@ def platform_health(user=Depends(require_business)):
             "message": "Payments configured ✓" if has_pay else "No payment method configured",
         }
     except Exception as exc:
-        checks["payments"] = {"status": "yellow", "message": str(exc)}
+        log.warning("health check: payments check failed: %s", exc)
+        checks["payments"] = {"status": "yellow", "message": "Payment check failed"}
 
     # Last message timestamp
     try:

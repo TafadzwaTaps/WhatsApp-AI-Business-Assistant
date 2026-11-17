@@ -111,8 +111,22 @@ def test_paypal_webhook_dev_mode_unchanged_without_webhook_id(app_client, monkey
     _, c = app_client
     monkeypatch.delenv("PAYPAL_WEBHOOK_ID", raising=False)
     monkeypatch.delenv("RENDER", raising=False)
+    # Unsigned events are fail-closed by default (see next tests) and only
+    # accepted with the explicit local-development opt-in.
+    monkeypatch.setenv("ALLOW_UNSIGNED_WEBHOOKS", "1")
     r = c.post("/payments/paypal/webhook", json={"event_type": "SOMETHING.ELSE"})
     assert r.status_code == 200
+
+
+def test_paypal_webhook_unsigned_rejected_by_default_and_on_render(app_client, monkeypatch):
+    _, c = app_client
+    monkeypatch.delenv("PAYPAL_WEBHOOK_ID", raising=False)
+    monkeypatch.delenv("RENDER", raising=False)
+    monkeypatch.delenv("ALLOW_UNSIGNED_WEBHOOKS", raising=False)
+    assert c.post("/payments/paypal/webhook", json={"event_type": "X"}).status_code == 503
+    monkeypatch.setenv("ALLOW_UNSIGNED_WEBHOOKS", "1")
+    monkeypatch.setenv("RENDER", "true")          # opt-in is ignored on a real deployment
+    assert c.post("/payments/paypal/webhook", json={"event_type": "X"}).status_code == 503
 
 
 def test_paypal_webhook_rejects_bad_signature_when_configured(app_client, monkeypatch):

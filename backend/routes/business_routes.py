@@ -83,10 +83,11 @@ class BusinessUpdate(BaseModel):
     # the same total as pickup regardless of what was configured. Run the
     # accompanying SQL migration to add the column before this takes effect.
     delivery_fee:        Optional[float] = None
-    # Stripe billing fields
-    stripe_customer_id:     Optional[str]  = None
-    stripe_subscription_id: Optional[str]  = None
-    stripe_plan:            Optional[str]  = None
+    # SECURITY: Stripe billing identifiers (stripe_customer_id,
+    # stripe_subscription_id, stripe_plan) are deliberately NOT accepted here.
+    # They are written only by the verified Stripe webhook / billing service;
+    # letting a tenant set them would allow opening another customer's billing
+    # portal. Unknown fields are ignored by Pydantic.
 
 
 @router.get("/me")
@@ -142,7 +143,7 @@ def get_me(user=Depends(require_business)):
     b["paypal_configured"]        = _has(b.get("paypal_email"))
     b["bank_transfer_configured"] = _has(b.get("bank_transfer_details"))
     b["blik_configured"]          = _has(b.get("blik_number"))
-    return b
+    return _redact_stripe_secrets(b)
 
 
 # Currency symbol → ISO code map — keeps symbol and currency column in sync
@@ -161,13 +162,94 @@ _SYM_TO_ISO: dict = {
 _FEATURES_JSON_MAX_BYTES = 64_000
 
 
+_SG_ENUM_RE = __import__("re").compile(r"^[a-z0-9_]{1,40}$")
+_SG_ACCENT_RE = __import__("re").compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+_SG_LANGS = ("en", "pl", "fr", "pt", "es", "de", "ar")
+
+
+def _clean_text(v, limit: int, multiline: bool = False) -> str:
+    if not isinstance(v, str):
+        return ""
+    # control characters become spaces (newlines are kept for multi-line text only)
+    v = "".join(" " if (ch < " " or ch == "\x7f") and not (ch == "\n" and multiline) else ch for ch in v)
+    if multiline:
+        return "\n".join(line.rstrip() for line in v.strip().split("\n"))[:limit]
+    return " ".join(v.split())[:limit]
+
+
+def _sanitize_site_settings(cfg):
+    """Server-side validation of features_json.site_generator (the dashboard
+    already limits these client-side, but the API accepted anything). Unknown
+    keys are kept (other features share this object); known keys are coerced:
+    enums must look like preset ids, accent must be a hex colour, texts are
+    control-char-stripped and length-capped, toggles are booleans, language must
+    be a supported site language. Invalid values are dropped (-> defaults)."""
+    if not isinstance(cfg, dict):
+        return {}
+    out = dict(cfg)
+    for k in ("theme_style", "font", "layout"):
+        if k in out and not (isinstance(out[k], str) and _SG_ENUM_RE.match(out[k])):
+            out.pop(k)
+    if "accent_color" in out:
+        out["accent_color"] = out["accent_color"] if (isinstance(out["accent_color"], str)
+                                                     and _SG_ACCENT_RE.match(out["accent_color"])) else ""
+    for k, lim in (("hero_title", 80), ("hero_tagline", 160), ("cta_text", 40), ("contact_title", 60),
+                   ("business_hours", 300), ("location", 200)):
+        if k in out:
+            out[k] = _clean_text(out[k], lim)
+    if "description" in out:
+        out["description"] = _clean_text(out["description"], 2000, multiline=True)
+    for k in ("show_hours", "show_location", "show_reviews", "show_gallery", "show_ordering", "show_map"):
+        if k in out:
+            out[k] = bool(out[k])
+    if "logo_url" in out:
+        lu = out["logo_url"]
+        ok = (isinstance(lu, str) and lu.lower().startswith(("https://", "http://")) and len(lu) <= 600
+              and not any(c.isspace() or c in "\"'<>\\" for c in lu))
+        out["logo_url"] = lu if ok else ""
+    if "language" in out and out["language"] not in _SG_LANGS:
+        out["language"] = ""
+    return out
+
+
+def _encrypt_secret(value: str) -> str:
+    from core.crypto import encrypt_token, is_encrypted
+    return value if is_encrypted(value) else encrypt_token(value)
+
+
+def _redact_stripe_secrets(b: dict) -> dict:
+    """Never send a merchant's Stripe secret/webhook keys back to the browser —
+    only whether they are set (also scrubs values saved before encryption)."""
+    fj = b.get("features_json")
+    if isinstance(fj, dict) and isinstance(fj.get("stripe"), dict):
+        cfg = dict(fj["stripe"])
+        for k in ("secret_key", "webhook_secret"):
+            if cfg.pop(k, None):
+                cfg[f"{k}_configured"] = True
+        b["features_json"] = {**fj, "stripe": cfg}
+    return b
+
+
 @router.patch("/me")
 def update_me(data: BusinessUpdate, user=Depends(require_business)):
     safe = data.dict(exclude_none=True)
     safe.pop("is_active", None)
     if isinstance(safe.get("features_json"), dict):
-        if len(__import__("json").dumps(safe["features_json"], default=str).encode("utf-8")) > _FEATURES_JSON_MAX_BYTES:
+        # The "stripe" section is managed only by /me/payment-settings/stripe.
+        # GET /me redacts the keys, so a client that round-trips features_json
+        # must not be able to erase (or inject) them here.
+        current = crud.get_business_by_id(user["business_id"]) or {}
+        cur_fj = current.get("features_json") if isinstance(current.get("features_json"), dict) else {}
+        fj = dict(safe["features_json"])
+        if "stripe" in cur_fj:
+            fj["stripe"] = cur_fj["stripe"]
+        else:
+            fj.pop("stripe", None)
+        if "site_generator" in fj:
+            fj["site_generator"] = _sanitize_site_settings(fj["site_generator"])
+        if len(__import__("json").dumps(fj, default=str).encode("utf-8")) > _FEATURES_JSON_MAX_BYTES:
             raise HTTPException(413, "Settings are too large to save.")
+        safe["features_json"] = fj
     new_phone_id = safe.get("whatsapp_phone_id")
     if new_phone_id:
         existing = crud.get_business_by_phone_id(new_phone_id)
@@ -190,7 +272,15 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
     if not b: raise HTTPException(404, "Not found")
     b.pop("owner_password", None)
     b.pop("whatsapp_token", None)
-    return b
+    return _redact_stripe_secrets(b)
+
+
+@router.get("/me/translation-status")
+def translation_status(user=Depends(require_business)):
+    """Which languages the generated website can ACTUALLY translate on this server
+    (fixed labels always; owner text only when the Argos engine + pair is installed)."""
+    from services.translation_service import engine_status
+    return engine_status()
 
 
 @router.get("/me/test-whatsapp")
@@ -387,9 +477,9 @@ def update_stripe_settings(data: StripeSettingsUpdate, user=Depends(require_busi
     if data.stripe_pub_key:
         stripe_cfg["pub_key"] = data.stripe_pub_key.strip()
     if data.stripe_secret_key:
-        stripe_cfg["secret_key"] = data.stripe_secret_key.strip()
+        stripe_cfg["secret_key"] = _encrypt_secret(data.stripe_secret_key.strip())
     if data.stripe_webhook_secret:
-        stripe_cfg["webhook_secret"] = data.stripe_webhook_secret.strip()
+        stripe_cfg["webhook_secret"] = _encrypt_secret(data.stripe_webhook_secret.strip())
     new_fj = {**existing_fj, "stripe": stripe_cfg}
     class _D:
         def dict(self, **_): return {"features_json": new_fj}
