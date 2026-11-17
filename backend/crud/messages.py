@@ -78,6 +78,46 @@ def message_exists(wa_message_id: str) -> bool:
     return exists
 
 
+_STATUS_RANK = {"sent": 1, "delivered": 2, "read": 3}
+
+
+def set_message_wa_id(message_id, wa_message_id: str) -> None:
+    """Remember the WhatsApp id (wamid) Meta returned for an outgoing message so later
+    delivery receipts can be matched to it. Never raises."""
+    if not message_id or not wa_message_id or wa_message_id == "?":
+        return
+    try:
+        supabase.table("messages").update({"wa_message_id": wa_message_id}).eq("id", message_id).execute()
+    except Exception as exc:
+        log.warning("set_message_wa_id failed  id=%s: %s", message_id, exc)
+
+
+def apply_delivery_status(wa_message_id: str, status: str, detail: str | None = None) -> bool:
+    """Apply a Meta delivery receipt (sent/delivered/read/failed) to the matching message.
+
+    Receipts can arrive out of order, so a message never moves backwards
+    (read -> delivered) and a failure never overwrites a delivered/read message.
+    Returns True if a row was updated. `detail` (error code/title) is logged by
+    the caller; storing it needs a new column and is intentionally not done here."""
+    if not wa_message_id or status not in ("sent", "delivered", "read", "failed"):
+        return False
+    res = (
+        supabase.table("messages").select("id,status")
+        .eq("wa_message_id", wa_message_id).eq("direction", "outgoing").limit(1).execute()
+    )
+    if not res.data:
+        return False
+    row = res.data[0]
+    cur = row.get("status") or "sent"
+    if status == "failed":
+        if cur in ("delivered", "read"):
+            return False
+    elif _STATUS_RANK.get(status, 0) <= _STATUS_RANK.get(cur, 0):
+        return False
+    supabase.table("messages").update({"status": status}).eq("id", row["id"]).execute()
+    return True
+
+
 def create_message(
     customer_id: int,
     business_id: int,
@@ -234,7 +274,7 @@ def mark_messages_read(customer_id: int, business_id: int) -> None:
       .eq("is_read", False)\
       .execute()
 
-    supabase.table("customers").update({"unread_count": 0}).eq("id", customer_id).execute()
+    supabase.table("customers").update({"unread_count": 0}).eq("id", customer_id).eq("business_id", business_id).execute()
 
 
 def get_chat_conversations(business_id: int, filter_unread: bool = False) -> list[dict]:
@@ -476,6 +516,7 @@ def clear_customer_messages(customer_id: int, business_id: int) -> int:
         supabase.table("customers") \
             .update({"unread_count": 0}) \
             .eq("id", customer_id) \
+            .eq("business_id", business_id) \
             .execute()
 
         log.info("clear_customer_messages  customer=%s  deleted=%d", customer_id, count)
