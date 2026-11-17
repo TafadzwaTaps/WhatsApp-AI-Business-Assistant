@@ -339,7 +339,7 @@ body {
 
 </div><!-- /page -->
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script src="/static/vendor/chart.umd.4.4.1.js" integrity="sha384-dug+JxfBvklEQdJ4AYuBBAIScUz0bVN73xpy273gcAwHjb3qI0fXmuYNaNfdyYJG"></script>
 <script>
 'use strict';
 
@@ -360,7 +360,8 @@ function escHtml(s) {
     .replace(/&/g,'&amp;')
     .replace(/</g,'&lt;')
     .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 
 /* ── THEME ── */
@@ -554,7 +555,7 @@ function renderStatus(data) {
     <div class="legend-row">
       <div style="display:flex;align-items:center;">
         <div class="legend-dot" style="background:${colors[i]};"></div>
-        <span style="color:var(--text2);text-transform:capitalize;">${k}</span>
+        <span style="color:var(--text2);text-transform:capitalize;">${escHtml(k)}</span>
       </div>
       <span style="color:var(--text3);">${vals[i]} (${Math.round(vals[i]/total*100)}%)</span>
     </div>
@@ -629,7 +630,7 @@ function renderOrdersTable(data) {
 function showError(msg) {
   document.getElementById('kpi-grid').innerHTML = `
     <div class="error-state" style="grid-column:1/-1;">
-      <div>⚠ ${msg}</div>
+      <div>⚠ ${escHtml(msg)}</div>
       <button onclick="loadAll()">Try again</button>
     </div>`;
 }

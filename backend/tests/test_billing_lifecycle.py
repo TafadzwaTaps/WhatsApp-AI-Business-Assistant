@@ -914,8 +914,14 @@ def _storefront(env):
     ]
 
 
-def test_storefront_checkout_charges_server_price_not_client_price(client, env):
+def _connected(monkeypatch, connected=True, charges=True):
+    monkeypatch.setattr(svc, "get_connect_account_status", lambda bid: {
+        "connected": connected, "charges_enabled": charges, "account_id": "acct_1"} if connected else {"connected": False})
+
+
+def test_storefront_checkout_charges_server_price_not_client_price(client, env, monkeypatch):
     c, _, _ = client
+    _connected(monkeypatch)
     _storefront(env)
     r = c.post("/billing/product-checkout", json={
         "business_id": 1, "currency": "usd",
@@ -928,11 +934,31 @@ def test_storefront_checkout_charges_server_price_not_client_price(client, env):
     assert p["success_url"].startswith("https://wazibothq.com/")
 
 
-def test_storefront_checkout_matches_by_name_for_cached_pages(client, env):
+def test_storefront_checkout_matches_by_name_for_cached_pages(client, env, monkeypatch):
     c, _, _ = client
+    _connected(monkeypatch)
     _storefront(env)
     r = c.post("/billing/product-checkout", json={"business_id": 1, "items": [{"name": "haircut", "price": 1, "quantity": 1}]})
     assert r.status_code == 200 and env.fs.sessions[-1]["line_items"][0]["price_data"]["unit_amount"] == 2000
+
+
+def test_storefront_checkout_blocked_until_merchant_connected_stripe(client, env, monkeypatch):
+    c, _, _ = client
+    _storefront(env)
+    for status in ({"connected": False},
+                   {"connected": True, "charges_enabled": False, "account_id": "acct_1"}):
+        monkeypatch.setattr(svc, "get_connect_account_status", lambda bid, s=status: s)
+        r = c.post("/billing/product-checkout", json={"business_id": 1, "items": [{"id": 5, "quantity": 1}]})
+        assert r.status_code == 409 and "set" in r.json()["detail"].lower()
+    assert env.fs.sessions == []                       # no Stripe session, so no money to the platform
+
+
+def test_connected_storefront_payment_goes_to_the_merchant_account(client, env, monkeypatch):
+    c, _, _ = client
+    _connected(monkeypatch)
+    _storefront(env)
+    assert c.post("/billing/product-checkout", json={"business_id": 1, "items": [{"id": 5, "quantity": 1}]}).status_code == 200
+    assert env.fs.sessions[-1]["payment_intent_data"]["transfer_data"]["destination"] == "acct_1"
 
 
 def test_storefront_checkout_rejects_other_business_and_unknown_items(client, env):
@@ -946,8 +972,9 @@ def test_storefront_checkout_rejects_other_business_and_unknown_items(client, en
     assert len(env.fs.sessions) == before
 
 
-def test_storefront_quantity_is_clamped(client, env):
+def test_storefront_quantity_is_clamped(client, env, monkeypatch):
     c, _, _ = client
+    _connected(monkeypatch)
     _storefront(env)
     c.post("/billing/product-checkout", json={"business_id": 1, "items": [{"id": 5, "quantity": 100000}]})
     assert env.fs.sessions[-1]["line_items"][0]["quantity"] == 99

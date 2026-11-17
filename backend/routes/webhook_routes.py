@@ -858,6 +858,9 @@ async def _handle_one_message(data: dict) -> dict:
         if "error" in result:
             _log_event("wa.failed", phone=customer_phone, biz=business["id"],
                        error=result["error"])
+            # Record the failure on the stored reply so the inbox shows it as undelivered.
+            if isinstance(out_msg, dict) and out_msg.get("id"):
+                await run_in_threadpool(crud.messages.mark_message_failed, out_msg["id"])
         else:
             msg_id = (result.get("messages") or [{}])[0].get("id", "?")
             _log_event("wa.sent", phone=customer_phone, biz=business["id"],
@@ -867,6 +870,8 @@ async def _handle_one_message(data: dict) -> dict:
                 await run_in_threadpool(crud.messages.set_message_wa_id, out_msg["id"], msg_id)
     else:
         log.error("📤 STEP 8 FAIL — No token for '%s'", business["name"])
+        if isinstance(out_msg, dict) and out_msg.get("id"):
+            await run_in_threadpool(crud.messages.mark_message_failed, out_msg["id"])
 
     return {"status": "ok"}
 
@@ -970,11 +975,58 @@ def download_invoice(order_id: int, user=Depends(require_business)):
 
 # ── WebSocket ─────────────────────────────────────────────────────────────────
 
+_WS_MAX_MESSAGE = 4096
+_WS_MAX_PER_BUSINESS = 20
+
+
+def _ws_origin_allowed(origin: str, host: str) -> bool:
+    from urllib.parse import urlparse
+    try:
+        o = urlparse(origin)
+    except Exception:
+        return False
+    if o.netloc and o.netloc.lower() == (host or "").lower():
+        return True
+    import os as _os
+    allowed = {"https://wazibothq.com", "https://www.wazibothq.com", "http://localhost:3000",
+               "http://localhost:5173", "http://127.0.0.1:3000"}
+    allowed |= {x.strip().rstrip("/") for x in _os.getenv("ALLOWED_ORIGINS", "").split(",") if x.strip()}
+    return origin.rstrip("/") in allowed
+
+
 @router.websocket("/ws/chat/{business_id}")
 async def websocket_chat(websocket: WebSocket, business_id: int):
+    # Browsers always send Origin on a WebSocket handshake: refuse other sites (cross-site
+    # WebSocket hijacking). Non-browser clients send none and still need a valid token.
+    origin = (getattr(websocket, "headers", None) or {}).get("origin", "")
+    if origin and not _ws_origin_allowed(origin, (getattr(websocket, "headers", None) or {}).get("host", "")):
+        await websocket.close(code=4003)
+        return
+    if getattr(manager, "count", lambda _b: 0)(business_id) >= _WS_MAX_PER_BUSINESS:
+        await websocket.close(code=4008)
+        return
+
     token_param = websocket.query_params.get("token", "")
+    accepted = False
+    if not token_param and hasattr(websocket, "accept"):
+        # Preferred: token as the FIRST message ({"type":"auth","token":...}) so it never
+        # appears in a URL, proxy log or browser history.
+        try:
+            await websocket.accept()
+            accepted = True
+            first = json.loads(await asyncio.wait_for(websocket.receive_text(), timeout=5))
+            if len(str(first)) > _WS_MAX_MESSAGE or first.get("type") != "auth":
+                raise ValueError("bad auth frame")
+            token_param = str(first.get("token") or "")
+        except Exception:
+            await websocket.close(code=4001)
+            return
     try:
         payload = decode_token(token_param)
+        from core.auth import is_token_revoked as _revoked
+        if _revoked(payload.get("jti")):
+            await websocket.close(code=4001)
+            return
         if payload.get("type") == "refresh":          # refresh tokens never authenticate
             await websocket.close(code=4001)
             return
@@ -985,15 +1037,25 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
         await websocket.close(code=4001)
         return
 
-    await manager.connect(websocket, business_id)
+    await manager.connect(websocket, business_id, accepted=True) if accepted else await manager.connect(websocket, business_id)
     try:
         while True:
             raw = await websocket.receive_text()
+            if len(raw) > _WS_MAX_MESSAGE:               # the socket only carries pings
+                await websocket.close(code=1009)
+                manager.disconnect(websocket, business_id)
+                return
             try:
                 msg = json.loads(raw) if raw else {}
                 if msg.get("type") == "ping":
+                    from core.auth import is_token_revoked as _rv
+                    if _rv(payload.get("jti")):          # logged out while the socket was open
+                        await websocket.close(code=4001)
+                        return
                     await websocket.send_text(json.dumps({"type": "pong"}))
             except Exception as _swallowed_exc:
                 from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     except WebSocketDisconnect:
-        manager.disconnect(websocket, business_id)
+        pass
+    finally:
+        manager.disconnect(websocket, business_id)      # always free the slot

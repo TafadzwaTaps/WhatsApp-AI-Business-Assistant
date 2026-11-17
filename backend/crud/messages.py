@@ -92,6 +92,17 @@ def set_message_wa_id(message_id, wa_message_id: str) -> None:
         log.warning("set_message_wa_id failed  id=%s: %s", message_id, exc)
 
 
+def mark_message_failed(message_id) -> None:
+    """Record that an outgoing message could not be sent (status -> failed). Never raises.
+    Policy: failures after a customer message is stored are recorded, not retried by Meta."""
+    if not message_id:
+        return
+    try:
+        supabase.table("messages").update({"status": "failed"}).eq("id", message_id).execute()
+    except Exception as exc:
+        log.warning("mark_message_failed failed  id=%s: %s", message_id, exc)
+
+
 def apply_delivery_status(wa_message_id: str, status: str, detail: str | None = None) -> bool:
     """Apply a Meta delivery receipt (sent/delivered/read/failed) to the matching message.
 

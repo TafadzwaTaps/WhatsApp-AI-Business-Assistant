@@ -220,11 +220,12 @@ def test_download_whatsapp_media_accepts_valid_small_image(monkeypatch):
     import services.whatsapp_service as wa
 
     fake_responses = [
-        _FakeResp(json_data={"url": "https://cdn.example/img", "mime_type": "image/png",
+        _FakeResp(json_data={"url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1", "mime_type": "image/png",
                               "file_size": 1234}),
         _FakeResp(content=b"\x89PNG-fake-bytes"),
     ]
-    import httpx
+    import httpx, socket
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("157.240.1.1", 443))])
     monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _FakeAsyncClient(fake_responses))
 
     img_bytes, mime = asyncio.run(wa.download_whatsapp_media("media123", "tok"))

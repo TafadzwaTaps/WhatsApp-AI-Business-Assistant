@@ -47,6 +47,8 @@ def reduce_stock(product_id: int, quantity: int, is_service_business: bool = Fal
     order CREATION independently re-validated stock here and blocked the
     booking anyway, after the customer had already gone through checkout.
     """
+    if quantity is None or int(quantity) <= 0:
+        raise ValueError("Quantity must be a positive number")
     product = get_product(product_id)
 
     if not product:
@@ -68,8 +70,30 @@ def reduce_stock(product_id: int, quantity: int, is_service_business: bool = Fal
             f"requested {quantity}, available {current}"
         )
 
-    new_stock = current - quantity
-    supabase.table("products").update({"stock": new_stock}).eq("id", product_id).execute()
+    # Compare-and-set: only write if stock is still what we read. A concurrent order that
+    # changed it makes the update match no row; re-read and re-check instead of
+    # overwriting it (the old read-then-write let two orders both "take" the same unit).
+    new_stock = None
+    for _attempt in range(5):
+        new_stock = current - quantity
+        q = supabase.table("products").update({"stock": new_stock}).eq("id", product_id).eq("stock", current)
+        if product.get("business_id") is not None:
+            q = q.eq("business_id", product["business_id"])
+        if q.execute().data:
+            break
+        fresh = get_product(product_id)
+        current = (fresh or {}).get("stock")
+        if fresh is None or current is None:
+            raise ValueError(f"Product id={product_id} changed while ordering - please try again")
+        if current < quantity:
+            raise ValueError(
+                f"Insufficient stock for '{product['name']}': "
+                f"requested {quantity}, available {current}"
+            )
+        product = fresh
+        new_stock = None
+    if new_stock is None:
+        raise ValueError(f"Stock for '{product.get('name')}' is changing too quickly - please try again")
 
     threshold = product.get("low_stock_threshold") or 5
     if new_stock <= threshold:
@@ -88,6 +112,29 @@ def reduce_stock_by_name(business_id: int, name: str, quantity: int, is_service_
     if not product:
         raise ValueError(f"Product '{name}' not found in business id={business_id}")
     return reduce_stock(product["id"], quantity, is_service_business)
+
+
+def restore_stock(product_id: int, quantity: int) -> bool:
+    """Give back `quantity` units taken by reduce_stock when an order could not be completed.
+    Compare-and-set like reduce_stock; products with no stock tracking (NULL) are left alone.
+    Returns True when restored (or nothing to restore). Never raises."""
+    try:
+        for _ in range(5):
+            product = get_product(product_id)
+            if not product or product.get("stock") is None:
+                return True
+            cur = product["stock"]
+            q = supabase.table("products").update({"stock": cur + quantity}).eq("id", product_id).eq("stock", cur)
+            if product.get("business_id") is not None:
+                q = q.eq("business_id", product["business_id"])
+            if q.execute().data:
+                log.info("restore_stock: product=%s +%d", product_id, quantity)
+                return True
+    except Exception as exc:
+        log.error("restore_stock failed product=%s qty=%s: %s", product_id, quantity, exc)
+        return False
+    log.error("restore_stock gave up (contention) product=%s qty=%s", product_id, quantity)
+    return False
 
 
 def restock_product(product_id: int, quantity: int) -> dict:

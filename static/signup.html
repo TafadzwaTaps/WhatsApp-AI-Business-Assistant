@@ -760,13 +760,17 @@ function showSuccess(payload, data) {
   document.getElementById('success').style.display = 'block';
 
   var isPaid = _selectedPlan !== 'trial';
+  var _esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  };
   document.getElementById('success-msg').innerHTML =
-    '<strong>' + data.business_name + '</strong> is ready. ' +
+    '<strong>' + _esc(data.business_name) + '</strong> is ready. ' +
     (isPaid ? "You'll be redirected to complete payment." : 'Your AI ordering bot is live! \ud83c\udf89');
 
   document.getElementById('success-creds').innerHTML =
-    '<div class="cred-row"><span class="cred-label">Business</span><span class="cred-value">' + data.business_name + '</span></div>' +
-    '<div class="cred-row"><span class="cred-label">Username</span><span class="cred-value">' + payload.username + '</span></div>' +
+    '<div class="cred-row"><span class="cred-label">Business</span><span class="cred-value">' + _esc(data.business_name) + '</span></div>' +
+    '<div class="cred-row"><span class="cred-label">Username</span><span class="cred-value">' + _esc(payload.username) + '</span></div>' +
     '<div class="cred-row"><span class="cred-label">Plan</span><span class="cred-value">' +
     (_selectedPlan === 'trial' ? '\ud83c\udf81 30-Day Free Trial' : _selectedPlan === 'growth' ? '\ud83d\ude80 Growth' : '\u26a1 Starter') +
     '</span></div>' +

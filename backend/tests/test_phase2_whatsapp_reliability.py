@@ -278,3 +278,35 @@ def test_send_whatsapp_still_does_not_retry_real_client_errors(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
     assert main.send_whatsapp("pid", "tok", "263700000000", "hi", _shared_fallback=False) == bad
     assert len(posted) == 1
+
+
+# ── W8: a failed send is recorded, not retried by Meta ─────────────────────
+
+def test_failed_send_marks_the_stored_reply_failed(client, monkeypatch):
+    _capture_generate_reply(monkeypatch)
+    wh.send_whatsapp.return_value = {"error": "boom"}
+    failed = []
+    monkeypatch.setattr(messages_mod, "mark_message_failed", lambda mid: failed.append(mid))
+    assert client.post("/webhook", json=_envelope(_text("wamid.1", "hello"))).status_code == 200
+    assert failed == [1]
+
+
+def test_successful_send_is_not_marked_failed(client, monkeypatch):
+    _capture_generate_reply(monkeypatch)
+    failed = []
+    monkeypatch.setattr(messages_mod, "mark_message_failed", lambda mid: failed.append(mid))
+    client.post("/webhook", json=_envelope(_text("wamid.1", "hello")))
+    assert failed == []
+
+
+def test_mark_message_failed_updates_status_and_never_raises(monkeypatch):
+    rows = [{"id": 7, "status": "sent", "direction": "outgoing"}]
+    monkeypatch.setattr(messages_mod, "supabase", _Db(rows))
+    messages_mod.mark_message_failed(7)
+    assert rows[0]["status"] == "failed"
+
+    class Boom:
+        def table(self, *_): raise RuntimeError("db down")
+    monkeypatch.setattr(messages_mod, "supabase", Boom())
+    messages_mod.mark_message_failed(7)          # must not raise
+    messages_mod.mark_message_failed(None)

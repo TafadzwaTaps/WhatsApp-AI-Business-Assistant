@@ -124,7 +124,7 @@ def _safe_biz(b: dict) -> dict:
     """Return only public-safe business fields."""
     slug = _name_to_slug(b.get("name", ""))
     return {
-        "id":           b.get("id"),
+        # No internal business id on the public payload: the slug is the public identifier.
         "name":         b.get("name", ""),
         "category":     b.get("category", ""),
         "tagline":      b.get("tagline", ""),
@@ -156,6 +156,12 @@ def _safe_product(p: dict) -> dict:
 # JSON API
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _is_publicly_listed(b: dict) -> bool:
+    """Directory visibility is opt-in: features_json.public_listing must be exactly True."""
+    fj = b.get("features_json")
+    return isinstance(fj, dict) and fj.get("public_listing") is True
+
+
 @router.get("/api/directory")
 def api_directory(request: Request):
     """JSON: list of all publicly visible active businesses."""
@@ -163,15 +169,18 @@ def api_directory(request: Request):
     _public_rl("public_read", request)
     try:
         from core.db import supabase
+        fields = _get_biz_public_fields()
+        if "features_json" in _get_biz_columns():
+            fields += ",features_json"             # read only to apply the opt-in; never returned
         res = (
             supabase.table("businesses")
-            .select(_get_biz_public_fields())
+            .select(fields)
             .eq("is_active", True)
             .order("display_order", desc=False, nullsfirst=True)
             .order("id", desc=False)
             .execute()
         )
-        businesses = [_safe_biz(b) for b in (res.data or [])]
+        businesses = [_safe_biz(b) for b in (res.data or []) if _is_publicly_listed(b)]
         return {"businesses": businesses, "total": len(businesses)}
     except Exception as exc:
         log.warning("api_directory error: %s", exc)

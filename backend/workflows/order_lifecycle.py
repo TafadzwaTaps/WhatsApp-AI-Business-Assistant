@@ -108,6 +108,27 @@ def create_order_supabase(
     cart: list,
     payment_method: str = "ecocash",
 ) -> dict:
+    """Create an order (see _create_order_impl). If ANYTHING fails after stock was taken -
+    a later cart item, schema probing, JSON encoding, the insert - the stock comes back."""
+    reduced: list = []
+    try:
+        return _create_order_impl(business_id, customer_phone, cart, payment_method, reduced)
+    except Exception:
+        if reduced:
+            from services.inventory import restore_stock
+            for _pid, _q in reduced:
+                restore_stock(_pid, _q)
+            reduced.clear()
+        raise
+
+
+def _create_order_impl(
+    business_id: int,
+    customer_phone: str,
+    cart: list,
+    payment_method: str = "ecocash",
+    _reduced: list | None = None,
+) -> dict:
     """
     Create an order and reduce inventory atomically.
     Only inserts columns that actually exist in Supabase.
@@ -137,11 +158,23 @@ def create_order_supabase(
 
     total = 0.0
     items_detail = []
+    if _reduced is None:
+        _reduced = []       # (product_id, qty) already taken from stock, for rollback
+
+    def _rollback_stock() -> None:
+        if not _reduced:
+            return
+        from services.inventory import restore_stock
+        for _pid, _q in _reduced:
+            restore_stock(_pid, _q)
+        _reduced.clear()
 
     for item in cart:
         name  = item["name"]
         qty   = int(item["qty"])
         price = float(item["price"])
+        if qty <= 0 or price < 0:
+            raise ValueError(f"Invalid quantity or price for '{name}'")
 
         # Service businesses skip stock reduction entirely — there's nothing
         # to reduce for a haircut or consultation. Calling reduce_stock_by_name
@@ -154,7 +187,13 @@ def create_order_supabase(
         # product businesses (which never needed the extra parameter) call
         # it, using the exact same call shape that has always worked.
         if not _is_service_biz:
-            reduce_stock_by_name(business_id, name, qty)
+            try:
+                _p = reduce_stock_by_name(business_id, name, qty)
+            except Exception:
+                _rollback_stock()       # an earlier item in this cart was already decremented
+                raise
+            if isinstance(_p, dict) and _p.get("id") is not None and _p.get("stock") is not None:
+                _reduced.append((_p["id"], qty))
 
         subtotal = price * qty
         total += subtotal
@@ -202,6 +241,7 @@ def create_order_supabase(
         # Schema mismatch — invalidate cache so next call re-probes columns
         _invalidate_column_cache()
         log.error("create_order_supabase insert failed: %s", exc)
+        _rollback_stock()               # no order was created, so the stock must come back
         raise ValueError(
             f"Order could not be saved. The database schema may need updating. "
             f"Error: {exc}"

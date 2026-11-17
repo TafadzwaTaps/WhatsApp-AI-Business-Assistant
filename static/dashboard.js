@@ -360,13 +360,26 @@ async function tryRefresh() {
 }
 
 function logout() {
-  // FIX: clear all session state then do a hard redirect so no stale
-  // in-memory variables survive into the next session.
-  ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id']
-    .forEach(k => localStorage.removeItem(k));
-  token = refreshTok = userRole = userName = bizName = null;
-  bizId = 0;
-  window.location.href = '/';
+  // Revoke the session on the server first (best effort, never blocks the redirect for
+  // long), so a copied token stops working. Then clear all session state and hard-redirect
+  // so no stale in-memory variables survive into the next session.
+  const _t = token, _r = refreshTok;
+  const _finish = () => {
+    ['wazi_token','wazi_refresh','wazi_role','wazi_user','wazi_biz','wazi_business_id',
+     'wazibot_token','wazibot_biz_id'].forEach(k => localStorage.removeItem(k));
+    token = refreshTok = userRole = userName = bizName = null;
+    bizId = 0;
+    window.location.href = '/';
+  };
+  if (!_t && !_r) { _finish(); return; }
+  try {
+    const timer = setTimeout(_finish, 1500);
+    fetch(API + '/auth/logout', {
+      method: 'POST', keepalive: true,
+      headers: { 'Content-Type': 'application/json', ...(_t ? { Authorization: 'Bearer ' + _t } : {}) },
+      body: JSON.stringify({ refresh_token: _r || null }),
+    }).catch(() => {}).finally(() => { clearTimeout(timer); _finish(); });
+  } catch { _finish(); }
 }
 
 /* Sprint 4 — Client-side /me cache (60s TTL)
@@ -589,7 +602,7 @@ async function apiFetch(path, opts={}, _retried=false) {
         '\n  path:', path,
         '\n  method:', finalOpts.method || 'GET',
         '\n  hasAuthHeader:', !!mergedHeaders.Authorization,
-        '\n  tokenPreview:', token ? token.slice(0, 12) + '…' : '(none)',
+        '\n  hasToken:', !!token,
         '\n  serverDetail:', detail || '(none)',
       );
       const refreshed = await tryRefresh();
@@ -2352,7 +2365,7 @@ async function loadChatMessages(phone) {
     }
   } catch(e) {
     const el = document.getElementById('chat-msgs');
-    if (el) el.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
+    if (el) el.innerHTML = `<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -2446,7 +2459,7 @@ async function loadCustomers() {
     if (statTotal) statTotal.textContent = phones.length;
   } catch (e) {
     const rl = document.getElementById('recipient-list');
-    if (rl) rl.innerHTML = `<div class="empty">⚠ ${e.message}</div>`;
+    if (rl) rl.innerHTML = `<div class="empty">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -2567,7 +2580,7 @@ This will send a WhatsApp message to each selected recipient.`)) return;
     const failedSet  = new Set((data.failed_numbers || []));
     const reachedPhones = phones.filter(p => !failedSet.has(p));
     const viewReachedBtn = reachedPhones.length
-      ? `<div style="margin-top:8px;"><button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick='filterCrmByPhoneSet(${JSON.stringify(reachedPhones)}, "Reached by last broadcast")'>👥 View these ${reachedPhones.length} customer${reachedPhones.length!==1?'s':''}</button></div>`
+      ? `<div style="margin-top:8px;"><button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="filterCrmByPhoneSet(${escHtml(JSON.stringify(reachedPhones))}, 'Reached by last broadcast')">👥 View these ${reachedPhones.length} customer${reachedPhones.length!==1?'s':''}</button></div>`
       : '';
 
     if (result) {
@@ -2577,7 +2590,7 @@ This will send a WhatsApp message to each selected recipient.`)) return;
         ? `✅ Sent to <strong>${data.sent}</strong> customer${data.sent !== 1 ? 's' : ''}!`
         : `Sent: <strong>${data.sent}</strong>  |  Failed: <strong>${data.failed}</strong>` +
           (data.failed_numbers && data.failed_numbers.length
-            ? `<div style="font-size:10px;margin-top:6px;opacity:0.7;">Failed: ${data.failed_numbers.slice(0,5).join(', ')}${data.failed_numbers.length > 5 ? '…' : ''}</div>`
+            ? `<div style="font-size:10px;margin-top:6px;opacity:0.7;">Failed: ${data.failed_numbers.slice(0,5).map(escHtml).join(', ')}${data.failed_numbers.length > 5 ? '…' : ''}</div>`
             : '') +
           (data.first_error ? `<div style="font-size:11px;margin-top:6px;">${escHtml(data.first_error)}</div>` : '')
       ) + viewReachedBtn;
@@ -2664,6 +2677,8 @@ async function loadSettings() {
     _setVal('set-hours',         b.business_hours || '');
     _setVal('set-instagram',     b.instagram || '');
     _setVal('set-facebook',      b.facebook || '');
+    const listingToggle = document.getElementById('set-public-listing');
+    if (listingToggle) listingToggle.checked = !!(b.features_json && b.features_json.public_listing === true);
     // Multi-language toggle — restore saved state from features_json
     const translationToggle = document.getElementById('set-translation-enabled');
     if (translationToggle) {
@@ -3135,10 +3150,10 @@ async function stripeConnect() {
     if (result && result.url) {
       window.location.href = result.url;  // Stripe onboarding — full redirect
     } else {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Could not start Stripe setup') + '</span>';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + escHtml(result?.error || 'Could not start Stripe setup') + '</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ Connect Stripe Account'; }
   }
@@ -3153,10 +3168,10 @@ async function stripeConnectDashboard() {
     if (result && result.url) {
       window.open(result.url, '_blank');
     } else {
-      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + (result?.error || 'Dashboard not available') + '</span>';
+      if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + escHtml(result?.error || 'Dashboard not available') + '</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📊 Open Stripe Dashboard'; }
   }
@@ -3204,7 +3219,7 @@ async function stripeManage() {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ Portal not available — contact support.</span>';
     }
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '⚙ Manage Subscription'; }
   }
@@ -3220,7 +3235,7 @@ async function stripeCancel() {
     if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Subscription cancelled — access continues until period end.</span>';
     setTimeout(loadStripeBillingStatus, 1500);
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${e.message}</span>`;
+    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Cancel Plan'; }
   }
@@ -3640,7 +3655,8 @@ function escHtml(s){
     .replace(/&/g,'&amp;')
     .replace(/</g,'&lt;')
     .replace(/>/g,'&gt;')
-    .replace(/"/g,'&quot;');
+    .replace(/"/g,'&quot;')
+    .replace(/'/g,'&#39;');
 }
 // Safe JS string-literal argument for a double-quoted inline handler attribute:
 //   onclick="fn(${jsArg(value)})"  — escHtml alone leaves ' and \ live inside the
@@ -4823,7 +4839,7 @@ async function loadInactive(days) {
       </div>`
     ).join('') + (data.length > 8 ? `<div style="color:var(--text-dim);font-size:10px;padding-top:6px;">+${data.length-8} more</div>` : '');
   } catch (e) {
-    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${e.message}</div>`;
+    list.innerHTML = `<div style="color:var(--red);font-size:11px;">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -4954,7 +4970,7 @@ async function loadDrawerOrders(phone) {
       </div>`
     ).join('');
   } catch (e) {
-    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
+    list.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -6076,7 +6092,7 @@ async function loadBcCustomerPicker() {
     const sel = document.querySelector('input[name="bc-audience"]:checked');
     if (sel && sel.value === 'custom') updateBcRecipientPreview('custom');
   } catch (e) {
-    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${e.message}</div>`;
+    if (list) list.innerHTML = `<div style="font-family:var(--mono);font-size:12px;color:var(--red);padding:8px;">⚠ ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -6183,7 +6199,7 @@ function updateBcRecipientPreview(audience) {
       return `<div class="bcr-item"><span class="bcp-avatar" aria-hidden="true">${escHtml((String(display).replace(/^\+/, '')[0] || '?').toUpperCase())}</span><span class="bcr-name">${escHtml(display)}</span></div>`;
     }).join('');
   }).catch(e => {
-    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${e.message}</div>`;
+    recipientListEl.innerHTML = `<div style="font-family:var(--mono);font-size:11px;color:var(--red);">⚠ ${escHtml(e.message)}</div>`;
     if (statSelected) statSelected.textContent = '—';
   });
 }
@@ -6891,13 +6907,13 @@ async function askDashHelp() {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question: q, context: 'dashboard' }),
     });
-    let html = `<div class="help-answer">${(data.answer||'').replace(/\*(.*?)\*/g,'<strong>$1</strong>')}</div>`;
-    if (data.steps?.length) html += `<ol class="help-steps">${data.steps.map(s=>`<li>${s}</li>`).join('')}</ol>`;
-    if (data.tips?.length)  html += data.tips.map(t=>`<div class="help-tip">💡 ${t}</div>`).join('');
+    let html = `<div class="help-answer">${escHtml(data.answer||'').replace(/\*(.*?)\*/g,'<strong>$1</strong>')}</div>`;
+    if (data.steps?.length) html += `<ol class="help-steps">${data.steps.map(s=>`<li>${escHtml(s)}</li>`).join('')}</ol>`;
+    if (data.tips?.length)  html += data.tips.map(t=>`<div class="help-tip">💡 ${escHtml(t)}</div>`).join('');
     if (data.related?.length) html += `<div class="help-related">${data.related.map(r=>`<button class="help-related-chip" onclick="askDashHelpQ(${jsArg('Tell me about ' + r.title)})">${escHtml(r.title)}</button>`).join('')}</div>`;
     body.innerHTML = html;
   } catch (e) {
-    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${e.message}</div>`;
+    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Error: ${escHtml(e.message)}</div>`;
   }
 }
 
@@ -7073,13 +7089,13 @@ async function submitReferralWithdrawal() {
       method: 'POST',
       body:   JSON.stringify({ paypal_email: email, amount }),
     });
-    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${result.message}</div>`;
+    if (status) status.innerHTML = `<div style="color:var(--green);line-height:1.6;">✅ ${escHtml(result.message)}</div>`;
     toast('✅ Payout requested!');
     // Refresh stats
     _refData = null;
     setTimeout(loadReferralTab, 1000);
   } catch(e) {
-    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${e.message}</span>`;
+    if (status) status.innerHTML = `<span style="color:#ff5252">❌ ${escHtml(e.message)}</span>`;
     toast(e.message, true);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '💸 Request Payout'; }
@@ -7966,11 +7982,11 @@ async function checkFirstOrderCelebration() {
     if (detailEl) {
       const item = (first.items || [])[0] || {};
       detailEl.innerHTML = `
-        <div>📦 Order #${first.id || '—'}</div>
+        <div>📦 Order #${escHtml(first.id || '—')}</div>
         <div style="margin-top:4px;color:var(--text)">
-          ${item.name || 'Order'} — ${getCurrencySymbol()}${parseFloat(first.total_price || 0).toFixed(2)}
+          ${escHtml(item.name || 'Order')} — ${getCurrencySymbol()}${parseFloat(first.total_price || 0).toFixed(2)}
         </div>
-        <div style="margin-top:4px;">Customer: ${first.customer_phone || '—'}</div>
+        <div style="margin-top:4px;">Customer: ${escHtml(first.customer_phone || '—')}</div>
       `;
     }
 
@@ -8081,6 +8097,22 @@ async function saveGrowthSetting(key, enabled) {
   }
 }
 
+// Public directory: opt-in flag (features_json.public_listing). Off by default; when on, ONLY
+// name, category, tagline, logo, colour, currency and a booking link appear in /directory.
+async function savePublicListingToggle(enabled) {
+  try {
+    const biz      = await apiFetch('/me').catch(() => ({}));
+    const features = biz?.features_json || {};
+    features['public_listing'] = !!enabled;
+    await apiFetch('/me', { method: 'PATCH', body: JSON.stringify({ features_json: features }) });
+    showToast(`Public directory listing ${enabled ? 'enabled' : 'disabled'}`);
+  } catch (e) {
+    showToast('Failed to save setting', true);
+    const el = document.getElementById('set-public-listing');
+    if (el) el.checked = !enabled;
+  }
+}
+
 // Multi-language: toggle services.translation_layer's per-business opt-in
 // flag (features_json.translation_enabled). Same pattern as Growth
 // Automation above — additive, does not touch any other features_json key.
@@ -8134,7 +8166,7 @@ function sgFilterCategory(tabEl, category) {
 // Accent colour — preview while dragging colour wheel
 function sgPreviewAccent(hex) {
   const el = document.getElementById('sg-accent-preview');
-  if (el && hex) el.innerHTML = `Accent: <strong style="color:${hex}">${hex}</strong> — saved with settings`;
+  if (el && hex && /^#[0-9a-f]{3,8}$/i.test(String(hex))) el.innerHTML = `Accent: <strong style="color:${hex}">${hex}</strong> — saved with settings`;
   // Highlight matching quick-palette dot
   document.querySelectorAll('.sg-palette-dot').forEach(dot => {
     const bg = dot.style.background || dot.style.backgroundColor;
