@@ -13,6 +13,7 @@ import logging
 
 from fastapi import APIRouter, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 import crud
@@ -83,6 +84,84 @@ async def verify_webhook(request: Request):
 
 # ── Webhook receive ───────────────────────────────────────────────────────────
 
+import asyncio
+import weakref
+
+# One lock per sender so two quick messages from the same customer are processed
+# in order (conversation/cart state is a read-modify-write with no DB-level lock).
+# Weak values: an entry disappears once nobody holds or waits on the lock.
+_CUSTOMER_LOCKS: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
+
+
+def _customer_lock(key: str) -> asyncio.Lock:
+    lock = _CUSTOMER_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _CUSTOMER_LOCKS[key] = lock
+    return lock
+
+
+def _split_webhook_payload(data: dict):
+    """Yield one single-message payload per message in entry[] x changes[] x messages[]
+    (envelope fields such as contacts/metadata are preserved). Payloads with no messages
+    (status-only, malformed) yield nothing."""
+    entries = data.get("entry")
+    if not isinstance(entries, list):
+        return
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        for c in (e.get("changes") or []):
+            if not isinstance(c, dict):
+                continue
+            value = c.get("value")
+            if not isinstance(value, dict):
+                continue
+            for m in (value.get("messages") or []):
+                if isinstance(m, dict):
+                    yield {**data, "entry": [{**e, "changes": [{**c, "value": {**value, "messages": [m]}}]}]}
+
+
+def _payload_sender(single: dict) -> str:
+    try:
+        return str(single["entry"][0]["changes"][0]["value"]["messages"][0].get("from") or "?")
+    except Exception:
+        return "?"
+
+
+def _apply_status_events(data: dict) -> None:
+    """Delivery receipts: update messages.status (sent/delivered/read/failed) by wa_message_id."""
+    from crud.messages import apply_delivery_status
+    for e in (data.get("entry") or []):
+        for c in ((e or {}).get("changes") or []):
+            for s in (((c or {}).get("value") or {}).get("statuses") or []):
+                if not isinstance(s, dict):
+                    continue
+                wamid, status = s.get("id"), s.get("status")
+                if not wamid or not status:
+                    continue
+                errs = s.get("errors") or []
+                detail = None
+                if status == "failed" and errs and isinstance(errs[0], dict):
+                    detail = f"{errs[0].get('code')}: {errs[0].get('title') or ''}"[:200]
+                    log.warning("WhatsApp delivery failed  wa_id=%s  error=%s", wamid, detail)
+                try:
+                    apply_delivery_status(wamid, status, detail)
+                except Exception as exc:
+                    log.warning("delivery status update failed  wa_id=%s: %s", wamid, exc)
+
+
+def _is_duplicate_key_error(exc: Exception) -> bool:
+    """True for a unique-violation (Postgres SQLSTATE 23505), tolerating the text forms
+    PostgREST/supabase-py put in the exception."""
+    code = getattr(exc, "code", None)
+    if code is None and exc.args and isinstance(exc.args[0], dict):
+        code = exc.args[0].get("code")
+    s = str(exc).lower()
+    return (str(code) == "23505" or "23505" in s or "duplicate key" in s
+            or ("unique" in s and ("constraint" in s or "violat" in s)))
+
+
 @router.post("/webhook")
 async def receive_message(request: Request):
     raw_body   = await request.body()
@@ -96,7 +175,30 @@ async def receive_message(request: Request):
         data = json.loads(raw_body)
     except Exception:
         return {"status": "ok"}
+    if not isinstance(data, dict):
+        return {"status": "ok"}
 
+    # Meta may batch several messages (and several entries/changes) in ONE
+    # delivery and is told 200 afterwards, so every message must be handled
+    # now - anything skipped here is lost for good. Each message runs through
+    # the unchanged single-message pipeline below, serialised per customer.
+    for single in _split_webhook_payload(data):
+        key = _payload_sender(single)
+        async with _customer_lock(key):
+            try:
+                await _handle_one_message(single)
+            except Exception as exc:   # one bad message must not drop the rest of the batch
+                log.exception("webhook: message handler crashed: %s", exc)
+    try:
+        await run_in_threadpool(_apply_status_events, data)
+    except Exception as exc:
+        log.warning("webhook: status handling failed (ignored): %s", exc)
+    return {"status": "ok"}
+
+
+async def _handle_one_message(data: dict) -> dict:
+    """The original single-message pipeline (STEP 1 - STEP 8), unchanged except for
+    the handoff-safety checks marked 'Phase 2'. `data` holds exactly one message."""
     # STEP 1: Parse Meta payload
     try:
         entry = data.get("entry", [])
@@ -318,8 +420,7 @@ async def receive_message(request: Request):
             wa_message_id=wa_message_id,
         )
     except Exception as exc:
-        err_str = str(exc)
-        if "wa_message_id" in err_str or "unique" in err_str.lower():
+        if _is_duplicate_key_error(exc):
             log.warning("💾 STEP 5 — Duplicate at INSERT  wa_id=%s", wa_message_id)
             return {"status": "ok"}
         log.exception("💾 STEP 5 FAIL: %s", exc)
@@ -331,6 +432,17 @@ async def receive_message(request: Request):
         })
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
+
+    # Phase 2 handoff safety: never speak over a human agent. The strict probe returns
+    # None when the state cannot be read - then stay silent rather than assume
+    # "browsing" (the message is already stored for the agent to see).
+    from services._ai_state import is_in_human_handoff
+    _in_handoff = await run_in_threadpool(is_in_human_handoff, customer_phone, business["id"])
+    if _in_handoff is None:      # one retry for a transient database error
+        _in_handoff = await run_in_threadpool(is_in_human_handoff, customer_phone, business["id"])
+    if _in_handoff is None:
+        log.error("STEP 6 SKIP — conversation state unreadable, not replying  phone=%s", _mask_phone(customer_phone))
+        return {"status": "ok"}
 
     # STEP 6: Generate AI reply
     try:
@@ -359,6 +471,8 @@ async def receive_message(request: Request):
                     log.warning("voice transcription call failed: %s", exc)
                     voice_transcript = None
 
+            if not voice_transcript and _in_handoff:
+                return {"status": "ok"}      # a human owns this chat: no automatic fallback reply
             if not voice_transcript:
                 reply = (
                     "🎤 Sorry, I couldn't understand that voice message. "
@@ -372,7 +486,7 @@ async def receive_message(request: Request):
                 except Exception as exc:
                     log.warning("STEP 7 voice-note-reply failed: %s", exc)
                 if token:
-                    send_whatsapp(phone_number_id, token, customer_phone, reply)
+                    await run_in_threadpool(send_whatsapp, phone_number_id, token, customer_phone, reply)
                 return {"status": "ok"}
 
             # Transcription succeeded — treat the transcript as this
@@ -395,7 +509,7 @@ async def receive_message(request: Request):
             log.debug("language switch check failed (ignored): %s", exc)
             switch_reply = None
 
-        if switch_reply:
+        if switch_reply and not _in_handoff:
             try:
                 out_msg = crud.create_message(
                     customer["id"], business["id"], switch_reply, "outgoing", sender_type="ai",
@@ -403,7 +517,7 @@ async def receive_message(request: Request):
             except Exception as exc:
                 log.warning("STEP 7 language-switch-reply failed: %s", exc)
             if token:
-                send_whatsapp(phone_number_id, token, customer_phone, switch_reply)
+                await run_in_threadpool(send_whatsapp, phone_number_id, token, customer_phone, switch_reply)
             return {"status": "ok"}
 
         # ── Multi-language: passive detection from natural phrasing ────────
@@ -512,7 +626,7 @@ async def receive_message(request: Request):
                         except Exception as exc:
                             log.warning("STEP 6b intent-clarification-reply failed: %s", exc)
                         if token:
-                            send_whatsapp(phone_number_id, token, customer_phone, clarify_reply)
+                            await run_in_threadpool(send_whatsapp, phone_number_id, token, customer_phone, clarify_reply)
                         return {"status": "ok"}
             except Exception as exc:
                 # Classification is purely additive — any failure here must
@@ -595,7 +709,7 @@ async def receive_message(request: Request):
         # download/analysis failure) behaves exactly as it did before this
         # phase.
         image_analysis = None
-        if image_media_id and not is_from_agent:
+        if image_media_id and not is_from_agent and not _in_handoff:
             try:
                 from core import plan_guard as _pg_img
                 _img_allowed_plan = _pg_img.feature_access(
@@ -653,7 +767,7 @@ async def receive_message(request: Request):
                     log.debug("image understanding pipeline failed (ignored): %s", exc)
                     image_analysis = None
 
-        reply = generate_reply(
+        reply = await run_in_threadpool(generate_reply,
             message=text,
             phone=customer_phone,
             business_id=business["id"],
@@ -740,7 +854,7 @@ async def receive_message(request: Request):
         return {"status": "ok"}
 
     if token:
-        result = send_whatsapp(phone_number_id, token, customer_phone, reply)
+        result = await run_in_threadpool(send_whatsapp, phone_number_id, token, customer_phone, reply)
         if "error" in result:
             _log_event("wa.failed", phone=customer_phone, biz=business["id"],
                        error=result["error"])
@@ -748,6 +862,9 @@ async def receive_message(request: Request):
             msg_id = (result.get("messages") or [{}])[0].get("id", "?")
             _log_event("wa.sent", phone=customer_phone, biz=business["id"],
                        msg_id=msg_id, reply_len=len(reply))
+            # Keep Meta's id on the stored message so delivery receipts can update it.
+            if isinstance(out_msg, dict) and out_msg.get("id"):
+                await run_in_threadpool(crud.messages.set_message_wa_id, out_msg["id"], msg_id)
     else:
         log.error("📤 STEP 8 FAIL — No token for '%s'", business["name"])
 
@@ -796,10 +913,12 @@ async def payment_webhook(data: PaymentConfirmRequest, request: Request):
         return {"success": True, "message": f"Order {order_id} already paid.", "order_id": order_id}
 
     biz_id = order.get("business_id")
-    crud.update_order_payment(order_id, biz_id, {
-        "payment_status":    "paid",
-        "payment_reference": reference,
-    })
+    try:
+        _claimed = crud.claim_order_paid(order_id, biz_id, {"payment_reference": reference})
+    except Exception:
+        raise HTTPException(503, "Temporary error - please retry")   # provider re-delivers
+    if not _claimed:
+        return {"success": True, "message": f"Order {order_id} already paid.", "order_id": order_id}
     try:
         update_order_status_supabase(order_id, "paid")
     except Exception as _swallowed_exc:

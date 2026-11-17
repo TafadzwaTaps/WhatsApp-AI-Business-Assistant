@@ -178,12 +178,29 @@ def test_paypal_success_marks_paid_when_amount_matches(monkeypatch):
         "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 50.0})
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1, "total_price": 50.0, "payment_status": "pending"})
     updated = []
-    monkeypatch.setattr(cr.crud, "update_order_payment", lambda *a, **k: updated.append(a))
+    monkeypatch.setattr(cr.crud, "claim_order_paid", lambda *a, **k: (updated.append(a), True)[1])
 
     async def _noop(*a, **k): return None
     monkeypatch.setattr(cr, "_notify_customer_payment", _noop)
     out = _run(cr.paypal_success(request=None, token="PP-1", PayerID="x", reference=""))
     assert out["status"] == "ok" and len(updated) == 1
+
+
+def test_paypal_success_duplicate_return_does_not_notify_twice(monkeypatch):
+    """A second/concurrent return for an already-paid order must not repeat the side effects."""
+    import routes.chat_routes as cr
+    import services.payment_service as ps
+    import workflows.order_lifecycle as ol
+    monkeypatch.setattr(ps, "capture_paypal_order", lambda t: {
+        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 50.0})
+    monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1, "total_price": 50.0, "payment_status": "pending"})
+    monkeypatch.setattr(cr.crud, "claim_order_paid", lambda *a, **k: False)   # another request already won
+    notified = []
+
+    async def _notify(*a, **k): notified.append(1)
+    monkeypatch.setattr(cr, "_notify_customer_payment", _notify)
+    out = _run(cr.paypal_success(request=None, token="PP-1", PayerID="x", reference=""))
+    assert out["status"] == "ok" and out["paid"] is True and notified == []
 
 
 # ── 5. Storefront XSS ───────────────────────────────────────────────────────

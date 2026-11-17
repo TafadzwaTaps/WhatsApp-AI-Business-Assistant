@@ -48,6 +48,7 @@ class FakeQueryBuilder:
     def upsert(self, *a, **kw): return self
     def eq(self, *a, **kw): return self
     def neq(self, *a, **kw): return self
+    def or_(self, *a, **kw): return self
     def in_(self, *a, **kw): return self
     def not_(self): return self
     def is_(self, *a, **kw): return self

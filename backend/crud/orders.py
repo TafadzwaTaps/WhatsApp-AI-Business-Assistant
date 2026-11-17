@@ -166,6 +166,34 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
         return None
 
 
+def claim_order_paid(order_id: int, business_id: int, data: dict) -> bool:
+    """Atomically move an order to paid. Returns True only for the caller that actually
+    made the transition, so duplicate/concurrent payment notifications (provider retries,
+    double-clicked return URLs) run their side effects - customer message, stock/memory
+    sync - exactly once. Scoped by business_id like update_order_payment.
+
+    Returns False when the order is already paid / not this business's. A database
+    failure RAISES (it must never look like "already paid": the caller should answer
+    with a retryable error so the payment provider re-delivers)."""
+    from workflows.order_lifecycle import _has_col
+    allowed = ("payment_status", "payment_reference", "paypal_order_id")
+    safe = {k: v for k, v in data.items() if k in allowed and _has_col(k)}
+    safe["payment_status"] = "paid"
+    try:
+        res = (
+            supabase.table("orders")
+            .update(safe)
+            .eq("id", order_id)
+            .eq("business_id", business_id)
+            .or_("payment_status.is.null,payment_status.neq.paid")
+            .execute()
+        )
+        return bool(res.data)
+    except Exception as exc:
+        log.error("claim_order_paid error  order=%s  exc=%s", order_id, exc)
+        raise
+
+
 def get_order_by_paypal_id(paypal_order_id: str) -> Optional[dict]:
     """
     Look up an internal order by PayPal's order ID.

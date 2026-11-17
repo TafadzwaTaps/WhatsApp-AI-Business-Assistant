@@ -507,6 +507,15 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str, _shar
                     log.info("✅ WhatsApp OK  msg_id=%s  to=%s", msg_id, to)
                 return result
 
+            # Rate limiting (HTTP 429, or Meta throughput/pair-rate codes) is transient:
+            # back off and retry using the same delays as a 5xx instead of giving up.
+            _rl_err = (result.get("error") or {}) if isinstance(result, dict) else {}
+            if resp.status_code == 429 or _rl_err.get("code") in (130429, 131056, 80007):
+                log.warning("⚠️  WhatsApp rate limited (attempt %d/%d) — will retry  code=%s",
+                            attempt, len(_RETRY_DELAYS), _rl_err.get("code"))
+                last_result = result
+                continue
+
             # 4xx — do NOT retry (bad request, auth failure, invalid number)
             if 400 <= resp.status_code < 500:
                 err = result.get("error", {})

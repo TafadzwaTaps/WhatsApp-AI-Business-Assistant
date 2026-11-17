@@ -57,6 +57,7 @@ from crud.orders import (  # noqa: F401
     get_order_by_id,
     update_order_status,
     update_order_payment,
+    claim_order_paid,
     get_order_by_paypal_id,
     get_dashboard_stats,
     get_customers_for_product,

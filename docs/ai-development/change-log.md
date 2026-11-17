@@ -89,3 +89,16 @@ Open items from security review (not changed, need decisions): unsubscribe token
 - Restored the public booking page (`routes/booking_routes.py`, from 506cbaa^) and website-generator i18n/translation features (`services/site_generator.py`, 3-way merge keeping later fixes and the logo feature). `/site/{slug}` now renders via `run_in_threadpool`.
 - Security-review follow-ups: booking page script constants escape every `<`; booking input bounded (lengths, duration 0-8h, date/time shape); canonical/og:url escaped; silent excepts replaced with logging.
 - Tests: 1125 passed / 3 failed / 1 skipped (the 3 are the monthly-report unsubscribe tests, awaiting a decision). Independent security review: no Critical/High; remaining Low: `/book/{slug}` page view has no rate limit; duplicate-booking check relies on `create_booking` for atomicity.
+
+## Phase 2 groups 1-4 (2026-11-17) — uncommitted
+- Webhook (`routes/webhook_routes.py`): every message in a delivery is processed (entry x changes x messages) via the unchanged pipeline `_handle_one_message`, one at a time per sender (`_customer_lock`); a crash in one message no longer drops the rest. Blocking `generate_reply`/`send_whatsapp` run in a threadpool.
+- Handoff safety: strict `is_in_human_handoff` (`services/_ai_state.py`) - unreadable state means no reply; voice-fallback, language-switch reply and image analysis are skipped while a human owns the chat.
+- Duplicate detection by SQLSTATE 23505 instead of error-text matching.
+- Delivery receipts: `statuses` events update `messages.status` monotonically; the outgoing wamid is stored after send; failures are logged with Meta's error code (no new column).
+- `send_whatsapp` retries on 429 and Meta rate-limit codes (130429, 131056, 80007) with the existing delays. Graph API version unchanged.
+- `crud.orders.claim_order_paid`: atomic, business-scoped paid transition used by the PayPal success/webhook and `/payment/webhook`, so duplicate notifications run side effects once.
+- `customers.unread_count` resets now scoped by business_id.
+- Tests: new `test_phase2_whatsapp_reliability.py` (18) and `test_phase2_tenant_isolation.py` (9); `conftest` fake gained `or_`; PayPal success test updated to the claim path plus a duplicate-return test. Suite: 1153 passed / 3 failed (monthly unsubscribe, awaiting decision) / 1 skipped.
+- Not done (needs DB access/approval): migrations M1-M6, atomic stock decrement (D1), order-failure stock rollback, retry policy W8, `carts` compare-and-set.
+- Phase 2 review follow-ups: `claim_order_paid` now raises on a database error (callers answer 503 so the provider re-delivers) instead of looking like "already paid"; delivery receipts apply only to outgoing rows; duplicate detection no longer matches bare "unique"/"wa_message_id" text (a missing-column error is not a duplicate); handoff probe retried once. Suite: 1157 passed / 3 failed (monthly unsubscribe) / 1 skipped.
+- Known limits from review: a crash in notify/status-sync after the paid claim is not retried (provider sees 200); outgoing wamid is stored only after the main send, so very fast receipts and the voice/language/clarify replies get no status; the lock is per-process and is held during slow AI/send calls.

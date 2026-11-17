@@ -591,7 +591,10 @@ async def paypal_success(
             log.warning("paypal_success: amount mismatch order=%s expected=%.2f got=%.2f",
                         order_id, order_total, float(capture.get("amount") or 0))
             return {"status": "error", "detail": "Payment amount does not match the order total."}
-        crud.update_order_payment(order_id, biz_id, {"payment_status": "paid", "payment_reference": ref, "paypal_order_id": token})
+        # A database error propagates to the handler below (generic "contact the business"
+        # reply) instead of being reported as "already confirmed".
+        if not crud.claim_order_paid(order_id, biz_id, {"payment_reference": ref, "paypal_order_id": token}):
+            return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
         await _notify_customer_payment(order,
             f"✅ *PayPal Payment Confirmed!*\n\nThank you! Payment for *{ref}* is complete.\n\n"
             f"💰 Amount: ${capture['amount']:.2f} USD\n📦 Your order is being prepared. 🙏"
@@ -673,7 +676,13 @@ async def paypal_webhook(request: Request):
             if abs(round(paid_amount, 2) - order_total) > 0.10:
                 raise HTTPException(400, f"Amount mismatch: expected ${order_total:.2f}, received ${paid_amount:.2f}")
 
-            crud.update_order_payment(order_id, biz_id, {"payment_status": "paid", "payment_reference": ref, "paypal_order_id": paypal_order_id})
+            try:
+                _claimed = crud.claim_order_paid(order_id, biz_id, {"payment_reference": ref, "paypal_order_id": paypal_order_id})
+            except Exception:
+                # Retryable: a non-2xx makes PayPal re-deliver the event.
+                raise HTTPException(503, "Temporary error - please retry")
+            if not _claimed:
+                return {"status": "ok", "detail": "already_paid"}
             try: update_order_status_supabase(order_id, "paid")
             except Exception as exc: log.warning("paypal_webhook: status update failed: %s", exc)
 

@@ -42,6 +42,31 @@ def _read_state_data(phone: str, business_id: int) -> dict:
         return {}
 
 
+def is_in_human_handoff(phone: str, business_id: int):
+    """True / False if the conversation is / is not in human handoff;
+    None when the state could not be read (DB error).
+
+    _read_state_data() swallows DB errors and returns {}, which looks like a
+    normal "browsing" conversation. Callers that must never speak over a human
+    agent use this strict probe and stay silent on None."""
+    try:
+        from core.db import supabase
+        res = (
+            supabase.table("carts")
+            .select("state_data")
+            .eq("phone", phone)
+            .eq("business_id", business_id)
+            .limit(1)
+            .execute()
+        )
+        sd = (res.data[0].get("state_data") if res.data else None) or {}
+        from services._ai_lazy import _states
+        return _states().normalize_state(sd.get("state", "browsing")) == "human_handoff"
+    except Exception as exc:
+        log.error("is_in_human_handoff read failed: %s", exc)
+        return None
+
+
 def _write_state_data(phone: str, business_id: int, patch: dict) -> None:
     """
     Merge patch into existing state_data and save.
