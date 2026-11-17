@@ -279,7 +279,7 @@ function buildCategories() {
   const cats = ['All', ...Object.keys(counts).sort((a,b) => counts[b]-counts[a])];
   const bar = document.getElementById('category-bar');
   bar.innerHTML = cats.map(c => {
-    const label = c === 'All' ? `All (${_all.length})` : `${icon(c)} ${c} (${counts[c]})`;
+    const label = c === 'All' ? `All (${_all.length})` : `${icon(c)} ${esc(c)} (${counts[c]})`;
     // Security fix: the category used to be embedded directly inside a
     // single-quoted JS string literal in the onclick attribute
     // (onclick="setCategory('${c}', this)"). HTML-escaping a quote
@@ -335,7 +335,7 @@ function render() {
       ? `<img src="${esc(b.logo_url)}" alt="${esc(b.name)} logo" loading="lazy" onerror="this.parentElement.textContent='${icon(b.category)}'"/>`
       : icon(b.category);
     return `
-      <a class="card" href="/store/${slug}">
+      <a class="card" href="/store/${encodeURIComponent(slug)}">
         <div class="card-top">
           <div class="card-icon">${iconHtml}</div>
           <div class="card-heading">

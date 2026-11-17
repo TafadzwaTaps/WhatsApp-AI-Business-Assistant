@@ -494,7 +494,7 @@ def platform_list_businesses(user=Depends(require_superadmin)):
 
 
 @router.get("/platform/businesses/active")
-def platform_active_businesses():
+def platform_active_businesses(user=Depends(require_superadmin)):
     businesses = crud.get_active_businesses()
     return [{"id": b["id"], "name": b["name"], "category": b.get("category", "")}
             for b in businesses]

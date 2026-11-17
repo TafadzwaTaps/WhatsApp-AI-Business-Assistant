@@ -9,6 +9,7 @@ Changes vs original:
 
 import hmac
 import os
+import secrets
 from datetime import datetime, timedelta
 
 from jose import JWTError, jwt
@@ -45,7 +46,7 @@ if SECRET_KEY in _WEAK_KEYS:
     )
 ALGORITHM   = "HS256"
 
-ACCESS_TOKEN_EXPIRE_MINUTES  = 60 * 8       # 8 hours
+ACCESS_TOKEN_EXPIRE_MINUTES  = 60           # 60 minutes (was 8 h); the dashboard refreshes silently via the refresh token
 REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
 IMPERSONATION_TOKEN_EXPIRE_MINUTES = 30     # SuperAdmin 2.0 Phase 13 — deliberately
 # much shorter than a normal login session: a bounded support-tool window,
@@ -132,6 +133,7 @@ def create_access_token(data: dict) -> str:
     payload = data.copy()
     payload["exp"]  = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     payload["type"] = "access"
+    payload["jti"]  = secrets.token_urlsafe(16)      # unique id so a single token can be revoked
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -140,6 +142,7 @@ def create_refresh_token(data: dict) -> str:
     payload = data.copy()
     payload["exp"]  = datetime.utcnow() + timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES)
     payload["type"] = "refresh"
+    payload["jti"]  = secrets.token_urlsafe(16)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -170,6 +173,7 @@ def create_impersonation_token(business_id: int, owner_username: str, impersonat
         payload["pwd_ts"] = pwd_ts
     payload["exp"]  = datetime.utcnow() + timedelta(minutes=IMPERSONATION_TOKEN_EXPIRE_MINUTES)
     payload["type"] = "access"
+    payload["jti"]  = secrets.token_urlsafe(16)
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -245,6 +249,83 @@ def _get_current_password_changed_at(business_id: int) -> str | None:
     return state[0] if state else None
 
 
+# ── Server-side token revocation (logout) ───────────────────────────────────
+# Logout stores the token's `jti` in the revoked_tokens table (see
+# backend/migrations/phase3_revoked_tokens.sql). Tokens issued before this feature carry
+# no jti and are simply not revocable individually (password change still kills them).
+# Revoked ids are also kept in-process so revocation is instant on this instance; other
+# lookups are cached for _PWD_TS_CACHE_TTL seconds. A lookup failure (table missing, DB
+# down) fails OPEN and is logged - same convention as the checks above - so a DB hiccup
+# cannot lock every user out.
+_revoked_local: dict[str, float] = {}                # jti -> exp (unix); revoked in this process
+_revoked_checked: dict[str, tuple[bool, float]] = {}  # jti -> (revoked, checked_at)
+_last_revoked_cleanup = 0.0
+
+
+def is_token_revoked(jti: str | None) -> bool:
+    import time as _time
+    if not jti:
+        return False
+    now = _time.time()
+    if jti in _revoked_local:
+        return True
+    hit = _revoked_checked.get(jti)
+    if hit and (now - hit[1]) < _PWD_TS_CACHE_TTL:
+        return hit[0]
+    revoked = False
+    try:
+        from core.db import supabase
+        res = supabase.table("revoked_tokens").select("jti").eq("jti", jti).limit(1).execute()
+        revoked = bool(res.data)
+    except Exception as exc:
+        import logging as _l
+        _l.getLogger("wazibot.auth").warning("revocation lookup failed (failing open): %s", type(exc).__name__)
+    if len(_revoked_checked) > 5000:
+        _revoked_checked.clear()
+    _revoked_checked[jti] = (revoked, now)
+    return revoked
+
+
+def revoke_token(token: str) -> bool:
+    """Revoke ONE token (access or refresh). Returns True if it was recorded. Never raises.
+    Accepts expired tokens (nothing to do) and garbage (ignored)."""
+    import time as _time
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM], options={"verify_exp": False})
+    except Exception:
+        return False
+    jti = payload.get("jti")
+    if not jti:
+        return False
+    exp = float(payload.get("exp") or 0)
+    if exp and exp < _time.time():
+        return True                                    # already expired: nothing to revoke
+    now = _time.time()
+    for k in [k for k, e in _revoked_local.items() if e and e < now]:    # prune expired entries
+        _revoked_local.pop(k, None)
+    _revoked_local[jti] = exp
+    try:
+        from core.db import supabase
+        supabase.table("revoked_tokens").insert({
+            "jti": jti,
+            "business_id": payload.get("business_id"),
+            "expires_at": datetime.utcfromtimestamp(exp).isoformat() + "Z" if exp else None,
+        }).execute()
+        global _last_revoked_cleanup
+        if now - _last_revoked_cleanup > 3600:         # opportunistic cleanup, at most hourly
+          _last_revoked_cleanup = now
+          try:
+            supabase.table("revoked_tokens").delete().lt("expires_at", datetime.utcnow().isoformat() + "Z").execute()
+          except Exception as _exc:
+            import logging as _l2
+            _l2.getLogger("wazibot.auth").debug("revoked_tokens cleanup skipped: %s", type(_exc).__name__)
+        return True
+    except Exception as exc:
+        import logging as _l
+        _l.getLogger("wazibot.auth").error("could not persist token revocation: %s", type(exc).__name__)
+        return False
+
+
 def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     import logging as _al
     _log = _al.getLogger("wazibot.auth")
@@ -253,6 +334,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     except HTTPException as exc:
         _log.warning("AUTH FAILED: reason=invalid_or_expired_token  detail=%s", exc.detail)
         raise
+    if is_token_revoked(payload.get("jti")):
+        _log.warning("AUTH FAILED: reason=token_revoked")
+        raise HTTPException(status_code=401, detail="Session ended. Please log in again.")
     username    = payload.get("sub")
     role        = payload.get("role", "business")
     business_id = payload.get("business_id")

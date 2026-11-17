@@ -995,7 +995,8 @@ function escHtml(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 // Safe JS string-literal argument for a double-quoted inline handler attribute
 // (escHtml alone leaves ' and \ live inside a JS string): onclick="fn(${jsArg(v)})"
@@ -1880,7 +1881,7 @@ async function askHelp() {
     }
     body.innerHTML = html;
   } catch (e) {
-    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Could not load answer: ${e.message}</div>`;
+    body.innerHTML = `<div style="color:var(--red);font-size:12px;">Could not load answer: ${escHtml(e.message)}</div>`;
   }
 }
 

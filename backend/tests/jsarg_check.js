@@ -6,7 +6,7 @@ for (const f of process.argv.slice(2)) {
   const ja=src.match(/function jsArg\([\s\S]*?\n\}\n/)[0];
   const safeText=s=>String(s==null?'':s);   // inbox.js helper used by its escHtml
   const jsArg=new Function('safeText',esc+ja+'; return jsArg;')(safeText);
-  const dec=s=>s.replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+  const dec=s=>s.replace(/&#39;/g,"'").replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
   const vals=["+263771234567","O'Brien","a\b","');alert(1);//","\"><img src=x onerror=alert(1)>","</script>","line\nbreak","\u2028x\u2029",""];
   for (const v of vals) {
     const attr=jsArg(v);

@@ -9,6 +9,7 @@ Routes: /me, /me/*, /products, /orders, /conversations, /customers, /broadcast,
 import logging
 from typing import Optional
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Request, HTTPException, Depends, Query, UploadFile, File
 from pydantic import BaseModel, validator
 
@@ -622,7 +623,7 @@ async def upload_avatar(
     from core.db import supabase
     import os as _os
 
-    data  = await file.read()
+    data  = await file.read(3 * 1024 * 1024 + 1)     # bounded read: never buffer more than the cap
     if len(data) > 3 * 1024 * 1024:
         raise HTTPException(400, "File too large. Maximum 3 MB.")
 
@@ -680,7 +681,7 @@ async def upload_site_logo(
     from core.db import supabase
     import os as _os
 
-    data = await file.read()
+    data = await file.read(3 * 1024 * 1024 + 1)
     if len(data) > 3 * 1024 * 1024:
         raise HTTPException(400, "File too large. Maximum 3 MB.")
 
@@ -851,7 +852,7 @@ async def upload_product_image(
         raise HTTPException(400, f"Unsupported file type: {content_type}. Use JPG, PNG, or WebP.")
 
     # Max 5MB
-    data = await file.read()
+    data = await file.read(5 * 1024 * 1024 + 1)
     if len(data) > 5 * 1024 * 1024:
         raise HTTPException(400, "File too large. Maximum size is 5MB.")
 
@@ -1518,6 +1519,10 @@ async def notify_low_stock_to_owner(user=Depends(require_business)):
 
 # ── Voice transcribe ──────────────────────────────────────────────────────────
 
+from services.whatsapp_service import is_safe_media_url as _is_safe_media_url  # shared allow-list
+_MAX_AUDIO_BYTES = 16 * 1024 * 1024
+
+
 class VoiceTranscribeRequest(BaseModel):
     customer_id: int
     audio_url:   str
@@ -1536,14 +1541,23 @@ async def voice_transcribe(body: VoiceTranscribeRequest, user=Depends(require_bu
     transcript = None
 
     if openai_key:
+        if not await run_in_threadpool(_is_safe_media_url, body.audio_url):
+            raise HTTPException(400, "audio_url must be an https WhatsApp media URL")
         try:
             import httpx
             biz   = crud.get_business_by_id(bid)
             token = crud.get_decrypted_token(biz) if biz else ""
-            async with httpx.AsyncClient() as client:
-                r = await client.get(body.audio_url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
-                r.raise_for_status()
-                audio_bytes = r.content
+            async with httpx.AsyncClient(follow_redirects=False) as client:
+                async with client.stream("GET", body.audio_url,
+                                         headers={"Authorization": f"Bearer {token}"}, timeout=30) as r:
+                    r.raise_for_status()
+                    chunks, size = [], 0
+                    async for part in r.aiter_bytes():
+                        size += len(part)
+                        if size > _MAX_AUDIO_BYTES:
+                            raise ValueError("audio too large")
+                        chunks.append(part)
+                    audio_bytes = b"".join(chunks)
             async with httpx.AsyncClient() as client:
                 resp = await client.post(
                     "https://api.openai.com/v1/audio/transcriptions",
@@ -1737,7 +1751,7 @@ async def import_products_csv(
             if v: return v.strip()
         return ""
     try:
-        raw_bytes = await file.read()
+        raw_bytes = await file.read(10 * 1024 * 1024 + 1)
         if not raw_bytes:
             raise HTTPException(400, "Uploaded file is empty.")
         if len(raw_bytes) > 10 * 1024 * 1024:

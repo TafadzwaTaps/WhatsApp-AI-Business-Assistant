@@ -2060,6 +2060,10 @@ def generate_site_html(slug: str) -> str:
     else:
         # Use theme's built-in accent (new themes have it; old themes fall back to theme_colour)
         theme       = palette.get("accent") or biz.get("theme_colour") or "#00c853"
+        # theme_colour is tenant-controlled and lands in a <style> block: hex colours only.
+        if not (isinstance(theme, str) and re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", theme.strip())):
+            theme = "#00c853"
+        theme = theme.strip()
         theme_dark  = _hex_darken(theme, 25)
 
     # Fetch reviews if enabled

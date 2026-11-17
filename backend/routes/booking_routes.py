@@ -30,6 +30,7 @@ customer booking an appointment isn't logged in). Protected instead by:
 from __future__ import annotations
 
 import logging
+import re
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, validator
@@ -364,7 +365,7 @@ def _render_booking_page_html(slug: str, biz: dict) -> str:
     _i18n_json, _slug_js = _safe(BOOKING_I18N), _safe(slug)
     _name_js, _lang_js = _safe(biz.get("name", "")), _safe(_lang)
     accent = biz.get("theme_colour") or "#22c55e"
-    if not (isinstance(accent, str) and accent.startswith("#") and len(accent) == 7):
+    if not (isinstance(accent, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", accent)):
         accent = "#22c55e"
 
     return f"""<!DOCTYPE html>

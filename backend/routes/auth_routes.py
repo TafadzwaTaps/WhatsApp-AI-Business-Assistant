@@ -13,7 +13,7 @@ from core.auth import (
     verify_password,
     hash_password,
     create_access_token, create_refresh_token,
-    decode_token,
+    decode_token, revoke_token, is_token_revoked,
     get_current_user, require_superadmin, require_business,
     SUPER_ADMIN_USERNAME, SUPER_ADMIN_PASSWORD, SUPER_ADMIN_LOGIN_DISABLED,
 )
@@ -345,6 +345,38 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = None
+
+
+@router.post("/auth/logout")
+def logout_endpoint(data: LogoutRequest, request: Request):
+    """Server-side logout: revoke the presented access token (Authorization header) and
+    refresh token so a copied token cannot be reused. Deliberately does not require a VALID
+    access token (the user may be logging out because it expired); possession of a token is
+    enough to revoke that token and nothing else. Idempotent."""
+    _rate_check("refresh", request)
+    revoked = 0
+    attempted = 0
+    auth = request.headers.get("authorization", "")
+    candidates = ([auth[7:].strip()] if auth.lower().startswith("bearer ") else []) +                  ([data.refresh_token] if data.refresh_token else [])
+    for tok in candidates:
+        ok = revoke_token(tok)
+        revoked += bool(ok)
+        # revoke_token is False for garbage AND for a failed write; only a decodable token
+        # that failed to persist counts as a real failure.
+        try:
+            from jose import jwt as _j
+            if _j.get_unverified_claims(tok).get("jti") and not ok:
+                attempted += 1
+        except Exception as _exc:
+            log.debug("logout: unreadable token skipped: %s", type(_exc).__name__)
+    if attempted:
+        # Don't claim success: the token is only dead on this instance (table missing / DB down).
+        raise HTTPException(503, "Logout could not be fully recorded. Please try again.")
+    return {"ok": True, "revoked": revoked}
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(..., max_length=128)
     new_password:     str = Field(..., max_length=128)
@@ -409,6 +441,8 @@ def refresh_token_endpoint(data: RefreshRequest, request: Request):
 
     if payload.get("type") != "refresh":
         raise HTTPException(401, "Not a refresh token.")
+    if is_token_revoked(payload.get("jti")):
+        raise HTTPException(401, "Session ended. Please log in again.")
 
     sub         = payload.get("sub", "")
     role        = payload.get("role", "business")

@@ -139,6 +139,16 @@ app.add_middleware(
 )
 
 
+def _ws_origin(request) -> str:
+    """The wss:// origin of the host serving this request (the dashboard's own live-chat
+    socket), instead of allowing wss: to any host."""
+    import re as _re
+    host = (request.headers.get("host") or "").strip()
+    if not _re.fullmatch(r"[A-Za-z0-9.\-]+(:\d+)?", host):
+        return "wss://wazibothq.com"
+    return ("ws://" if host.split(":")[0] in ("localhost", "127.0.0.1") else "wss://") + host
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
@@ -157,7 +167,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com data:; "
             "img-src 'self' data: blob: https:; "
-            "connect-src 'self' https://wazibothq.com wss:; "
+            "connect-src 'self' https://wazibothq.com wss://wazibothq.com wss://www.wazibothq.com " + _ws_origin(request) + "; "
             # Allows the optional embedded Google Map on business storefronts
             # (Settings → Store → Show Map). Without an explicit frame-src,
             # iframes fall back to default-src 'self' and get silently
@@ -165,7 +175,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             # the site uses iframes, so this only opens the door for Maps.
             "frame-src https://www.google.com; "
             "frame-ancestors 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
         )
+        # Authenticated API responses must not be stored by browsers or shared caches.
+        if ("authorization" in request.headers
+                and "cache-control" not in response.headers
+                and response.headers.get("content-type", "").startswith("application/json")):
+            response.headers["Cache-Control"] = "no-store"
         return response
 
 
@@ -444,9 +462,13 @@ class ConnectionManager:
     def __init__(self):
         self._conns: dict[int, list[WebSocket]] = {}
 
-    async def connect(self, ws: WebSocket, business_id: int):
-        await ws.accept()
+    async def connect(self, ws: WebSocket, business_id: int, accepted: bool = False):
+        if not accepted:
+            await ws.accept()
         self._conns.setdefault(business_id, []).append(ws)
+
+    def count(self, business_id: int) -> int:
+        return len(self._conns.get(business_id, []))
 
     def disconnect(self, ws: WebSocket, business_id: int):
         lst = self._conns.get(business_id, [])

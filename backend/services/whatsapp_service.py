@@ -195,6 +195,55 @@ class WhatsAppService:
 # POST /voice/transcribe endpoint (routes/business_routes.py), but starts
 # from a WhatsApp media id instead of a caller-supplied audio_url, since
 # that's what the live webhook actually receives.
+
+# ── Media URL allow-list ─────────────────────────────────────────────────────
+# The business's Meta access token is sent to the media URL Graph API hands back, so
+# that URL is only followed when it is https, on a known Meta media host and resolves
+# to public addresses. Redirects are never followed (httpx default, made explicit).
+# Hosts: lookaside.fbsbx.com is the WhatsApp Cloud API media host; *.fbcdn.net and
+# *.whatsapp.net are Meta's CDNs that have served WhatsApp media. Extend ONLY with a
+# host seen in the "media url rejected" log line - set META_MEDIA_EXTRA_HOSTS (comma
+# separated exact hostnames) to add one without a code change.
+_MEDIA_EXACT_HOSTS = ("lookaside.fbsbx.com",)
+_MEDIA_HOST_SUFFIXES = ("fbcdn.net", "whatsapp.net")
+
+
+def is_safe_media_url(url) -> bool:
+    import ipaddress, os, socket
+    from urllib.parse import urlparse
+    try:
+        u = urlparse(str(url or ""))
+        host = (u.hostname or "").lower()
+        if u.scheme != "https" or not host or u.username or u.password or u.port not in (None, 443):
+            return False
+        extra = {h.strip().lower() for h in os.getenv("META_MEDIA_EXTRA_HOSTS", "").split(",") if h.strip()}
+        if not (host in _MEDIA_EXACT_HOSTS or host in extra
+                or any(host.endswith("." + s) for s in _MEDIA_HOST_SUFFIXES)):
+            return False
+        for info in socket.getaddrinfo(host, 443, proto=socket.IPPROTO_TCP):
+            ip = ipaddress.ip_address(info[4][0])
+            ip = getattr(ip, "ipv4_mapped", None) or ip
+            if not ip.is_global:
+                return False
+        return True
+    except Exception:
+        return False
+
+
+async def _media_url_ok(url: str) -> bool:
+    """Async wrapper (DNS lookup is blocking). Logs only the HOSTNAME of a rejected URL."""
+    import asyncio
+    from urllib.parse import urlparse
+    ok = await asyncio.to_thread(is_safe_media_url, url)
+    if not ok:
+        try:
+            host = urlparse(str(url)).hostname
+        except Exception:
+            host = "?"
+        log.warning("media url rejected (not an allowed Meta media host)  host=%s", host)
+    return ok
+
+
 async def transcribe_whatsapp_voice_note(
     media_id: str,
     wa_token: str,
@@ -225,6 +274,8 @@ async def transcribe_whatsapp_voice_note(
             media_url = meta_resp.json().get("url", "")
             if not media_url:
                 log.warning("transcribe_whatsapp_voice_note: no media url  media_id=%s", media_id)
+                return None
+            if not await _media_url_ok(media_url):
                 return None
 
             # Step 2: download the audio bytes (same Bearer token required)
@@ -292,6 +343,8 @@ async def download_whatsapp_media(media_id: str, wa_token: str):
 
             if not media_url:
                 log.warning("download_whatsapp_media: no media url  media_id=%s", media_id)
+                return None, None
+            if not await _media_url_ok(media_url):
                 return None, None
 
             # ── Media validation ────────────────────────────────────────────

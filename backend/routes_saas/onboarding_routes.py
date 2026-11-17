@@ -194,7 +194,7 @@ async def onboarding_step2(
     logo_url = ""
 
     if logo and logo.filename:
-        data = await logo.read()
+        data = await logo.read(5 * 1024 * 1024 + 1)
         if len(data) > 5 * 1024 * 1024:
             raise HTTPException(400, "Logo must be under 5 MB")
         try:
