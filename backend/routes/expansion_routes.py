@@ -262,8 +262,8 @@ def update_booking_status(
         try:
             from crud.analytics import _cache_invalidate_business
             _cache_invalidate_business(user["business_id"])
-        except Exception:
-            pass
+        except Exception as exc_cache:
+            log.debug("booking update: stats cache invalidation failed: %s", exc_cache)
 
         return {"ok": True, "booking": updated_booking}
     except HTTPException: raise
@@ -279,8 +279,8 @@ def cancel_booking_api(booking_id: int, user=Depends(require_business), _plan=De
     try:
         from crud.analytics import _cache_invalidate_business
         _cache_invalidate_business(user["business_id"])
-    except Exception:
-        pass
+    except Exception as exc_cache:
+        log.debug("booking cancel: stats cache invalidation failed: %s", exc_cache)
     return {"ok": True, "cancelled": booking_id}
 
 

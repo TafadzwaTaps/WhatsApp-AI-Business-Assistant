@@ -567,12 +567,16 @@ async def paypal_success(
         if not capture["paid"]:
             return {"status": "capture_failed", "detail": capture.get("error"),
                     "message": "Payment not completed. Please try again."}
-        ref = reference or capture.get("reference", "")
+        # The order is identified ONLY from PayPal's own capture data - the
+        # `reference` query parameter is attacker-controllable and must never pick
+        # which order gets marked paid.
+        capture_ref = capture.get("reference", "")
+        ref = capture_ref or reference
         internal_id = capture.get("internal_order_id")
         order = None
         if internal_id: order = get_order(internal_id)
-        elif ref.startswith("ORDER-"):
-            try: order = get_order(int(ref.split("-")[1]))
+        elif capture_ref.startswith("ORDER-"):
+            try: order = get_order(int(capture_ref.split("-")[1]))
             except (ValueError, IndexError): pass
         if not order: return {"status": "error", "detail": "Order not found"}
         order_id = order["id"]
@@ -580,6 +584,13 @@ async def paypal_success(
         ref      = ref or f"ORDER-{order_id}"
         if order.get("payment_status") == "paid":
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
+        # Same amount check the webhook path already enforces: a capture for a
+        # different (smaller) amount must not mark this order paid.
+        order_total = round(float(order.get("total_price") or 0), 2)
+        if order_total > 0 and abs(round(float(capture.get("amount") or 0), 2) - order_total) > 0.10:
+            log.warning("paypal_success: amount mismatch order=%s expected=%.2f got=%.2f",
+                        order_id, order_total, float(capture.get("amount") or 0))
+            return {"status": "error", "detail": "Payment amount does not match the order total."}
         crud.update_order_payment(order_id, biz_id, {"payment_status": "paid", "payment_reference": ref, "paypal_order_id": token})
         await _notify_customer_payment(order,
             f"✅ *PayPal Payment Confirmed!*\n\nThank you! Payment for *{ref}* is complete.\n\n"
@@ -589,7 +600,7 @@ async def paypal_success(
                 "amount": capture["amount"], "message": "Payment confirmed!"}
     except Exception as exc:
         log.exception("paypal_success error: %s", exc)
-        return {"status": "error", "detail": str(exc)}
+        return {"status": "error", "detail": "Could not confirm the payment. Please contact the business."}
 
 
 @router.get("/payments/paypal/cancel")
@@ -607,12 +618,18 @@ async def paypal_webhook(request: Request):
     WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
     raw_body   = await request.body()
 
-    # Fail closed: an unverified event must never mark an order as paid.
-    if not WEBHOOK_ID:
-        log.error("paypal_webhook: PAYPAL_WEBHOOK_ID not configured — refusing unverified event")
-        raise HTTPException(503, "PayPal webhook is not configured")
-    if not verify_paypal_webhook_signature(headers=dict(request.headers), raw_body=raw_body, webhook_id=WEBHOOK_ID):
-        raise HTTPException(400, "Invalid PayPal webhook signature")
+    if WEBHOOK_ID:
+        if not verify_paypal_webhook_signature(headers=dict(request.headers), raw_body=raw_body, webhook_id=WEBHOOK_ID):
+            raise HTTPException(400, "Invalid PayPal webhook signature")
+    elif os.getenv("RENDER") or os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "").strip() != "1":
+        # SECURITY: fail closed. Without PAYPAL_WEBHOOK_ID a forged
+        # PAYMENT.CAPTURE.COMPLETED could mark an order paid, so an unverified
+        # event is rejected unless a developer explicitly opts in with
+        # ALLOW_UNSIGNED_WEBHOOKS=1 - and that opt-in is ignored on Render.
+        log.error("paypal_webhook: PAYPAL_WEBHOOK_ID not set - rejecting unverified webhook")
+        raise HTTPException(503, "PayPal webhook not configured")
+    else:
+        log.warning("paypal_webhook: ALLOW_UNSIGNED_WEBHOOKS=1 - skipping signature verification (dev only)")
 
     try:
         event = await request.json()
@@ -675,7 +692,7 @@ async def paypal_webhook(request: Request):
         except HTTPException: raise
         except Exception as exc:
             log.exception("paypal_webhook COMPLETED handler error: %s", exc)
-            return {"status": "error", "detail": str(exc)}
+            return {"status": "error", "detail": "Webhook processing failed"}
 
     elif event_type == "PAYMENT.CAPTURE.DENIED":
         try:

@@ -266,8 +266,8 @@ def detect_language(text: str) -> Optional[str]:
             if best.prob >= 0.85 and best.lang in SUPPORTED_SITE_LANGS:
                 return best.lang
             return None
-    except Exception:
-        pass
+    except Exception as exc_detect:
+        log.debug("language detection unavailable, using fallback: %s", exc_detect)
     if _PL_RE.search(t):
         return "pl"
     return None
@@ -297,8 +297,8 @@ def _validate_translation(source: str, out: str, source_lang: str, target_lang: 
             best = detect_langs(out)[0]
             if best.lang != target_lang and best.prob >= 0.9 and best.lang in SUPPORTED_SITE_LANGS:
                 return False              # clearly the wrong language
-        except Exception:
-            pass
+        except Exception as exc_detect:
+            log.debug("translation language check skipped: %s", exc_detect)
     return True
 
 

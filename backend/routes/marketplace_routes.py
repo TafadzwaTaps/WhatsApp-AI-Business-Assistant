@@ -252,7 +252,9 @@ async def site_page(slug: str, request: Request):
 
     try:
         from services.site_generator import generate_site_html
-        html = generate_site_html(slug)
+        from starlette.concurrency import run_in_threadpool
+        # The generator does blocking DB/translation work - keep it off the event loop.
+        html = await run_in_threadpool(generate_site_html, slug)
         return HTMLResponse(html)
     except Exception as exc:
         log.warning("site_page error: %s", exc)

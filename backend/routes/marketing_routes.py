@@ -175,7 +175,8 @@ def get_qr_image(dest: str = "whatsapp", user=Depends(require_business)):
     try:
         png_bytes = generate_qr_png(kit["business_name"], dest=dest)
     except ImportError as exc:
-        raise HTTPException(503, str(exc))
+        log.error("QR generation unavailable (missing dependency): %s", exc)
+        raise HTTPException(503, "QR code generation is not available on this server.")
     except Exception as exc:
         log.error("QR generation failed  business=%s  error=%s", user["business_id"], exc)
         raise HTTPException(500, "QR generation failed — please try again")
@@ -196,7 +197,8 @@ def download_qr(dest: str = "whatsapp", user=Depends(require_business)):
     try:
         png_bytes = generate_qr_png(kit["business_name"], dest=dest)
     except ImportError as exc:
-        raise HTTPException(503, str(exc))
+        log.error("QR generation unavailable (missing dependency): %s", exc)
+        raise HTTPException(503, "QR code generation is not available on this server.")
     except Exception as exc:
         raise HTTPException(500, "QR generation failed")
 
