@@ -1345,6 +1345,7 @@ def _patch_biz(bid: int, patch: dict) -> None:
     from core.db import supabase
     try:
         supabase.table("businesses").update(patch).eq("id", bid).execute()
+        from crud.businesses import _biz_cache_clear; _biz_cache_clear()
     except Exception as exc:
         legacy = {k: v for k, v in patch.items() if k not in _EXT_SET}
         if len(legacy) == len(patch) or not legacy:
@@ -1352,6 +1353,7 @@ def _patch_biz(bid: int, patch: dict) -> None:
         log.warning("billing patch retried without extended columns (migration not applied?)  business=%s  err=%s",
                     bid, type(exc).__name__)
         supabase.table("businesses").update(legacy).eq("id", bid).execute()
+        from crud.businesses import _biz_cache_clear; _biz_cache_clear()
     log.info("Billing patch  business=%s  keys=%s", bid, sorted(patch.keys()))
 
 

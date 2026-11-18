@@ -368,6 +368,17 @@ async def _notify_customer_payment(order: dict, message: str) -> None:
         log.error("_notify_customer_payment error: %s", exc)
 
 
+def _order_currency_sym(order: dict, bid: int) -> str:
+    """Currency symbol for customer messages: the order's own, else the business's, else "$"."""
+    sym = (order.get("currency_symbol") or "").strip()
+    if not sym:
+        try:
+            sym = ((crud.get_business_by_id(bid) or {}).get("currency_symbol") or "").strip()
+        except Exception:
+            return "$"
+    return sym or "$"
+
+
 @router.post("/orders/{order_id}/approve-payment")
 async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depends(require_business)):
     bid   = user["business_id"]
@@ -384,7 +395,7 @@ async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depe
     note_line = f"\n_Note: {data.note}_" if data.note else ""
     await _notify_customer_payment(order,
         f"✅ *Payment Confirmed!*\n\nYour payment for *{ref}* has been verified.\n\n"
-        f"💰 Amount: ${total:.2f}\n📍 Status: *CONFIRMED*{note_line}\n\nWe're now preparing your order! 🙌"
+        f"💰 Amount: {_order_currency_sym(order, bid)}{total:.2f}\n📍 Status: *CONFIRMED*{note_line}\n\nWe're now preparing your order! 🙌"
     )
     phone = order.get("customer_phone", "")
     if phone and not order.get("fulfillment_method"):
@@ -459,7 +470,7 @@ async def admin_refund_order(order_id: int, data: OrderAdminAction, user=Depends
     note  = data.note or "Your refund has been processed."
     total = float(order.get("total_price") or 0)
     await _notify_customer_payment(order,
-        f"💳 *Refund Processed*\n\n*{ref}* — ${total:.2f}\n\n_{note}_\n\nPlease allow 3–5 business days. 🙏"
+        f"💳 *Refund Processed*\n\n*{ref}* — {_order_currency_sym(order, bid)}{total:.2f}\n\n_{note}_\n\nPlease allow 3–5 business days. 🙏"
     )
     return {"ok": True, "order_id": order_id, "message": f"{ref} marked refunded."}
 

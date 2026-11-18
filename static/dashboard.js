@@ -3752,7 +3752,7 @@ function _upRender(data) {
 
   // Currency (read-only display from features_json)
   const currEl = document.getElementById('up-currency-display');
-  if (currEl) currEl.value = (data.features_json || {}).currency || data.currency_symbol || 'USD';
+  if (currEl) currEl.value = data.currency || (data.features_json || {}).currency || data.currency_symbol || 'USD';
 
   // Avatar
   _upSetAvatar(p.avatar_url, p.owner_name || p.display_name || data.owner_username || 'W');

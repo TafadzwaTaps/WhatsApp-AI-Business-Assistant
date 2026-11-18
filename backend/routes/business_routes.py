@@ -1337,8 +1337,11 @@ async def campaign_send(body: CampaignRequest, request: Request, user=Depends(re
     if body.audience not in AUDIENCE_INFO: raise HTTPException(400, f"Unknown audience: {list(AUDIENCE_INFO.keys())}")
     if len(body.message.strip()) < 3: raise HTTPException(400, "Message too short")
     if len(body.message) > 1024: raise HTTPException(400, "Message too long (max 1024 chars)")
-    result = CampaignService.run(business_id=bid, audience=body.audience, message=body.message,
-                                  phone_list=body.phone_list, personalise_msg=body.personalise_msg, dry_run=body.dry_run)
+    # Sends to many recipients with blocking HTTP/DB calls: keep it off the event loop so other
+    # tenants' requests and webhooks are not stalled for the whole campaign.
+    result = await run_in_threadpool(
+        CampaignService.run, business_id=bid, audience=body.audience, message=body.message,
+        phone_list=body.phone_list, personalise_msg=body.personalise_msg, dry_run=body.dry_run)
     if not body.dry_run and result.get("sent", 0) > 0:
         try:
             from services.events import Events
@@ -1366,9 +1369,10 @@ def campaign_audiences():
 @router.post("/campaigns/preview")
 async def campaign_preview(body: CampaignRequest, user=Depends(require_business)):
     from services.campaign_service import CampaignService
-    return CampaignService.run(business_id=user["business_id"], audience=body.audience,
-                                message=body.message, phone_list=body.phone_list,
-                                personalise_msg=body.personalise_msg, dry_run=True)
+    return await run_in_threadpool(
+        CampaignService.run, business_id=user["business_id"], audience=body.audience,
+        message=body.message, phone_list=body.phone_list,
+        personalise_msg=body.personalise_msg, dry_run=True)
 
 
 # ── Templates ─────────────────────────────────────────────────────────────────
@@ -1826,12 +1830,12 @@ async def import_products_csv(
         for start in range(0, len(payloads), BATCH):
             batch = payloads[start:start + BATCH]
             try:
-                _sb.table("products").insert(batch).execute()
+                await run_in_threadpool(lambda b=batch: _sb.table("products").insert(b).execute())
                 imported += len(batch)
             except Exception:
                 for p in batch:
                     try:
-                        _sb.table("products").insert(p).execute()
+                        await run_in_threadpool(lambda r=p: _sb.table("products").insert(r).execute())
                         imported += 1
                     except Exception as re:
                         skipped += 1

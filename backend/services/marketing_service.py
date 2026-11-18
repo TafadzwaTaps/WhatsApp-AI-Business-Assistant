@@ -174,6 +174,8 @@ def generate_referral_qr_png(referral_code: str, referral_link: str) -> bytes:
     card.save(buf, format="PNG")
     png_bytes = buf.getvalue()
 
+    if len(_qr_cache) > 500:      # bound memory (about 5 KB per entry)
+        _qr_cache.clear()
     _qr_cache[cache_key] = png_bytes
     log.info("Referral QR generated  code=%s  size=%d bytes", referral_code, len(png_bytes))
     return png_bytes
@@ -241,6 +243,8 @@ def generate_qr_png(business_name: str, box_size: int = 10, border: int = 4,
         img.save(buf)
         png_bytes = buf.getvalue()
 
+    if len(_qr_cache) > 500:      # bound memory (about 5 KB per entry)
+        _qr_cache.clear()
     _qr_cache[cache_key] = png_bytes
     log.info("QR generated  business=%s  keyword=%s  dest=%s  size=%d bytes",
              business_name, keyword, dest, len(png_bytes))

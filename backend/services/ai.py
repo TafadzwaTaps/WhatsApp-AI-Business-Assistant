@@ -759,7 +759,7 @@ def _generate_reply_core(
                 if recent:
                     return (
                         f"🚫 *Cancel ORDER-{recent['id']}?*\n\n"
-                        f"💰 Amount: ${float(recent['total_price']):.2f}\n"
+                        f"💰 Amount: {_currency_sym}{float(recent['total_price']):.2f}\n"
                         f"📍 Status: {recent['status'].upper()}\n\n"
                         f"Reply *yes, cancel* to confirm cancellation, "
                         f"or type anything else to keep your order.\n\n"
@@ -1391,7 +1391,7 @@ def _generate_reply_core(
         if len(address) < 5:
             return (
                 "⚠️ That address looks too short. Please send your full delivery address.\n\n"
-                f"_e.g. 42 Harare Street, Avondale, Harare_\n\n"
+                f"_e.g. 12 Main Street, Springfield_\n\n"
                 f"_Type *cancel* to skip._"
             )
 
