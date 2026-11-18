@@ -101,6 +101,7 @@ AI COST OPTIMIZATION (Phase 12)
 """
 
 import re
+import time
 import logging
 import crud
 
@@ -172,6 +173,25 @@ from services._ai_payments import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class _MaskPhones(logging.Filter):
+    """P1x: customer phone numbers are personal data - keep only the last 3 digits in this
+    module's log lines (enough to correlate a conversation, not enough to identify a person)."""
+    _RE = re.compile(r"(?<!\d)\+?(\d{6,13})(\d{3})(?!\d)")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            masked = self._RE.sub(lambda m: "*" * len(m.group(1)) + m.group(2), msg)
+            if masked != msg:
+                record.msg, record.args = masked, ()
+        except Exception:
+            return True            # never let log masking break logging
+        return True
+
+
+log.addFilter(_MaskPhones())
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -488,11 +508,11 @@ def _generate_reply_core(
 
     if voice_transcript:
         text = voice_transcript.strip()
-        log.info("▶ voice  phone=%s  biz=%s  transcript=%r", phone, business_id, text[:80])
+        log.info("▶ voice  phone=%s  biz=%s  transcript_len=%d", phone, business_id, len(text))
     else:
         text = message.strip()
-        log.info("▶ msg  phone=%s  biz=%s  img=%s  text=%r",
-                 phone, business_id, message_has_image, text[:80])
+        log.info("▶ msg  phone=%s  biz=%s  img=%s  text_len=%d",
+                 phone, business_id, message_has_image, len(text))
 
     current_state = _get_state(phone, business_id)
     cart          = _load_cart(phone, business_id)
@@ -572,8 +592,8 @@ def _generate_reply_core(
     try:
         from services.prompt_injection_guard import is_injection_attempt, refusal_reply
         if is_injection_attempt(text):
-            log.warning("prompt_injection: blocked  phone=%s  biz=%s  text=%r",
-                        phone, business_id, text[:120])
+            log.warning("prompt_injection: blocked  phone=%s  biz=%s  text_len=%d",
+                        phone, business_id, len(text))
             return refusal_reply()
     except Exception as exc:
         log.debug("prompt_injection_guard check failed (ignored): %s", exc)
@@ -866,8 +886,8 @@ def _generate_reply_core(
             log.debug("abuse warning count write failed: %s", exc)
 
         log.warning(
-            "ABUSE DETECTED  phone=%s  biz=%s  warning_count=%d  text=%r",
-            phone, business_id, warning_count, text[:100],
+            "ABUSE DETECTED  phone=%s  biz=%s  warning_count=%d  text_len=%d",
+            phone, business_id, warning_count, len(text),
         )
 
         if warning_count == 1:
@@ -1288,7 +1308,7 @@ def _generate_reply_core(
         session   = _read_state_data(phone, business_id).get("session") or {}
         order_id  = session.get("order_id")
         reference = session.get("reference", f"ORDER-{order_id}" if order_id else "your order")
-        log.info("awaiting_fulfillment  order=%s  ref=%s  text=%r", order_id, reference, text)
+        log.info("awaiting_fulfillment  order=%s  ref=%s  text_len=%d", order_id, reference, len(text))
 
         # Auto-resolve if business only has one fulfillment option
         if not _pickup_enabled:
@@ -1342,7 +1362,7 @@ def _generate_reply_core(
                 f"_Any questions? Type *{reference.lower()}* to check status._"
             )
 
-        log.warning("awaiting_fulfillment: unrecognised reply  text=%r  order=%s", text, order_id)
+        log.warning("awaiting_fulfillment: unrecognised reply  text_len=%d  order=%s", len(text), order_id)
         return (
             f"🤔 Please choose how you'd like to receive *{reference}*:\n\n"
             f"  1️⃣  *Delivery* — we bring it to you\n"
@@ -1585,7 +1605,7 @@ def _generate_reply_core(
                 message="image",
                 phone=phone, business_id=business_id,
                 business_name=business_name, products=products,
-                message_has_image=True,
+                message_has_image=True, business_config=business_config,
             )
 
         ref_id = _extract_order_id(text)
@@ -3187,6 +3207,7 @@ def _generate_reply_core(
             message=product["name"],
             phone=phone, business_id=business_id,
             business_name=business_name, products=products,
+            business_config=business_config,
         )
 
     active_order = _get_active_order(phone, business_id)
@@ -3260,6 +3281,9 @@ def _generate_reply_core(
 # "not understood" without touching a single line of that logic.
 # ══════════════════════════════════════════════════════════════════════════
 
+_PAUSE_NOTICE_SENT: dict = {}     # (phone, business_id) -> last time the "replies paused" text was sent
+_PAUSE_NOTICE_TTL = 1800          # at most one notice per customer per 30 minutes
+
 _P12_FALLBACK_MARKERS = (
     "🤔 I didn't catch that.\n\n",
     "🤔 I'm not sure what you mean — but happy to help!\n\n",
@@ -3303,6 +3327,20 @@ def generate_reply(
     try:
         from core.platform_controls import is_paused
         if is_paused("ai_replies"):
+            # Never talk over a human agent; otherwise tell the customer at most once per
+            # 30 minutes instead of on every message.
+            if message_is_from_agent:
+                return ""
+            from services._ai_state import is_in_human_handoff as _in_ho
+            if _in_ho(phone, business_id) is not False:       # True (human) or None (unknown)
+                return ""
+            _now = time.time()
+            _k = (phone, business_id)
+            if _now - _PAUSE_NOTICE_SENT.get(_k, 0) < _PAUSE_NOTICE_TTL:
+                return ""
+            if len(_PAUSE_NOTICE_SENT) > 5000:
+                _PAUSE_NOTICE_SENT.clear()
+            _PAUSE_NOTICE_SENT[_k] = _now
             return "Sorry — our automated replies are temporarily paused. A team member will get back to you shortly."
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)

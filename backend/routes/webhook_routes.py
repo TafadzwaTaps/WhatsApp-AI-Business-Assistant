@@ -196,6 +196,15 @@ async def receive_message(request: Request):
     return {"status": "ok"}
 
 
+def _escalation_keywords_of(business: dict):
+    """Optional business-specific escalation words: a column, or features_json.escalation_keywords."""
+    kw = business.get("escalation_keywords")
+    if kw:
+        return kw
+    fj = business.get("features_json")
+    return (fj.get("escalation_keywords") if isinstance(fj, dict) else None) or ""
+
+
 async def _handle_one_message(data: dict) -> dict:
     """The original single-message pipeline (STEP 1 - STEP 8), unchanged except for
     the handoff-safety checks marked 'Phase 2'. `data` holds exactly one message."""
@@ -281,7 +290,7 @@ async def _handle_one_message(data: dict) -> dict:
     # STEP 1b: Deduplication
     if wa_message_id:
         try:
-            if crud.message_exists(wa_message_id):
+            if await run_in_threadpool(crud.message_exists, wa_message_id):
                 return {"status": "ok"}
         except Exception as exc:
             log.error("⚠️  Dedup check failed: %s", exc)
@@ -375,7 +384,7 @@ async def _handle_one_message(data: dict) -> dict:
                 return {"status": "ok"}
             token = SHARED_WA_TOKEN
         else:
-            business = crud.get_business_by_phone_id(phone_number_id)
+            business = await run_in_threadpool(crud.get_business_by_phone_id, phone_number_id)
             if not business:
                 log.error("📋 STEP 2 FAIL — No business for phone_number_id=%s", phone_number_id)
                 return {"status": "ok"}
@@ -396,7 +405,7 @@ async def _handle_one_message(data: dict) -> dict:
 
     # STEP 4: Get or create customer
     try:
-        customer = crud.get_or_create_customer(customer_phone, business["id"])
+        customer = await run_in_threadpool(crud.get_or_create_customer, customer_phone, business["id"])
     except Exception as exc:
         log.exception("👤 STEP 4 FAIL: %s", exc)
         return {"status": "ok"}
@@ -414,8 +423,9 @@ async def _handle_one_message(data: dict) -> dict:
     # STEP 5: Save incoming message
     in_msg: dict = {}
     try:
-        crud.log_message(business["id"], customer_phone, "in", text)
-        in_msg = crud.create_message(
+        await run_in_threadpool(crud.log_message, business["id"], customer_phone, "in", text)
+        in_msg = await run_in_threadpool(
+            crud.create_message,
             customer["id"], business["id"], text, "incoming",
             wa_message_id=wa_message_id,
         )
@@ -446,7 +456,7 @@ async def _handle_one_message(data: dict) -> dict:
 
     # STEP 6: Generate AI reply
     try:
-        products = crud.get_products(business["id"])
+        products = await run_in_threadpool(crud.get_products, business["id"])
         message_has_image = (msg_type in ("image", "document", "sticker"))
         is_voice_note = (msg_type == "audio")
 
@@ -461,15 +471,48 @@ async def _handle_one_message(data: dict) -> dict:
             audio_obj = msg_obj.get("audio", {})
             media_id  = audio_obj.get("id", "")
             if media_id and token:
+                # C1: transcription costs money, so it passes the same per-business /
+                # per-conversation LLM budget gate as image analysis and is recorded in usage.
+                _v_ok, _v_session, _v_cost = True, {}, None
                 try:
-                    from services.whatsapp_service import transcribe_whatsapp_voice_note
-                    voice_transcript = await transcribe_whatsapp_voice_note(
-                        media_id=media_id, wa_token=token,
-                        language=(business.get("preferred_language") or "en"),
-                    )
+                    from services import ai_usage_tracker as _v_cost
+                    from services._ai_state import _read_state_data_strict as _v_read
+                    _v_session = (await run_in_threadpool(_v_read, customer_phone, business["id"])).get("session") or {}
+                    _v_ok, _v_reason = _v_cost.should_call_llm(business["id"], _v_session)
+                    if not _v_ok:
+                        log.info("voice transcription skipped (budget gate) biz=%s reason=%s",
+                                 business["id"], _v_reason)
                 except Exception as exc:
-                    log.warning("voice transcription call failed: %s", exc)
-                    voice_transcript = None
+                    log.debug("voice budget gate unavailable (allowing): %s", exc)
+                if _v_ok:
+                    try:
+                        from services.whatsapp_service import transcribe_whatsapp_voice_note
+                        voice_transcript = await transcribe_whatsapp_voice_note(
+                            media_id=media_id, wa_token=token,
+                            language=(business.get("preferred_language") or "en"),
+                        )
+                    except Exception as exc:
+                        log.warning("voice transcription call failed: %s", exc)
+                        voice_transcript = None
+                    try:
+                        if _v_cost is not None:
+                            from services._ai_state import _write_state_data as _v_write
+                            if voice_transcript:
+                                # Re-read AFTER the slow transcription (strict: a read error skips the
+                                # write) so a concurrent change to the session is never reverted.
+                                _v_fresh = (await run_in_threadpool(_v_read, customer_phone, business["id"])).get("session") or {}
+                                _v_cost.record_customer_llm_call(_v_fresh)
+                                await run_in_threadpool(_v_write, customer_phone, business["id"], {"session": _v_fresh})
+                            _v_cost.record_llm_usage(
+                                business_id=business["id"], phone=customer_phone,
+                                conversation_id=_v_cost.make_conversation_id(business["id"], customer_phone),
+                                intent="voice_transcription", tier="full",
+                                provider="openai", model="whisper-1",
+                                prompt_tokens=0, completion_tokens=0, latency_ms=0,
+                                status="ok" if voice_transcript else "no_result",
+                            )
+                    except Exception as exc:
+                        log.debug("voice usage record failed (ignored): %s", exc)
 
             if not voice_transcript and _in_handoff:
                 return {"status": "ok"}      # a human owns this chat: no automatic fallback reply
@@ -527,7 +570,7 @@ async def _handle_one_message(data: dict) -> dict:
         # alters this turn's AI reply.
         try:
             from services.translation_layer import detect_and_set_language
-            detect_and_set_language(text, customer_phone, business["id"])
+            await run_in_threadpool(detect_and_set_language, text, customer_phone, business["id"])
         except Exception as exc:
             log.debug("detect_and_set_language failed (ignored): %s", exc)
 
@@ -597,7 +640,7 @@ async def _handle_one_message(data: dict) -> dict:
                 from services.conversation_context import classify_with_context
                 _intent_result = classify_with_context(
                     text, customer_id=customer.get("id"),
-                    products=crud.get_products(business["id"]),
+                    products=products,
                     language=(business.get("preferred_language") or "en"),
                 )
                 _log_event(
@@ -694,6 +737,8 @@ async def _handle_one_message(data: dict) -> dict:
             # Visual catalog: pass sending credentials so ai.py can send images directly
             "phone_number_id":       phone_number_id or "",
             "wa_token":              token or "",
+            # Business-specific escalation words (T1). Optional: column or features_json key.
+            "escalation_keywords":   _escalation_keywords_of(business),
         }
 
         # ── Phase 13: Image Understanding ────────────────────────────────────
@@ -789,7 +834,7 @@ async def _handle_one_message(data: dict) -> dict:
         # phrases, or explicitly via the language-switch command above.
         try:
             from services.translation_layer import maybe_translate
-            reply = maybe_translate(reply, customer_phone, business["id"], products=products)
+            reply = await run_in_threadpool(maybe_translate, reply, customer_phone, business["id"], products=products)
         except Exception as exc:
             log.debug("maybe_translate failed (using original reply): %s", exc)
 
@@ -807,6 +852,9 @@ async def _handle_one_message(data: dict) -> dict:
         # even acknowledged. Check their current state so the apology at
         # least reflects what they were actually in the middle of, rather
         # than sounding like their message was never processed at all.
+        # A human owns this chat (or we cannot tell): never send the generic apology over them.
+        if _in_handoff is not False:
+            return {"status": "ok"}
         try:
             from services._ai_state import _get_state
             _crash_state = _get_state(customer_phone, business["id"]) or ""
@@ -832,8 +880,9 @@ async def _handle_one_message(data: dict) -> dict:
     # STEP 7: Save outgoing
     out_msg: dict = {}
     try:
-        crud.log_message(business["id"], customer_phone, "out", reply)
-        out_msg = crud.create_message(
+        await run_in_threadpool(crud.log_message, business["id"], customer_phone, "out", reply)
+        out_msg = await run_in_threadpool(
+            crud.create_message,
             customer["id"], business["id"], reply, "outgoing", sender_type="ai",
         )
     except Exception as exc:

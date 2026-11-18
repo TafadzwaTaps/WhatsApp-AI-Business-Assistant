@@ -141,3 +141,34 @@ Open items from security review (not changed, need decisions): unsubscribe token
 - **Chart.js:** v4.4.1 self-hosted at `static/vendor/chart.umd.4.4.1.js` (downloaded from cdnjs; sha512 matches cdnjs's published hash) with a sha384 SRI attribute; CSP `script-src 'self'` covers it.
 - Tests: suite 1237 passed / 1 skipped.
 - Phase 3c review follow-ups: `/auth/logout` now answers 503 (instead of ok) if a token could not be persisted; revoked-id memory pruned; table cleanup at most hourly; the WebSocket re-checks revocation on every ping (so a socket open at logout closes within ~25 s). Declined/noted: legacy `?token=` still accepted until the inbox switch; `PATCH /me` only protects the `stripe` key in `features_json` (no other server-managed keys found there; plan/billing live in columns); toggle rewrites features_json from a /me read (existing pattern, small lost-update window); other instances may cache "not revoked" up to 60 s; confirm `revoked_tokens.business_id integer` matches `businesses.id` (it is integer per the Phase 2 catalog). `static/vendor/` must be committed. Suite 1239 passed / 1 skipped.
+
+---
+
+## 2026-11-18 — Phase 4 stages 1–3 (AI employee: conversation safety, correctness, cost/load)
+Approved by user: "Approve 1-3". Uncommitted; nothing deployed.
+
+### Changes
+- **H1** `workflows/human_handoff.py`: restart words ("hi", "menu"…) end a handoff only when the reason is customer request / complex request / repeated misunderstanding (or none). Complaint, dispute, sensitive, abuse, damaged goods, business-escalation, booking-conflict and agent-initiated handoffs end only via the agent's Resume or the idle timeout. The idle clock now restarts on `last_agent_reply_at`. The first-ack "type menu or hi" hint is shown only when that is true.
+- **S1** `services/_ai_state.py`: `_write_state_data` uses a strict read and aborts (logged) on a read error instead of overwriting the row with `{}`; it now returns a bool. `_set_human_handoff` retries once and logs an error if it still fails.
+- **H2** `services/ai.py`, `routes/webhook_routes.py`: the "replies paused" notice and the step-6 crash fallback are silent during (or when unsure about) a human handoff; the pause notice is throttled to once per customer per 30 min (in-process).
+- **T1** `routes/webhook_routes.py`: `escalation_keywords` (column or `features_json.escalation_keywords`) now reaches `business_config`. Behaviour change: tenants that already hold such a value start escalating on it.
+- **O1** `services/ai.py`: two recursive `_generate_reply_core` calls pass `business_config`.
+- **C1** `routes/webhook_routes.py`: voice transcription passes `should_call_llm`, is counted per customer, and recorded in usage (count only; 0 tokens). Session writes re-read strictly after the slow call.
+- **N1** `routes/webhook_routes.py`: dedup check, business/customer lookup, message logging, products fetch (now once), language detection and translation run in the threadpool.
+- **P1x** `services/ai.py`: message text removed from log lines; a logging filter keeps only the last 3 digits of phone-like numbers.
+
+### Deferred (decision/evidence needed)
+- **G1** free-delivery claim: cannot tell "unset" from 0 without the `businesses.delivery_fee` column default (query given to owner).
+- **G2** EcoCash "(Zimbabwe)" label: already shown only for businesses that configure EcoCash.
+- **L1** module-global LLM usage metadata: existing tests set the globals directly; needs a test rewrite.
+- **O2, I1, L2, W1, H3**: later stages / need decisions (see `phase4-plan.md`).
+
+### Tests (actually run)
+Full suite: 1277 passed, 1 skipped (was 1239). New: `tests/test_phase4_conversation_safety.py`, `tests/test_phase4_correctness_cost.py`. The C1/N1/crash-fallback tests are structural (no webhook harness yet).
+
+### Reviews
+- Security: no critical/high. Medium M1 (voice usage write could clobber session) fixed. Accepted: M2 (incident handoffs wait for agent/45 min), M3 (no ack in handoff while platform pause is on).
+- QA: weak tests tightened; reason-drift guard, first-ack hint and write-failure tests added. Open: no end-to-end `_handle_one_message` tests; `human_handoff.py`'s own upserts still use read-or-`{}` (resume, `record_agent_reply`); Whisper still runs for chats in handoff (kept so agents see the transcript); logs in `human_handoff.py`/`webhook_routes.py` still contain raw phone numbers in a few lines.
+
+### Rollback
+Revert the changed files; no schema or config changes.

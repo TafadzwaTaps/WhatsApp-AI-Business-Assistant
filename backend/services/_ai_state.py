@@ -42,6 +42,23 @@ def _read_state_data(phone: str, business_id: int) -> dict:
         return {}
 
 
+def _read_state_data_strict(phone: str, business_id: int) -> dict:
+    """Like _read_state_data but RAISES on a DB error. Used by the write path so a transient
+    read failure can never be mistaken for "no state" and overwrite the whole row."""
+    from core.db import supabase
+    res = (
+        supabase.table("carts")
+        .select("state_data")
+        .eq("phone", phone)
+        .eq("business_id", business_id)
+        .limit(1)
+        .execute()
+    )
+    if res.data:
+        return res.data[0].get("state_data") or {}
+    return {}
+
+
 def is_in_human_handoff(phone: str, business_id: int):
     """True / False if the conversation is / is not in human handoff;
     None when the state could not be read (DB error).
@@ -67,15 +84,18 @@ def is_in_human_handoff(phone: str, business_id: int):
         return None
 
 
-def _write_state_data(phone: str, business_id: int, patch: dict) -> None:
+def _write_state_data(phone: str, business_id: int, patch: dict) -> bool:
     """
     Merge patch into existing state_data and save.
     Only touches state_data — never changes items column.
-    Never raises.
+    Never raises; returns True if saved, False if the write was skipped/failed (callers that
+    must not lose a transition, e.g. human handoff, can retry). If the existing state cannot be read, the write is ABORTED (logged) rather
+    than upserting {} + patch over the row, which would wipe the handoff flag, pending
+    payment and cart snapshot after a transient DB error.
     """
     try:
         from core.db import supabase
-        existing = _read_state_data(phone, business_id)
+        existing = _read_state_data_strict(phone, business_id)
         existing.update(patch)
         supabase.table("carts").upsert(
             {
@@ -87,8 +107,10 @@ def _write_state_data(phone: str, business_id: int, patch: dict) -> None:
             on_conflict="phone,business_id",
         ).execute()
         log.debug("_write_state_data  phone=%s  keys=%s", phone, list(patch.keys()))
+        return True
     except Exception as exc:
         log.error("_write_state_data error: %s", exc)
+        return False
 
 
 # ── State getters ─────────────────────────────────────────────────────────────
@@ -113,10 +135,10 @@ def _get_pending_proof(phone: str, business_id: int) -> dict | None:
 
 # ── State setters ─────────────────────────────────────────────────────────────
 
-def _set_state(phone: str, business_id: int, state: str, **extra) -> None:
+def _set_state(phone: str, business_id: int, state: str, **extra) -> bool:
     patch = {"state": state}
     patch.update(extra)
-    _write_state_data(phone, business_id, patch)
+    return _write_state_data(phone, business_id, patch)
 
 
 def _set_checkout_state(phone: str, business_id: int, cart_snapshot: list,
@@ -265,8 +287,12 @@ def _set_awaiting_appointment_time(phone: str, business_id: int,
 
 def _set_human_handoff(phone: str, business_id: int) -> None:
     """Pause AI and flag this customer for human agent attention."""
-    _set_state(phone, business_id, "human_handoff",
-               session={}, pending_payment=None, pending_proof=None)
+    patch = dict(session={}, pending_payment=None, pending_proof=None)
+    if not _set_state(phone, business_id, "human_handoff", **patch):
+        # A dropped handoff write would leave the bot answering a customer we just told a
+        # human is coming: retry once, and make a final failure loud.
+        if not _set_state(phone, business_id, "human_handoff", **patch):
+            log.error("_set_human_handoff: state write FAILED twice  phone=%s biz=%s", phone, business_id)
 
 
 # ── Convenience checkers ──────────────────────────────────────────────────────
