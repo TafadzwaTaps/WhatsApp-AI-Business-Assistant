@@ -145,10 +145,14 @@ async function apiFetch(path, opts = {}) {
 function connectWS() {
   if (!bizId) return;
 
-  const wsUrl = `wss://wazibothq.com/ws/chat/${bizId}?token=${encodeURIComponent(token)}`;
-  wsConn = new WebSocket(wsUrl);
+  // The token is sent as the FIRST message, never in the URL (URLs end up in proxy logs and
+  // browser history). The server closes the socket if no valid auth frame arrives within 5 s.
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  wsConn = new WebSocket(`${proto}//${location.host}/ws/chat/${bizId}`);
 
   wsConn.onopen = () => {
+    try { wsConn.send(JSON.stringify({ type: 'auth', token: token })); }
+    catch (e) { console.warn('WS auth send failed'); }
     setWsStatus('live', 'Live');
     // Heartbeat every 25 s
     const hb = setInterval(() => {
@@ -160,9 +164,12 @@ function connectWS() {
     }, 25000);
   };
 
-  wsConn.onclose = () => {
+  wsConn.onclose = (ev) => {
     setWsStatus('dead', 'Reconnecting…');
-    setTimeout(connectWS, 3000);
+    // 4001 = auth rejected, 4003 = origin refused, 4008 = connection limit: retrying every
+    // 3 s would only hammer the server, so back off much further for those.
+    const refused = ev && (ev.code === 4001 || ev.code === 4003 || ev.code === 4008);
+    setTimeout(connectWS, refused ? 30000 : 3000);
   };
 
   wsConn.onmessage = (event) => {
