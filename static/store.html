@@ -165,7 +165,7 @@ function renderStore(biz, products) {
     document.getElementById('products-grid').innerHTML =
       '<div class="empty">No products listed yet.</div>';
   } else {
-    const curr = sym(biz);
+    const curr = esc(sym(biz));
     document.getElementById('products-grid').innerHTML = products.map(p => {
       const img = p.image_url
         ? `<img class="prod-img" src="${esc(p.image_url)}" alt="${esc(p.name)}" loading="lazy"/>`

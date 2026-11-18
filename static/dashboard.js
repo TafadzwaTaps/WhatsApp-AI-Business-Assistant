@@ -393,7 +393,11 @@ const _meCache = { data: null, ts: 0, ttl: 60000 };
 // every time /me is fetched (see getCachedMe below). Defaults to '$' so
 // nothing breaks before the first /me call resolves.
 window.CURRENT_CURRENCY_SYMBOL = '$';
-function getCurrencySymbol() { return window.CURRENT_CURRENCY_SYMBOL || '$'; }
+// The symbol is business-controlled text that is interpolated into many innerHTML templates:
+// strip anything that could carry markup or break out of an attribute (real symbols never need these).
+function getCurrencySymbol() {
+  return String(window.CURRENT_CURRENCY_SYMBOL || '$').replace(/[<>"'&\\`]/g, '').slice(0, 8) || '$';
+}
 
 // ── Business type helpers (service vs product) ────────────────────────────────
 const _SERVICE_CATEGORIES = new Set([
@@ -3364,9 +3368,9 @@ async function loadCurrencyConvertPreview() {
         <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:12px;">
           <span>${escHtml(it.name || ('Product #' + it.id))}</span>
           <span>
-            <span style="color:var(--text-dim);text-decoration:line-through;">${fromCurrency} ${it.old_price.toFixed(2)}</span>
+            <span style="color:var(--text-dim);text-decoration:line-through;">${escHtml(fromCurrency)} ${it.old_price.toFixed(2)}</span>
             <span style="margin:0 6px;color:var(--text-dim);">→</span>
-            <span style="color:var(--green);font-weight:700;">${toCurrency} ${it.new_price.toFixed(2)}</span>
+            <span style="color:var(--green);font-weight:700;">${escHtml(toCurrency)} ${it.new_price.toFixed(2)}</span>
           </span>
         </div>`).join('');
     }
@@ -3412,7 +3416,7 @@ async function confirmCurrencyConversion() {
     resultEl.innerHTML = res.failed_count > 0
       ? `✅ Updated ${res.updated_count} product${res.updated_count !== 1 ? 's' : ''}. ` +
         `⚠️ ${res.failed_count} could not be updated — please check those manually.`
-      : `✅ All ${res.updated_count} product price${res.updated_count !== 1 ? 's' : ''} updated to ${res.to_currency}.`;
+      : `✅ All ${res.updated_count} product price${res.updated_count !== 1 ? 's' : ''} updated to ${escHtml(res.to_currency)}.`;
 
     document.getElementById('ccm-step-preview').style.display = 'none';
     document.getElementById('ccm-step-result').style.display  = 'block';

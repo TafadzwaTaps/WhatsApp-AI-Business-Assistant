@@ -577,7 +577,10 @@ def _social_url(platform: str, value) -> str:
     domain = tmpl.split("/")[2].replace("www.", "")
     if re.match(r"^https?://", v, re.I):
         host = (re.match(r"^https?://([^/?#]+)", v, re.I).group(1) or "").lower().replace("www.", "")
-        if host == domain or host.endswith("." + domain) or (platform == "x" and host.endswith("twitter.com")) \
+        # Browsers treat a backslash like "/" and "@" starts userinfo: only a plain hostname may pass.
+        if not re.fullmatch(r"[a-z0-9.-]+", host):
+            return ""
+        if host == domain or host.endswith("." + domain) or (platform == "x" and (host in ("twitter.com", "x.com") or host.endswith((".twitter.com", ".x.com")))) \
                 or (platform == "telegram" and host in ("t.me", "telegram.me")):
             return v if len(v) <= 200 and not re.search(r"[\s\"'<>]", v) else ""
         return ""
@@ -1851,7 +1854,8 @@ def _buy_now_html(biz_id: int, currency_sym: str, currency_code: str, palette: d
     curr   = currency_code.lower()[:3] if currency_code else "usd"
     # Escape currency symbol for safe JS string embedding
     # JSON-escape (quotes, backslashes, newlines) and neutralise "</script>".
-    sym_js = json.dumps(str(currency_sym))[1:-1].replace("'", "\\'").replace("</", "<\\/")
+    sym_js = (json.dumps(str(currency_sym)[:8])[1:-1].replace("'", "\\'")
+              .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
     return f"""
 <div id="wz-cart-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1000;align-items:center;justify-content:center">
   <div style="background:{bg};border-radius:16px;padding:28px;width:min(420px,94vw);max-height:90vh;overflow-y:auto;">

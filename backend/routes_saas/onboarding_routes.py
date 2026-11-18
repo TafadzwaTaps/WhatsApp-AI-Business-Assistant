@@ -36,6 +36,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 log = logging.getLogger("wazibot")
+def _clean_sym(value) -> str:
+    """Same rule as the mounted onboarding route: a short symbol with no markup (unmounted copy)."""
+    from crud._helpers import clean_currency_symbol
+    try:
+        return clean_currency_symbol(value) or "$"
+    except ValueError:
+        return "$"
+
+
 router = APIRouter()
 
 import os as _os
@@ -168,7 +177,7 @@ def onboarding_step1(body: Step1Request, user=Depends(require_business)):
             "name":            body.business_name.strip(),
             "category":        body.category.strip(),
             "currency":        body.currency,
-            "currency_symbol": body.currency_symbol,
+            "currency_symbol": _clean_sym(body.currency_symbol),
         }
         # Try to include onboarding_step — ignore if column doesn't exist
         try:
