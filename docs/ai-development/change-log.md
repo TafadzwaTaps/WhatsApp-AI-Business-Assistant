@@ -199,3 +199,11 @@ Full suite: 1297 passed, 1 skipped (was 1277). New: `tests/test_phase5_global_pe
 
 ### Rollback
 Revert the changed files; no schema or config changes.
+
+---
+
+## 2026-11-18 — Phase 3 step 2: inbox WebSocket first-message auth
+Approved by user (Phase 3 decision 4); backend support deployed first, as required. Uncommitted.
+- `static/inbox.js connectWS`: connects to `location.host` (no hardcoded host, `ws:`/`wss:` by page protocol) with no `?token=`; sends `{"type":"auth","token":...}` as the first frame. Auth-refused closes (4001/4003/4008) now retry after 30 s instead of 3 s.
+- Test: `tests/test_phase3_security.py::test_inbox_websocket_uses_first_message_auth_not_url_token`. Suite: 1298 passed, 1 skipped.
+- Residual: the backend still accepts legacy `?token=` for old cached pages; remove it after a deploy cycle once no client uses it. Not exercised against a live socket (needs a browser session on the deployed site).

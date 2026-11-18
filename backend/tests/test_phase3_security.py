@@ -433,3 +433,14 @@ def test_revoked_local_is_pruned_of_expired_entries(revdb):
     auth._revoked_local["old"] = 1.0
     auth.revoke_token(auth.create_access_token({"sub": "u"}))
     assert "old" not in auth._revoked_local
+
+
+def test_inbox_websocket_uses_first_message_auth_not_url_token():
+    """Phase 3 step 2: the inbox must not put the JWT in the WebSocket URL."""
+    import pathlib
+    js = (pathlib.Path(__file__).resolve().parent.parent.parent / "static" / "inbox.js").read_text(encoding="utf8")
+    i = js.index("function connectWS")
+    body = js[i:i + 1800]
+    assert "?token=" not in body
+    assert "type: 'auth'" in body and "location.host" in body
+    assert "wazibothq.com" not in body
