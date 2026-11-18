@@ -158,6 +158,26 @@ def handoff_paused_reply() -> str:
     )
 
 
+# Handoff reasons for which a customer typing a restart word ("hi", "menu") may hand the
+# conversation back to the bot. Every OTHER reason (complaints, disputes, sensitive issues,
+# abuse, damaged goods, business escalation rules, booking conflicts, agent takeovers) is
+# an incident a human must close: only the agent's Resume button or the idle timeout ends it.
+_RESTART_RESUME_REASONS = {"", "customer request", "complex request", "repeated misunderstanding"}
+
+
+def _handoff_reason(sd: dict) -> str:
+    session = sd.get("session") if isinstance(sd.get("session"), dict) else {}
+    return str(session.get("handoff_reason") or sd.get("handoff_reason") or "").strip().lower()
+
+
+def restart_word_resumes(sd: dict) -> bool:
+    """True if a restart word from the customer may end this handoff."""
+    session = sd.get("session") if isinstance(sd.get("session"), dict) else {}
+    if session.get("agent_initiated") or sd.get("agent_initiated"):
+        return False
+    return _handoff_reason(sd) in _RESTART_RESUME_REASONS
+
+
 def should_auto_resume(text: str, sd: dict) -> tuple[bool, str]:
     """
     Determine whether the AI should automatically resume from human_handoff.
@@ -177,18 +197,25 @@ def should_auto_resume(text: str, sd: dict) -> tuple[bool, str]:
     session = sd.get("session") or {}
     agent_initiated = bool(session.get("agent_initiated"))
 
-    # Trigger 1: restart intent keyword (skipped for agent-initiated handoffs)
-    if not agent_initiated:
+    # Trigger 1: restart intent keyword (skipped for agent-initiated handoffs and for
+    # complaint/safety/dispute handoffs - see _RESTART_RESUME_REASONS)
+    if restart_word_resumes(sd):
         t_lower = text.lower().strip()
         if t_lower in AUTO_RESUME_INTENTS:
             log.info("auto_resume: restart intent detected  word=%r", t_lower)
             return True, f"customer restart intent: {t_lower!r}"
     else:
-        log.debug("auto_resume: skipping restart-intent check — agent_initiated handoff")
+        log.debug("auto_resume: skipping restart-intent check (agent_initiated=%s reason=%r)",
+                  agent_initiated, _handoff_reason(sd))
 
     # Trigger 2: timeout elapsed
     if HANDOFF_TIMEOUT_SECONDS > 0:
         handoff_at = sd.get("handoff_started_at", 0)
+        # The idle clock restarts whenever a human agent replies (documented behaviour).
+        try:
+            handoff_at = max(float(handoff_at or 0), float(sd.get("last_agent_reply_at") or 0))
+        except (TypeError, ValueError):
+            handoff_at = sd.get("handoff_started_at", 0)
         if handoff_at:
             elapsed = time.time() - float(handoff_at)
             if elapsed > HANDOFF_TIMEOUT_SECONDS:
@@ -341,7 +368,8 @@ def handoff_customer_message(phone: str, business_id: int, text: str = "") -> st
             return (
                 "⏳ *Your message has been received.*\n\n"
                 "Our team member will reply shortly. 🙏\n\n"
-                "_To return to the AI assistant, type *menu* or *hi* at any time._"
+                + ("_To return to the AI assistant, type *menu* or *hi* at any time._"
+                   if restart_word_resumes(sd) else "")
             )
 
         # Subsequent messages — stay silent, agent handles it
