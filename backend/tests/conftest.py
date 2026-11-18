@@ -82,6 +82,11 @@ def _reset_fake_db():
     into another, while keeping the same patched module in place."""
     _shared_fake_supabase.results = {}
     _shared_fake_supabase._current_table = None
+    try:                      # per-process caches must not leak between tests
+        from crud.businesses import _biz_cache_clear
+        _biz_cache_clear()
+    except ImportError:
+        return_ = None
     yield _shared_fake_supabase
 
 

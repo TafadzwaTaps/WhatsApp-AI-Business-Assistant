@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 
 from core.db import supabase
-from crud._helpers import _now
+from crud._helpers import _now, fetch_all
 from crud.businesses import get_all_businesses
 
 log = logging.getLogger(__name__)
@@ -37,6 +37,8 @@ def _cache_get(key: tuple) -> tuple[bool, _Any]:
 
 
 def _cache_set(key: tuple, value: _Any) -> None:
+    if len(_cache) > 2000:        # bound memory: entries are only dropped on re-read otherwise
+        _cache.clear()
     _cache[key] = (_time.monotonic(), value)
 
 
@@ -69,9 +71,18 @@ def get_admin_stats() -> dict:
     crud/__init__.py exports get_admin_stats from *this* file — so that
     copy was unreachable dead code. This is the one that actually runs.)
     """
-    businesses = get_all_businesses()
-    orders_res = supabase.table("orders").select("total_price").execute()
-    orders = orders_res.data or []
+    # Only the columns this function reads (no encrypted tokens), paged so totals are not
+    # silently capped at the row cap.
+    try:
+        businesses = fetch_all(lambda: (
+            supabase.table("businesses")
+            .select("id,name,is_active,billing_status,trial_ends_at,use_shared_number,category,currency")
+            .order("id")
+        ))
+    except Exception as exc:       # a column missing in an older database: fall back to the old read
+        log.warning("get_admin_stats narrow select failed (%s); using full read", type(exc).__name__)
+        businesses = get_all_businesses()
+    orders = fetch_all(lambda: supabase.table("orders").select("id,total_price").order("id"))
 
     trialing_count  = sum(1 for b in businesses if (b.get("billing_status") or "trialing") == "trialing")
     paid_count      = sum(1 for b in businesses if b.get("billing_status") == "active")
@@ -181,13 +192,12 @@ def get_business_stats(business_id: int) -> dict:
              pending_orders, ai_handled, human_handled.
     """
     try:
-        orders_res = (
+        orders = fetch_all(lambda: (
             supabase.table("orders")
             .select("id, total_price, payment_status, status")
             .eq("business_id", business_id)
-            .execute()
-        )
-        orders = orders_res.data or []
+            .order("id")
+        ))
 
         total_orders   = len(orders)
         # A cancelled order (including one whose linked booking was marked
@@ -203,22 +213,20 @@ def get_business_stats(business_id: int) -> dict:
         pending_orders = sum(1 for o in orders
                              if o.get("status") in ("pending", "confirmed", "pending_cash"))
 
-        cust_res = (
+        active_customers = len(fetch_all(lambda: (
             supabase.table("customers")
             .select("id")
             .eq("business_id", business_id)
-            .execute()
-        )
-        active_customers = len(cust_res.data or [])
+            .order("id")
+        )))
 
-        msgs_res = (
+        msgs = fetch_all(lambda: (
             supabase.table("messages")
-            .select("sender_type")
+            .select("id, sender_type")
             .eq("business_id", business_id)
             .eq("direction", "outgoing")
-            .execute()
-        )
-        msgs          = msgs_res.data or []
+            .order("id")
+        ))
         ai_handled    = sum(1 for m in msgs if m.get("sender_type") == "ai")
         human_handled = sum(1 for m in msgs if m.get("sender_type") == "agent")
 

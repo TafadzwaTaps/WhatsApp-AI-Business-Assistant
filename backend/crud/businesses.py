@@ -70,7 +70,25 @@ def get_businesses_by_email(email: str) -> list:
     return [r for r in (res.data or []) if (r.get("owner_email") or "").strip().lower() == e]
 
 
+import copy
+
+# Very short in-process cache for the per-webhook-message business lookup (PF3): a burst of
+# messages to one business shares a single read. Kept deliberately short (several code paths
+# update `businesses` directly, e.g. billing), and cleared by update_business(). Callers get a
+# copy because the webhook mutates the dict it receives.
+_BIZ_PHONE_TTL = 5.0
+_biz_phone_cache: dict = {}
+
+
+def _biz_cache_clear() -> None:
+    _biz_phone_cache.clear()
+
+
 def get_business_by_phone_id(phone_id: str) -> Optional[dict]:
+    import time as _t
+    hit = _biz_phone_cache.get(phone_id)
+    if hit and (_t.monotonic() - hit[0]) < _BIZ_PHONE_TTL:
+        return copy.deepcopy(hit[1]) if hit[1] else None
     res = (
         supabase.table("businesses")
         .select("*")
@@ -78,7 +96,12 @@ def get_business_by_phone_id(phone_id: str) -> Optional[dict]:
         .limit(1)
         .execute()
     )
-    return _one("businesses", res)
+    row = _one("businesses", res)
+    if len(_biz_phone_cache) > 500:
+        _biz_phone_cache.clear()
+    if row:                                   # never cache a miss: a new business must work at once
+        _biz_phone_cache[phone_id] = (_t.monotonic(), row)
+    return copy.deepcopy(row) if row else None
 
 
 def get_all_businesses() -> list[dict]:
@@ -177,6 +200,7 @@ def get_business_payment_settings(business_id: int) -> dict:
 
 
 def update_business(business_id: int, data) -> Optional[dict]:
+    _biz_cache_clear()
     update_dict = data.dict(exclude_none=True) if hasattr(data, "dict") else dict(data)
 
     if update_dict.get("whatsapp_token"):

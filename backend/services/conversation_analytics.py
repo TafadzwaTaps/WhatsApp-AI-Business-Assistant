@@ -106,6 +106,8 @@ def _cache_get(key):
 
 
 def _cache_set(key, value):
+    if len(_cache) > 2000:        # bound memory
+        _cache.clear()
     _cache[key] = (time.monotonic(), value)
 
 

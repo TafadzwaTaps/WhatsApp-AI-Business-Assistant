@@ -8,7 +8,7 @@ import logging
 from typing import Optional
 
 from core.db import supabase
-from crud._helpers import _now, _one
+from crud._helpers import _now, _one, fetch_all
 from crud.products import get_product_price
 
 log = logging.getLogger(__name__)
@@ -228,14 +228,20 @@ def get_dashboard_stats(business_id: int) -> dict:
     """
     from collections import defaultdict, Counter
 
-    orders = get_orders(business_id)
-    customers_res = (
+    # Narrow columns + paged reads: same numbers as before, smaller payload, and no silent
+    # truncation at the row cap for large businesses.
+    orders = fetch_all(lambda: (
+        supabase.table("orders")
+        .select("id,customer_phone,total_price,status,payment_status,created_at,product_name")
+        .eq("business_id", business_id)
+        .order("id", desc=True)
+    ))
+    customers = fetch_all(lambda: (
         supabase.table("customers")
         .select("id,created_at")
         .eq("business_id", business_id)
-        .execute()
-    )
-    customers = customers_res.data or []
+        .order("id")
+    ))
 
     total_revenue   = round(sum(float(o.get("total_price") or 0) for o in orders), 2)
     total_orders    = len(orders)
@@ -311,7 +317,7 @@ def notify_owner_new_order(business_id: int, order: dict) -> None:
     """
     try:
         biz = supabase.table("businesses").select(
-            "name, contact_phone, whatsapp_phone_id, whatsapp_token, use_shared_number"
+            "name, contact_phone, whatsapp_phone_id, whatsapp_token, use_shared_number, currency_symbol"
         ).eq("id", business_id).limit(1).execute()
         biz_row = (biz.data or [{}])[0]
 
@@ -337,7 +343,7 @@ def notify_owner_new_order(business_id: int, order: dict) -> None:
             f"👤 Customer: {customer}\n"
             f"🛍️ Items: {item_count}" +
             (f" ({first_item})" if first_item else "") +
-            f"\n💰 Total: *${total:.2f}*\n\n"
+            f"\n💰 Total: *{(biz_row.get('currency_symbol') or '$').strip() or '$'}{total:.2f}*\n\n"
             f"_Open your dashboard to manage this order._"
         )
 

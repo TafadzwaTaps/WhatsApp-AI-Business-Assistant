@@ -137,7 +137,7 @@ def resolve_audience(
 # MESSAGE PERSONALISER
 # ─────────────────────────────────────────────────────────────────────────────
 
-def personalise(message: str, memory: dict, business_name: str = "") -> str:
+def personalise(message: str, memory: dict, business_name: str = "", currency_symbol: str = "$") -> str:
     """
     Replace template variables in a campaign message.
 
@@ -160,7 +160,7 @@ def personalise(message: str, memory: dict, business_name: str = "") -> str:
         .replace("{name}",     name)
         .replace("{business}", business_name)
         .replace("{orders}",   str(orders))
-        .replace("{spent}",    f"${spent:.2f}")
+        .replace("{spent}",    f"{currency_symbol or '$'}{spent:.2f}")
     )
 
 
@@ -229,7 +229,7 @@ class CampaignService:
         previews = []
         for r in recipients[:3]:
             phone = r.get("phone", "")
-            msg   = personalise(message, r, biz_name) if personalise_msg else message
+            msg   = personalise(message, r, biz_name, business.get("currency_symbol") or "$") if personalise_msg else message
             previews.append({"phone": phone, "message": msg})
 
         if dry_run:
@@ -284,7 +284,7 @@ class CampaignService:
                 skipped += 1
                 continue
 
-            msg = personalise(message, recipient, biz_name) if personalise_msg else message
+            msg = personalise(message, recipient, biz_name, business.get("currency_symbol") or "$") if personalise_msg else message
 
             try:
                 result = _send(phone_id, token, phone, msg)

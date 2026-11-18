@@ -427,6 +427,7 @@ def saas_set_tenant_tier(
             "subscription_tier": tier,
             "billing_status":    "active",
         }).eq("id", business_id).execute()
+        from crud.businesses import _biz_cache_clear; _biz_cache_clear()   # webhook lookup cache
         log.info("Admin tier override  business=%s  tier=%s  by=%s", business_id, tier, user.get("username"))
         try:
             from crud.subscription_history import log_subscription_event

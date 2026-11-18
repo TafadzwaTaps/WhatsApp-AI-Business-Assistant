@@ -399,6 +399,13 @@ def context_tips(section: str):
 # PHASE 3 — ONBOARDING WIZARD
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _has_rows(table: str, business_id: int) -> bool:
+    """Existence check for one business: reads a single id instead of the whole table."""
+    from core.db import supabase
+    res = supabase.table(table).select("id").eq("business_id", business_id).limit(1).execute()
+    return bool(res.data)
+
+
 @router.get("/onboarding/status")
 def onboarding_status(user=Depends(require_business)):
     """
@@ -415,8 +422,7 @@ def onboarding_status(user=Depends(require_business)):
 
     try:
         # Step 1: has at least one product
-        products = crud.get_products(bid)
-        steps_done[1] = len(products) > 0
+        steps_done[1] = _has_rows("products", bid)
 
         # Step 2: has whatsapp phone id configured
         biz = crud.get_business_by_id(bid)
@@ -428,23 +434,12 @@ def onboarding_status(user=Depends(require_business)):
         ))
 
         # Step 4: has at least one order (test order done)
-        orders = crud.get_orders(bid)
-        steps_done[4] = len(orders) > 0
+        steps_done[4] = _has_rows("orders", bid)
 
         # Step 5: has sent at least one campaign
         try:
-            from core.db import supabase
-            res = (
-                supabase.table("scheduled_campaigns")
-                .select("id")
-                .eq("business_id", bid)
-                .limit(1)
-                .execute()
-            )
-            # Check if any campaign has been run (via checking messages sent from campaigns)
-            # We use a simple heuristic: if they have customers + messages, assume tested
-            customers = crud.get_customers_for_business(bid)
-            steps_done[5] = len(customers) > 0  # conservative: any customer interaction = launched
+            # Heuristic unchanged: any customer interaction counts as launched.
+            steps_done[5] = _has_rows("customers", bid)
         except Exception:
             steps_done[5] = False
 

@@ -172,3 +172,30 @@ Full suite: 1277 passed, 1 skipped (was 1239). New: `tests/test_phase4_conversat
 
 ### Rollback
 Revert the changed files; no schema or config changes.
+
+---
+
+## 2026-11-18 — Phase 5 stages 1–3 (globalisation + performance)
+Approved by user: "Approve 1-3". Uncommitted; nothing deployed. Plan: `phase5-plan.md`.
+
+### Changes
+- **GL1/GL2/GL5** — `services/ai.py` (cancel prompt uses business symbol; neutral address example), `routes/admin_routes.py` (`_order_currency_sym`: order symbol → business symbol → `$`; used in payment-confirmed and refund messages), `crud/orders.py` (owner new-order alert), `services/campaign_service.py` (`personalise(..., currency_symbol)` and both callers pass the business symbol), `static/dashboard.html` ("Total revenue"), `static/dashboard.js` (prefer `data.currency`). USD businesses see identical output. Timezone list needed no change (already global).
+- **PF5** `routes/ux_routes.py`: onboarding status reads one row per table (`_has_rows`); unused campaigns query removed.
+- **PF1/PF4** `crud/_helpers.py` `fetch_all` (paged reads, warns if it hits 200 pages); `crud/orders.py get_dashboard_stats`, `crud/analytics.py get_business_stats` / `get_admin_stats` use narrow columns and paging. Large businesses previously saw totals truncated at the row cap, so their numbers may rise to the correct values. `get_admin_stats` falls back to the old full read if a narrowed column is missing.
+- **PF9** size caps on the analytics, conversation-analytics and QR caches.
+- **PF3** `crud/businesses.py`: 5-second per-process cache for `get_business_by_phone_id` (deep copies, misses not cached). Cleared by `update_business`, the billing patch writer and the admin tier override. Other direct writers (auth, onboarding, outreach, growth) are not hooked, so staleness there is up to 5 s per worker.
+- **PF6** `routes/business_routes.py`: campaign send/preview and CSV import inserts run in the thread pool.
+- `tests/conftest.py`: resets the business cache between tests.
+
+### Tests (actually run)
+Full suite: 1297 passed, 1 skipped (was 1277). New: `tests/test_phase5_global_perf.py` (route-table regression, paging beyond 1000 rows with tenant filter and recent-order order, fallback, cache behaviour, symbol wiring).
+
+### Reviews
+- Security: found a **Critical regression I introduced** — a helper inserted between the `approve-payment` decorator and its handler un-routed the endpoint. Fixed and covered by route-table tests. Medium: cache staleness (partly mitigated above). Low: shallow copy (now deep copy), campaign symbol not wired (fixed).
+- QA: same blocker; weak structural tests replaced with behavioural ones where practical.
+
+### Not done / open
+`delete_account` and `chat_send` still do blocking DB work in async routes; PF2/PF7/PF8 (pagination of lists) and PF10 (indexes) are later stages; GL3/GL8 payment copy needs the country-field decision. Please confirm the Supabase `max_rows` setting is at least 1000 (otherwise paging stops after the first short page).
+
+### Rollback
+Revert the changed files; no schema or config changes.
