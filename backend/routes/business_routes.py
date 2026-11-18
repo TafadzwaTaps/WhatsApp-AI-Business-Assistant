@@ -257,6 +257,13 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
         if existing and existing["id"] != user["business_id"]:
             raise HTTPException(400, "That WhatsApp Phone Number ID is already registered.")
 
+    if safe.get("currency_symbol") is not None:
+        from crud._helpers import clean_currency_symbol
+        try:
+            safe["currency_symbol"] = clean_currency_symbol(safe["currency_symbol"])
+        except ValueError:
+            raise HTTPException(400, "Currency symbol must be at most 8 characters and contain no quotes or markup.")
+
     # Auto-sync: if currency_symbol is set but currency is not, derive the ISO code.
     # This prevents mismatches where the symbol is zł but currency column stays USD.
     sym = (safe.get("currency_symbol") or "").strip()

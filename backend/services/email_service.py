@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html as _html
 import logging
 import os
 from typing import Optional
@@ -57,6 +58,16 @@ if not _MAILING_ADDRESS:
     )
 
 _UNSUB_SECRET = os.getenv("SECRET_KEY", "") or "wazibot-unsubscribe-fallback-secret"
+
+
+def _h(value) -> str:
+    """HTML-escape a tenant/customer-controlled value before it goes into an email body."""
+    return _html.escape("" if value is None else str(value), quote=True)
+
+
+def _subj(value) -> str:
+    """Plain-text (subject line) form of a possibly-escaped value: no entities, no newlines."""
+    return " ".join(_html.unescape("" if value is None else str(value)).split())[:150]
 
 
 def _unsubscribe_token(business_id: int) -> str:
@@ -235,6 +246,9 @@ def send_welcome_email(
     username: str,
     owner_name: Optional[str] = None,
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
+    username = _h(username) if username is not None else username   # escaped once, at the template boundary
+    owner_name = _h(owner_name) if owner_name is not None else owner_name   # escaped once, at the template boundary
     """
     Welcome email sent immediately after successful registration.
 
@@ -282,6 +296,7 @@ def send_wizard_resume_email(
     current_step: int,
     business_id: Optional[int] = None,
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
     """
     Reminder email when a business hasn't completed the setup wizard.
     Sent by a scheduled job or admin trigger — not on signup.
@@ -318,6 +333,7 @@ def send_login_link_email(
     to_email: str,
     business_name: str,
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
     """Magic login link / password recovery helper email."""
     dash_url = f"{_BASE_URL}/dashboard"
     body = f"""
@@ -343,6 +359,7 @@ def send_trial_expiry_warning(
     days_left:     int,
     business_id:   Optional[int] = None,
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
     """
     Warning email sent at 7 days, 3 days, and 1 day before trial ends.
     Called by the scheduled job in growth_service.py.
@@ -410,6 +427,7 @@ def send_trial_expired(
     to_email:      str,
     business_name: str,
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
     """Sent on the day the trial expires — account moves to read-only."""
     pricing_url = f"{_BASE_URL}/static/pricing.html"
     body = f"""
@@ -444,6 +462,8 @@ def send_subscription_confirmed(
     amount:        str,           # e.g. "$5.99/month"
     next_billing:  str,           # e.g. "8 August 2026"
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
+    plan_name = _h(plan_name) if plan_name is not None else plan_name   # escaped once, at the template boundary
     """Confirmation email sent after a successful subscription payment."""
     dash_url = f"{_BASE_URL}/static/dashboard.html"
     body = f"""
@@ -470,7 +490,7 @@ def send_subscription_confirmed(
 """
     return _send(
         to=to_email,
-        subject=f"Payment confirmed — {plan_name} plan activated",
+        subject=f"Payment confirmed — {_subj(plan_name)} plan activated",
         html=_base_template("Subscription confirmed", body),
     )
 
@@ -484,6 +504,9 @@ def send_purchase_receipt(
     currency_symbol: str = "$",
     is_service:      bool = False,
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
+    customer_name = _h(customer_name) if customer_name is not None else customer_name   # escaped once, at the template boundary
+    currency_symbol = _h(currency_symbol) if currency_symbol is not None else currency_symbol   # escaped once, at the template boundary
     """
     Receipt email sent to a customer after a storefront purchase (the "Pay"
     button on a business's public site). This is the one receipt channel
@@ -493,7 +516,7 @@ def send_purchase_receipt(
     noun = "Booking" if is_service else "Order"
     rows = "".join(
         f'<tr><td style="padding:8px 0;font-size:13px;color:#e8f5e9;'
-        f'border-bottom:1px solid #1f3025;">{i.get("name","Item")} × {i.get("qty",1)}</td>'
+        f'border-bottom:1px solid #1f3025;">{_h(i.get("name","Item"))} × {_h(i.get("qty",1))}</td>'
         f'<td style="padding:8px 0;font-size:13px;color:#e8f5e9;text-align:right;'
         f'border-bottom:1px solid #1f3025;">{currency_symbol}{float(i.get("price",0)) * int(i.get("qty",1)):.2f}</td></tr>'
         for i in (items or [])
@@ -520,7 +543,7 @@ def send_purchase_receipt(
 """
     return _send(
         to=to_email,
-        subject=f"Receipt — {noun} from {business_name}",
+        subject=f"Receipt — {noun} from {_subj(business_name)}",
         html=_base_template(f"{noun} confirmed", body),
     )
 
@@ -532,6 +555,8 @@ def send_payment_failed(
     amount:        str,
     retry_date:    str,           # e.g. "3 August 2026"
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
+    plan_name = _h(plan_name) if plan_name is not None else plan_name   # escaped once, at the template boundary
     """
     Sent when a recurring subscription payment fails.
     Stripe retries automatically — this email asks the user to update their card.
@@ -553,7 +578,7 @@ def send_payment_failed(
 """
     return _send(
         to=to_email,
-        subject=f"⚠️ Payment failed — action required for {business_name}",
+        subject=f"⚠️ Payment failed — action required for {_subj(business_name)}",
         html=_base_template("Payment failed", body),
     )
 
@@ -564,6 +589,10 @@ def send_subscription_cancelled(
     plan_name:      str,
     access_ends:    str,          # e.g. "31 August 2026"
 ) -> bool:
+    business_name = _h(business_name) if business_name is not None else business_name   # escaped once, at the template boundary
+    plan_name = _h(plan_name)
+    access_ends_plain = _subj(access_ends)
+    access_ends = _h(access_ends)
     """Confirmation that a subscription has been cancelled (end-of-period)."""
     pricing_url = f"{_BASE_URL}/static/pricing.html"
     body = f"""
@@ -582,7 +611,7 @@ def send_subscription_cancelled(
 """
     return _send(
         to=to_email,
-        subject=f"Subscription cancelled — access continues until {access_ends}",
+        subject=f"Subscription cancelled — access continues until {access_ends_plain}",
         html=_base_template("Subscription cancelled", body),
     )
 

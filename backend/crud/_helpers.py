@@ -20,6 +20,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def clean_currency_symbol(value) -> str:
+    """Validate a tenant-supplied currency symbol (it is rendered on public pages and in
+    scripts): at most 8 characters, no markup/quote/control characters. Raises ValueError."""
+    s = ("" if value is None else str(value)).strip()
+    if len(s) > 8 or any(c in s for c in "<>\"'&\\`") or any(ord(c) < 32 for c in s):
+        raise ValueError("Invalid currency symbol")
+    return s
+
+
 def fetch_all(make_query, page: int = 1000, max_pages: int = 200) -> list:
     """Read every row of a query in pages of `page` (PostgREST silently truncates a plain
     select at its row cap). `make_query` must return a fresh query with a deterministic

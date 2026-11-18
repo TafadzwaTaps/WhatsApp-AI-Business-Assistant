@@ -28,6 +28,7 @@ SCHEDULING:
 from __future__ import annotations
 
 import logging
+from html import escape as _html_escape
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -146,7 +147,7 @@ def _build_report_html(business_name: str, stats: dict, dash_url: str,
     period_label = period_label or _month_window()[2]
     top_product_line = (
         f"<p>⭐ <strong style='color:#e8f5e9'>Top product:</strong> "
-        f"{stats['top_product']}</p>"
+        f"{_html_escape(str(stats['top_product']))}</p>"
         if stats.get("top_product") else ""
     )
     repeat_pct = ""
@@ -154,7 +155,7 @@ def _build_report_html(business_name: str, stats: dict, dash_url: str,
         repeat_pct = f" (customers who ordered more than once)"
 
     return f"""
-<h1>Your month at {business_name} 📊</h1>
+<h1>Your month at {_html_escape(business_name)} 📊</h1>
 <p style='color:#6b8f71;font-family:monospace;font-size:12px;'>
   {period_label}
 </p>
@@ -255,7 +256,7 @@ def send_weekly_reports() -> dict:
                 dash_url = f"{_BASE_URL}/dashboard"
                 body     = _build_report_html(biz_name, stats, dash_url, period,
                                               unsubscribe_address_url(email))
-                html     = _base_template(f"Monthly Report — {biz_name}", body)
+                html     = _base_template(f"Monthly Report — {_html_escape(biz_name)}", body)
 
                 ok = _send(
                     to      = email,

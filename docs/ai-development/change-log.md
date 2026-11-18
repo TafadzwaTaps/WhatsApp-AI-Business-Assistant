@@ -207,3 +207,33 @@ Approved by user (Phase 3 decision 4); backend support deployed first, as requir
 - `static/inbox.js connectWS`: connects to `location.host` (no hardcoded host, `ws:`/`wss:` by page protocol) with no `?token=`; sends `{"type":"auth","token":...}` as the first frame. Auth-refused closes (4001/4003/4008) now retry after 30 s instead of 3 s.
 - Test: `tests/test_phase3_security.py::test_inbox_websocket_uses_first_message_auth_not_url_token`. Suite: 1298 passed, 1 skipped.
 - Residual: the backend still accepts legacy `?token=` for old cached pages; remove it after a deploy cycle once no client uses it. Not exercised against a live socket (needs a browser session on the deployed site).
+
+---
+
+## 2026-11-18 — Phase 3d: application-wide XSS / HTML-injection audit follow-ups
+Approved by user (Phase 3 decision 5: complete innerHTML and unsafe-insertion audit). Two read-only audits (static frontend; server-built HTML and emails). Uncommitted.
+
+### Findings fixed
+- **Medium — stored XSS on the public store page:** `currency_symbol` (free text) went raw into `store.html` innerHTML. Fixed in three layers: validated on save (`crud/_helpers.clean_currency_symbol`: max 8 chars, no `< > " ' & \ \``, no control chars; used by `PATCH` business and onboarding step 1, which now returns 400), escaped on render in `store.html`, and `dashboard.js getCurrencySymbol()` strips markup characters (it feeds ~30 innerHTML templates). Previously stored bad values are therefore also safe to render.
+- **Medium — HTML injection in outgoing emails:** welcome, receipt, trial, payment, subscription and weekly-report emails interpolated business name, username, customer name, item names, currency symbol and top product unescaped, and the signup flow lets an anonymous caller choose the recipient. Now escaped once at each function boundary (`email_service._h`); subject lines use `_subj` (plain text, newlines removed).
+- **Low — social link host bypass** (`site_generator._social_url`): a backslash or `@` could make the browser go to another host. Host must now be a plain hostname.
+- **Low — currency symbol in the generated site's inline script:** capped to 8 chars and `< > &` unicode-escaped.
+- **Low — remaining frontend escapes:** currency converter preview/result strings (`dashboard.js`), message status class and agent-note timestamp (`inbox.js`).
+
+### Reviewed and judged safe
+All other server-rendered pages (generated site, booking page, marketplace, maintenance, unsubscribe pages) and the other frontend sinks audited in `inbox.js`, `dashboard.js`, `admin_outreach.js`, `marketplace.html`, `store.html`, `multidash.html`, `onboarding.html`, `signup.html`. Server-supplied URLs used with `window.open` / `href` are server-built (fixed `https://wa.me/`, Stripe URLs).
+
+### Tests (actually run)
+Full suite: 1329 passed, 1 skipped (was 1298). New `tests/test_phase3d_xss_followups.py` (31 tests, including a weekly-report test that caught an unescaped `top_product` during this work).
+
+### Residual / not done
+- CSP still has `'unsafe-inline'` (about 450 inline handlers), so output escaping remains the defence. `img-src https:` still allows image-request exfiltration.
+- `/billing/product-checkout` trusts the client-supplied item name and price (`stripe_service.py`): separate review recommended.
+- The fallback `biz.logo_url` in the generated site is HTML-escaped but not scheme-checked (tracking-pixel risk only).
+- Emails to owners are still limited only by the signup flow; email verification before the welcome email is not implemented.
+- Not exercised in a browser; store page and dashboard rendering should be spot-checked after deploy.
+
+### Phase 3d review follow-ups (independent security review: no critical/high)
+- Weekly-report `<title>` now escaped; `_social_url` for X/Twitter no longer matches look-alike domains (`nottwitter.com`), accepts `twitter.com`/`x.com` and their subdomains; cancelled-subscription email escapes plan and date (subject stays plain text); the unmounted `routes_saas/onboarding_routes.py` copy also validates the currency symbol.
+- Tests: suite 1339 passed, 1 skipped.
+- Accepted/low: some server-formatted email values (amounts, dates from Stripe) remain unescaped; empty string clears the stored symbol (clients fall back to `$`); docstrings in the modified `send_*` functions are now bare expressions (cosmetic); `HTTPException(500, str(exc))` in onboarding step 1 still echoes exception text (the central 5xx sanitiser covers it).

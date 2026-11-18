@@ -789,7 +789,7 @@ function createBubble(msg) {
     <div class="bubble">${displayText}</div>
     <div class="msg-meta">
       <span class="msg-time">${formatTime(msg.created_at)}</span>
-      ${dir === 'outgoing' ? `<span class="msg-status ${msg.status || 'sent'}"></span>` : ''}
+      ${dir === 'outgoing' ? `<span class="msg-status ${escHtml(msg.status || 'sent')}"></span>` : ''}
     </div>`;
   return div;
 }
@@ -1821,7 +1821,7 @@ async function loadAgentNotes(customerId) {
         ? notes.map(n => `
             <div class="agent-note-item">
               ${escHtml(n.text)}
-              <div class="agent-note-meta">— ${escHtml(n.agent || 'agent')} · ${(n.timestamp||'').slice(0,16).replace('T',' ')}</div>
+              <div class="agent-note-meta">— ${escHtml(n.agent || 'agent')} · ${escHtml((n.timestamp||'').slice(0,16).replace('T',' '))}</div>
             </div>`).join('')
         : '<div style="color:var(--text-muted);font-size:11px;padding:6px 0;">No notes yet.</div>';
     }

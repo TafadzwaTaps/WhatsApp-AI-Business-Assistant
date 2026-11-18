@@ -125,11 +125,16 @@ def onboarding_step1(body: Step1Request, user=Depends(require_business)):
         from core.db import supabase
         # Build update payload — only include columns that actually exist
         # onboarding_step is optional (schema upgrade) — skip if column missing
+        from crud._helpers import clean_currency_symbol
+        try:
+            _sym = clean_currency_symbol(body.currency_symbol) or "$"
+        except ValueError:
+            raise HTTPException(400, "Currency symbol must be at most 8 characters and contain no quotes or markup.")
         payload: dict = {
             "name":            body.business_name.strip(),
             "category":        body.category.strip(),
             "currency":        body.currency,
-            "currency_symbol": body.currency_symbol,
+            "currency_symbol": _sym,
         }
         # Try to include onboarding_step — ignore if column doesn't exist
         try:
@@ -138,6 +143,8 @@ def onboarding_step1(body: Step1Request, user=Depends(require_business)):
             # Column doesn't exist yet — update without it
             supabase.table("businesses").update(payload).eq("id", bid).execute()
         return {"ok": True, "next_step": 2}
+    except HTTPException:
+        raise
     except Exception as exc:
         log.error("onboarding step1 error: %s", exc)
         raise HTTPException(500, str(exc))
