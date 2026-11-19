@@ -26,6 +26,8 @@ CREATE INDEX IF NOT EXISTS stock_movements_business_idx ON public.stock_movement
 ALTER TABLE public.stock_movements ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.stock_movements FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE public.stock_movements_id_seq FROM anon, authenticated;
+GRANT ALL ON public.stock_movements TO service_role;
+GRANT USAGE, SELECT ON SEQUENCE public.stock_movements_id_seq TO service_role;
 
 -- 2) Atomic, tenant-scoped stock adjustment. A single UPDATE (no read-modify-write); products
 --    with NULL stock (unlimited) are never touched; returns the new stock or no row.
@@ -46,7 +48,17 @@ $$;
 REVOKE ALL ON FUNCTION public.adjust_stock_atomic(integer, integer, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.adjust_stock_atomic(integer, integer, integer) TO service_role;
 
--- 3) Optional backstop: stock can never go negative (add NOT VALID first, validate after the pre-check).
+-- Make PostgREST notice the new table and function without a restart.
+NOTIFY pgrst, 'reload schema';
+
+-- 3) Optional backstop, to be done LATER AND SEPARATELY (not part of the steps above):
+--    stock can never go negative. NOT VALID still enforces the rule on every new write at once, and
+--    ADD CONSTRAINT briefly takes an exclusive lock on products, so: check `select count(*) from
+--    public.products where stock < 0` is 0, run `SET lock_timeout = '3s';` first, and retry if it times out.
+-- Optional foreign keys (staging first; check orders.id / businesses.id types match):
+--    ALTER TABLE public.stock_movements ADD CONSTRAINT stock_movements_order_fk
+--        FOREIGN KEY (order_id) REFERENCES public.orders(id) ON DELETE CASCADE;
+--    (do NOT add a foreign key on product_id: products can be deleted and the ledger is history)
 -- ALTER TABLE public.products ADD CONSTRAINT products_stock_nonneg CHECK (stock IS NULL OR stock >= 0) NOT VALID;
 -- ALTER TABLE public.products VALIDATE CONSTRAINT products_stock_nonneg;
 

@@ -299,3 +299,17 @@ Full suite: 1450 passed, 1 skipped (was 1395). New `tests/test_phase1c_job_idemp
 
 ### Rollback
 Revert the changed files; no schema or configuration was changed. Nothing in `migrations/` has been applied.
+
+---
+
+## 2026-11-19 — Phase 2: database integrity, tenant isolation, stock restoration
+Approved by user ("proceed to phase 2"). Uncommitted; nothing deployed; no migration applied. Full report: `PHASE_2_REPORT.md`.
+
+- **Stock restore** (`services/stock_restore.py`, `workflows/order_lifecycle.py`, admin/business routes): new orders record `product_id` + `stock_deducted` per item; cancelling restores exactly what was deducted, once (atomic conditional status update, per-item flag, unique ledger claim when `stock_movements` exists); refunds restock only on the owner's explicit `restock` / `restock_items`; services, unlimited-stock products and older orders never restored; repeated refund answers 409; failed restore reported, retried on a repeated cancel (ledger only), never blocks the cancel.
+- **Tenant isolation**: order status, payment-confirm, PayPal/payment-webhook, campaign final write and customer unread writes now carry the business id.
+- **Payments**: manual payment confirmation uses the atomic paid claim (no double notification, finishes an interrupted status change).
+- **Inventory**: `restock_product` compare-and-set, unlimited stays unlimited (both identical copies).
+- **Dashboard**: cancel shows the stock result; order drawer shows inventory status (plain text).
+- **Migrations (proposed only)**: `proposed_phase2_stock_restoration.sql`, `notification_ledger.sql` hardened (service_role grants, schema reload, FK/CHECK guidance).
+- **Tests**: 1500 passed, 1 skipped (was 1450); mutation-verified race tests. Reviews: security, QA and database engineer, no critical/high open.
+- **Open**: customer cancel during payment keeps the order pending with stock held; booking-linked cancel bypass; one-claim-per-product ledger limit; live database behaviour unverified.

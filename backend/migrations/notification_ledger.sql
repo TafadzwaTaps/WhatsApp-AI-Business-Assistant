@@ -21,6 +21,9 @@ CREATE INDEX IF NOT EXISTS notification_log_business_idx ON public.notification_
 ALTER TABLE public.notification_log ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.notification_log FROM anon, authenticated;
 REVOKE ALL ON SEQUENCE public.notification_log_id_seq FROM anon, authenticated;
+GRANT ALL ON public.notification_log TO service_role;
+GRANT USAGE, SELECT ON SEQUENCE public.notification_log_id_seq TO service_role;
+NOTIFY pgrst, 'reload schema';
 
 -- ROLLBACK:
 --   DROP TABLE IF EXISTS public.notification_log;

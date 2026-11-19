@@ -551,7 +551,7 @@ async def run_scheduled_campaigns(request: Request):
             supabase.table("scheduled_campaigns").update({
                 "status":  status,
                 "sent_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", campaign_id).in_("status", ["processing", "pending"]).execute()
+            }).eq("id", campaign_id).eq("business_id", bid).in_("status", ["processing", "pending"]).execute()
         except Exception as exc:
             log.warning("scheduled campaign status update failed: %s", exc)
 

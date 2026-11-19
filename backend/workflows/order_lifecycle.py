@@ -186,14 +186,22 @@ def _create_order_impl(
         # depends on inventory.py's signature matching at all — only
         # product businesses (which never needed the extra parameter) call
         # it, using the exact same call shape that has always worked.
+        # Recorded on the order so a later cancel/refund knows exactly what to give back:
+        # the product id, and whether stock was REALLY taken (False for services and for
+        # unlimited / untracked products). Additive keys in the existing items JSON.
+        _item_pid = None
+        _item_deducted = False
         if not _is_service_biz:
             try:
                 _p = reduce_stock_by_name(business_id, name, qty)
             except Exception:
                 _rollback_stock()       # an earlier item in this cart was already decremented
                 raise
-            if isinstance(_p, dict) and _p.get("id") is not None and _p.get("stock") is not None:
-                _reduced.append((_p["id"], qty))
+            if isinstance(_p, dict) and _p.get("id") is not None:
+                _item_pid = _p["id"]
+                if _p.get("stock") is not None:
+                    _reduced.append((_p["id"], qty))
+                    _item_deducted = True
 
         subtotal = price * qty
         total += subtotal
@@ -202,6 +210,8 @@ def _create_order_impl(
             "qty":      qty,
             "price":    price,
             "subtotal": round(subtotal, 2),
+            "product_id":     _item_pid,
+            "stock_deducted": _item_deducted,
         })
 
     # Build insert using ONLY columns that exist in the DB
@@ -356,11 +366,15 @@ def update_order_status_supabase(order_id: int, status: str, business_id: int = 
     if status == "paid" and _has_col("payment_status"):
         update_payload["payment_status"] = "paid"
 
+    # Conditional on the status we validated against: if two callers race (e.g. a double
+    # cancel), exactly one wins the transition and the loser gets "update failed".
     _query = (
         supabase.table("orders")
         .update(update_payload)
         .eq("id", order_id)
     )
+    if existing.get("status") is not None:       # (an order with no stored status cannot be matched on it)
+        _query = _query.eq("status", current)
     if business_id is not None:
         _query = _query.eq("business_id", business_id)
     res = _query.execute()
@@ -368,13 +382,35 @@ def update_order_status_supabase(order_id: int, status: str, business_id: int = 
         raise ValueError(f"Order id={order_id} update failed")
 
     log.info("📦 Order %s → %s", order_id, status)
+    result = res.data[0]
+    # True only for the call that actually MOVED the status (the one that validated against the
+    # old status and won the conditional update). A repeat or losing-the-race call that finds the
+    # order already in the target status gets False, so callers can avoid repeating side effects.
+    result["_transitioned"] = (current != status)
+    # Cancelling gives back the stock that was really deducted. Only the caller that WON the
+    # transition (current != cancelled) gets here, so it happens once; a failure is reported
+    # in result["_stock_restore"] and never blocks the cancellation.
+    if status == "cancelled":
+        try:
+            from services.stock_restore import restore_order_stock
+            # current != cancelled: this call won the transition, which is the once-only guard.
+            # current == cancelled: a repeated cancel is a RETRY of a restore that may have failed
+            # the first time; it only proceeds when the stock_movements ledger can guarantee
+            # once-only (otherwise it is skipped with "ledger_required", never risking a double).
+            result["_stock_restore"] = restore_order_stock(
+                {**existing, "id": order_id}, reason="cancelled" if current != "cancelled" else "cancel_retry",
+                transition_won=(current != "cancelled"))
+        except Exception as _stock_exc:
+            log.error("stock restore on cancel failed order=%s: %s", order_id, type(_stock_exc).__name__)
+            result["_stock_restore"] = {"restored": [], "skipped": [],
+                                        "failed": [{"name": None, "reason": "unexpected_error"}]}
     # Sync customer memory when order reaches a completion state
     if status in ("delivered", "confirmed", "paid"):
         _phone = existing.get("customer_phone", "")
         _bid   = existing.get("business_id", 0)
         if _phone and _bid:
             _sync_user_memory_after_order(int(_bid), str(_phone))
-    return res.data[0]
+    return result
 
 
 
@@ -448,10 +484,12 @@ def _sync_user_memory_after_order(business_id: int, customer_phone: str) -> None
         log.debug("_sync_user_memory_after_order error: %s", exc)
 
 
-def confirm_payment_supabase(order_id: int, reference: str) -> dict:
-    """Mark an order as paid and record the payment reference."""
+def confirm_payment_supabase(order_id: int, reference: str, business_id: int | None = None) -> dict:
+    """Mark an order as paid and record the payment reference.
+    business_id (optional, backwards compatible): when given, the order must belong to that
+    business or it is reported as not found (no cross-tenant write)."""
     existing = get_order(order_id)
-    if not existing:
+    if not existing or (business_id is not None and existing.get("business_id") != business_id):
         raise ValueError(f"Order id={order_id} not found")
 
     update_payload: dict = {"status": "paid"}
@@ -460,12 +498,14 @@ def confirm_payment_supabase(order_id: int, reference: str) -> dict:
     if _has_col("payment_reference"):
         update_payload["payment_reference"] = reference
 
-    res = (
+    _q = (
         supabase.table("orders")
         .update(update_payload)
         .eq("id", order_id)
-        .execute()
     )
+    if business_id is not None:
+        _q = _q.eq("business_id", business_id)
+    res = _q.execute()
     if not res.data:
         raise ValueError(f"Order id={order_id} payment confirmation failed")
 

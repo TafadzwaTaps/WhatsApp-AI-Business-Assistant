@@ -517,7 +517,7 @@ async def delete_conversation(customer_id: int, user=Depends(require_business)):
                 log.debug("delete_conversation: chat_messages cleanup failed (non-fatal): %s", exc)
         # Reset unread count on the customer record
         try:
-            _sb.table("customers").update({"unread_count": 0}).eq("id", customer_id).execute()
+            _sb.table("customers").update({"unread_count": 0}).eq("id", customer_id).eq("business_id", bid).execute()
         except Exception as _swallowed_exc:
             from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         return {"ok": True, "customer_id": customer_id, "message": "Conversation deleted"}
@@ -703,7 +703,7 @@ async def paypal_webhook(request: Request):
                 raise HTTPException(503, "Temporary error - please retry")
             if not _claimed:
                 return {"status": "ok", "detail": "already_paid"}
-            try: update_order_status_supabase(order_id, "paid")
+            try: update_order_status_supabase(order_id, "paid", business_id=biz_id)
             except Exception as exc: log.warning("paypal_webhook: status update failed: %s", exc)
 
             customer_phone = order.get("customer_phone", "")
@@ -750,8 +750,20 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
     order = get_order(order_id)
     if not order: raise HTTPException(404, f"Order {order_id} not found")
     if order.get("business_id") != user["business_id"]: raise HTTPException(403, "Access denied")
-    crud.update_order_payment(order_id, user["business_id"], {"payment_status": "paid", "payment_reference": reference})
-    try: update_order_status_supabase(order_id, "paid")
+    # Atomic "mark paid once", like the PayPal and payment-webhook paths: a double click (or a
+    # retried request) must not re-run the side effects or notify the customer twice.
+    try:
+        _claimed = crud.claim_order_paid(order_id, user["business_id"], {"payment_reference": reference})
+    except Exception:
+        raise HTTPException(503, "Temporary error - please retry")
+    if not _claimed:
+        # Already paid: no second customer message and no second memory sync, but if an earlier
+        # attempt marked the payment and then failed to advance the order status, finish that now.
+        try: update_order_status_supabase(order_id, "paid", business_id=user["business_id"])
+        except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
+        return {"ok": True, "order_id": order_id, "reference": reference,
+                "message": "Order was already marked as paid."}
+    try: update_order_status_supabase(order_id, "paid", business_id=user["business_id"])
     except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
     # Sync customer memory — update order_count + total_spent
     try:

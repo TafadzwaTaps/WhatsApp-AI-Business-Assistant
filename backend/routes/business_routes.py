@@ -1179,7 +1179,10 @@ def update_order_status_api(order_id: int, data: OrderStatusUpdate, user=Depends
         # can enforce it directly at the database write itself.
         order = update_order_status_supabase(order_id, data.status, business_id=user["business_id"])
     except ValueError as exc: raise HTTPException(400, str(exc))
-    return {"message": "Status updated", "order_id": order_id, "status": order["status"]}
+    resp = {"message": "Status updated", "order_id": order_id, "status": order["status"]}
+    if order.get("_stock_restore") is not None:        # set only when this call cancelled the order
+        resp["stock"] = order["_stock_restore"]
+    return resp
 
 
 @router.get("/orders/{order_id}/invoice")

@@ -5685,6 +5685,15 @@ function openOrderDrawer(orderId) {
   document.getElementById('order-drawer-total').textContent     = getCurrencySymbol() + parseFloat(order.total_price||0).toFixed(2);
   document.getElementById('order-drawer-status-badge').textContent = labels[status] || status;
   document.getElementById('order-drawer-item').textContent      = order.product_name || '—';
+  // Inventory status line (created on first use; empty for services / unlimited stock / old orders).
+  let _stockEl = document.getElementById('order-drawer-stock');
+  if (!_stockEl) {
+    _stockEl = document.createElement('div');
+    _stockEl.id = 'order-drawer-stock';
+    _stockEl.style.cssText = 'font-size:12px;color:var(--text-dim);margin-top:4px;';
+    document.getElementById('order-drawer-item').insertAdjacentElement('afterend', _stockEl);
+  }
+  _stockEl.textContent = _orderStockStatus(order);
 
   // UI/UX audit (Phase 9): the drawer showed the item name as plain text
   // with no way to jump to that product (e.g. to check current stock).
@@ -5717,14 +5726,38 @@ function closeOrderDrawer() {
   _restoreFocusFromDrawer();
 }
 
+// Inventory side of a cancellation, from the status API's `stock` report (only present when
+// that call cancelled the order). Plain text: it is shown with toast()/textContent.
+function _stockNote(res) {
+  const s = res && res.stock;
+  if (!s) return '';
+  const back = (s.restored || []).map(r => `${r.name} ×${r.qty}`);
+  if (back.length) return ` · stock restored (${back.join(', ')})`;
+  if ((s.failed || []).length) return ' · ⚠ stock could not be restored — please check inventory';
+  return '';   // nothing was deducted (service, unlimited stock, or an older order): nothing to say
+}
+
+// Inventory status of an order, from the per-item records written at order creation.
+function _orderStockStatus(order) {
+  let items = order && order.items;
+  if (typeof items === 'string') { try { items = JSON.parse(items); } catch (_) { items = null; } }
+  if (!Array.isArray(items)) return '';
+  const deducted = items.filter(i => i && i.stock_deducted === true);
+  if (!deducted.length) return '';
+  const restored = deducted.filter(i => Number(i.stock_restored_qty || 0) > 0);
+  const closed = ['cancelled', 'refunded'].includes(order.status);
+  if (restored.length) return 'Stock restored to inventory';
+  return closed ? 'Stock not returned to inventory' : 'Stock reserved for this order';
+}
+
 async function updateOrderStatusFromDrawer() {
   if (!_orderDrawerOrder) return;
   const sel = document.getElementById('order-drawer-status-select');
   const pick = sel.value;
   if (pick === (_orderDrawerOrder.status || 'pending')) { closeOrderDrawer(); return; }
   try {
-    await apiFetch(`/orders/${_orderDrawerOrder.id}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
-    toast(`✅ Order #${_orderDrawerOrder.id} → ${pick}`);
+    const _res = await apiFetch(`/orders/${_orderDrawerOrder.id}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
+    toast(`✅ Order #${_orderDrawerOrder.id} → ${pick}${_stockNote(_res)}`);
     closeOrderDrawer();
     await loadOrders();
   } catch (e) { toast('Update failed: ' + e.message, true); }
@@ -5813,8 +5846,8 @@ async function updateOrderStatus(orderId) {
   if (!pick || pick === cur) return;
   if (!statuses.includes(pick)) { toast('Invalid status', true); return; }
   try {
-    await apiFetch(`/orders/${orderId}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
-    toast(`✅ ORDER-${orderId} → ${pick}`);
+    const _res = await apiFetch(`/orders/${orderId}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
+    toast(`✅ ORDER-${orderId} → ${pick}${_stockNote(_res)}`);
     await loadOrders();
   } catch (e) { toast('Update failed: ' + e.message, true); }
 }
