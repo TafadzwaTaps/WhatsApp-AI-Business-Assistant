@@ -331,3 +331,10 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - **Frontend**: `safeUrl()` on every server-supplied redirect/href/window.open; pricing redirect https-only; refresh sends the newest shared token.
 - **Tests**: 1670 passed, 1 skipped (was 1617); 53 new; protections mutation-verified. Security and QA reviewed; no critical/high.
 - **Open (see PHASE_4_REPORT.md)**: email verification (schema), cookie sessions, CSP `'unsafe-inline'`, dependency floors (python-jose CVEs) awaiting approval, full refresh-family rotation.
+
+## 2026-11-19 — Phase 4B: dependencies, email verification, cookie design, follow-ups (uncommitted, migration NOT applied)
+- **Dependencies**: floors raised to python-jose>=3.4.0, python-multipart>=0.0.31, requests>=2.33.0 (advisory-driven); pinned `backend/requirements.lock` (unused by deploy until the build command is changed); pip-audit: only unfixable jose/ecdsa notes remain.
+- **Email verification** (off until `migrations/email_verification.sql` is applied): hashed single-use 24 h tokens bound to the address, resend with limits, welcome email after verification, banner, verify page; gates campaigns/broadcast/win-back/scheduled campaigns, trial and report emails for flagged accounts only; existing accounts grandfathered (required=false, not marked verified); fail-open.
+- **Cookie auth**: design and staged plan only (`COOKIE_AUTH_DESIGN.md`).
+- **Follow-ups done**: impersonation refused on money/irreversible routes and owner-email change; unsubscribe secret from the effective key; SECRET_KEY length warning; reset password length cap. Plan for the rest in `SECURITY_FOLLOWUP_PLAN.md`.
+- **Tests**: 1752 passed, 1 skipped (was 1670); 82 new; 25 protections mutation-verified.

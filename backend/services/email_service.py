@@ -57,7 +57,21 @@ if not _MAILING_ADDRESS:
         "§ 7704) requires. Set EMAIL_MAILING_ADDRESS in Render env vars."
     )
 
-_UNSUB_SECRET = os.getenv("SECRET_KEY", "") or "wazibot-unsubscribe-fallback-secret"
+def _derive_unsub_secret() -> str:
+    # Phase 4: use the EFFECTIVE signing key (core.auth replaces an unset or weak SECRET_KEY with a
+    # random per-process one). The old fixed fallback string was readable in the source, so anyone
+    # could forge an unsubscribe token for any business when SECRET_KEY was not configured. With a
+    # real SECRET_KEY the value is unchanged, so links already sent keep working.
+    try:
+        from core.auth import SECRET_KEY as _effective
+        if _effective:
+            return _effective
+    except Exception as exc:
+        log.debug("email: effective key unavailable for unsubscribe tokens: %s", type(exc).__name__)
+    return os.getenv("SECRET_KEY", "") or os.urandom(32).hex()
+
+
+_UNSUB_SECRET = _derive_unsub_secret()
 
 
 def _h(value) -> str:

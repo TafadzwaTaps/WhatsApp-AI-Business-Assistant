@@ -325,6 +325,40 @@ function showImpersonationBannerIfActive() {
   }
 }
 
+// Email verification prompt (Phase 4 follow-up). Shown only when the server says the feature is
+// active, the owner has an address, and it is not confirmed; hidden for impersonated sessions.
+async function loadEmailVerificationBanner() {
+  const el = document.getElementById('email-verify-banner');
+  if (!el) return;
+  el.style.display = 'none';
+  if (userRole !== 'business' || sessionStorage.getItem('wazi_impersonating')) return;
+  try {
+    const s = await apiFetch('/auth/verification-status');
+    if (!s || !s.active || s.verified || (!s.has_email && !s.restricted)) return;
+    const t = document.getElementById('email-verify-banner-text');
+    const rb = document.getElementById('email-verify-resend');
+    if (rb) rb.style.display = s.has_email ? '' : 'none';
+    if (t) t.textContent = !s.has_email
+      ? 'Add your email address in Settings, then confirm it, to send campaigns and receive reports.'
+      : s.restricted
+        ? 'Confirm your email address to send campaigns and receive trial and report emails. We sent you a link.'
+        : 'Please confirm your email address to keep your account secure and keep receiving reports.';
+    el.style.display = 'flex';
+  } catch (_) { /* the prompt is optional; never block the dashboard */ }
+}
+
+async function resendVerificationEmail(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await apiFetch('/auth/resend-verification', { method: 'POST' });
+    if (res && res.message) toast(res.message);
+  } catch (e) {
+    toast(e && e.message ? e.message : 'Could not send the link. Try again later.', true);
+  } finally {
+    setTimeout(() => { if (btn) btn.disabled = false; }, 30000);   // gentle client-side cooldown
+  }
+}
+
 let _refreshInFlight = false;
 async function tryRefresh() {
   // If there was never a refresh token, user is simply not logged in — don't redirect
@@ -4408,6 +4442,7 @@ async function init(){
   buildSidebar();
   checkStatus();
   try { showImpersonationBannerIfActive(); } catch(_) {}
+  try { loadEmailVerificationBanner(); } catch(_) {}
 
   // Handle Stripe Connect return from onboarding
   const _urlParams = new URLSearchParams(window.location.search);

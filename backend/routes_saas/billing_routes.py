@@ -444,7 +444,7 @@ def send_trial_warnings(request: Request):
     from datetime import datetime, timezone
 
     now  = datetime.now(timezone.utc)
-    sent = 0; errors = 0; already = 0; opted_out = 0
+    sent = 0; errors = 0; already = 0; opted_out = 0; unverified = 0
 
     try:
         res = (
@@ -484,6 +484,10 @@ def send_trial_warnings(request: Request):
             # not happen, release the claim so the next run retries instead of losing it.
             from crud.notification_ledger import claim, release
             from services.email_service import _is_opted_out
+            from services.email_verification_service import is_restricted
+            if is_restricted(biz.get("id")):
+                unverified += 1                 # address not confirmed yet: no trial email, no claim kept
+                continue
             if kind != "trial_expired" and _is_opted_out(biz.get("id")):
                 opted_out += 1                  # marketing opt-out: a skip, not a failure; no claim kept
                 continue
@@ -507,8 +511,10 @@ def send_trial_warnings(request: Request):
             log.warning("trial-warnings: biz=%s err=%s", biz.get("id"), type(exc).__name__)
             errors += 1
 
-    log.info("trial-warnings: sent=%d already_sent=%d opted_out=%d errors=%d", sent, already, opted_out, errors)
-    return {"ok": True, "sent": sent, "already_sent": already, "opted_out": opted_out, "errors": errors}
+    log.info("trial-warnings: sent=%d already_sent=%d opted_out=%d unverified=%d errors=%d",
+             sent, already, opted_out, unverified, errors)
+    return {"ok": True, "sent": sent, "already_sent": already, "opted_out": opted_out,
+            "unverified_skipped": unverified, "errors": errors}
 
 
 

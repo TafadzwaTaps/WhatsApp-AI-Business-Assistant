@@ -44,6 +44,13 @@ if SECRET_KEY in _WEAK_KEYS:
         "real SECRET_KEY in Render env vars. "
         "Generate: python -c \"import secrets; print(secrets.token_hex(32))\""
     )
+elif len(SECRET_KEY) < 32:
+    # Phase 4: WARNING ONLY. Replacing a short key would invalidate every existing session at the
+    # next deploy, so the key is kept; set a 32+ character value (python -c "import secrets;
+    # print(secrets.token_hex(32))") in Render at a time when a forced re-login is acceptable.
+    import logging as _kal2; _kal2.getLogger("wazibot.security").warning(
+        "SECRET_KEY is only %d characters; use at least 32 random characters. Rotating it logs "
+        "everyone out once, so schedule it.", len(SECRET_KEY))
 ALGORITHM   = "HS256"
 
 ACCESS_TOKEN_EXPIRE_MINUTES  = 60           # 60 minutes (was 8 h); the dashboard refreshes silently via the refresh token
@@ -391,3 +398,17 @@ def require_business(user: dict = Depends(get_current_user)):
                     user.get("role"), user.get("username"))
         raise HTTPException(status_code=403, detail="Business account required")
     return user
+
+
+def require_not_impersonated(user: dict = Depends(require_business)):
+    """Business login required AND not a support "view as business" token. Used on actions that
+    move or redirect money, delete the account, or change who receives payments: support may
+    look at a customer's dashboard but must not be able to do these as them."""
+    if user.get("impersonated_by"):
+        import logging as _al
+        _al.getLogger("wazibot.auth").warning(
+            "AUTH BLOCKED: impersonation token on a restricted action  admin=%s  business=%s",
+            user.get("impersonated_by"), user.get("business_id"))
+        raise HTTPException(status_code=403, detail="This action is not available while viewing as another business.")
+    return user
+

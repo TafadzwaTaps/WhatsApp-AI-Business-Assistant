@@ -28,7 +28,7 @@ Security:
     above are live now.
 """
 from fastapi import APIRouter, Request, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from routes._deps import log
 
 router = APIRouter()
@@ -43,9 +43,9 @@ class ValidateTokenRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    token:            str
-    new_password:     str
-    confirm_password: str
+    token:            str = Field(..., max_length=300)
+    new_password:     str = Field(..., max_length=128)      # Phase 4: same cap as change-password
+    confirm_password: str = Field(..., max_length=128)
 
 
 @router.post("/auth/forgot-password")
@@ -130,6 +130,8 @@ def reset_password(data: ResetPasswordRequest, request: Request):
         errors.append("a number")
     if errors:
         raise HTTPException(400, f"Password must contain {', '.join(errors)}")
+    if len(pw.encode("utf-8")) > 72:        # bcrypt would silently ignore everything past 72 bytes
+        raise HTTPException(400, "Password is too long (max 72 bytes in UTF-8; shorten it or use fewer non-ASCII characters)")
 
     from services.password_reset_service import complete_password_reset
     result = complete_password_reset(data.token, data.new_password)
