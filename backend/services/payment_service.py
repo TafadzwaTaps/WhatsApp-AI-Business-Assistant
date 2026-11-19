@@ -83,6 +83,61 @@ def _sym(order: dict) -> str:
     return (order.get("currency_symbol") or order.get("currency_sym") or "$").strip() or "$"
 
 
+# Currencies PayPal accepts for Orders v2 (PayPal developer docs). HUF, JPY and TWD have no decimals.
+_PAYPAL_CURRENCIES = {
+    "AUD", "BRL", "CAD", "CNY", "CZK", "DKK", "EUR", "HKD", "HUF", "ILS", "JPY", "MYR", "MXN",
+    "TWD", "NZD", "NOK", "PHP", "PLN", "GBP", "RUB", "SGD", "SEK", "CHF", "THB", "USD",
+}
+_PAYPAL_ZERO_DECIMAL = {"HUF", "JPY", "TWD"}
+_SYMBOL_TO_ISO = {"$": "USD", "€": "EUR", "£": "GBP", "zł": "PLN", "Kč": "CZK", "kr": "SEK", "CHF": "CHF"}
+
+
+class CurrencyLookupError(Exception):
+    """The business's currency could not be read (database error). Callers must NOT guess USD:
+    a guess would charge or validate in the wrong currency. They retry or use a safe fallback."""
+
+
+def order_currency_code(order: dict) -> str:
+    """ISO currency of an order: the order's own `currency`, else its business's currency, else
+    derived from the currency symbol, else USD (the platform default). Raises CurrencyLookupError
+    when the business lookup FAILS (never silently defaults to USD on an error)."""
+    c = str(order.get("currency") or "").strip().upper()
+    if len(c) == 3 and c.isalpha():
+        return c
+    bid = order.get("business_id")
+    if bid is not None:
+        try:
+            from core.db import supabase
+            res = supabase.table("businesses").select("currency").eq("id", bid).limit(1).execute()
+        except Exception as exc:
+            log.warning("order_currency_code: business lookup failed: %s", type(exc).__name__)
+            raise CurrencyLookupError(type(exc).__name__) from exc
+        c = str(((res.data or [{}])[0]).get("currency") or "").strip().upper()
+        if len(c) == 3 and c.isalpha():
+            return c
+    return _SYMBOL_TO_ISO.get(_sym(order), "USD")
+
+
+def paypal_charge_for(order: dict, total: float | None = None):
+    """(currency, value_string, value_float) PayPal must be asked to charge for this order, or
+    None when PayPal cannot charge the business's currency (the caller then falls back to
+    manual instructions instead of charging the wrong amount in the wrong currency)."""
+    cur = order_currency_code(order)
+    if cur not in _PAYPAL_CURRENCIES:
+        return None
+    amt = _total(order) if total is None else float(total)
+    if cur in _PAYPAL_ZERO_DECIMAL:
+        value = float(round(amt))
+        return cur, f"{int(value)}", value
+    value = round(amt, 2)
+    return cur, f"{value:.2f}", value
+
+
+def paypal_amount_matches(captured: float, expected: float) -> bool:
+    """A capture must equal what was requested (to the cent)."""
+    return abs(round(float(captured), 2) - round(float(expected), 2)) <= 0.01
+
+
 def _base(method: str, order: dict) -> dict:
     return {
         "method":          method,
@@ -251,6 +306,26 @@ def create_paypal_order(order: dict) -> dict:
     biz_name   = order.get("business_name", "WaziBot")
 
     try:
+        charge = paypal_charge_for(order, total)
+    except CurrencyLookupError:
+        # The business currency could not be read: never guess. Manual instructions are safe.
+        fallback = generate_paypal_email_instructions(order)
+        fallback["fallback_reason"] = "currency_lookup_failed"
+        fallback["auto_verified"]   = False
+        return fallback
+    if charge is None:
+        # PayPal cannot charge this business's currency. Never ask it for the number in USD
+        # instead (that would charge the wrong amount): give the manual instructions. The
+        # reason is NOT stored under "error": the instructions are valid, so the order must
+        # stay "awaiting payment" rather than be recorded as a payment error.
+        log.warning("create_paypal_order: business currency not supported by PayPal - manual instructions")
+        fallback = generate_paypal_email_instructions(order)
+        fallback["fallback_reason"] = "currency_not_supported_by_paypal"
+        fallback["auto_verified"]   = False
+        return fallback
+    pp_currency, pp_value, _ = charge
+
+    try:
         token = _paypal_token()
 
         payload = {
@@ -260,8 +335,8 @@ def create_paypal_order(order: dict) -> dict:
                 "description":  f"WaziBot {ref}",
                 "custom_id":    str(order.get("id", "")),   # internal order ID for webhook lookup
                 "amount": {
-                    "currency_code": "USD",
-                    "value":         f"{total:.2f}",
+                    "currency_code": pp_currency,
+                    "value":         pp_value,
                 },
             }],
             "application_context": {
@@ -345,13 +420,17 @@ def capture_paypal_order(paypal_order_id: str) -> dict:
         resp.raise_for_status()
         data   = resp.json()
         status = data.get("status", "")
-        paid   = (status == "COMPLETED")
 
         pu       = (data.get("purchase_units") or [{}])[0]
         ref      = pu.get("reference_id", "")           # our ORDER-{id}
         custom   = pu.get("custom_id", "")              # our internal order id
         captures = pu.get("payments", {}).get("captures", [{}])
         capture  = captures[0] if captures else {}
+        # The order can be COMPLETED while its CAPTURE is still PENDING (e.g. funds under review):
+        # only a COMPLETED capture is money we have. A pending one is reported, not treated as paid.
+        capture_status = str(capture.get("status", "") or "")
+        paid    = (status == "COMPLETED" and capture_status == "COMPLETED")
+        pending = (status == "COMPLETED" and capture_status != "COMPLETED")
         amount   = float(capture.get("amount", {}).get("value", 0))
         currency = capture.get("amount", {}).get("currency_code", "USD")
 
@@ -365,6 +444,8 @@ def capture_paypal_order(paypal_order_id: str) -> dict:
             "amount":            amount,
             "currency":          currency,
             "status":            status,
+            "capture_status":    capture_status,
+            "pending":           pending,
             "error":             "",
         }
     except Exception as exc:
@@ -373,6 +454,42 @@ def capture_paypal_order(paypal_order_id: str) -> dict:
             "paid": False, "reference": "", "internal_order_id": None,
             "amount": 0, "currency": "USD", "error": str(exc), "status": "error",
         }
+
+
+def paypal_order_preview(paypal_order_id: str) -> dict:
+    """READ-ONLY look at a PayPal order BEFORE anything is captured: what PayPal will charge
+    (purchase-unit amount + currency), which of OUR orders it belongs to (custom_id) and its
+    status. Used to validate first and move money only if everything matches.
+    Returns { status, amount, currency, reference, internal_order_id, captured_amount,
+              captured_currency, error }."""
+    try:
+        token = _paypal_token()
+        resp = http.get(
+            f"{_paypal_base()}/v2/checkout/orders/{paypal_order_id}",
+            headers={"Authorization": f"Bearer {token}"}, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        pu = (data.get("purchase_units") or [{}])[0]
+        amt = pu.get("amount") or {}
+        custom = str(pu.get("custom_id", "") or "")
+        caps = (pu.get("payments") or {}).get("captures") or []
+        cap = caps[0] if caps else {}
+        return {
+            "status":            data.get("status", ""),
+            "amount":            float(amt.get("value", 0) or 0),
+            "currency":          str(amt.get("currency_code", "") or "").upper(),
+            "reference":         pu.get("reference_id", ""),
+            "internal_order_id": int(custom) if custom.isdigit() else None,
+            "captured_status":   str(cap.get("status", "") or "") if cap else "",
+            "captured_amount":   float((cap.get("amount") or {}).get("value", 0) or 0) if cap else 0.0,
+            "captured_currency": str((cap.get("amount") or {}).get("currency_code", "") or "").upper() if cap else "",
+            "error":             "",
+        }
+    except Exception as exc:
+        log.error("paypal_order_preview error: %s", type(exc).__name__)
+        return {"status": "unknown", "amount": 0.0, "currency": "", "reference": "",
+                "internal_order_id": None, "captured_status": "", "captured_amount": 0.0,
+                "captured_currency": "", "error": type(exc).__name__}
 
 
 def get_paypal_order_details(paypal_order_id: str) -> dict:

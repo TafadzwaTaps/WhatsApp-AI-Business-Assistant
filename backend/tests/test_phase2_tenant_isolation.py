@@ -27,15 +27,29 @@ class _Q:
     def gt(self, c, v): self.preds.append(lambda r: (r.get(c) or 0) > v); return self
     def in_(self, c, vs): vs = set(vs); self.preds.append(lambda r: r.get(c) in vs); return self
     def or_(self, expr):
-        # supports "col.is.null,col.neq.val"
-        parts = [p.split(".", 2) for p in expr.split(",")]
+        # supports "col.is.null,col.neq.val" and the nested form
+        # "col.is.null,and(col.neq.a,col.neq.b)" (PostgREST syntax)
+        def split_top(s):
+            out, depth, cur = [], 0, ""
+            for ch in s:
+                if ch == "(": depth += 1
+                if ch == ")": depth -= 1
+                if ch == "," and depth == 0:
+                    out.append(cur); cur = ""
+                else:
+                    cur += ch
+            out.append(cur)
+            return out
 
-        def ok(r):
-            for col, op, val in parts:
-                if op == "is" and val == "null" and r.get(col) is None: return True
-                if op == "neq" and r.get(col) is not None and str(r.get(col)) != val: return True
+        def term(r, p):
+            if p.startswith("and(") and p.endswith(")"):
+                return all(term(r, q) for q in split_top(p[4:-1]))
+            col, op, val = p.split(".", 2)
+            if op == "is" and val == "null": return r.get(col) is None
+            if op == "neq": return r.get(col) is not None and str(r.get(col)) != val
             return False
-        self.preds.append(ok); return self
+        parts = split_top(expr)
+        self.preds.append(lambda r: any(term(r, p) for p in parts)); return self
     def order(self, c, desc=False): self._order = (c, desc); return self
     def limit(self, n): self._limit = n; return self
     def range(self, a, b): self._limit = b + 1; return self
@@ -158,3 +172,11 @@ def test_claim_order_paid_database_error_is_not_reported_as_already_paid(db, mon
 def test_claim_order_paid_handles_null_status(db):
     db.t["orders"].append({"id": 300, "business_id": A, "payment_status": None})
     assert orders_mod.claim_order_paid(300, A, {}) is True
+
+
+def test_claim_order_paid_never_flips_a_refunded_order_back_to_paid(db):
+    db.t["orders"].append({"id": 400, "business_id": A, "payment_status": "refunded"})
+    assert orders_mod.claim_order_paid(400, A, {"payment_reference": "X"}) is False
+    assert next(o for o in db.t["orders"] if o["id"] == 400)["payment_status"] == "refunded"
+    db.t["orders"].append({"id": 401, "business_id": A, "payment_status": "pending"})
+    assert orders_mod.claim_order_paid(401, A, {}) is True            # normal orders still claim

@@ -139,6 +139,17 @@ def test_paypal_webhook_rejects_bad_signature_when_configured(app_client, monkey
 
 # ── 4. PayPal success URL ───────────────────────────────────────────────────
 
+def _fake_paypal(monkeypatch, cap):
+    """Fake BOTH PayPal calls the return page makes: the read-only preview (validated first) and the
+    capture. `cap` describes what the payment looks like."""
+    import services.payment_service as ps
+    monkeypatch.setattr(ps, "capture_paypal_order", lambda t: dict(cap))
+    monkeypatch.setattr(ps, "paypal_order_preview", lambda t: {
+        "status": "APPROVED", "amount": cap.get("amount", 0), "currency": cap.get("currency", ""),
+        "reference": cap.get("reference", ""), "internal_order_id": cap.get("internal_order_id"),
+        "captured_amount": 0.0, "captured_currency": "", "error": ""})
+
+
 def _run(coro):
     return asyncio.new_event_loop().run_until_complete(coro)
 
@@ -147,8 +158,8 @@ def test_paypal_success_ignores_client_reference_for_order_lookup(monkeypatch):
     import routes.chat_routes as cr
     import services.payment_service as ps
     import workflows.order_lifecycle as ol
-    monkeypatch.setattr(ps, "capture_paypal_order", lambda t: {
-        "paid": True, "reference": "", "internal_order_id": None, "amount": 1.0})
+    _fake_paypal(monkeypatch, {
+        "paid": True, "reference": "", "internal_order_id": None, "amount": 1.0, "currency": "USD"})
     looked_up = []
     monkeypatch.setattr(ol, "get_order", lambda oid: looked_up.append(oid) or {"id": oid, "business_id": 1, "total_price": 50})
     updated = []
@@ -161,8 +172,8 @@ def test_paypal_success_rejects_amount_mismatch(monkeypatch):
     import routes.chat_routes as cr
     import services.payment_service as ps
     import workflows.order_lifecycle as ol
-    monkeypatch.setattr(ps, "capture_paypal_order", lambda t: {
-        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 1.0})
+    _fake_paypal(monkeypatch, {
+        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 1.0, "currency": "USD"})
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1, "total_price": 50.0, "payment_status": "pending"})
     updated = []
     monkeypatch.setattr(cr.crud, "update_order_payment", lambda *a, **k: updated.append(a))
@@ -174,8 +185,8 @@ def test_paypal_success_marks_paid_when_amount_matches(monkeypatch):
     import routes.chat_routes as cr
     import services.payment_service as ps
     import workflows.order_lifecycle as ol
-    monkeypatch.setattr(ps, "capture_paypal_order", lambda t: {
-        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 50.0})
+    _fake_paypal(monkeypatch, {
+        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 50.0, "currency": "USD"})
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1, "total_price": 50.0, "payment_status": "pending"})
     updated = []
     monkeypatch.setattr(cr.crud, "claim_order_paid", lambda *a, **k: (updated.append(a), True)[1])
@@ -191,8 +202,8 @@ def test_paypal_success_duplicate_return_does_not_notify_twice(monkeypatch):
     import routes.chat_routes as cr
     import services.payment_service as ps
     import workflows.order_lifecycle as ol
-    monkeypatch.setattr(ps, "capture_paypal_order", lambda t: {
-        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 50.0})
+    _fake_paypal(monkeypatch, {
+        "paid": True, "reference": "ORDER-9", "internal_order_id": 9, "amount": 50.0, "currency": "USD"})
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1, "total_price": 50.0, "payment_status": "pending"})
     monkeypatch.setattr(cr.crud, "claim_order_paid", lambda *a, **k: False)   # another request already won
     notified = []

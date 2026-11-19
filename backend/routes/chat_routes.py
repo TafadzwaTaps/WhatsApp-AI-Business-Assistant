@@ -574,55 +574,138 @@ async def _notify_customer_payment(order: dict, message: str) -> None:
         log.error("_notify_customer_payment error: %s", exc)
 
 
+_PP_RETURN_HITS: dict = {}
+_PP_RETURN_LIMIT = 20          # per client address per minute: this unauthenticated GET captures money
+
+
+def _paypal_return_rate_ok(request) -> bool:
+    import time as _t
+    if request is None:                              # direct call without an HTTP request (tests)
+        return True
+    # Render appends the real client address as the LAST entry; earlier entries are client-supplied.
+    fwd = (request.headers.get("x-forwarded-for", "") or "").split(",")[-1].strip()
+    ip = fwd or (request.client.host if getattr(request, "client", None) else "?")
+    now = _t.monotonic()
+    hits = [t for t in _PP_RETURN_HITS.get(ip, []) if now - t < 60.0]
+    if len(hits) >= _PP_RETURN_LIMIT:
+        _PP_RETURN_HITS[ip] = hits
+        return False
+    hits.append(now)
+    _PP_RETURN_HITS[ip] = hits
+    if len(_PP_RETURN_HITS) > 5000:                 # bound memory
+        for k in [k for k, v in _PP_RETURN_HITS.items() if not v or now - v[-1] > 60.0]:
+            _PP_RETURN_HITS.pop(k, None)
+    return True
+
+
 @router.get("/payments/paypal/success")
 async def paypal_success(
     request: Request, token: str = "", PayerID: str = "", reference: str = "",
 ):
-    from services.payment_service import capture_paypal_order
+    from services.payment_service import (
+        capture_paypal_order, paypal_order_preview, paypal_charge_for, order_currency_code,
+        paypal_amount_matches, CurrencyLookupError)
     from workflows.order_lifecycle import get_order
-    log.info("paypal_success  token=%s  reference=%s  PayerID=%s", token, reference, PayerID)
+    # The PayPal token and PayerID identify a payment: never log them in full.
+    log.info("paypal_success  token=***%s  has_reference=%s", (token or "")[-4:], bool(reference))
     if not token: return {"status": "error", "detail": "Missing PayPal token"}
+    if not _paypal_return_rate_ok(request):
+        return {"status": "error", "detail": "Too many requests. Please wait a minute and try again."}
+    _retry = {"status": "error", "detail": "We could not confirm the payment right now. Please try again in a minute."}
     try:
-        capture = capture_paypal_order(token)
-        if not capture["paid"]:
-            return {"status": "capture_failed", "detail": capture.get("error"),
-                    "message": "Payment not completed. Please try again."}
-        # The order is identified ONLY from PayPal's own capture data - the
-        # `reference` query parameter is attacker-controllable and must never pick
-        # which order gets marked paid.
-        capture_ref = capture.get("reference", "")
-        ref = capture_ref or reference
-        internal_id = capture.get("internal_order_id")
-        order = None
-        if internal_id: order = get_order(internal_id)
-        elif capture_ref.startswith("ORDER-"):
-            try: order = get_order(int(capture_ref.split("-")[1]))
-            except (ValueError, IndexError): pass
+        # 1) Our own record of this PayPal order (a database error must stop us BEFORE any money moves).
+        try:
+            known = crud.get_order_by_paypal_id(token)
+        except Exception as _exc:
+            log.warning("paypal_success: stored-id lookup failed: %s", type(_exc).__name__)
+            return _retry
+        if known and known.get("payment_status") == "paid":
+            return {"status": "ok", "paid": True,
+                    "reference": known.get("payment_reference") or f"ORDER-{known['id']}",
+                    "message": "Already confirmed."}
+
+        # 2) Look at PayPal's order WITHOUT capturing: what it will charge and which order it is for.
+        preview = paypal_order_preview(token)
+        if preview.get("error"):
+            return _retry
+        # The order is identified ONLY from our stored record or PayPal's own data (custom_id /
+        # reference_id) - the `reference` query parameter is attacker-controllable and must never
+        # pick which order gets marked paid.
+        order = known
+        if order is None:
+            pp_ref = preview.get("reference", "") or ""
+            if preview.get("internal_order_id"):
+                order = get_order(preview["internal_order_id"])
+            elif pp_ref.startswith("ORDER-"):
+                try: order = get_order(int(pp_ref.split("-")[1]))
+                except (ValueError, IndexError): order = None
         if not order: return {"status": "error", "detail": "Order not found"}
         order_id = order["id"]
         biz_id   = order["business_id"]
-        ref      = ref or f"ORDER-{order_id}"
+        ref      = preview.get("reference") or reference or f"ORDER-{order_id}"
         if order.get("payment_status") == "paid":
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
-        # Same amount check the webhook path already enforces: a capture for a
-        # different (smaller) amount must not mark this order paid.
-        order_total = round(float(order.get("total_price") or 0), 2)
-        if order_total > 0 and abs(round(float(capture.get("amount") or 0), 2) - order_total) > 0.10:
-            log.warning("paypal_success: amount mismatch order=%s expected=%.2f got=%.2f",
-                        order_id, order_total, float(capture.get("amount") or 0))
-            return {"status": "error", "detail": "Payment amount does not match the order total."}
+        if order.get("payment_status") == "refunded":
+            return {"status": "error", "detail": "This order was refunded and can no longer be paid."}
+
+        # 3) VALIDATE BEFORE CAPTURING: the PayPal order must belong to this order, in the currency
+        #    and for the amount we asked for. Nothing has been charged yet, so a failure here costs
+        #    the customer nothing.
+        _stored = (order.get("paypal_order_id") or "").strip()
+        if (known and preview.get("internal_order_id") not in (None, order_id)) or (_stored and _stored != token):
+            log.error("paypal_success: PayPal order does not belong to order %s - NOT captured", order_id)
+            return {"status": "error", "detail": "This payment does not match the order. Please contact the business."}
+        try:
+            _expected_cur = order_currency_code(order)
+        except CurrencyLookupError:
+            return _retry                                    # could not read the currency: never guess
+        _charge = paypal_charge_for(order)
+        if str(preview.get("currency") or "").upper() != _expected_cur or \
+                _charge is None or _charge[2] <= 0 or not paypal_amount_matches(preview.get("amount") or 0, _charge[2]):
+            log.error("paypal_success: PayPal order %s does not match order %s (expected %s %s, PayPal %s %s) - NOT captured",
+                      "***" + token[-4:], order_id, _expected_cur, _charge and _charge[2],
+                      preview.get("currency"), preview.get("amount"))
+            return {"status": "error", "detail": "Payment amount or currency does not match the order. Please contact the business."}
+
+        # 4) Capture only an APPROVED order (a COMPLETED one was already captured, e.g. by the webhook).
+        _pending = {"status": "pending",
+                    "message": "Your payment is still being processed by PayPal. We will confirm your order "
+                               "automatically as soon as it clears."}
+        status = preview.get("status")
+        if status == "COMPLETED":
+            # Already captured (e.g. by the webhook): trust only what was ACTUALLY captured, and only
+            # a capture that is itself COMPLETED (an order can be COMPLETED with a pending capture).
+            if preview.get("captured_status") != "COMPLETED":
+                return _pending
+            capture = {"paid": True, "amount": preview.get("captured_amount"),
+                       "currency": preview.get("captured_currency")}
+        elif status == "APPROVED":
+            capture = capture_paypal_order(token)
+            if capture.get("pending"):
+                return _pending
+            if not capture.get("paid"):
+                return {"status": "capture_failed", "detail": capture.get("error"),
+                        "message": "Payment not completed. Please try again."}
+        else:
+            return {"status": "error", "detail": "The PayPal payment has not been approved yet."}
+        # Defence in depth: what was actually captured must equal what we validated.
+        if str(capture.get("currency") or "").upper() != _expected_cur or \
+                not paypal_amount_matches(capture.get("amount") or 0, _charge[2]):
+            log.error("paypal_success: captured amount differs from the validated order %s: MANUAL REVIEW NEEDED", order_id)
+            return {"status": "error", "detail": "Payment received but needs manual confirmation. Please contact the business."}
+
         # A database error propagates to the handler below (generic "contact the business"
         # reply) instead of being reported as "already confirmed".
         if not crud.claim_order_paid(order_id, biz_id, {"payment_reference": ref, "paypal_order_id": token}):
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
         await _notify_customer_payment(order,
             f"✅ *PayPal Payment Confirmed!*\n\nThank you! Payment for *{ref}* is complete.\n\n"
-            f"💰 Amount: ${capture['amount']:.2f} USD\n📦 Your order is being prepared. 🙏"
+            f"💰 Amount: {capture.get('currency', '')} {float(capture['amount']):.2f}\n📦 Your order is being prepared. 🙏"
         )
         return {"status": "ok", "paid": True, "reference": ref,
                 "amount": capture["amount"], "message": "Payment confirmed!"}
     except Exception as exc:
-        log.exception("paypal_success error: %s", exc)
+        log.exception("paypal_success error: %s", type(exc).__name__)
         return {"status": "error", "detail": "Could not confirm the payment. Please contact the business."}
 
 
@@ -677,8 +760,7 @@ async def paypal_webhook(request: Request):
 
             amount_obj    = resource.get("amount", {})
             paid_amount   = float(amount_obj.get("value", 0))
-            paid_currency = amount_obj.get("currency_code", "USD").upper()
-            if paid_currency != "USD": return {"status": "error", "detail": f"Unexpected currency: {paid_currency}"}
+            paid_currency = str(amount_obj.get("currency_code", "") or "").upper()
 
             order = crud.get_order_by_paypal_id(paypal_order_id)
             if not order:
@@ -692,14 +774,44 @@ async def paypal_webhook(request: Request):
 
             if order.get("payment_status") == "paid": return {"status": "ok", "detail": "already_paid"}
 
-            order_total = round(float(order.get("total_price") or 0), 2)
-            if abs(round(paid_amount, 2) - order_total) > 0.10:
-                raise HTTPException(400, f"Amount mismatch: expected ${order_total:.2f}, received ${paid_amount:.2f}")
+            # The event's PayPal order must be the one stored for this order (an order found only
+            # through custom_id must not be settled by a different PayPal order).
+            _stored_pp = (order.get("paypal_order_id") or "").strip()
+            if _stored_pp and _stored_pp != paypal_order_id:
+                log.error("paypal_webhook: PayPal order does not belong to order %s", order_id)
+                return {"status": "error", "detail": "PayPal order does not match this order"}
+            # Currency and amount must equal what we asked PayPal to charge (not assumed USD).
+            from services.payment_service import (
+                paypal_charge_for, order_currency_code, paypal_amount_matches)
+            from services.payment_service import CurrencyLookupError
+            try:
+                _expected_cur = order_currency_code(order)
+            except CurrencyLookupError:
+                raise HTTPException(503, "Temporary error - please retry")      # never guess the currency
+            if paid_currency != _expected_cur:
+                log.error("paypal_webhook: currency mismatch order=%s expected=%s got=%s",
+                          order_id, _expected_cur, paid_currency)
+                return {"status": "error", "detail": f"Unexpected currency: {paid_currency}"}
+            _charge = paypal_charge_for(order)
+            if _charge is not None and (_charge[2] <= 0 or not paypal_amount_matches(paid_amount, _charge[2])):
+                raise HTTPException(400, f"Amount mismatch: expected {_charge[0]} {_charge[2]}, received {paid_currency} {paid_amount:.2f}")
+
+            # Once per PayPal event id (audit + replay guard; claim_order_paid below is the money guard).
+            _event_id = str(event.get("id") or "")
+            _ev_claimed = False
+            if _event_id:
+                from crud.notification_ledger import claim as _claim_once
+                if not _claim_once(biz_id, "paypal_event", _event_id, table_only=True):
+                    return {"status": "ok", "detail": "duplicate_event"}
+                _ev_claimed = True
 
             try:
                 _claimed = crud.claim_order_paid(order_id, biz_id, {"payment_reference": ref, "paypal_order_id": paypal_order_id})
             except Exception:
-                # Retryable: a non-2xx makes PayPal re-deliver the event.
+                # Retryable: a non-2xx makes PayPal re-deliver the event (so give the event claim back).
+                if _ev_claimed:
+                    from crud.notification_ledger import release as _release_once
+                    _release_once(biz_id, "paypal_event", _event_id)
                 raise HTTPException(503, "Temporary error - please retry")
             if not _claimed:
                 return {"status": "ok", "detail": "already_paid"}
@@ -714,7 +826,7 @@ async def paypal_webhook(request: Request):
                 except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
             await _notify_customer_payment(order,
-                f"✅ *Payment Received!*\n\nYour PayPal payment of *${paid_amount:.2f} USD* has been confirmed.\n\n"
+                f"✅ *Payment Received!*\n\nYour PayPal payment of *{paid_currency} {paid_amount:.2f}* has been confirmed.\n\n"
                 f"📦 Order : *{ref}*\n📍 Status: *CONFIRMED*\n\nWe're preparing your order! 🙌\n\n_Thank you!_ 🙏"
             )
             return {"status": "ok", "order_id": order_id, "paid": True}
@@ -728,6 +840,12 @@ async def paypal_webhook(request: Request):
             resource  = event.get("resource", {})
             custom_id = resource.get("custom_id", "")
             order     = get_order(int(custom_id)) if custom_id.isdigit() else None
+            if order and order.get("payment_status") in ("paid", "refunded"):
+                # A denied capture can never undo a payment we confirmed (only COMPLETED captures
+                # are ever marked paid) and must not overwrite a refund: log and leave it.
+                log.warning("paypal_webhook: DENIED event for order %s already %s - ignored",
+                            order["id"], order.get("payment_status"))
+                order = None
             if order:
                 crud.update_order_payment(order["id"], order["business_id"], {"payment_status": "payment_failed"})
                 await _notify_customer_payment(order,
@@ -735,6 +853,74 @@ async def paypal_webhook(request: Request):
                 )
         except Exception as exc: log.error("paypal_webhook DENIED handler error: %s", exc)
         return {"status": "ok"}
+
+    elif event_type in ("PAYMENT.CAPTURE.REFUNDED", "PAYMENT.CAPTURE.REVERSED"):
+        # The owner refunded in PayPal (or PayPal reversed the payment): the order must stop
+        # looking paid. Stock is NOT restored automatically (the owner decides whether goods came
+        # back, same rule as refunds in the dashboard). Partial refunds leave the order as it is.
+        _ev_claimed, _event_id, biz_id = False, str(event.get("id") or ""), None
+        try:
+            resource = event.get("resource", {})
+            related  = (resource.get("supplementary_data", {}) or {}).get("related_ids", {}) or {}
+            pp_id    = related.get("order_id", "")
+            if not pp_id:
+                for link in resource.get("links", []) or []:
+                    href = str(link.get("href", ""))
+                    if "/v2/checkout/orders/" in href:          # only a real PayPal order link
+                        pp_id = href.rstrip("/").split("/")[-1]
+                        break
+            order = crud.get_order_by_paypal_id(pp_id) if pp_id else None
+            custom_id = str(resource.get("custom_id", "") or "")
+            if not order and custom_id.isdigit():
+                order = get_order(int(custom_id))
+            if not order:
+                return {"status": "ok", "detail": "order_not_found"}
+            order_id, biz_id = order["id"], order["business_id"]
+            # Same binding as a payment event: the PayPal order must be the one stored on the order.
+            _stored_pp = (order.get("paypal_order_id") or "").strip()
+            if _stored_pp and pp_id and _stored_pp != pp_id:
+                log.error("paypal_webhook: refund event does not belong to order %s", order_id)
+                return {"status": "error", "detail": "PayPal order does not match this order"}
+            if order.get("payment_status") == "refunded":
+                return {"status": "ok", "detail": "already_refunded"}
+            if order.get("payment_status") != "paid":
+                # A refund of something this system never recorded as paid changes nothing.
+                log.warning("paypal_webhook: refund event for order %s with payment_status=%s ignored",
+                            order_id, order.get("payment_status"))
+                return {"status": "ok", "detail": "order_not_paid"}
+            from services.payment_service import paypal_charge_for, paypal_amount_matches
+            _charge = paypal_charge_for(order)
+            _amt = float((resource.get("amount") or {}).get("value", 0) or 0)
+            if _charge is None or _amt <= 0:
+                log.warning("paypal_webhook: refund event for order %s has no usable amount - ignored", order_id)
+                return {"status": "ok", "detail": "refund_amount_unusable"}
+            if _amt < _charge[2] and not paypal_amount_matches(_amt, _charge[2]):
+                log.warning("paypal_webhook: PARTIAL refund order=%s refunded=%s of %s - order left as is",
+                            order_id, _amt, _charge[2])
+                return {"status": "ok", "detail": "partial_refund_logged"}
+            # Once per event, but only AFTER the cheap checks, and given back if the update fails
+            # so PayPal's redelivery can finish the job instead of being dropped as a duplicate.
+            if _event_id:
+                from crud.notification_ledger import claim as _claim_once
+                if not _claim_once(biz_id, "paypal_event", _event_id, table_only=True):
+                    return {"status": "ok", "detail": "duplicate_event"}
+                _ev_claimed = True
+            if crud.update_order_payment(order_id, biz_id, {"payment_status": "refunded"}) is None:
+                # update_order_payment logs and returns None on a database error: that is a FAILURE here
+                # (release the event claim and answer 503 so PayPal redelivers), never a success.
+                raise RuntimeError("could not record the refund")
+            try:
+                update_order_status_supabase(order_id, "refunded", business_id=biz_id)
+            except Exception as _exc:          # a status that cannot move to refunded stays as it is
+                log.warning("paypal_webhook: order %s status left unchanged on refund: %s", order_id, _exc)
+            log.warning("paypal_webhook: order %s marked REFUNDED from PayPal (%s)", order_id, event_type)
+            return {"status": "ok", "order_id": order_id, "refunded": True}
+        except Exception as exc:
+            log.exception("paypal_webhook REFUNDED handler error: %s", type(exc).__name__)
+            if _ev_claimed:
+                from crud.notification_ledger import release as _release_once
+                _release_once(biz_id, "paypal_event", _event_id)
+            raise HTTPException(503, "Temporary error - please retry")
 
     return {"status": "ok", "detail": f"event {event_type} not handled"}
 

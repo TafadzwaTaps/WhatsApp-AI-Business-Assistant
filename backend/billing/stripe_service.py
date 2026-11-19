@@ -1579,6 +1579,11 @@ def _send_lifecycle_emails(res: dict, *, activated_hint: bool = False) -> None:
         log.debug("lifecycle email skipped  business=%s  err=%s", bid, type(exc).__name__)
 
 
+class _FulfilmentRetry(Exception):
+    """A transient failure while fulfilling a PAID storefront checkout: the webhook must fail
+    (500) so Stripe redelivers the event and the order is created exactly once."""
+
+
 def _on_product_purchase_completed(obj: dict) -> None:
     """
     Handles a completed storefront product/service purchase (the "Pay"
@@ -1600,6 +1605,27 @@ def _on_product_purchase_completed(obj: dict) -> None:
         return
 
     session_id = obj.get("id", "")
+
+    # Only a PAID session is fulfilled. A delayed payment method (bank debit etc.) reports
+    # checkout.session.completed with payment_status "unpaid": fulfilling it then would hand
+    # out an order for money that has not arrived (and may never). Fulfilment happens on
+    # checkout.session.async_payment_succeeded, where payment_status is "paid".
+    if (obj.get("payment_status") or "") not in ("paid", "no_payment_required"):
+        log.info("product purchase webhook: session %s not paid yet (payment_status=%s) - waiting for "
+                 "async_payment_succeeded", session_id, obj.get("payment_status"))
+        return
+
+    # Once per checkout SESSION, whatever event id delivers it: the same session can arrive as
+    # checkout.session.completed AND async_payment_succeeded (different event ids), and the
+    # event ledger alone cannot tell they are one purchase.
+    _claimed_session = False
+    if session_id:
+        from crud.notification_ledger import claim as _claim_once
+        if not _claim_once(bid, "stripe_checkout_fulfilled", session_id, table_only=True):
+            log.info("product purchase webhook: session %s already fulfilled - skipped", session_id)
+            return
+        _claimed_session = True
+
     currency   = (obj.get("currency") or "usd").upper()
     total      = float(obj.get("amount_total") or 0) / (1 if currency in
                  {"BIF","CLP","DJF","GNF","JPY","KMF","KRW","MGA","PYG",
@@ -1644,6 +1670,12 @@ def _on_product_purchase_completed(obj: dict) -> None:
                 })
     except Exception as exc:
         log.warning("product purchase webhook: line item fetch failed: %s", exc)
+        # The customer has PAID: creating the order from a guessed single line would record the
+        # wrong goods and take no stock. Give the claim back and let Stripe redeliver.
+        if _claimed_session:
+            from crud.notification_ledger import release as _release_once
+            _release_once(bid, "stripe_checkout_fulfilled", session_id)
+            raise _FulfilmentRetry("line items unavailable") from exc
 
     log.info("PRODUCT PURCHASE COMPLETED  business=%s  total=%s %s  email=%s",
              bid, total, currency, cust_email or "—")
@@ -1668,19 +1700,37 @@ def _on_product_purchase_completed(obj: dict) -> None:
             cart = [{"name": i["name"], "qty": i["qty"], "price": i["price"]} for i in items] or [
                 {"name": f"Stripe purchase {session_id[-8:]}", "qty": 1, "price": total}
             ]
-            order = create_order_supabase(
-                business_id=bid, customer_phone=cust_phone, cart=cart, payment_method="stripe",
-            )
-            order["business_name"]   = biz_name
-            order["currency_symbol"] = currency_sym
             try:
-                from core.db import supabase as _sb2
-                _sb2.table("orders").update({"payment_status": "paid", "status": "confirmed"}) \
-                    .eq("id", order.get("id")).execute()
-            except Exception as _exc:
-                log.warning("could not mark order paid after checkout: %s", _exc)
-            from services._ai_payments import _send_pdf_invoice
-            _send_pdf_invoice(order, cust_phone, bid)
+                order = create_order_supabase(
+                    business_id=bid, customer_phone=cust_phone, cart=cart, payment_method="stripe",
+                )
+            except ValueError as exc:
+                # Permanent business-rule failure (e.g. the item sold out while the customer was
+                # paying): retrying cannot help. The customer HAS paid, so say so loudly; the
+                # business is still notified below and must handle it by hand.
+                log.error("PAID BUT NO ORDER CREATED  business=%s  session=%s  reason=%s",
+                          bid, session_id, exc)
+                order = None
+            except Exception as exc:
+                # Transient failure (database/network): give the claim back and fail the webhook so
+                # Stripe delivers it again and the order is created exactly once.
+                if _claimed_session:
+                    from crud.notification_ledger import release as _release_once
+                    _release_once(bid, "stripe_checkout_fulfilled", session_id)
+                raise _FulfilmentRetry(str(type(exc).__name__)) from exc
+            if order is not None:
+                order["business_name"]   = biz_name
+                order["currency_symbol"] = currency_sym
+                try:
+                    from core.db import supabase as _sb2
+                    _sb2.table("orders").update({"payment_status": "paid", "status": "confirmed"}) \
+                        .eq("id", order.get("id")).execute()
+                except Exception as _exc:
+                    log.warning("could not mark order paid after checkout: %s", _exc)
+                from services._ai_payments import _send_pdf_invoice
+                _send_pdf_invoice(order, cust_phone, bid)
+        except _FulfilmentRetry:
+            raise                                    # lets the webhook answer 500 so Stripe retries
         except Exception as exc:
             log.warning("product purchase webhook: order/WhatsApp receipt failed: %s", exc)
 

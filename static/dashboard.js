@@ -3125,9 +3125,19 @@ async function loadStripeSubscriptionStatus() {
     if (!s) return;
     const tier   = (s.tier || 'free').charAt(0).toUpperCase() + (s.tier || 'free').slice(1);
     const status = s.billing_status || 'active';
-    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252', canceled:'var(--text-dim)' };
+    // The backend stores "cancelled" (two l's); "canceled" is kept for older rows.
+    const statusColors = { active:'var(--green)', trialing:'var(--green)', past_due:'#ff5252',
+                           canceled:'var(--text-dim)', cancelled:'var(--text-dim)',
+                           unpaid:'#ff5252', paused:'var(--amber)' };
+    window._lastBillingStatus = s;                      // used by stripeCancel() for the end date
+    const endsAt = s.cancel_at_period_end ? _fmtBillingDate(s.access_ends_at || s.current_period_end) : '';
     if (planLabel) { planLabel.textContent = `${tier} Plan`; planLabel.style.color = statusColors[status] || 'var(--text)'; }
-    if (statusEl)  { statusEl.textContent  = status.charAt(0).toUpperCase()+status.slice(1).replace('_',' '); statusEl.style.color = statusColors[status] || 'var(--text-dim)'; }
+    if (statusEl)  {
+      let label = status.charAt(0).toUpperCase()+status.slice(1).replace('_',' ');
+      if (s.cancel_at_period_end) label += endsAt ? ` · cancels on ${endsAt}` : ' · cancellation scheduled';
+      statusEl.textContent = label;
+      statusEl.style.color = s.cancel_at_period_end ? 'var(--amber)' : (statusColors[status] || 'var(--text-dim)');
+    }
     if (trialEl) {
       if (status === 'trialing' && s.trial_ends_at) {
         const days = Math.max(0, Math.ceil((new Date(s.trial_ends_at) - Date.now()) / 86400000));
@@ -3137,12 +3147,34 @@ async function loadStripeSubscriptionStatus() {
           : `Trial ended. Upgrade from $5.99/month to restore full access.`;
       } else { trialEl.style.display = 'none'; }
     }
-    const canUpgrade   = s.tier === 'free' || status === 'trialing' || status === 'canceled';
-    const hasActiveSub = s.stripe_subscription_id && (status === 'active' || status === 'past_due');
+    const canUpgrade   = s.tier === 'free' || ['trialing', 'canceled', 'cancelled'].includes(status);
+    // unpaid / paused still have a subscription the owner must be able to fix in the billing portal.
+    const hasActiveSub = !!s.stripe_subscription_id && ['active', 'past_due', 'unpaid', 'paused'].includes(status);
+    const cancelling   = !!s.cancel_at_period_end && hasActiveSub;
     if (upgradeBtn) upgradeBtn.style.display = canUpgrade   ? 'inline-flex' : 'none';
     if (manageBtn)  manageBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
-    if (cancelBtn)  cancelBtn.style.display  = hasActiveSub ? 'inline-flex' : 'none';
+    // While a cancellation is scheduled the Cancel button would only repeat it: offer Resume instead.
+    if (cancelBtn)  cancelBtn.style.display  = (hasActiveSub && !cancelling) ? 'inline-flex' : 'none';
+    let resumeBtn = document.getElementById('stripe-resume-btn');
+    if (!resumeBtn && cancelBtn) {
+      resumeBtn = document.createElement('button');
+      resumeBtn.id = 'stripe-resume-btn';
+      resumeBtn.className = cancelBtn.className;
+      resumeBtn.textContent = 'Resume Plan';
+      resumeBtn.onclick = stripeResume;
+      cancelBtn.insertAdjacentElement('afterend', resumeBtn);
+    }
+    if (resumeBtn) resumeBtn.style.display = cancelling ? 'inline-flex' : 'none';
+    const actionEl = document.getElementById('stripe-action-status');
+    if (actionEl && s.status_message && !actionEl.textContent) actionEl.textContent = s.status_message;
   } catch(e) { /* subscription status unavailable */ }
+}
+
+// "5 January 2027" in the viewer's locale, or '' when the date is missing/invalid.
+function _fmtBillingDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
 }
 
 async function stripeConnect() {
@@ -3230,18 +3262,50 @@ async function stripeManage() {
 }
 
 async function stripeCancel() {
-  if (!confirm('Cancel your subscription? You keep access until the end of your billing period.')) return;
+  const known = _fmtBillingDate((window._lastBillingStatus || {}).current_period_end);
+  const until = known ? `until ${known}` : 'until the end of your current billing period';
+  if (!confirm(`Cancel your subscription? Your plan stays active ${until}, then it will not renew. You can resume before then.`)) return;
   const btn = document.getElementById('stripe-cancel-btn');
   const statusEl = document.getElementById('stripe-action-status');
+  const show = (text, color) => { if (statusEl) { statusEl.textContent = text; statusEl.style.color = color; } };
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
-    await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
-    if (statusEl) statusEl.innerHTML = '<span style="color:var(--green)">✅ Subscription cancelled — access continues until period end.</span>';
-    setTimeout(loadStripeBillingStatus, 1500);
+    const res = await apiFetch('/billing/cancel', { method: 'POST', body: JSON.stringify({ confirm: true }) });
+    if (!res || res.ok === false || res.error) {
+      // Not confirmed by the billing provider: never claim it was cancelled.
+      show('⚠️ ' + ((res && (res.message || res.error)) || 'Could not confirm the cancellation. Your plan was not changed.'), '#ff5252');
+    } else {
+      const end = _fmtBillingDate(res.access_until);
+      show('✅ ' + (res.message || (end ? `Cancellation scheduled — access continues until ${end}.`
+                                       : 'Cancellation scheduled — access continues until the end of the billing period.')), 'var(--green)');
+    }
+    await loadStripeSubscriptionStatus();               // the panel now reflects the real state
   } catch(e) {
-    if (statusEl) statusEl.innerHTML = `<span style="color:#ff5252">Failed: ${escHtml(e.message)}</span>`;
+    show('Failed: ' + e.message, '#ff5252');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Cancel Plan'; }
+  }
+}
+
+// Undo a scheduled cancellation (only valid before the period ends).
+async function stripeResume() {
+  const btn = document.getElementById('stripe-resume-btn');
+  const statusEl = document.getElementById('stripe-action-status');
+  const show = (text, color) => { if (statusEl) { statusEl.textContent = text; statusEl.style.color = color; } };
+  if (!confirm('Resume your subscription? It will renew as normal and the scheduled cancellation is removed.')) return;
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Resuming…'; }
+    const res = await apiFetch('/billing/resume', { method: 'POST' });
+    if (!res || res.ok === false || res.error) {
+      show('⚠️ ' + ((res && (res.message || res.error)) || 'Could not resume the subscription.'), '#ff5252');
+    } else {
+      show('✅ ' + (res.message || 'Your subscription will continue and renew as normal.'), 'var(--green)');
+    }
+    await loadStripeSubscriptionStatus();
+  } catch(e) {
+    show('Failed: ' + e.message, '#ff5252');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Resume Plan'; }
   }
 }
 
