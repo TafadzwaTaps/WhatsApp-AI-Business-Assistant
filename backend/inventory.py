@@ -138,15 +138,26 @@ def restore_stock(product_id: int, quantity: int) -> bool:
 
 
 def restock_product(product_id: int, quantity: int) -> dict:
-    """Add stock to a product."""
-    product = get_product(product_id)
-    if not product:
-        raise ValueError(f"Product id={product_id} not found")
-    new_stock = (product.get("stock") or 0) + quantity
-    supabase.table("products").update({"stock": new_stock}).eq("id", product_id).execute()
-    product["stock"] = new_stock
-    log.info("restock_product: id=%s +%d → %d", product_id, quantity, new_stock)
-    return product
+    """Add stock to a product (compare-and-set, so two concurrent restocks cannot lose a unit).
+    A product with no stock tracking (NULL = unlimited) is left unlimited rather than silently
+    turned into a finite count."""
+    for _ in range(5):
+        product = get_product(product_id)
+        if not product:
+            raise ValueError(f"Product id={product_id} not found")
+        current = product.get("stock")
+        if current is None:
+            log.info("restock_product: id=%s has no stock tracking - left unlimited", product_id)
+            return product
+        new_stock = current + quantity
+        q = supabase.table("products").update({"stock": new_stock}).eq("id", product_id).eq("stock", current)
+        if product.get("business_id") is not None:
+            q = q.eq("business_id", product["business_id"])
+        if q.execute().data:
+            product["stock"] = new_stock
+            log.info("restock_product: id=%s +%d → %d", product_id, quantity, new_stock)
+            return product
+    raise ValueError(f"Stock for product id={product_id} is changing too quickly - please try again")
 
 
 def check_stock(business_id: int, name: str, quantity: int) -> tuple[bool, int]:

@@ -269,3 +269,47 @@ Full suite: 1394 passed, 1 skipped (was 1339). New `tests/test_phase1b_webhook_r
 
 ### Rollback
 Revert the changed files; no schema or configuration changes.
+
+---
+
+## 2026-11-19 — Phase 1 addendum: duplicate campaigns and repeating trial emails (owner-approved exception)
+Approved by user ("fix both alongside Phase 1"). Uncommitted; nothing deployed or applied.
+
+### Changes
+- **Scheduled campaigns sent at most once** `routes/growth_routes.py`: each due campaign is claimed with a conditional `UPDATE pending → processing` (claim time in `sent_at`) BEFORE sending; only one caller can win. If the database rejects the `processing` value (a CHECK constraint), it falls back to claiming through `sent_at` while the status stays `pending`; any other claim failure means the campaign is NOT sent. A campaign still claimed after 60 minutes (the process died mid-send) is marked `failed` and never re-sent, so the owner can reschedule on purpose. The final status write only applies to claimed rows (it cannot overwrite `cancelled`). Cancel is now conditional (`pending`, unclaimed, own tenant) and answers 409 if the scheduler got there first. Run response gains `skipped_already_claimed` and `interrupted_marked_failed`.
+- **Immediate campaign double-click guard** `routes/business_routes.py campaign_send`: an identical campaign (business, audience, text, phone list) is refused with 409 for 60 s; a campaign that sent nothing or raised can be retried at once; dry runs are never blocked. In-process (single worker).
+- **Trial notifications once per business and trial period** `routes_saas/billing_routes.py` + new `crud/notification_ledger.py`: kinds `trial_warn_7/3/1` and `trial_expired`, period key = `trial_ends_at`. The claim is taken before sending and released if the send fails, so a failed send is retried and a delivered one is never repeated; a database error while claiming means no email. Marketing opt-outs are counted as `opted_out` (no claim, not an error); the expiry notice is unchanged. Response gains `already_sent` and `opted_out`.
+- **Storage for the ledger**: table `notification_log` with a UNIQUE key when it exists (`backend/migrations/notification_ledger.sql`, proposed, not applied); until then a marker in `businesses.features_json["_notif_sent"]` under a process lock (single worker only). Structured error codes decide "duplicate" and "missing table"; message text is only a last resort.
+- **Docs**: `SCALING_NOTES.md` (what relies on one worker), `phase2-inventory-restoration-plan.md` and `migrations/proposed_phase2_stock_restoration.sql` (plan and proposal only; SQL untested, hardened with REVOKE FROM PUBLIC, pinned search_path, sequence revokes).
+
+### Tests (actually run)
+Full suite: 1450 passed, 1 skipped (was 1395). New `tests/test_phase1c_job_idempotency.py` and `tests/test_phase1c_job_idempotency_extra.py` (55 tests): a process dying mid-send never causes a second send (verified to FAIL when the claim is neutered), overlapping claims have one winner, status-constraint fallback and its crash/sweep, sweep scope, cancel racing the claim, final write not overwriting `cancelled`, tenant independence, trial emails once per period (both ledger storages), failed/raising sends released and retried once, opt-out skip, Z/naive timestamp formats, concurrent claims, double-click guard cases.
+
+### Reviews
+- Security: no critical/high. Fixed: cancel race and final-write clobbering, stale fallback claims never swept, opt-out counted as failure, `PGRST204` misread as missing table, SQL hardening. Accepted: Medium-2 below; Low-1 below.
+- QA: weak/vacuous tests identified and replaced with real-error-shape, fallback-crash and sweep-scope tests.
+
+### Residual risks
+- **Fallback ledger (until `notification_log` exists):** it rewrites `businesses.features_json`; a dashboard settings save racing it could lose either the marker (one repeated email) or, in the worse direction, the other settings written between its read and write (small window, once per due business per run). Applying `notification_ledger.sql` and restarting removes this; the code does not re-probe until restart.
+- **Email timeout:** if the provider accepted a message but the HTTP call timed out, the claim is released and the next daily run re-sends (a duplicate trial reminder is accepted over a lost one).
+- **Campaign claim assumptions (UNVERIFIED live):** supabase-py returns the updated rows (the existing inventory compare-and-set relies on the same behaviour); `scheduled_campaigns.status` may or may not accept `processing` (the fallback covers both); `sent_at` must be a timestamp column.
+- A partially sent campaign that was interrupted is marked failed and is NOT resumed (no per-recipient record exists).
+- Monthly report and booking reminders still lack an atomic claim (not part of this exception).
+- Everything here assumes one worker (see `SCALING_NOTES.md`).
+
+### Rollback
+Revert the changed files; no schema or configuration was changed. Nothing in `migrations/` has been applied.
+
+---
+
+## 2026-11-19 — Phase 2: database integrity, tenant isolation, stock restoration
+Approved by user ("proceed to phase 2"). Uncommitted; nothing deployed; no migration applied. Full report: `PHASE_2_REPORT.md`.
+
+- **Stock restore** (`services/stock_restore.py`, `workflows/order_lifecycle.py`, admin/business routes): new orders record `product_id` + `stock_deducted` per item; cancelling restores exactly what was deducted, once (atomic conditional status update, per-item flag, unique ledger claim when `stock_movements` exists); refunds restock only on the owner's explicit `restock` / `restock_items`; services, unlimited-stock products and older orders never restored; repeated refund answers 409; failed restore reported, retried on a repeated cancel (ledger only), never blocks the cancel.
+- **Tenant isolation**: order status, payment-confirm, PayPal/payment-webhook, campaign final write and customer unread writes now carry the business id.
+- **Payments**: manual payment confirmation uses the atomic paid claim (no double notification, finishes an interrupted status change).
+- **Inventory**: `restock_product` compare-and-set, unlimited stays unlimited (both identical copies).
+- **Dashboard**: cancel shows the stock result; order drawer shows inventory status (plain text).
+- **Migrations (proposed only)**: `proposed_phase2_stock_restoration.sql`, `notification_ledger.sql` hardened (service_role grants, schema reload, FK/CHECK guidance).
+- **Tests**: 1500 passed, 1 skipped (was 1450); mutation-verified race tests. Reviews: security, QA and database engineer, no critical/high open.
+- **Open**: customer cancel during payment keeps the order pending with stock held; booking-linked cancel bypass; one-claim-per-product ledger limit; live database behaviour unverified.

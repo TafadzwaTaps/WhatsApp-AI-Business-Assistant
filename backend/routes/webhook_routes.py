@@ -1153,7 +1153,7 @@ async def payment_webhook(data: PaymentConfirmRequest, request: Request):
     if not _claimed:
         return {"success": True, "message": f"Order {order_id} already paid.", "order_id": order_id}
     try:
-        update_order_status_supabase(order_id, "paid")
+        update_order_status_supabase(order_id, "paid", business_id=biz_id)
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 

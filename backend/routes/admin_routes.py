@@ -11,7 +11,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Request, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import crud
 from core.auth import (
@@ -306,7 +306,7 @@ async def push_lifecycle_update(
         "preparing": "confirmed", "ready": "confirmed",
         "out_for_delivery": "confirmed", "delivered": "delivered", "completed": "delivered",
     }
-    try: update_order_status_supabase(order_id, status_map.get(new_status, "confirmed"))
+    try: update_order_status_supabase(order_id, status_map.get(new_status, "confirmed"), business_id=bid)
     except Exception as exc: log.warning("lifecycle: db update failed: %s", exc)
 
     ref      = f"ORDER-{order_id}"
@@ -348,8 +348,18 @@ async def push_lifecycle_update(
             "message_sent": customer_msg[:80] + "..." if len(customer_msg) > 80 else customer_msg}
 
 
+class RestockItem(BaseModel):
+    product_id: int
+    qty: int = Field(ge=1, le=100000)
+
+
 class OrderAdminAction(BaseModel):
     note: Optional[str] = None
+    # Refunds only. A refund NEVER puts stock back by itself: the owner says the goods were
+    # actually returned. restock=True returns every item that was deducted; restock_items
+    # returns only the listed products (partial return). Cancellations always restore.
+    restock: bool = False
+    restock_items: Optional[list[RestockItem]] = None
 
 
 async def _notify_customer_payment(order: dict, message: str) -> None:
@@ -387,7 +397,7 @@ async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depe
         raise HTTPException(404, f"Order {order_id} not found")
 
     crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
-    try: update_order_status_supabase(order_id, "confirmed")
+    try: update_order_status_supabase(order_id, "confirmed", business_id=bid)
     except Exception as exc: log.warning("approve_payment: status update failed: %s", exc)
 
     ref   = f"ORDER-{order_id}"
@@ -442,17 +452,23 @@ async def admin_cancel_order(order_id: int, data: OrderAdminAction, user=Depends
     order = get_order(order_id)
     if not order or order.get("business_id") != bid:
         raise HTTPException(404, f"Order {order_id} not found")
-    try: update_order_status_supabase(order_id, "cancelled")
+    try: _cancelled = update_order_status_supabase(order_id, "cancelled", business_id=bid)
     except Exception as exc:
         log.warning("admin_cancel_order: status update rejected order=%s: %s", order_id, exc)
         raise HTTPException(422, "Order cannot be cancelled from its current status")
+    if not (_cancelled or {}).get("_transitioned", True):
+        # Already cancelled (a repeat or a lost race): no second customer message. A stock
+        # restore retry may have run (reported below); the ledger keeps it once-only.
+        return {"ok": True, "order_id": order_id, "message": f"ORDER-{order_id} was already cancelled.",
+                "stock": (_cancelled or {}).get("_stock_restore")}
     crud.update_order_payment(order_id, bid, {"payment_status": "cancelled"})
     ref    = f"ORDER-{order_id}"
     reason = data.note or "Your order has been cancelled."
     await _notify_customer_payment(order,
         f"❌ *Order Cancelled*\n\n*{ref}* has been cancelled.\n\n_{reason}_\n\nType *menu* to place a new order. 😊"
     )
-    return {"ok": True, "order_id": order_id, "message": f"{ref} cancelled."}
+    return {"ok": True, "order_id": order_id, "message": f"{ref} cancelled.",
+            "stock": (_cancelled or {}).get("_stock_restore")}
 
 
 @router.post("/orders/{order_id}/refund")
@@ -461,18 +477,34 @@ async def admin_refund_order(order_id: int, data: OrderAdminAction, user=Depends
     order = get_order(order_id)
     if not order or order.get("business_id") != bid:
         raise HTTPException(404, f"Order {order_id} not found")
-    try: update_order_status_supabase(order_id, "refunded")
+    _prev_status = order.get("status")
+    if _prev_status == "refunded":
+        # A refund happens once. Repeating it must not notify the customer again or restock again.
+        raise HTTPException(409, "This order has already been refunded")
+    try: _refunded = update_order_status_supabase(order_id, "refunded", business_id=bid)
     except Exception as exc:
         log.warning("admin_refund_order: status update rejected order=%s: %s", order_id, exc)
         raise HTTPException(422, "Order cannot be refunded from its current status")
+    if not (_refunded or {}).get("_transitioned", True):
+        # Our earlier read was stale: another request refunded this order first. Do nothing more.
+        raise HTTPException(409, "This order has already been refunded")
     crud.update_order_payment(order_id, bid, {"payment_status": "refunded"})
+    # Stock goes back only if the owner explicitly said the goods were returned.
+    _stock = None
+    if data.restock or data.restock_items:
+        from services.stock_restore import restore_order_stock
+        _only = [{"product_id": i.product_id, "qty": i.qty} for i in data.restock_items] if data.restock_items else None
+        # A full restock after an order that was already cancelled was restored at cancellation.
+        _stock = restore_order_stock(
+            order, reason="refund", only=_only,
+            transition_won=(_only is None and _prev_status != "cancelled"))
     ref   = f"ORDER-{order_id}"
     note  = data.note or "Your refund has been processed."
     total = float(order.get("total_price") or 0)
     await _notify_customer_payment(order,
         f"💳 *Refund Processed*\n\n*{ref}* — {_order_currency_sym(order, bid)}{total:.2f}\n\n_{note}_\n\nPlease allow 3–5 business days. 🙏"
     )
-    return {"ok": True, "order_id": order_id, "message": f"{ref} marked refunded."}
+    return {"ok": True, "order_id": order_id, "message": f"{ref} marked refunded.", "stock": _stock}
 
 
 @router.get("/orders/{order_id}/status")
