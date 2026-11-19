@@ -109,7 +109,9 @@ INVOICES_DIR = os.path.join(_BASE, "invoices")
 os.makedirs(INVOICES_DIR, exist_ok=True)
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None)
+# Phase 4: /openapi.json stays off too (docs/redoc were already disabled); it listed every route.
+# app.openapi() still works in-process for tests.
+app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None, openapi_url=None)
 
 # ── CORS ──────────────────────────────────────────────────────────────────
 # Previously allow_origins=["*"] — unrestricted. Mobile apps (Flutter) are
@@ -163,7 +165,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "
+            "script-src 'self' 'unsafe-inline'; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com data:; "
             "img-src 'self' data: blob: https:; "

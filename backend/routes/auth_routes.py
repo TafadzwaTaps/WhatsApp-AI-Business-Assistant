@@ -257,6 +257,20 @@ class LoginRequest(BaseModel):
     password: str
 
 
+_DUMMY_HASH = None
+
+
+def _dummy_verify(password: str) -> None:
+    """Spend one bcrypt verification so an unknown username takes as long as a wrong password."""
+    global _DUMMY_HASH
+    try:
+        if _DUMMY_HASH is None:
+            _DUMMY_HASH = hash_password("wazibot-timing-equaliser")
+        verify_password(password, _DUMMY_HASH)
+    except Exception as exc:
+        log.debug("dummy verify skipped: %s", type(exc).__name__)
+
+
 @router.post("/auth/login")
 def login(data: LoginRequest, request: Request):
     _rate_check("login", request)
@@ -278,13 +292,15 @@ def login(data: LoginRequest, request: Request):
     # each IP+account pair looked fresh. Time-limited, not permanent —
     # a permanent account lock would let anyone lock a legitimate business
     # out of their own account just by failing a few login attempts.
-    if is_login_locked(ip, data.username):
-        log.warning("login_locked  ip_account=%s  username=%s", ip, data.username)
+    # Phase 4: normalise BEFORE the lockout checks. Failures are recorded under the normalised
+    # name, so checking the raw (padded / differently cased) value let an attacker dodge the
+    # per-account lockout by sending " victim" or "VICTIM".
+    username = data.username.strip().lower()
+    if is_login_locked(ip, username):
+        log.warning("login_locked  ip_account=%s  username=%s", ip, username)
         raise HTTPException(429, "Too many failed login attempts. Please try again in 5 minutes.")
     check_ip_login_limit(ip)
-    check_account_login_lockout(data.username)
-
-    username = data.username.strip().lower()
+    check_account_login_lockout(username)
 
     if username == SUPER_ADMIN_USERNAME.lower():
         if SUPER_ADMIN_LOGIN_DISABLED:
@@ -312,6 +328,8 @@ def login(data: LoginRequest, request: Request):
                     break
         except Exception as exc:
             log.warning("login: email lookup failed: %s", exc)
+    if not biz:
+        _dummy_verify(data.password)      # same bcrypt cost as a wrong password: no timing oracle
     if not biz or not verify_password(data.password, biz["owner_password"]):
         record_failed_login(ip, username)
         record_failed_login_ip(ip)
@@ -431,6 +449,40 @@ def change_password(data: ChangePasswordRequest, request: Request, user: dict = 
     return {"ok": True, "message": "Password updated"}
 
 
+# Phase 4: refresh-token REUSE TRIPWIRE (best effort, not full family rotation: tokens carry no
+# family id, so a thief who refreshes first keeps the chain they obtained; the victim's old token
+# is the one that gets revoked and they must log in again, which also exposes the theft). The first use of a refresh token is
+# recorded; a SECOND use inside the grace window is allowed (two browser tabs, or a retry after
+# a dropped response, legitimately present the same token); a use after the window means
+# someone kept a copy, so the token is revoked and refused. The record is per process (single
+# worker, see SCALING_NOTES.md): after a restart the window simply starts again, which only
+# ever errs towards letting a legitimate client through.
+_ROTATED: dict = {}
+_ROTATE_GRACE_SECONDS = 120
+
+
+def _rotate_refresh_token(payload: dict, token: str) -> None:
+    import time as _t
+    jti = payload.get("jti")
+    if not jti:
+        return
+    now = _t.time()
+    for k in [k for k, ts in _ROTATED.items() if now - ts > 8 * 86400]:     # refresh tokens live 7 days
+        _ROTATED.pop(k, None)
+    first = _ROTATED.get(jti)
+    if first is None:
+        if len(_ROTATED) < 50000:
+            _ROTATED[jti] = now
+        return
+    if now - first > _ROTATE_GRACE_SECONDS:
+        log.warning("refresh token reuse detected after rotation; token revoked  sub=%s", payload.get("sub"))
+        try:
+            revoke_token(token)
+        except Exception as exc:
+            log.debug("reuse revoke skipped: %s", type(exc).__name__)
+        raise HTTPException(401, "Session ended. Please log in again.")
+
+
 @router.post("/auth/refresh")
 def refresh_token_endpoint(data: RefreshRequest, request: Request):
     _rate_check("refresh", request)
@@ -449,6 +501,10 @@ def refresh_token_endpoint(data: RefreshRequest, request: Request):
     business_id = payload.get("business_id")
     pwd_ts      = None
 
+    # Phase 4: a superadmin session must not outlive the superadmin login being disabled.
+    if role == "superadmin" and SUPER_ADMIN_LOGIN_DISABLED:
+        raise HTTPException(401, "Session ended. Please log in again.")
+
     if role == "business":
         biz = crud.get_business_by_username(sub)
         if not biz or not biz.get("is_active", True):
@@ -463,10 +519,15 @@ def refresh_token_endpoint(data: RefreshRequest, request: Request):
         # password reset. Checked here directly for that reason.
         current_pwd_ts = biz.get("password_changed_at")
         token_pwd_ts   = payload.get("pwd_ts")
-        if token_pwd_ts and current_pwd_ts and current_pwd_ts != token_pwd_ts:
+        # Phase 4: a token with NO pwd_ts (every signup token, and logins before the first password
+        # change) is stale as soon as a password change exists; before, it skipped this check and
+        # was re-issued a token carrying the new timestamp, surviving a password reset.
+        if current_pwd_ts and current_pwd_ts != token_pwd_ts:
             log.warning("refresh_token rejected: password changed since issuance  business_id=%s", business_id)
             raise HTTPException(401, "Your password was changed. Please log in again.")
         pwd_ts = current_pwd_ts
+
+    _rotate_refresh_token(payload, data.refresh_token)
 
     log.info("🔄 Token refreshed for: %s", sub)
     return {

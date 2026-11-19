@@ -162,9 +162,11 @@ def debug_token(user=Depends(require_superadmin)):
 
 
 @router.get("/debug/webhook")
-def debug_webhook(user=Depends(require_business)):
+def debug_webhook(request: Request, user=Depends(require_business)):
     import requests as http_requests
+    from services.security import rate_limit as _rl     # Phase 4: it makes an outbound Graph API call
     bid      = user["business_id"]
+    _rl("debug_webhook", request, 6, 60, key_suffix=str(bid))
     business = crud.get_business_by_id(bid)
     if not business:
         return {"ok": False, "step": 1, "error": "Business not found"}
@@ -210,7 +212,7 @@ def debug_webhook(user=Depends(require_business)):
 
 
 @router.get("/debug/schema")
-def debug_schema(user=Depends(require_business)):
+def debug_schema(user=Depends(require_superadmin)):   # Phase 4: lists DB columns, clears a cache shared by all tenants
     from workflows.order_lifecycle import _get_orders_columns, _invalidate_column_cache
     _invalidate_column_cache()
     cols     = _get_orders_columns()

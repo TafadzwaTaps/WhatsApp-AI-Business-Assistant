@@ -324,3 +324,10 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - **Billing**: impersonation tokens refused on money-moving billing routes; cancel/resume UX shows the real server message and end date, offers Resume, handles cancelled/unpaid/paused.
 - **Tests**: 1617 passed, 1 skipped (was 1500); 14 protections mutation-verified. Reviews: security (twice), QA; no critical/high open.
 - **Open**: Stripe storefront refunds/disputes (audit-log only), scheduled billing reconcile, Stripe-trial PRO access, impersonation on non-billing money routes, behaviour without the `notification_log` table, live PayPal/Stripe/Supabase behaviour unverified.
+
+## 2026-11-19 — Phase 4: authentication, API security, frontend (uncommitted)
+- **Sessions**: tokens without a password stamp are stale after a password change (access and refresh); refresh reuse tripwire (120 s grace, best effort, in memory); lockout keyed on the normalised username; dummy bcrypt for unknown users; superadmin refresh re-checks the disabled flag; WebSocket enforces password-change and suspension.
+- **API**: `/debug/schema` superadmin-only; `/debug/webhook` rate limited; upload, voice and CSV routes limited per business (product images 120/min); `/openapi.json` off; cdnjs dropped from CSP.
+- **Frontend**: `safeUrl()` on every server-supplied redirect/href/window.open; pricing redirect https-only; refresh sends the newest shared token.
+- **Tests**: 1670 passed, 1 skipped (was 1617); 53 new; protections mutation-verified. Security and QA reviewed; no critical/high.
+- **Open (see PHASE_4_REPORT.md)**: email verification (schema), cookie sessions, CSP `'unsafe-inline'`, dependency floors (python-jose CVEs) awaiting approval, full refresh-family rotation.

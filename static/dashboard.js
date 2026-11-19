@@ -337,10 +337,14 @@ async function tryRefresh() {
   }
   _refreshInFlight = true;
   try {
+    // Refresh tokens are single-chain: another tab may have rotated it already, so send the
+    // newest one from shared storage rather than this tab's possibly stale copy.
+    let _rt = refreshTok;
+    try { _rt = localStorage.getItem('wazi_refresh') || refreshTok; } catch (_) {}
     const res = await fetch(API + ROUTES.refresh, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshTok })
+      body: JSON.stringify({ refresh_token: _rt })
     });
     if (!res.ok) {
       // 401/403 from refresh = token genuinely expired → must re-login
@@ -2856,7 +2860,7 @@ function updateCurrencySymbol(code) {
 function showPlanUpgradeModal(detail) {
   const isObj      = typeof detail === 'object' && detail !== null;
   const message    = isObj ? (detail.message    || 'This feature requires a higher plan.') : String(detail);
-  const upgradeUrl = isObj ? (detail.upgrade_url || '/pricing') : '/pricing';
+  const upgradeUrl = isObj ? safeUrl(detail.upgrade_url, '/pricing') : '/pricing';
 
   let modal = document.getElementById('plan-upgrade-modal');
   if (!modal) {
@@ -3184,7 +3188,7 @@ async function stripeConnect() {
     if (btn) { btn.disabled = true; btn.textContent = 'Opening Stripe…'; }
     const result = await apiFetch('/billing/connect', { method: 'POST' });
     if (result && result.url) {
-      window.location.href = result.url;  // Stripe onboarding — full redirect
+      safeUrl(result.url) && (window.location.href = safeUrl(result.url));  // Stripe onboarding — full redirect
     } else {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + escHtml(result?.error || 'Could not start Stripe setup') + '</span>';
     }
@@ -3202,7 +3206,7 @@ async function stripeConnectDashboard() {
     if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
     const result = await apiFetch('/billing/connect/dashboard', { method: 'POST' });
     if (result && result.url) {
-      window.open(result.url, '_blank');
+      safeUrl(result.url) && window.open(safeUrl(result.url), '_blank');
     } else {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ ' + escHtml(result?.error || 'Dashboard not available') + '</span>';
     }
@@ -3250,7 +3254,7 @@ async function stripeManage() {
     if (btn) { btn.disabled = true; btn.textContent = 'Opening…'; }
     const result = await apiFetch('/billing/portal', { method: 'POST' });
     if (result && result.url) {
-      window.open(result.url, '_blank');
+      safeUrl(result.url) && window.open(safeUrl(result.url), '_blank');
     } else {
       if (statusEl) statusEl.innerHTML = '<span style="color:var(--amber)">⚠️ Portal not available — contact support.</span>';
     }
@@ -3726,6 +3730,19 @@ function escHtml(s){
     .replace(/"/g,'&quot;')
     .replace(/'/g,'&#39;');
 }
+// Phase 4: URLs that come back from the server are only followed when they are a same-site
+// path or https. escHtml does not stop a javascript: / data: URL, so every redirect, href and
+// window.open built from a response goes through this. Returns `fallback` ('' by default).
+function safeUrl(u, fallback){
+  try {
+    // Browsers silently drop tab / CR / LF inside a URL, so "/\t/evil.com" would become
+    // "//evil.com". Strip them first and return the cleaned value.
+    const s = String(u == null ? '' : u).replace(/[\t\r\n]/g, '').trim();
+    if (/^\/(?![\/\\])/.test(s)) return s;
+    if (new URL(s).protocol === 'https:') return s;
+  } catch (_) { /* fall through */ }
+  return fallback === undefined ? '' : fallback;
+}
 // Safe JS string-literal argument for a double-quoted inline handler attribute:
 //   onclick="fn(${jsArg(value)})"  — escHtml alone leaves ' and \ live inside the
 // JS string, so the value is JSON-encoded first, then HTML-escaped for the attribute.
@@ -3772,7 +3789,7 @@ function checkPendingCheckout() {
         body: JSON.stringify({ tier: tier, billing_period: period }),
       });
       if (res && res.url) {
-        window.location.href = res.url;
+        safeUrl(res.url) && (window.location.href = safeUrl(res.url));
       }
     } catch (e) {
       // Non-fatal: user remains on dashboard, can upgrade manually
@@ -4375,7 +4392,7 @@ function mktCopy(elementId) {
 }
 
 function mktOpen() {
-  if (_mktData?.whatsapp_link) window.open(_mktData.whatsapp_link, '_blank');
+  if (_mktData?.whatsapp_link && safeUrl(_mktData.whatsapp_link)) window.open(safeUrl(_mktData.whatsapp_link), '_blank');
   else toast('Link not loaded yet', true);
 }
 
@@ -6027,7 +6044,7 @@ async function loadAIInsights() {
       body.innerHTML = `<div class="empty">
         📊 Detailed AI conversation insights are available on the
         <strong>${escHtml(data && data.required_tier || 'Growth')}</strong> plan and above.
-        <a href="${escHtml(data && data.upgrade_url || '/pricing')}" target="_blank">Upgrade →</a>
+        <a href="${escHtml(safeUrl(data && data.upgrade_url, '/pricing'))}" target="_blank">Upgrade →</a>
       </div>`;
       return;
     }
@@ -6728,7 +6745,7 @@ function renderGrowthCard(data) {
         <div style="font-size:13px;font-weight:600;color:var(--text,#e8f5e9);">${escHtml(w.title)}</div>
         <div style="font-size:11px;color:var(--text-dim,#6b8f71);margin-top:2px;">${escHtml(w.value)}</div>
       </div>
-      <button onclick="window.open(${jsArg(w.endpoint)},'_blank')" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border,#2a3830);background:transparent;color:var(--green,#22c55e);cursor:pointer;white-space:nowrap;flex-shrink:0;">${escHtml(w.action)}</button>
+      <button onclick="window.open(${jsArg(safeUrl(w.endpoint, '/'))},'_blank')" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--border,#2a3830);background:transparent;color:var(--green,#22c55e);cursor:pointer;white-space:nowrap;flex-shrink:0;">${escHtml(w.action)}</button>
     </div>
   `).join('');
 
@@ -6908,7 +6925,7 @@ async function loadSuccessNudges() {
     container.style.marginBottom = '12px';
 
     container.innerHTML = wins.map(w => `
-      <div class="nudge-bar" role="button" tabindex="0" onclick="window.open(${jsArg(w.endpoint)},'_blank')">
+      <div class="nudge-bar" role="button" tabindex="0" onclick="window.open(${jsArg(safeUrl(w.endpoint, '/'))},'_blank')">
         <span class="nudge-bar-icon">${w.priority === 'high' ? '🔴' : '🟡'}</span>
         <div class="nudge-bar-text">${escHtml(w.title)} — <em>${escHtml(w.value)}</em></div>
         <span class="nudge-bar-action">${escHtml(w.action)} →</span>

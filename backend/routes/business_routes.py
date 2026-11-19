@@ -613,6 +613,13 @@ def check_username_availability(body: dict, user=Depends(require_business)):
         raise HTTPException(500, "Could not check username")
 
 
+def _upload_rate_limit(request: Request, bid, name: str = "upload", max_calls: int = 30) -> None:
+    """Phase 4: per-business limit on upload / AI-moderated / transcription routes. Each call can
+    trigger a paid AI request, so an authenticated tenant could otherwise drive unbounded spend."""
+    from services.security import rate_limit as _rl
+    _rl(name, request, max_calls, 60, key_suffix=str(bid))
+
+
 @router.post("/me/upload-avatar")
 async def upload_avatar(
     request: Request,
@@ -621,6 +628,7 @@ async def upload_avatar(
 ):
     """Upload a profile avatar. Reuses the same Supabase Storage pattern as product images."""
     bid = user["business_id"]
+    _upload_rate_limit(request, bid)
     allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
     ct = file.content_type or "image/jpeg"
     if ct not in allowed:
@@ -679,6 +687,7 @@ async def upload_site_logo(
     """Upload a logo for the public website. Stored at features_json.site_generator.logo_url
     and used instead of the initial-letter placeholder. Same storage/moderation as avatars."""
     bid = user["business_id"]
+    _upload_rate_limit(request, bid)
     allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
     ct = file.content_type or "image/jpeg"
     if ct not in allowed:
@@ -851,6 +860,7 @@ async def upload_product_image(
     """
     import os, mimetypes
     from core.db import supabase
+    _upload_rate_limit(request, user["business_id"], "upload_product", 120)   # bulk catalogue uploads
 
     # Validate file type
     allowed = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -1571,9 +1581,10 @@ class VoiceTranscribeRequest(BaseModel):
 
 
 @router.post("/voice/transcribe")
-async def voice_transcribe(body: VoiceTranscribeRequest, user=Depends(require_business)):
+async def voice_transcribe(body: VoiceTranscribeRequest, request: Request, user=Depends(require_business)):
     import os
     bid      = user["business_id"]
+    _upload_rate_limit(request, bid)
     customer = crud.get_customer_by_id(body.customer_id, bid)
     if not customer: raise HTTPException(404, "Customer not found")
 
@@ -1763,6 +1774,7 @@ def analytics_repeat_customers(user=Depends(require_business)):
 
 @router.post("/products/import-csv")
 async def import_products_csv(
+    request: Request,
     file: UploadFile = File(...),
     user=Depends(require_business),
 ):
@@ -1776,6 +1788,7 @@ async def import_products_csv(
     """
     import csv, io
     bid       = user["business_id"]
+    _upload_rate_limit(request, bid)
     imported  = 0
     skipped   = 0
     row_errors: list[str] = []
