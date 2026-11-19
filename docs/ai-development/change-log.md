@@ -237,3 +237,35 @@ Full suite: 1329 passed, 1 skipped (was 1298). New `tests/test_phase3d_xss_follo
 - Weekly-report `<title>` now escaped; `_social_url` for X/Twitter no longer matches look-alike domains (`nottwitter.com`), accepts `twitter.com`/`x.com` and their subdomains; cancelled-subscription email escapes plan and date (subject stays plain text); the unmounted `routes_saas/onboarding_routes.py` copy also validates the currency symbol.
 - Tests: suite 1339 passed, 1 skipped.
 - Accepted/low: some server-formatted email values (amounts, dates from Stripe) remain unescaped; empty string clears the stored symbol (clients fall back to `$`); docstrings in the modified `send_*` functions are now bare expressions (cosmetic); `HTTPException(500, str(exc))` in onboarding step 1 still echoes exception text (the central 5xx sanitiser covers it).
+
+---
+
+## 2026-11-19 — Phase 1 (master plan): WhatsApp message reliability
+Approved by user ("Approve Phase 1"). Uncommitted; nothing deployed. Baseline and plan: `PHASE_0_BASELINE_AUDIT.md`.
+
+### Changes
+- **Transient failures are retried by Meta (F8/F9)** `routes/webhook_routes.py`: a transient database/network failure while looking up the business, the customer, or storing the incoming message now makes `/webhook` answer **503** after the rest of the batch is processed; redelivered messages that were already handled dedupe harmlessly. Permanent errors (constraint/validation, unknown or inactive business) keep answering 200, because retrying them would never succeed and sustained non-2xx can get a webhook disabled. Classification (`_is_transient_error`): network exception types, then a structured Postgres code (08/53/57, 502-504) decides alone; message text is used only when there is no code (Postgres can echo the customer's own text in an error).
+- **Write order (F2)**: the `messages` row (the unique-wamid dedupe guard) is written before the legacy `chat_messages` log, so a duplicate delivery leaves no stray log row; a legacy-log failure no longer blocks the reply.
+- **Lost replies (F1, no migration)** `crud/messages.get_unanswered_inbound` / `has_reply_since` (timestamps compared as instants); `GET /chat/unanswered` (business-scoped, minutes 5-240); `POST /webhook/recover-unanswered` (CRON_SECRET, fails closed, **dry run by default**, text only, max 120 min old, skips human handoff / shared-number / inactive businesses / customers whose conversation state changed after the message, re-checks "still unanswered" and handoff under the per-customer lock). The internal `_replay` flag is stripped from every webhook body.
+- **Meta 24h window (F6)**: error 131047 is labelled (`wa.window_closed`) in the reply path; the payment webhook now logs a failed confirmation notice instead of ignoring it.
+- **Send retries (F3)** `main.py send_whatsapp`: a read timeout is no longer retried (delivery unknown; resending could deliver twice); connect errors, 5xx and 429 still retry. Raw phone number removed from that log line.
+- **Single worker (F4)**: startup warning when `WEB_CONCURRENCY` > 1.
+
+### Tests (actually run)
+Full suite: 1394 passed, 1 skipped (was 1339). New `tests/test_phase1b_webhook_reliability.py` (56 tests): 503 vs 200 per error class and per step, batch finishing before 503, redelivery processed once, duplicate at insert, write order, forged `_replay` (new and already-stored message, top-level and nested), 131047, send retry policy, unanswered detection (tenant filter, fresh messages, mixed `Z`/`+00:00` formats), recovery endpoint (auth, dry run, lock re-checks, skip rules, clamps, failed replay), `/chat/unanswered` auth and bounds.
+
+### Reviews
+- Security: no critical/high. Fixed: `_replay` could be sent in a body (Low-Medium: needs a valid Meta signature; now stripped); message-text-based transient matching (now structured codes first); replay into a changed conversation state (now skipped); handoff re-check inside the lock; phone in a log line.
+- QA: timestamps compared as text (now instants); outgoing query ordering/limit; weak tests replaced.
+
+### Residual risks (not fixed)
+- A message whose storage succeeded but whose reply was lost is detected, but recovery only runs when an operator or cron calls the endpoint (no schedule was added).
+- The per-customer lock is still in-process; with more than one worker, replays and live messages can overlap (a warning is logged).
+- Messages whose reply send read-timed out are marked failed even if they were delivered (ambiguous by design); other `send_whatsapp` callers (campaigns, reminders, cart recovery) now treat a read timeout as a failure without retry (previously they would retry and could duplicate).
+- `get_unanswered_inbound` reads the newest 500 incoming rows across tenants in cron mode; under very heavy traffic older candidates are missed.
+- Recovery needs `messages.direction`, `created_at` and `customer_id` as the code assumes (not verified against the live database).
+- Not implemented (needs a migration and approval): a `webhook_events` table with retry counts, a DB-backed per-customer lease, an error-detail column. J2 (campaign double-send) and J4 (repeating trial emails) remain open pending your decision.
+- Not exercised against live Meta, Render or Supabase.
+
+### Rollback
+Revert the changed files; no schema or configuration changes.
