@@ -1332,6 +1332,10 @@ class CampaignRequest(BaseModel):
     dry_run:         bool = False
 
 
+_RECENT_CAMPAIGNS: dict = {}
+_CAMPAIGN_DUP_WINDOW = 60.0
+
+
 @router.post("/campaigns/send")
 async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted())):
     # SuperAdmin 2.0 emergency control — platform-wide campaign pause.
@@ -1344,11 +1348,33 @@ async def campaign_send(body: CampaignRequest, request: Request, user=Depends(re
     if body.audience not in AUDIENCE_INFO: raise HTTPException(400, f"Unknown audience: {list(AUDIENCE_INFO.keys())}")
     if len(body.message.strip()) < 3: raise HTTPException(400, "Message too short")
     if len(body.message) > 1024: raise HTTPException(400, "Message too long (max 1024 chars)")
+    # Double-click / client retry guard: an identical campaign (same business, audience, text
+    # and explicit phone list) is refused for 60 s after it was started. In-process, which is
+    # exactly right while WaziBot runs as a single worker (see docs/ai-development/SCALING_NOTES.md).
+    _dup_key = None
+    if not body.dry_run:
+        import hashlib as _hl, time as _tm
+        _dup_key = (bid, body.audience,
+                    _hl.sha256(body.message.encode("utf-8")).hexdigest()[:16],
+                    tuple(sorted(str(p) for p in (body.phone_list or []))))
+        _now_m = _tm.monotonic()
+        for _k in [k for k, v in _RECENT_CAMPAIGNS.items() if _now_m - v > _CAMPAIGN_DUP_WINDOW]:
+            _RECENT_CAMPAIGNS.pop(_k, None)
+        if _dup_key in _RECENT_CAMPAIGNS:
+            raise HTTPException(409, "This exact campaign was just sent. Wait a minute before sending it again.")
+        _RECENT_CAMPAIGNS[_dup_key] = _now_m          # no await between check and set: atomic here
     # Sends to many recipients with blocking HTTP/DB calls: keep it off the event loop so other
     # tenants' requests and webhooks are not stalled for the whole campaign.
-    result = await run_in_threadpool(
-        CampaignService.run, business_id=bid, audience=body.audience, message=body.message,
-        phone_list=body.phone_list, personalise_msg=body.personalise_msg, dry_run=body.dry_run)
+    try:
+        result = await run_in_threadpool(
+            CampaignService.run, business_id=bid, audience=body.audience, message=body.message,
+            phone_list=body.phone_list, personalise_msg=body.personalise_msg, dry_run=body.dry_run)
+    except Exception:
+        if _dup_key is not None:
+            _RECENT_CAMPAIGNS.pop(_dup_key, None)    # nothing was sent: allow an immediate retry
+        raise
+    if _dup_key is not None and (not result.get("ok", True) or result.get("sent", 0) == 0):
+        _RECENT_CAMPAIGNS.pop(_dup_key, None)        # nothing went out: allow a corrected retry
     if not body.dry_run and result.get("sent", 0) > 0:
         try:
             from services.events import Events

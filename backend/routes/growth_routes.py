@@ -405,12 +405,17 @@ def cancel_scheduled_campaign(campaign_id: int, user=Depends(require_business)):
         if not res.data:
             raise HTTPException(404, f"Campaign {campaign_id} not found")
         if res.data[0].get("status") != "pending":
-            raise HTTPException(422, "Only pending campaigns can be cancelled")
+            raise HTTPException(422, "Only pending campaigns can be cancelled "
+                                     "(a campaign that is already sending cannot be cancelled)")
 
-        supabase.table("scheduled_campaigns") \
-            .update({"status": "cancelled"}) \
-            .eq("id", campaign_id) \
-            .execute()
+        # Conditional on the campaign still being unclaimed: if the scheduler claimed it between
+        # the check above and this write, the cancel must NOT report success.
+        upd = (supabase.table("scheduled_campaigns")
+               .update({"status": "cancelled"})
+               .eq("id", campaign_id).eq("business_id", bid)
+               .eq("status", "pending").is_("sent_at", "null").execute())
+        if not upd.data:
+            raise HTTPException(409, "This campaign is already being sent and can no longer be cancelled")
 
         return {"ok": True, "campaign_id": campaign_id, "status": "cancelled"}
     except HTTPException:
@@ -418,6 +423,61 @@ def cancel_scheduled_campaign(campaign_id: int, user=Depends(require_business)):
     except Exception as exc:
         log.error("cancel_scheduled_campaign error: %s", exc)
         raise HTTPException(500, "Internal server error")
+
+
+_STALLED_CLAIM_MINUTES = 60
+
+
+def _claim_scheduled_campaign(supabase, campaign_id) -> bool:
+    """Atomically claim ONE pending campaign before anything is sent, so a campaign is sent at
+    most once even if the job is retried, overlaps another run (deploy overlap) or crashes
+    half-way. The conditional UPDATE only matches while the row is still 'pending', so exactly
+    one caller gets a row back.
+
+    Primary claim: status 'pending' -> 'processing' (claim time kept in sent_at). If the
+    database rejects the new status value (e.g. a CHECK constraint), fall back to claiming
+    through sent_at alone, leaving status 'pending'. Any other failure: do NOT send."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        res = (supabase.table("scheduled_campaigns")
+               .update({"status": "processing", "sent_at": now})
+               .eq("id", campaign_id).eq("status", "pending").execute())
+        return bool(res.data)
+    except Exception as exc:
+        log.warning("scheduled campaign %s: 'processing' claim rejected (%s); using sent_at claim",
+                    campaign_id, type(exc).__name__)
+    try:
+        res = (supabase.table("scheduled_campaigns")
+               .update({"sent_at": now})
+               .eq("id", campaign_id).eq("status", "pending").is_("sent_at", "null").execute())
+        return bool(res.data)
+    except Exception as exc:
+        log.error("scheduled campaign %s: could not claim, NOT sending: %s", campaign_id, type(exc).__name__)
+        return False
+
+
+def _fail_stalled_campaigns(supabase) -> int:
+    """A campaign stuck in 'processing' longer than _STALLED_CLAIM_MINUTES was interrupted
+    mid-send. It is NOT re-sent (some recipients already got it and a retry would message them
+    again); it is marked 'failed' so the owner sees it and can reschedule on purpose."""
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=_STALLED_CLAIM_MINUTES)).isoformat()
+    try:
+        res = (supabase.table("scheduled_campaigns").update({"status": "failed"})
+               .eq("status", "processing").lte("sent_at", cutoff).execute())
+        n = len(res.data or [])
+        # Fallback claim mode (the database refused the 'processing' status): the claim is a
+        # non-null sent_at on a row that is still 'pending'. A fresh claim is left alone; one
+        # older than the cutoff was interrupted and is surfaced the same way.
+        res2 = (supabase.table("scheduled_campaigns").update({"status": "failed"})
+                .eq("status", "pending").not_.is_("sent_at", "null").lte("sent_at", cutoff).execute())
+        n += len(res2.data or [])
+        if n:
+            log.error("scheduled campaigns: %d interrupted campaign(s) marked failed (not re-sent)", n)
+        return n
+    except Exception as exc:
+        log.warning("stalled campaign sweep failed: %s", type(exc).__name__)
+        return 0
 
 
 @router.post("/campaigns/scheduled/run")
@@ -443,6 +503,8 @@ async def run_scheduled_campaigns(request: Request):
 
     now = datetime.now(timezone.utc).isoformat()
     processed, sent_total, failed_total = 0, 0, 0
+    skipped_claimed = 0
+    stalled = _fail_stalled_campaigns(supabase)
 
     try:
         res = (
@@ -463,6 +525,13 @@ async def run_scheduled_campaigns(request: Request):
         audience    = campaign["audience"]
         message     = campaign["message"]
 
+        # Claim BEFORE sending: another run (retry, deploy overlap) or an earlier crashed run
+        # must never cause a second send of the same campaign.
+        if not _claim_scheduled_campaign(supabase, campaign_id):
+            skipped_claimed += 1
+            log.info("scheduled campaign %s already claimed or cancelled - skipped", campaign_id)
+            continue
+
         try:
             result = CampaignService.run(
                 business_id=bid,
@@ -482,7 +551,7 @@ async def run_scheduled_campaigns(request: Request):
             supabase.table("scheduled_campaigns").update({
                 "status":  status,
                 "sent_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", campaign_id).execute()
+            }).eq("id", campaign_id).in_("status", ["processing", "pending"]).execute()
         except Exception as exc:
             log.warning("scheduled campaign status update failed: %s", exc)
 
@@ -495,6 +564,8 @@ async def run_scheduled_campaigns(request: Request):
         "processed": processed,
         "sent":      sent_total,
         "failed":    failed_total,
+        "skipped_already_claimed": skipped_claimed,
+        "interrupted_marked_failed": stalled,
     }
 
 

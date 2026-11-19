@@ -433,7 +433,7 @@ def send_trial_warnings(request: Request):
     from datetime import datetime, timezone
 
     now  = datetime.now(timezone.utc)
-    sent = 0; errors = 0
+    sent = 0; errors = 0; already = 0; opted_out = 0
 
     try:
         res = (
@@ -462,15 +462,42 @@ def send_trial_warnings(request: Request):
 
             days_left = (exp - now).days
             if days_left < 0:
-                send_trial_expired(email, name); sent += 1
+                kind = "trial_expired"
             elif days_left in (1, 3, 7):
-                send_trial_expiry_warning(email, name, days_left, business_id=biz.get("id")); sent += 1
+                kind = f"trial_warn_{days_left}"
+            else:
+                continue
+
+            # At most one email per business, kind and trial period (the period key is the
+            # trial end, so a new trial starts fresh). Claim BEFORE sending; if the send did
+            # not happen, release the claim so the next run retries instead of losing it.
+            from crud.notification_ledger import claim, release
+            from services.email_service import _is_opted_out
+            if kind != "trial_expired" and _is_opted_out(biz.get("id")):
+                opted_out += 1                  # marketing opt-out: a skip, not a failure; no claim kept
+                continue
+            if not claim(biz["id"], kind, ends_at):
+                already += 1
+                continue
+            try:
+                if kind == "trial_expired":
+                    delivered = send_trial_expired(email, name)
+                else:
+                    delivered = send_trial_expiry_warning(email, name, days_left, business_id=biz.get("id"))
+            except Exception:
+                release(biz["id"], kind, ends_at)
+                raise
+            if delivered is False:
+                release(biz["id"], kind, ends_at)
+                errors += 1
+            else:
+                sent += 1
         except Exception as exc:
-            log.warning("trial-warnings: biz=%s err=%s", biz.get("id"), exc)
+            log.warning("trial-warnings: biz=%s err=%s", biz.get("id"), type(exc).__name__)
             errors += 1
 
-    log.info("trial-warnings: sent=%d errors=%d", sent, errors)
-    return {"ok": True, "sent": sent, "errors": errors}
+    log.info("trial-warnings: sent=%d already_sent=%d opted_out=%d errors=%d", sent, already, opted_out, errors)
+    return {"ok": True, "sent": sent, "already_sent": already, "opted_out": opted_out, "errors": errors}
 
 
 
