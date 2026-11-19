@@ -362,7 +362,9 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
             raise HTTPException(status_code=403, detail="Account suspended. Contact support.")
 
     token_pwd_ts = payload.get("pwd_ts")
-    if token_pwd_ts and business_id is not None:
+    # Phase 4: a business token WITHOUT pwd_ts (signup tokens, or logins before the first password
+    # change) is also stale once a password change exists. Impersonation tokens never carry one.
+    if business_id is not None and (token_pwd_ts or (role == "business" and not payload.get("impersonated_by"))):
         current_pwd_ts = _get_current_password_changed_at(business_id)
         if current_pwd_ts and current_pwd_ts != token_pwd_ts:
             _log.warning("AUTH FAILED: reason=password_changed_since_token_issued  business_id=%s", business_id)

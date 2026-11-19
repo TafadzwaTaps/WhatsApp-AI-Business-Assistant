@@ -1266,6 +1266,18 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
         if payload.get("business_id") != business_id and payload.get("role") != "superadmin":
             await websocket.close(code=4001)
             return
+        # Phase 4: same session checks as get_current_user: a token issued before a password
+        # change, or for a suspended business, must not open a live socket.
+        if payload.get("role") == "business" and not payload.get("impersonated_by"):
+            from core.auth import _get_current_password_changed_at, _lookup_auth_state
+            _cur = _get_current_password_changed_at(business_id)
+            if _cur and _cur != payload.get("pwd_ts"):
+                await websocket.close(code=4001)
+                return
+            _state = _lookup_auth_state(business_id)
+            if _state and _state[1] is False:
+                await websocket.close(code=4001)
+                return
     except Exception:
         await websocket.close(code=4001)
         return

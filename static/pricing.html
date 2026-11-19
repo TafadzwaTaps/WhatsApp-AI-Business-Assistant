@@ -522,7 +522,7 @@ async function checkout(plan) {
       })
     });
     const data = await resp.json();
-    if (data.url) {
+    if (data.url && /^https:\/\//i.test(String(data.url))) {   // Phase 4: never follow javascript:/data: URLs
       window.location.href = data.url;
     } else {
       alert(data.detail || data.error || 'Could not start checkout. Please try again.');
