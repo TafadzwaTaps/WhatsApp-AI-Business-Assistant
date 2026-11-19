@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 import crud
 from core.auth import (
-    require_superadmin, require_business, get_current_user,
+    require_superadmin, require_business, require_not_impersonated, get_current_user,
 )
 from core.crypto import TokenDecryptionError
 from crud.admin_audit import log_admin_action
@@ -392,7 +392,7 @@ def _order_currency_sym(order: dict, bid: int) -> str:
 
 
 @router.post("/orders/{order_id}/approve-payment")
-async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depends(require_business)):
+async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depends(require_not_impersonated)):
     bid   = user["business_id"]
     order = get_order(order_id)
     if not order or order.get("business_id") != bid:
@@ -449,7 +449,7 @@ async def admin_reject_proof(order_id: int, data: OrderAdminAction, user=Depends
 
 
 @router.post("/orders/{order_id}/cancel")
-async def admin_cancel_order(order_id: int, data: OrderAdminAction, user=Depends(require_business)):
+async def admin_cancel_order(order_id: int, data: OrderAdminAction, user=Depends(require_not_impersonated)):
     bid   = user["business_id"]
     order = get_order(order_id)
     if not order or order.get("business_id") != bid:
@@ -474,7 +474,7 @@ async def admin_cancel_order(order_id: int, data: OrderAdminAction, user=Depends
 
 
 @router.post("/orders/{order_id}/refund")
-async def admin_refund_order(order_id: int, data: OrderAdminAction, user=Depends(require_business)):
+async def admin_refund_order(order_id: int, data: OrderAdminAction, user=Depends(require_not_impersonated)):
     bid   = user["business_id"]
     order = get_order(order_id)
     if not order or order.get("business_id") != bid:

@@ -252,6 +252,14 @@
     <button class="btn btn-ghost" onclick="exitImpersonation()">Exit — Return to Admin</button>
   </div>
 
+  <!-- Email verification prompt: shown only while the owner's address is unconfirmed -->
+  <div id="email-verify-banner" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.4);
+       border-radius:8px;padding:10px 14px;margin-bottom:14px;font-family:var(--mono);font-size:12px;
+       align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;" role="status">
+    <span id="email-verify-banner-text">Please confirm your email address.</span>
+    <button class="btn btn-ghost" id="email-verify-resend" onclick="resendVerificationEmail(this)">Send me the link again</button>
+  </div>
+
   <!-- SUPERADMIN OVERVIEW -->
   <div id="section-admin-overview" class="section">
     <div class="topbar"><div class="page-title">Platform <span class="purple">Overview</span></div></div>

@@ -14,8 +14,8 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query, UploadFil
 from pydantic import BaseModel, validator
 
 import crud
-from core.auth import require_business, get_current_user, verify_password
-from core.plan_guard import require_plan, require_not_restricted
+from core.auth import require_business, require_not_impersonated, get_current_user, verify_password
+from core.plan_guard import require_plan, require_not_restricted, require_email_verified
 from core.crypto import TokenDecryptionError
 from services.ai import generate_reply
 from services.invoice_service import generate_invoice_text
@@ -232,7 +232,7 @@ def _redact_stripe_secrets(b: dict) -> dict:
 
 
 @router.patch("/me")
-def update_me(data: BusinessUpdate, user=Depends(require_business)):
+def update_me(data: BusinessUpdate, user=Depends(require_business), request: Request = None):
     safe = data.dict(exclude_none=True)
     safe.pop("is_active", None)
     if isinstance(safe.get("features_json"), dict):
@@ -274,10 +274,42 @@ def update_me(data: BusinessUpdate, user=Depends(require_business)):
             log.info("currency auto-synced  biz=%s  symbol=%s  iso=%s",
                      user["business_id"], sym, iso)
 
+    # Phase 4 follow-up: changing the owner email invalidates verification. The new address must be
+    # confirmed before trial/report emails and campaigns resume; a link goes to the NEW address.
+    _email_changed_to = None
+    if safe.get("owner_email") is not None:
+        _new_email = str(safe["owner_email"]).strip().lower()
+        safe["owner_email"] = _new_email
+        _cur_biz = crud.get_business_by_id(user["business_id"]) or {}
+        if _new_email and _new_email != (_cur_biz.get("owner_email") or "").strip().lower() and user.get("impersonated_by"):
+            # Changing the owner email changes who can reset the password: never as a support session.
+            raise HTTPException(403, "This action is not available while viewing as another business.")
+        if _new_email and _new_email != (_cur_biz.get("owner_email") or "").strip().lower():
+            from services.email_verification_service import columns_ready, mark_required
+            if columns_ready():
+                # A verification link goes to the NEW address, so this is rate limited like resend.
+                # Only while verification is active: without the migration nothing changes.
+                from services.security import rate_limit as _email_rl
+                if request is not None:             # None only when called directly (tests)
+                    _email_rl("email_change", request, 3, 3600, key_suffix=str(user["business_id"]))
+                _email_changed_to = _new_email
+                # A verified (or already required) account must prove the new address. Flag it
+                # BEFORE saving, so a failure here can never leave "verified" on an unproven
+                # address; a grandfathered account is only sent a voluntary link.
+                if (_cur_biz.get("email_verification_required") is True or _cur_biz.get("email_verified_at")) \
+                        and not mark_required(user["business_id"]):
+                    raise HTTPException(503, "Could not update your email right now. Please try again.")
+
     class _D:
         def dict(self, **_): return safe
     b = crud.update_business(user["business_id"], _D())
     if not b: raise HTTPException(404, "Not found")
+    if _email_changed_to:
+        try:
+            from services.email_verification_service import send_verification
+            send_verification(user["business_id"], _email_changed_to, b.get("name") or "", "")
+        except Exception as _ve:
+            log.warning("update_me: verification email failed (non-fatal): %s", type(_ve).__name__)
     b.pop("owner_password", None)
     b.pop("whatsapp_token", None)
     return _redact_stripe_secrets(b)
@@ -364,7 +396,7 @@ class PaymentTogglesUpdate(BaseModel):
 
 
 @router.post("/me/payment-settings/toggles")
-def update_payment_toggles(data: PaymentTogglesUpdate, user=Depends(require_business)):
+def update_payment_toggles(data: PaymentTogglesUpdate, user=Depends(require_not_impersonated)):
     """Owner switches each payment method on/off for the WhatsApp checkout menu."""
     allowed = ("ecocash", "banktransfer", "blik", "paypal", "cash")
     clean = {k: bool(v) for k, v in (data.toggles or {}).items() if k in allowed}
@@ -382,7 +414,7 @@ def update_payment_toggles(data: PaymentTogglesUpdate, user=Depends(require_busi
 
 
 @router.post("/me/payment-settings")
-def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_business)):
+def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_not_impersonated)):
     bid, updates, errors = user["business_id"], {}, []
     if data.ecocash_number is not None:
         n = data.ecocash_number.strip()
@@ -415,7 +447,7 @@ def update_payment_settings(data: PaymentSettingsUpdate, user=Depends(require_bu
 
 
 @router.post("/me/payment-settings/ecocash")
-def update_ecocash_settings(data: EcoCashSettingsUpdate, user=Depends(require_business)):
+def update_ecocash_settings(data: EcoCashSettingsUpdate, user=Depends(require_not_impersonated)):
     number, name = data.ecocash_number.strip(), data.ecocash_name.strip()
     if not number: raise HTTPException(422, "EcoCash number is required")
     if len(number) < 7: raise HTTPException(422, "EcoCash number too short — include country code")
@@ -428,7 +460,7 @@ def update_ecocash_settings(data: EcoCashSettingsUpdate, user=Depends(require_bu
 
 
 @router.post("/me/payment-settings/paypal")
-def update_paypal_settings(data: PayPalSettingsUpdate, user=Depends(require_business)):
+def update_paypal_settings(data: PayPalSettingsUpdate, user=Depends(require_not_impersonated)):
     email = data.paypal_email.strip().lower()
     if not email: raise HTTPException(422, "PayPal email is required")
     if "@" not in email or "." not in email.split("@")[-1]: raise HTTPException(422, "Invalid PayPal email")
@@ -440,7 +472,7 @@ def update_paypal_settings(data: PayPalSettingsUpdate, user=Depends(require_busi
 
 
 @router.post("/me/payment-settings/banktransfer")
-def update_bank_transfer_settings(data: BankTransferSettingsUpdate, user=Depends(require_business)):
+def update_bank_transfer_settings(data: BankTransferSettingsUpdate, user=Depends(require_not_impersonated)):
     details = data.bank_transfer_details.strip()
     if not details: raise HTTPException(422, "Bank transfer details are required")
     class _D:
@@ -451,7 +483,7 @@ def update_bank_transfer_settings(data: BankTransferSettingsUpdate, user=Depends
 
 
 @router.post("/me/payment-settings/blik")
-def update_blik_settings(data: BlikSettingsUpdate, user=Depends(require_business)):
+def update_blik_settings(data: BlikSettingsUpdate, user=Depends(require_not_impersonated)):
     number = data.blik_number.strip()
     if not number: raise HTTPException(422, "BLIK phone number is required")
     if len(number) < 7: raise HTTPException(422, "Include the full phone number")
@@ -470,7 +502,7 @@ class StripeSettingsUpdate(BaseModel):
     stripe_webhook_secret: Optional[str] = None
 
 @router.post("/me/payment-settings/stripe")
-def update_stripe_settings(data: StripeSettingsUpdate, user=Depends(require_business)):
+def update_stripe_settings(data: StripeSettingsUpdate, user=Depends(require_not_impersonated)):
     """Save Stripe API keys into features_json (encrypted fields go here).
     We store them in features_json rather than top-level columns so no schema
     migration is required. Secret/webhook keys are stored as-is — consider
@@ -758,7 +790,7 @@ class DeleteAccountRequest(BaseModel):
 
 
 @router.post("/me/delete-account")
-async def delete_account(payload: DeleteAccountRequest, request: Request, user=Depends(require_business)):
+async def delete_account(payload: DeleteAccountRequest, request: Request, user=Depends(require_not_impersonated)):
     """
     Self-service account deletion.
 
@@ -1180,7 +1212,7 @@ def create_order_api(data: OrderCreateRequest, user=Depends(require_business)):
 
 
 @router.put("/orders/{order_id}/status")
-def update_order_status_api(order_id: int, data: OrderStatusUpdate, user=Depends(require_business)):
+def update_order_status_api(order_id: int, data: OrderStatusUpdate, user=Depends(require_not_impersonated)):
     existing = crud.get_order_by_id(order_id, user["business_id"])
     if not existing: raise HTTPException(404, "Order not found")
     try:
@@ -1228,7 +1260,7 @@ class BroadcastRequest(BaseModel):
 
 
 @router.post("/broadcast")
-def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted())):
+def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted()), _verified=Depends(require_email_verified())):
     _rate_check("broadcast", request)
     bid      = user["business_id"]
     business = crud.get_business_by_id(bid)
@@ -1350,7 +1382,7 @@ _CAMPAIGN_DUP_WINDOW = 60.0
 
 
 @router.post("/campaigns/send")
-async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted())):
+async def campaign_send(body: CampaignRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted()), _verified=Depends(require_email_verified())):
     # SuperAdmin 2.0 emergency control — platform-wide campaign pause.
     from core.platform_controls import is_paused
     if is_paused("campaigns") and not body.dry_run:

@@ -736,3 +736,30 @@ def require_not_restricted():
             )
         return user
     return _check
+
+
+def require_email_verified():
+    """
+    FastAPI dependency (Phase 4 follow-up): sending routes (campaigns, broadcasts, win-back,
+    scheduled campaigns) refuse an account that must verify its email and has not. Accounts
+    created before verification existed are grandfathered (email_verification_required = false)
+    and are never refused; so is everything when the migration has not been applied or the
+    lookup fails (fail open: a database hiccup must not block a legitimate business).
+    """
+    def _check(user: dict = Depends(_require_business_lazy())):
+        business_id = user.get("business_id")
+        if not business_id:
+            raise HTTPException(403, "Business ID not found in token.")
+        from services.email_verification_service import is_restricted
+        if is_restricted(business_id):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error":   "email_unverified",
+                    "message": "Please confirm your email address to send campaigns. "
+                               "We sent you a link; you can request a new one from your dashboard.",
+                    "action":  "verify_email",
+                },
+            )
+        return user
+    return _check

@@ -26,7 +26,7 @@ from pydantic import BaseModel, validator
 
 import crud
 from core.auth import require_business
-from core.plan_guard import require_plan, require_not_restricted
+from core.plan_guard import require_plan, require_not_restricted, require_email_verified
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -95,7 +95,7 @@ class WinBackFireRequest(BaseModel):
 
 
 @router.post("/retention/send-win-back")
-async def retention_send_win_back(body: WinBackFireRequest, user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted())):
+async def retention_send_win_back(body: WinBackFireRequest, user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted()), _verified=Depends(require_email_verified())):
     """
     Fire a win-back campaign suggested by GET /retention/win-back.
     Delegates to the existing CampaignService — no new send logic.
@@ -350,7 +350,7 @@ def list_scheduled_campaigns(user=Depends(require_business)):
 
 
 @router.post("/campaigns/scheduled", status_code=201)
-def create_scheduled_campaign(body: ScheduledCampaignCreate, user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted())):
+def create_scheduled_campaign(body: ScheduledCampaignCreate, user=Depends(require_business), _plan=Depends(require_plan("GROWTH")), _restrict=Depends(require_not_restricted()), _verified=Depends(require_email_verified())):
     """
     Schedule a campaign to send at a future datetime.
 
@@ -504,6 +504,7 @@ async def run_scheduled_campaigns(request: Request):
     now = datetime.now(timezone.utc).isoformat()
     processed, sent_total, failed_total = 0, 0, 0
     skipped_claimed = 0
+    skipped_unverified = 0
     stalled = _fail_stalled_campaigns(supabase)
 
     try:
@@ -524,6 +525,13 @@ async def run_scheduled_campaigns(request: Request):
         bid         = campaign["business_id"]
         audience    = campaign["audience"]
         message     = campaign["message"]
+
+        # An account that must confirm its email (new, or changed its address) does not send
+        # campaigns; the campaign stays pending and goes out on the first run after it verifies.
+        from services.email_verification_service import is_restricted
+        if is_restricted(bid):
+            skipped_unverified += 1
+            continue
 
         # Claim BEFORE sending: another run (retry, deploy overlap) or an earlier crashed run
         # must never cause a second send of the same campaign.
@@ -565,6 +573,7 @@ async def run_scheduled_campaigns(request: Request):
         "sent":      sent_total,
         "failed":    failed_total,
         "skipped_already_claimed": skipped_claimed,
+        "skipped_unverified_email": skipped_unverified,
         "interrupted_marked_failed": stalled,
     }
 

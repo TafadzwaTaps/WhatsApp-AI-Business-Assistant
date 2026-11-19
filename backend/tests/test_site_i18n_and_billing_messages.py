@@ -145,7 +145,9 @@ def test_translate_text_wrapper_still_returns_original_on_failure(ts):
     assert ts.translate_text("Fresh bread daily for everyone", "pl") == "Fresh bread daily for everyone"
 
 
-def test_detect_language_signals(ts):
+def test_detect_language_signals(ts, monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "langdetect", None)     # simulate absence even where it is installed
     assert ts.detect_language("مرحبا بكم في متجرنا الجميل") == "ar"
     assert ts.detect_language("Zapraszamy do naszego salonu, czekamy na Państwa") == "pl"
     assert ts.detect_language("Hi") is None

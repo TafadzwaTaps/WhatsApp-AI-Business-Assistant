@@ -224,11 +224,26 @@ def signup(data: SignupRequest, request: Request):
         except Exception as exc:
             log.warning("referral record failed: %s", exc)
 
+    # Phase 4 follow-up: when the verification migration is applied, a new account must prove its
+    # address. It gets the verification link now and the welcome email after it is confirmed.
+    _verification_pending = False
+    try:
+        from services.email_verification_service import columns_ready, mark_required, send_verification
+        _vemail = (getattr(data, "email", "") or "").strip().lower()
+        # Every new account is flagged, even one without an email: it stays restricted until the
+        # owner adds an address (PATCH /me sends the link) and confirms it.
+        if columns_ready() and mark_required(biz["id"]):
+            _verification_pending = True
+            if _vemail and not send_verification(biz["id"], _vemail, biz["name"], get_client_ip(request)):
+                log.warning("signup: verification email not sent biz=%s (user can resend)", biz["id"])
+    except Exception as _ve:
+        log.warning("signup: verification setup failed (non-fatal): %s", type(_ve).__name__)
+
     # ── Feature 3: Send welcome email (non-blocking — signup succeeds regardless) ──
     try:
         from services.email_service import send_welcome_email
         _owner_email = getattr(data, "email", "").strip()
-        if _owner_email:
+        if _owner_email and not _verification_pending:
             send_welcome_email(
                 to_email=_owner_email,
                 business_name=biz["name"],
@@ -249,6 +264,7 @@ def signup(data: SignupRequest, request: Request):
         "business_id":    biz["id"],
         "selected_tier":  _tier or None,
         "billing_period": _billing_period if _tier else None,
+        "email_verification_required": _verification_pending,
     }
 
 
@@ -535,6 +551,65 @@ def refresh_token_endpoint(data: RefreshRequest, request: Request):
         "role": role,
         **({} if business_id is None else {"business_id": business_id}),
     }
+
+
+# ── Email verification (Phase 4 follow-up) ────────────────────────────────────
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(..., max_length=200)
+
+
+@router.post("/auth/verify-email")
+def verify_email(data: VerifyEmailRequest, request: Request):
+    """Redeem the emailed link. Public (the link is opened from a mail client); the token is the
+    credential. Generic failure text, per-address rate limit, single use."""
+    _rate_limit("verify_email", request, 20, 600)
+    from services.email_verification_service import verify_token
+    res = verify_token(data.token)
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("reason") or "Invalid or expired link.")
+    if res.get("first_time"):
+        try:                                    # the welcome email waits until the address is proven
+            from services.email_service import send_welcome_email
+            biz = crud.get_business_by_id(res["business_id"]) or {}
+            if biz.get("owner_email"):
+                send_welcome_email(to_email=biz["owner_email"], business_name=biz.get("name", ""),
+                                   username=biz.get("owner_username", ""))
+        except Exception as exc:
+            log.warning("verify-email: welcome email failed (non-fatal): %s", type(exc).__name__)
+    return {"ok": True, "message": "Your email address is confirmed."}
+
+
+@router.post("/auth/resend-verification")
+def resend_verification(request: Request, user: dict = Depends(get_current_user)):
+    """Send a new verification link to the address already on the signed-in account. No email is
+    accepted from the request, so this cannot be used to reach other addresses. Rate limited per
+    account and per address; the answer never differs between accounts."""
+    bid = user.get("business_id")
+    if user.get("role") != "business" or bid is None or user.get("impersonated_by"):
+        raise HTTPException(403, "Not available for this account")
+    _rate_limit("resend_verification", request, 3, 3600, key_suffix=str(bid))
+    _rate_limit("resend_verification_ip", request, 10, 3600)
+    from services.email_verification_service import columns_ready, needs_verification, send_verification
+    biz = crud.get_business_by_id(bid) or {}
+    email = (biz.get("owner_email") or "").strip().lower()
+    generic = {"ok": True, "message": "If your address still needs confirming, a new link is on its way."}
+    if not columns_ready() or not email or biz.get("email_verified_at"):
+        return generic
+    # Grandfathered accounts (required = false) may verify voluntarily; only a missing flag value
+    # on an inactive feature returns above.
+    if not send_verification(bid, email, biz.get("name") or biz.get("owner_username") or "", get_client_ip(request)):
+        log.warning("resend-verification: send failed biz=%s", bid)
+    return generic
+
+
+@router.get("/auth/verification-status")
+def verification_status(user: dict = Depends(get_current_user)):
+    """Safe summary for the dashboard banner."""
+    bid = user.get("business_id")
+    if user.get("role") != "business" or bid is None:
+        return {"active": False, "required": False, "verified": True, "restricted": False, "has_email": False}
+    from services.email_verification_service import status_for
+    return status_for(crud.get_business_by_id(bid))
 
 
 # ── Marketing-email unsubscribe (CAN-SPAM 15 U.S.C. § 7704) ───────────────────

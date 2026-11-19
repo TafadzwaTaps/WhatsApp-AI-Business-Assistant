@@ -239,6 +239,11 @@ def send_weekly_reports() -> dict:
                 skipped += 1
                 continue
 
+            from services.email_verification_service import is_restricted
+            if is_restricted(biz_id):          # address not confirmed yet: no report emails
+                skipped += 1
+                continue
+
             # Opt-out: the Preferences toggle and the email's unsubscribe link
             # both store pref_weekly_reports=False. Absent = opted in (default).
             if fj.get("pref_weekly_reports") is False:

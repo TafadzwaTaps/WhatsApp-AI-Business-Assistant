@@ -142,6 +142,7 @@ def test_detect_via_langdetect_gracefully_handles_missing_library(monkeypatch):
     """In this environment langdetect isn't installed — confirms the
     ImportError fallback path (the real, currently-exercised path) never
     raises and simply returns None."""
+    monkeypatch.setitem(sys.modules, "langdetect", None)     # simulate absence even where it is installed
     assert tl._detect_via_langdetect("Bonjour, je voudrais un café") is None
 
 

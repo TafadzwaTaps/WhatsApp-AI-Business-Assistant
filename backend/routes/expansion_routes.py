@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Depends, Query, Request
 from pydantic import BaseModel, validator
 
 import crud
-from core.auth import require_business, require_superadmin
+from core.auth import require_business, require_not_impersonated, require_superadmin
 from core.plan_guard import require_plan
 from services.security import check as _rate_check
 
@@ -553,7 +553,7 @@ def get_referral_balance(user=Depends(require_business)):
 
 
 @router.post("/me/referral/withdraw")
-def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_business)):
+def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_not_impersonated)):
     """
     Request a PayPal payout of referral credits.
     Rules:
