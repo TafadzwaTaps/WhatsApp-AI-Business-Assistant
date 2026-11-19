@@ -585,6 +585,13 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str, _shar
             )
             last_result = result
 
+        except http_requests.exceptions.ReadTimeout as exc:
+            # The request reached Meta but the answer did not come back, so the message may
+            # already have been accepted: resending could deliver it twice. WhatsApp has no
+            # idempotency key, so treat this as ambiguous and do NOT retry.
+            log.error("send_whatsapp: read timeout, delivery unknown - not retrying  to=***%s: %s", str(to)[-3:], exc)
+            return {"error": "read timeout - delivery unknown", "ambiguous": True}
+
         except (http_requests.exceptions.Timeout,
                 http_requests.exceptions.ConnectionError) as exc:
             log.warning(
@@ -777,6 +784,15 @@ if booking_public_router: app.include_router(booking_public_router)
 # Runs in a daemon thread — never blocks startup or requests.
 # Fires every Monday at 08:00 UTC. Fails silently if email not configured.
 try:
+    # The per-customer message lock, schedulers and several caches live inside ONE process.
+    try:
+        _workers = int(os.getenv("WEB_CONCURRENCY", "1") or 1)
+    except ValueError:
+        _workers = 1
+    if _workers > 1:
+        log.warning("WEB_CONCURRENCY=%d: WaziBot assumes a single worker process. Per-customer "
+                    "message locking and the report/reminder schedulers are NOT coordinated across "
+                    "workers (duplicate sends and concurrent state edits are possible).", _workers)
     from services.weekly_report_service import attach_weekly_report_scheduler
     attach_weekly_report_scheduler(app)
 except Exception as _wrs_err:

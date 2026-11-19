@@ -103,6 +103,72 @@ def mark_message_failed(message_id) -> None:
         log.warning("mark_message_failed failed  id=%s: %s", message_id, exc)
 
 
+def _ts(value):
+    """Parse a database timestamp into an aware datetime so comparisons are by instant, not by
+    text ('Z' vs '+00:00', with/without fractional seconds). Unparseable -> the epoch."""
+    from datetime import datetime, timezone
+    try:
+        d = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+
+def get_unanswered_inbound(max_age_minutes: int = 30, min_age_minutes: int = 3,
+                           limit: int = 100, business_id: int | None = None) -> list[dict]:
+    """Customers whose NEWEST incoming message is between `min_age_minutes` and
+    `max_age_minutes` old and has no outgoing message at or after it (the reply was lost:
+    crash, restart, failed send before the row was written, ...). No schema change: it is
+    derived from the messages table. Returns newest-incoming rows, oldest first.
+
+    The newest incoming message is taken over the whole window (not only the stale part) so
+    a customer who has just written again is never reported while that message is in flight."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    lo = (now - timedelta(minutes=max_age_minutes)).isoformat()
+    hi = (now - timedelta(minutes=min_age_minutes)).isoformat()
+    q = (supabase.table("messages")
+         .select("id,customer_id,business_id,text,created_at,wa_message_id")
+         .eq("direction", "incoming").gte("created_at", lo))
+    if business_id is not None:
+        q = q.eq("business_id", business_id)
+    rows = q.order("id", desc=True).limit(500).execute().data or []
+
+    latest: dict = {}
+    for r in rows:
+        latest.setdefault((r.get("business_id"), r.get("customer_id")), r)
+    hi_dt = now - timedelta(minutes=min_age_minutes)
+    latest = {k: r for k, r in latest.items() if _ts(r.get("created_at")) <= hi_dt}
+    if not latest:
+        return []
+
+    cust_ids = sorted({k[1] for k in latest if k[1] is not None})
+    oq = (supabase.table("messages").select("customer_id,business_id,created_at")
+          .eq("direction", "outgoing").gte("created_at", lo).in_("customer_id", cust_ids))
+    if business_id is not None:
+        oq = oq.eq("business_id", business_id)
+    last_out: dict = {}
+    # newest first, so if the limit ever bites it is the OLD replies that fall off
+    for o in (oq.order("id", desc=True).limit(3000).execute().data or []):
+        key = (o.get("business_id"), o.get("customer_id"))
+        t_out = _ts(o.get("created_at"))
+        if key not in last_out or t_out > last_out[key]:
+            last_out[key] = t_out
+
+    epoch = _ts(None)
+    unanswered = [r for k, r in latest.items() if last_out.get(k, epoch) < _ts(r.get("created_at"))]
+    unanswered.sort(key=lambda r: _ts(r.get("created_at")))
+    return unanswered[:limit]
+
+
+def has_reply_since(customer_id: int, business_id: int, since_iso: str) -> bool:
+    """True if this customer already has an outgoing message at/after `since_iso`."""
+    res = (supabase.table("messages").select("id")
+           .eq("customer_id", customer_id).eq("business_id", business_id)
+           .eq("direction", "outgoing").gte("created_at", since_iso).limit(1).execute())
+    return bool(res.data)
+
+
 def apply_delivery_status(wa_message_id: str, status: str, detail: str | None = None) -> bool:
     """Apply a Meta delivery receipt (sent/delivered/read/failed) to the matching message.
 

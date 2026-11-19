@@ -232,6 +232,26 @@ def handoff_pending(user=Depends(require_business)):
     return get_pending_handoffs(user["business_id"])
 
 
+@router.get("/chat/unanswered")
+def unanswered_messages(minutes: int = Query(60, ge=5, le=240), user=Depends(require_business)):
+    """Customer messages from the last `minutes` that never got a reply (lost reply, crash,
+    failed send). Scoped to the caller's business; lets the owner follow up by hand."""
+    from datetime import datetime, timezone
+    rows = crud.messages.get_unanswered_inbound(
+        max_age_minutes=minutes, min_age_minutes=3, limit=100, business_id=user["business_id"])
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in rows:
+        try:
+            age = int((now - datetime.fromisoformat(str(r["created_at"]).replace("Z", "+00:00"))).total_seconds() // 60)
+        except Exception:
+            age = None
+        out.append({"customer_id": r.get("customer_id"), "message_id": r.get("id"),
+                    "text": (r.get("text") or "")[:160], "created_at": r.get("created_at"),
+                    "age_minutes": age})
+    return {"count": len(out), "items": out}
+
+
 def _handoff_get_customer(customer_id: int, bid: int, agent_user: dict, action: str) -> dict:
     """
     Tenant-safe customer lookup for handoff endpoints.

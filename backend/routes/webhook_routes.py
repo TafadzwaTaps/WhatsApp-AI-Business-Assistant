@@ -162,6 +162,53 @@ def _is_duplicate_key_error(exc: Exception) -> bool:
             or ("unique" in s and ("constraint" in s or "violat" in s)))
 
 
+class WebhookRetry(Exception):
+    """Raised for a transient failure BEFORE a customer message was durably handled, so the
+    webhook can answer 503 and let Meta redeliver it (the unique wamid guard makes a
+    redelivery of an already-handled message a harmless no-op)."""
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    """True for network/timeout/5xx/connection-class failures worth a redelivery. Constraint,
+    validation and other permanent errors return False (retrying would never succeed and
+    sustained non-2xx answers can get a webhook disabled by Meta)."""
+    if _is_duplicate_key_error(exc):
+        return False
+    # Structured signals first: network-level exception types are transient...
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    name = type(exc).__name__.lower()
+    mod = (type(exc).__module__ or "").split(".")[0]
+    if mod in ("httpx", "httpcore", "requests", "urllib3", "socket", "ssl") or \
+            any(k in name for k in ("timeout", "connecterror", "networkerror", "transporterror",
+                                    "remoteprotocol", "readerror")):
+        return True
+    # ...and when the database driver gave a structured error code, that code alone decides.
+    # Never fall back to the message text then: Postgres can echo the offending row (including
+    # the customer's own text) in its message, so a message containing the word "connection"
+    # would otherwise be misread as an outage and retried forever.
+    code = getattr(exc, "code", None)
+    if code is None and exc.args and isinstance(exc.args[0], dict):
+        code = exc.args[0].get("code")
+    if code is not None and str(code) != "":
+        c = str(code)
+        return c.startswith(("08", "53", "57")) or c in ("502", "503", "504")
+    # No structured code at all: a short message match for generic gateway/network text.
+    s = str(exc).lower()[:120]
+    return any(k in s for k in ("timed out", "timeout", "connection", "temporarily unavailable",
+                                "bad gateway", "service unavailable", "gateway timeout",
+                                "server disconnected", "reset by peer", "too many connections"))
+
+
+def _wa_error_code(result) -> int | None:
+    """Meta error code from a send_whatsapp() failure dict, or None."""
+    try:
+        err = result.get("error") if isinstance(result, dict) else None
+        return int(err.get("code")) if isinstance(err, dict) and err.get("code") is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 @router.post("/webhook")
 async def receive_message(request: Request):
     raw_body   = await request.body()
@@ -177,22 +224,33 @@ async def receive_message(request: Request):
         return {"status": "ok"}
     if not isinstance(data, dict):
         return {"status": "ok"}
+    # "_replay" is an internal flag set only by /webhook/recover-unanswered. It must never be
+    # accepted from a request body (it skips the duplicate check and message storage).
+    data.pop("_replay", None)
 
     # Meta may batch several messages (and several entries/changes) in ONE
     # delivery and is told 200 afterwards, so every message must be handled
     # now - anything skipped here is lost for good. Each message runs through
     # the unchanged single-message pipeline below, serialised per customer.
+    retry_needed = False
     for single in _split_webhook_payload(data):
         key = _payload_sender(single)
         async with _customer_lock(key):
             try:
                 await _handle_one_message(single)
+            except WebhookRetry as exc:
+                # Transient failure before the message was stored: finish the rest of the
+                # batch, then ask Meta to redeliver (handled messages dedupe on redelivery).
+                retry_needed = True
+                log.error("webhook: transient failure, requesting redelivery: %s", exc)
             except Exception as exc:   # one bad message must not drop the rest of the batch
                 log.exception("webhook: message handler crashed: %s", exc)
     try:
         await run_in_threadpool(_apply_status_events, data)
     except Exception as exc:
         log.warning("webhook: status handling failed (ignored): %s", exc)
+    if retry_needed:
+        raise HTTPException(503, "Temporary processing error; please retry")
     return {"status": "ok"}
 
 
@@ -288,7 +346,7 @@ async def _handle_one_message(data: dict) -> dict:
         return {"status": "ok"}
 
     # STEP 1b: Deduplication
-    if wa_message_id:
+    if wa_message_id and not data.get("_replay"):
         try:
             if await run_in_threadpool(crud.message_exists, wa_message_id):
                 return {"status": "ok"}
@@ -393,6 +451,8 @@ async def _handle_one_message(data: dict) -> dict:
             token = ""
     except Exception as exc:
         log.exception("📋 STEP 2 FAIL: %s", exc)
+        if _is_transient_error(exc):      # nothing stored yet: let Meta redeliver
+            raise WebhookRetry("business lookup failed") from exc
         return {"status": "ok"}
 
     # STEP 3: Decrypt token
@@ -408,6 +468,8 @@ async def _handle_one_message(data: dict) -> dict:
         customer = await run_in_threadpool(crud.get_or_create_customer, customer_phone, business["id"])
     except Exception as exc:
         log.exception("👤 STEP 4 FAIL: %s", exc)
+        if _is_transient_error(exc):      # nothing stored yet: let Meta redeliver
+            raise WebhookRetry("customer lookup failed") from exc
         return {"status": "ok"}
 
     # ACQUISITION TRACKING — record conversation_started on first ever message.
@@ -422,24 +484,35 @@ async def _handle_one_message(data: dict) -> dict:
 
     # STEP 5: Save incoming message
     in_msg: dict = {}
-    try:
-        await run_in_threadpool(crud.log_message, business["id"], customer_phone, "in", text)
-        in_msg = await run_in_threadpool(
-            crud.create_message,
-            customer["id"], business["id"], text, "incoming",
-            wa_message_id=wa_message_id,
-        )
-    except Exception as exc:
-        if _is_duplicate_key_error(exc):
-            log.warning("💾 STEP 5 — Duplicate at INSERT  wa_id=%s", wa_message_id)
-            return {"status": "ok"}
-        log.exception("💾 STEP 5 FAIL: %s", exc)
+    if data.get("_replay"):
+        pass      # recovery replay: the incoming row already exists, do not store it again
+    else:
+        try:
+            # The message row is the dedupe guard, so it is written first; the legacy
+            # chat_messages log comes after so a duplicate delivery leaves no stray log row.
+            in_msg = await run_in_threadpool(
+                crud.create_message,
+                customer["id"], business["id"], text, "incoming",
+                wa_message_id=wa_message_id,
+            )
+        except Exception as exc:
+            if _is_duplicate_key_error(exc):
+                log.warning("💾 STEP 5 — Duplicate at INSERT  wa_id=%s", wa_message_id)
+                return {"status": "ok"}
+            log.exception("💾 STEP 5 FAIL: %s", exc)
+            if _is_transient_error(exc):      # not stored, nothing replied: let Meta redeliver
+                raise WebhookRetry("could not store incoming message") from exc
+        try:
+            await run_in_threadpool(crud.log_message, business["id"], customer_phone, "in", text)
+        except Exception as exc:
+            log.warning("💾 STEP 5 — legacy chat log failed (ignored): %s", exc)
 
     try:
-        await manager.broadcast(business["id"], {
-            "event": "new_message", "customer_id": customer["id"],
-            "phone": customer_phone, "message": in_msg,
-        })
+        if not data.get("_replay"):
+            await manager.broadcast(business["id"], {
+                "event": "new_message", "customer_id": customer["id"],
+                "phone": customer_phone, "message": in_msg,
+            })
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
@@ -907,6 +980,11 @@ async def _handle_one_message(data: dict) -> dict:
         if "error" in result:
             _log_event("wa.failed", phone=customer_phone, biz=business["id"],
                        error=result["error"])
+            if _wa_error_code(result) == 131047:
+                # Meta: more than 24h since the customer's last message. Not retryable and not
+                # a bug: a template message would be needed. Recorded so it is visible.
+                log.warning("📤 STEP 8 — 24h customer-service window closed (131047)  biz=%s", business["id"])
+                _log_event("wa.window_closed", phone=customer_phone, biz=business["id"])
             # Record the failure on the stored reply so the inbox shows it as undelivered.
             if isinstance(out_msg, dict) and out_msg.get("id"):
                 await run_in_threadpool(crud.messages.mark_message_failed, out_msg["id"])
@@ -923,6 +1001,107 @@ async def _handle_one_message(data: dict) -> dict:
             await run_in_threadpool(crud.messages.mark_message_failed, out_msg["id"])
 
     return {"status": "ok"}
+
+
+# ── Recovery of lost replies ──────────────────────────────────────────────────
+
+@router.post("/webhook/recover-unanswered")
+async def recover_unanswered(request: Request, dry_run: bool = True,
+                             max_age_minutes: int = 30, limit: int = 20):
+    """Re-run the reply for customer messages that were stored but never answered (crash,
+    restart or failure between storing the message and replying).
+
+    Safety: protected by CRON_SECRET and fails closed; DRY RUN BY DEFAULT (nothing is sent
+    unless dry_run=false is passed explicitly); text messages only; at most 120 minutes old;
+    skips customers in human handoff, shared-number businesses and inactive businesses;
+    re-checks "still unanswered" under the per-customer lock right before replaying, so a
+    reply that arrived in the meantime is never duplicated."""
+    import hmac as _hmac
+    _secret = os.getenv("CRON_SECRET", "")
+    if not _secret:
+        log.error("CRON_SECRET not configured - refusing /webhook/recover-unanswered")
+        raise HTTPException(503, "Cron endpoint not configured")
+    if not _hmac.compare_digest(request.headers.get("x-cron-secret", "").encode(), _secret.encode()):
+        raise HTTPException(403, "Forbidden")
+
+    max_age = min(max(int(max_age_minutes), 5), 120)
+    limit = min(max(int(limit), 1), 50)
+    from core.db import supabase
+    from services._ai_state import is_in_human_handoff
+
+    candidates = await run_in_threadpool(crud.messages.get_unanswered_inbound, max_age, 3, limit * 3)
+    report = {"dry_run": bool(dry_run), "candidates": len(candidates), "replayed": 0, "failed": 0,
+              "skipped": {"non_text": 0, "business": 0, "shared_number": 0, "handoff": 0,
+                          "answered_meanwhile": 0, "no_customer": 0, "state_changed": 0}}
+    handled = 0
+    for c in candidates:
+        if handled >= limit:
+            break
+        text = (c.get("text") or "").strip()
+        if not text or text.startswith("["):
+            report["skipped"]["non_text"] += 1      # placeholders such as [image] cannot be replayed
+            continue
+        bid, cid = c.get("business_id"), c.get("customer_id")
+        if not c.get("created_at"):
+            report["skipped"]["no_customer"] += 1     # cannot prove it is unanswered without a timestamp
+            continue
+        biz = await run_in_threadpool(crud.get_business_by_id, bid)
+        if not biz or not biz.get("is_active", True):
+            report["skipped"]["business"] += 1
+            continue
+        if biz.get("use_shared_number") or not biz.get("whatsapp_phone_id"):
+            report["skipped"]["shared_number"] += 1
+            continue
+        cust = await run_in_threadpool(
+            lambda: supabase.table("customers").select("phone").eq("id", cid).eq("business_id", bid)
+            .limit(1).execute().data)
+        phone = (cust or [{}])[0].get("phone") if cust else None
+        if not phone:
+            report["skipped"]["no_customer"] += 1
+            continue
+        if await run_in_threadpool(is_in_human_handoff, phone, bid) is not False:
+            report["skipped"]["handoff"] += 1       # a human owns it, or state unreadable
+            continue
+        handled += 1
+        if dry_run:
+            report["replayed"] += 1                 # "would replay"
+            continue
+        async with _customer_lock(phone):
+            if await run_in_threadpool(crud.messages.has_reply_since, cid, bid, c.get("created_at") or ""):
+                report["skipped"]["answered_meanwhile"] += 1
+                handled -= 1
+                continue
+            # Re-check handoff now that we hold the lock (it may have started while we waited).
+            if await run_in_threadpool(is_in_human_handoff, phone, bid) is not False:
+                report["skipped"]["handoff"] += 1
+                handled -= 1
+                continue
+            # If the conversation state was written AFTER this message arrived, the original run
+            # got part-way (e.g. an order or cart change) before it was lost. Replaying a
+            # "yes"/"confirm" into that changed state could repeat the action, so leave it to a human.
+            try:
+                st = await run_in_threadpool(
+                    lambda: supabase.table("carts").select("updated_at").eq("phone", phone)
+                    .eq("business_id", bid).limit(1).execute().data)
+            except Exception:
+                st = None
+            if st is None or (st and crud.messages._ts(st[0].get("updated_at")) > crud.messages._ts(c.get("created_at"))):
+                report["skipped"]["state_changed"] += 1
+                handled -= 1
+                continue
+            payload = {"_replay": True, "entry": [{"changes": [{"value": {
+                "metadata": {"phone_number_id": biz["whatsapp_phone_id"]},
+                "messages": [{"type": "text", "from": phone,
+                              "id": c.get("wa_message_id") or f"replay-{c.get('id')}",
+                              "text": {"body": text}}]}}]}]}
+            try:
+                await _handle_one_message(payload)
+                report["replayed"] += 1
+            except Exception as exc:
+                report["failed"] += 1
+                log.error("recover_unanswered: replay failed biz=%s customer=%s: %s", bid, cid, type(exc).__name__)
+    log.info("recover_unanswered: %s", report)
+    return report
 
 
 # ── Payment webhook ───────────────────────────────────────────────────────────
@@ -986,12 +1165,17 @@ async def payment_webhook(data: PaymentConfirmRequest, request: Request):
                 token    = crud.get_decrypted_token(business)
                 phone_id = business.get("whatsapp_phone_id")
                 if token and phone_id:
-                    send_whatsapp(phone_id, token, phone,
+                    _sent = send_whatsapp(phone_id, token, phone,
                         f"✅ *Payment Confirmed!*\n\n"
                         f"Thank you! Your payment for *{reference}* has been verified.\n\n"
                         f"💰 Amount: ${order_total:.2f}\n"
                         f"📦 Your order is now being prepared. Thank you! 🙏"
                     )
+                    if isinstance(_sent, dict) and "error" in _sent:
+                        # The payment is recorded either way; a failed notice must be visible
+                        # (131047 = outside Meta's 24h customer-service window).
+                        log.warning("payment_webhook: confirmation not delivered  order=%s  meta_code=%s",
+                                    order_id, _wa_error_code(_sent))
         except Exception as exc:
             log.exception("payment_webhook notify error: %s", exc)
 
