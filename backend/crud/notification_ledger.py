@@ -60,8 +60,13 @@ def _marker(kind: str, period_key: str) -> str:
 
 # ── claim ─────────────────────────────────────────────────────────────────────
 
-def claim(business_id: int, kind: str, period_key: str) -> bool:
-    """True if THIS call won the right to send; False if it was already claimed/sent."""
+def claim(business_id: int, kind: str, period_key: str, table_only: bool = False) -> bool:
+    """True if THIS call won the right to send; False if it was already claimed/sent.
+
+    table_only=True: for high-volume or settings-sensitive claims (payment events, checkout
+    sessions) that must never fall back to the features_json marker. If the notification_log
+    table is missing the claim is NOT recorded and True is returned (the caller keeps its own
+    other guards, e.g. the atomic paid claim); a warning is logged."""
     global _table_ok
     period_key = str(period_key)
     if _table_ok is not False:
@@ -80,8 +85,12 @@ def claim(business_id: int, kind: str, period_key: str) -> bool:
                 log.warning("notification_log table not found - using the features_json fallback "
                             "(apply backend/migrations/notification_ledger.sql for cross-process safety)")
                 _table_ok = False
+                if table_only:
+                    return True
             else:
                 raise
+    if table_only:
+        return True                     # table known missing: no features_json fallback for this claim
     return _claim_fallback(business_id, kind, period_key)
 
 

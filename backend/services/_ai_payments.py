@@ -65,6 +65,7 @@ def _build_payment_instructions(pending: dict, business_id: int, business_name: 
 
     order = {
         "id":              order_id,
+        "business_id":     business_id,     # lets the payment code look up the business currency
         "total_price":     total,
         "business_name":   business_name,
         "currency_symbol": currency_sym,   # ensures payment instructions use correct currency
@@ -330,13 +331,44 @@ def _handle_paypal_paid_message(
         log.error("PayPal status check failed: %s", exc)
         details = {"paid": False, "error": str(exc)}
 
+    if details.get("paid") and not order_id:
+        details = {"paid": False}               # nothing to verify against: never confirm
+    if details.get("paid") and order_id:
+        # "COMPLETED" alone is not proof: the PayPal order must be THIS order's, in the currency
+        # and for the amount we asked for. Anything else is left for the webhook / the owner.
+        try:
+            from workflows.order_lifecycle import get_order as _get_order
+            from services.payment_service import (
+                paypal_charge_for as _charge_for, order_currency_code as _cur_of,
+                paypal_amount_matches as _amt_ok)
+            _order = _get_order(order_id)
+            _verified = bool(_order and _order.get("business_id") == business_id)
+            if _verified and _order.get("payment_status") == "refunded":
+                _verified = False                    # a refunded order is never re-confirmed as paid
+            if _verified:
+                _internal = details.get("internal_order_id")
+                if _internal is not None and int(_internal) != int(order_id):
+                    _verified = False
+                _stored = (_order.get("paypal_order_id") or "").strip()
+                if _stored and _stored != paypal_order_id:
+                    _verified = False
+                if str(details.get("currency") or "").upper() != _cur_of(_order):
+                    _verified = False
+                _chg = _charge_for(_order)
+                if _chg is not None and not _amt_ok(details.get("amount", 0), _chg[2]):
+                    _verified = False
+        except Exception as exc:
+            log.error("PayPal paid-message verification failed: %s", type(exc).__name__)
+            _verified = False
+        if not _verified:
+            log.error("PayPal 'paid' claim NOT verified  order=%s  (id/currency/amount mismatch)", order_id)
+            details = {"paid": False}
+
     if details.get("paid"):
         try:
             if order_id:
-                crud.update_order_payment(order_id, business_id, {
-                    "payment_status":    "paid",
-                    "payment_reference": reference,
-                })
+                # Atomic "mark paid once": if the webhook already did it, no second side effects.
+                crud.claim_order_paid(order_id, business_id, {"payment_reference": reference})
         except Exception as exc:
             log.warning("PayPal payment status update failed: %s", exc)
 
@@ -345,7 +377,7 @@ def _handle_paypal_paid_message(
         _next_step = "We'll see you at your appointment!" if is_service_business else "We're now preparing your order. You'll hear from us shortly! 🙌"
         return (
             f"✅ *PayPal Payment Confirmed!*\n\n"
-            f"Thank you! Your payment of *${amount:.2f} USD* has been verified.\n\n"
+            f"Thank you! Your payment of *{details.get('currency', '')} {amount:.2f}* has been verified.\n\n"
             f"📦 {_ref_word} : *{reference}*\n"
             f"📍 Status: *CONFIRMED*\n\n"
             f"{_next_step}\n\n"
@@ -670,6 +702,16 @@ def _process_payment(
                     update["payment_url"] = pay["url"]
                 if pay.get("paypal_order_id"):
                     update["paypal_order_id"] = pay["paypal_order_id"]
+                if method == "paypal":
+                    # Remember the currency this payment was created in, so a later change of the
+                    # business currency cannot make a genuine payment look mismatched (stored only
+                    # when the orders table has a currency column).
+                    try:
+                        from services.payment_service import order_currency_code as _cur_of
+                        update["currency"] = _cur_of({**order, "business_id": business_id,
+                                                      "currency_symbol": currency_sym})
+                    except Exception as _cexc:
+                        log.debug("order currency not persisted: %s", type(_cexc).__name__)
             crud.update_order_payment(oid, business_id, update)
             log.info("payment persisted  order=%s  method=%s  status=%s",
                      oid, method, update["payment_status"])

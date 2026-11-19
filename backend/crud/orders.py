@@ -140,7 +140,7 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
         "payment_method", "payment_status", "payment_reference",
         "payment_url", "paypal_order_id",
         "fulfillment_method", "delivery_address", "fulfillment_notes",
-        "total_price",
+        "total_price", "currency",     # currency: only written if the orders table has the column
     )
     safe: dict = {}
     for col in allowed:
@@ -172,7 +172,9 @@ def claim_order_paid(order_id: int, business_id: int, data: dict) -> bool:
     double-clicked return URLs) run their side effects - customer message, stock/memory
     sync - exactly once. Scoped by business_id like update_order_payment.
 
-    Returns False when the order is already paid / not this business's. A database
+    Returns False when the order is already paid, was REFUNDED (a refunded order must never be
+    flipped back to paid by a late event or a customer's "paid" message) or is not this
+    business's. A database
     failure RAISES (it must never look like "already paid": the caller should answer
     with a retryable error so the payment provider re-delivers)."""
     from workflows.order_lifecycle import _has_col
@@ -185,7 +187,7 @@ def claim_order_paid(order_id: int, business_id: int, data: dict) -> bool:
             .update(safe)
             .eq("id", order_id)
             .eq("business_id", business_id)
-            .or_("payment_status.is.null,payment_status.neq.paid")
+            .or_("payment_status.is.null,and(payment_status.neq.paid,payment_status.neq.refunded)")
             .execute()
         )
         return bool(res.data)

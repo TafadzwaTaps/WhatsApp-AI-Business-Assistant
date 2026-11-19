@@ -61,6 +61,17 @@ class ChangePlanRequest(BaseModel):
     confirm_proration: bool = False
 
 
+def require_own_business(user=Depends(require_business)):
+    """Money-moving billing actions (checkout, cancel, resume, plan change, billing portal,
+    payout setup) are refused for a support "view as business" token: a superadmin looking at
+    a customer's dashboard must not be able to cancel or change that customer's subscription."""
+    if user.get("impersonated_by"):
+        log.warning("billing action blocked for impersonation token  admin=%s  business=%s",
+                    user.get("impersonated_by"), user.get("business_id"))
+        raise HTTPException(403, "This action is not available while viewing as another business.")
+    return user
+
+
 def _billing_error(result: dict):
     """Map a service error to an HTTP status (never leaks internals)."""
     code = result.get("code")
@@ -96,7 +107,7 @@ def billing_tiers():
 
 
 @router.post("/billing/checkout")
-def billing_checkout(body: CheckoutRequest, user=Depends(require_business)):
+def billing_checkout(body: CheckoutRequest, user=Depends(require_own_business)):
     """
     Create a Stripe Checkout Session for upgrading to a paid tier.
     Returns {"url": "https://checkout.stripe.com/..."} for the frontend to redirect to.
@@ -131,7 +142,7 @@ def billing_checkout(body: CheckoutRequest, user=Depends(require_business)):
 
 
 @router.post("/billing/cancel")
-def billing_cancel(body: CancelRequest, user=Depends(require_business)):
+def billing_cancel(body: CancelRequest, user=Depends(require_own_business)):
     """Cancel the business's Stripe subscription at end of current period."""
     if not body.confirm:
         raise HTTPException(400, "Set confirm=true to cancel your subscription")
@@ -143,7 +154,7 @@ def billing_cancel(body: CancelRequest, user=Depends(require_business)):
 
 
 @router.post("/billing/resume")
-def billing_resume(user=Depends(require_business)):
+def billing_resume(user=Depends(require_own_business)):
     """Undo a scheduled end-of-period cancellation (before it takes effect)."""
     from billing.stripe_service import resume_subscription
     result = resume_subscription(user["business_id"])
@@ -153,7 +164,7 @@ def billing_resume(user=Depends(require_business)):
 
 
 @router.post("/billing/change-plan")
-def billing_change_plan(body: ChangePlanRequest, user=Depends(require_business)):
+def billing_change_plan(body: ChangePlanRequest, user=Depends(require_own_business)):
     """Upgrade the business's existing subscription (no second subscription is created)."""
     from billing.stripe_service import change_plan
     result = change_plan(user["business_id"], body.tier, body.billing_period, body.confirm_proration)
@@ -204,7 +215,7 @@ def billing_pricing(country: str = "", request: Request = None):
 
 
 @router.post("/billing/portal")
-def billing_portal(user=Depends(require_business)):
+def billing_portal(user=Depends(require_own_business)):
     """Stripe Customer Portal for the caller's own business. The Stripe customer
     always comes from the server-side mapping (verified against Stripe), never
     from the request."""
@@ -218,7 +229,7 @@ def billing_portal(user=Depends(require_business)):
 # ── Stripe Connect — Merchant onboarding (Phase 1) ───────────────────────────
 
 @router.post("/billing/connect")
-def billing_connect(user=Depends(require_business)):
+def billing_connect(user=Depends(require_own_business)):
     """Start Stripe Connect Express onboarding for this merchant."""
     from billing.stripe_service import create_connect_account
     from core.db import supabase
@@ -239,7 +250,7 @@ def billing_connect_status(user=Depends(require_business)):
 
 
 @router.post("/billing/connect/dashboard")
-def billing_connect_dashboard(user=Depends(require_business)):
+def billing_connect_dashboard(user=Depends(require_own_business)):
     """Generate a Stripe Express Dashboard login link for this merchant."""
     from billing.stripe_service import create_connect_dashboard_link
     result = create_connect_dashboard_link(user["business_id"])

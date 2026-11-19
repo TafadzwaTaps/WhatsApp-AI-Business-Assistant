@@ -313,3 +313,14 @@ Approved by user ("proceed to phase 2"). Uncommitted; nothing deployed; no migra
 - **Migrations (proposed only)**: `proposed_phase2_stock_restoration.sql`, `notification_ledger.sql` hardened (service_role grants, schema reload, FK/CHECK guidance).
 - **Tests**: 1500 passed, 1 skipped (was 1450); mutation-verified race tests. Reviews: security, QA and database engineer, no critical/high open.
 - **Open**: customer cancel during payment keeps the order pending with stock held; booking-linked cancel bypass; one-claim-per-product ledger limit; live database behaviour unverified.
+
+---
+
+## 2026-11-19 — Phase 3: Stripe, PayPal and subscription security
+Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no migration required (uses the already-applied `notification_log`). Full report: `PHASE_3_REPORT.md`.
+
+- **PayPal**: orders are created in the business currency (manual instructions for currencies PayPal cannot charge or that cannot be read; never a USD guess); the return page validates against PayPal's own order BEFORE capturing (binding to the stored PayPal id, currency, amount to the cent, capture status), masks the token in logs and is rate limited; the webhook validates currency/amount per order, binds the stored PayPal id, claims each event once (released on failure) and now handles refund/reversal events; the customer's "paid" message verifies instead of trusting PayPal's status; a refunded order can never be flipped back to paid.
+- **Stripe storefront**: only paid sessions are fulfilled, once per checkout session; transient failures (order creation, line items) give the claim back and return 500 so Stripe retries; a permanent failure after payment is logged loudly and the business is notified.
+- **Billing**: impersonation tokens refused on money-moving billing routes; cancel/resume UX shows the real server message and end date, offers Resume, handles cancelled/unpaid/paused.
+- **Tests**: 1617 passed, 1 skipped (was 1500); 14 protections mutation-verified. Reviews: security (twice), QA; no critical/high open.
+- **Open**: Stripe storefront refunds/disputes (audit-log only), scheduled billing reconcile, Stripe-trial PRO access, impersonation on non-billing money routes, behaviour without the `notification_log` table, live PayPal/Stripe/Supabase behaviour unverified.
