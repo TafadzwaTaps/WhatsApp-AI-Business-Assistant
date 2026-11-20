@@ -359,42 +359,52 @@ async function resendVerificationEmail(btn) {
   }
 }
 
-let _refreshInFlight = false;
-async function tryRefresh() {
-  // If there was never a refresh token, user is simply not logged in — don't redirect
-  if (!refreshTok) return false;
-  // Prevent concurrent refresh attempts
-  if (_refreshInFlight) {
-    // Wait up to 3s for the in-flight refresh to complete
-    await new Promise(r => setTimeout(r, 3000));
-    return !!token;
-  }
+let _refreshInFlight = false;   // kept for compatibility; the shared promise below is the real guard
+let _refreshPromise = null;
+function tryRefresh() {
+  // If there was never a refresh token, user is simply not logged in: don't redirect
+  if (!refreshTok) return Promise.resolve(false);
+  // Concurrent callers share ONE request and all get its real result (the old code slept 3 s and then
+  // guessed, so a retry could fire with a stale token while the refresh was still pending or had failed).
+  if (_refreshPromise) return _refreshPromise;
   _refreshInFlight = true;
-  try {
-    // Refresh tokens are single-chain: another tab may have rotated it already, so send the
-    // newest one from shared storage rather than this tab's possibly stale copy.
-    let _rt = refreshTok;
-    try { _rt = localStorage.getItem('wazi_refresh') || refreshTok; } catch (_) {}
-    const res = await fetch(API + ROUTES.refresh, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: _rt })
-    });
-    if (!res.ok) {
-      // 401/403 from refresh = token genuinely expired → must re-login
-      logout();
+  _refreshPromise = (async () => {
+    try {
+      // Refresh tokens are single-chain: another tab may have rotated it already, so send the
+      // newest one from shared storage rather than this tab's possibly stale copy.
+      let _rt = refreshTok;
+      try { _rt = localStorage.getItem('wazi_refresh') || refreshTok; } catch (_) {}
+      const _post = (rt) => fetch(API + ROUTES.refresh, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: rt })
+      });
+      let res = await _post(_rt);
+      if (!res.ok) {
+        // The inbox (another tab) may have rotated the single refresh token a moment ago: if storage
+        // now holds a different one, try that once before ending the session.
+        let _latest = null;
+        try { _latest = localStorage.getItem('wazi_refresh'); } catch (_) {}
+        if (_latest && _latest !== _rt) res = await _post(_latest);
+      }
+      if (!res.ok) {
+        // 401/403 from refresh = token genuinely expired → must re-login
+        logout();
+        return false;
+      }
+      const data = await res.json();
+      saveSession(data, userName);
+      return true;
+    } catch {
+      // Network error: don't logout, just fail this request silently.
+      // User can retry; we don't force them back to login on a blip
       return false;
+    } finally {
+      _refreshInFlight = false;
+      _refreshPromise = null;
     }
-    const data = await res.json();
-    saveSession(data, userName);
-    return true;
-  } catch {
-    // Network error — don't logout, just fail this request silently
-    // User can retry; we don't force them back to login on a blip
-    return false;
-  } finally {
-    _refreshInFlight = false;
-  }
+  })();
+  return _refreshPromise;
 }
 
 function logout() {
@@ -632,7 +642,12 @@ async function apiFetch(path, opts={}, _retried=false) {
     'Authorization': `Bearer ${token}`,
     ...(opts.headers || {}),
   };
-  const finalOpts = { ...opts, headers: mergedHeaders };
+  // A hung request must not leave the UI frozen (setLoading disables the element): time out, with a
+  // longer limit for the few endpoints that legitimately run for a while.
+  const _tmo = opts._timeoutMs || (/\/(campaigns\/send|broadcast|products\/import-csv|upload|voice\/transcribe|support\/ask|crm\/backfill|analytics\/conversation-insights|insights\/growth)/.test(path) ? 120000 : 30000);
+  const _ctrl = opts.signal ? null : new AbortController();
+  const _timer = _ctrl ? setTimeout(() => _ctrl.abort(), _tmo) : null;
+  const finalOpts = { ...opts, headers: mergedHeaders, ...(_ctrl ? { signal: _ctrl.signal } : {}) };
 
   try {
     const res = await fetch(API + path, finalOpts);
@@ -671,16 +686,26 @@ async function apiFetch(path, opts={}, _retried=false) {
       console.error('[apiFetch] 403', path, msg403);
       throw new Error(msg403);
     }
+    if (res.status === 429) {
+      throw new Error('Too many requests. Please wait a moment and try again.');
+    }
     if (!res.ok) {
       let msg = res.statusText || 'Request failed';
       try { const e = await res.json(); msg = formatApiDetail(e.detail, msg); } catch {}
       console.error('[apiFetch] error', path, res.status, msg);
       throw new Error(msg);
     }
-    return res.json();
+    if (res.status === 204) return null;
+    const _text = await res.text();
+    if (!_text) return null;
+    try { return JSON.parse(_text); }
+    catch { throw new Error('The server sent an unexpected response. Please try again.'); }
   } catch (err) {
+    if (err && err.name === 'AbortError') throw new Error('The request timed out. Please check your connection and try again.');
     if (err instanceof TypeError) throw new Error('Cannot reach server — is the backend running?');
     throw err;
+  } finally {
+    if (_timer) clearTimeout(_timer);
   }
 }
 
@@ -3634,10 +3659,9 @@ async function saveLoginEmail() {
 function checkNewPassword() {
   const pw   = document.getElementById('sec-pass-new')?.value || '';
   const segs = [1,2,3,4].map(i => document.getElementById('pw-seg' + i));
-  const checks = [pw.length >= 8, /[A-Z]/.test(pw), /[0-9]/.test(pw), /[^A-Za-z0-9]/.test(pw)];
-  const score  = checks.filter(Boolean).length;
+  const score  = !pw ? 0 : pw.length < 8 ? 1 : pw.length < 12 ? 2 : pw.length < 16 ? 3 : 4;   // length only: no composition rules
   const colors = ['#ef4444','#f59e0b','#22c55e','#22c55e'];
-  segs.forEach((s, i) => { if (s) s.style.background = i < score ? colors[score-1] : 'var(--border)'; });
+  segs.forEach((s, i) => { if (s) s.style.background = (score && i < score) ? colors[score-1] : 'var(--border)'; });
   // Check confirm match
   const confirm = document.getElementById('sec-pass-confirm')?.value || '';
   const matchEl = document.getElementById('sec-pass-match');
@@ -3652,8 +3676,6 @@ function validateNewPasswordInput(current, newPw, confirmPw) {
   if (!current)                 return 'Enter your current password';
   if (newPw.length < 8)         return 'New password must be at least 8 characters';
   if (newPw.length > 128)       return 'New password must be at most 128 characters';
-  if (!/[A-Z]/.test(newPw))     return 'New password needs an uppercase letter';
-  if (!/[0-9]/.test(newPw))     return 'New password needs a number';
   if (new TextEncoder().encode(newPw).length > 72)
                                 return 'New password is too long (max 72 bytes — shorten it or use fewer special/non-English characters)';
   if (newPw !== confirmPw)      return 'New passwords do not match';
@@ -4091,16 +4113,14 @@ async function saveUsername() {
 // ── Password change ───────────────────────────────────────────────────────────
 function upCheckPwStrength(pw) {
   const checks = {
-    'up-req-len':   pw.length >= 8,
-    'up-req-upper': /[A-Z]/.test(pw),
-    'up-req-lower': /[a-z]/.test(pw),
-    'up-req-num':   /[0-9]/.test(pw),
+    'up-req-len': pw.length >= 8,
+    'up-req-max': pw.length <= 128 && new TextEncoder().encode(pw).length <= 72,
   };
-  let score = 0;
+  // Strength by length (guidance only); the two requirements above are what is enforced.
+  let score = !pw ? 0 : pw.length < 8 ? 1 : pw.length < 12 ? 2 : pw.length < 16 ? 3 : 4;
   Object.entries(checks).forEach(([id, met]) => {
     const el = document.getElementById(id);
     if (el) el.classList.toggle('met', met);
-    if (met) score++;
   });
   const colors = ['','#ef4444','#f59e0b','#f59e0b','#22c55e'];
   const labels = ['','Weak','Fair','Good','Strong'];
@@ -4556,12 +4576,25 @@ if (token && userRole) {
 }
 
 function copy(text) {
-  navigator.clipboard.writeText(text);
-  toast("Copied to clipboard ✅");
+  // The Clipboard API is missing on non-HTTPS pages and rejects when permission is denied: only say
+  // "Copied" when it worked, and fall back to a hidden textarea otherwise.
+  const ok = () => toast("Copied to clipboard ✅");
+  const fallback = () => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      const done = document.execCommand('copy');
+      document.body.removeChild(ta);
+      done ? ok() : toast('Could not copy. Select the text and copy it manually.', true);
+    } catch (_) { toast('Could not copy. Select the text and copy it manually.', true); }
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(ok, fallback);
+  else fallback();
 }
 
 // 🔄 AUTO REFRESH EVERY 15s
-setInterval(() => {
+function _pollDashboard() {
   if (!token) return;
   if (userRole === 'superadmin') {
     loadAdminData().catch(()=>{});
@@ -4584,7 +4617,15 @@ setInterval(() => {
     const openPhone = win && win.dataset.activePhone;
     if (openPhone) loadChatMessages(openPhone).catch(() => {});
   }
-}, 30000);  // 30s — reduced from 15s to cut Supabase request volume
+}
+// 30s: skipped while the tab is hidden (nobody is looking), with one catch-up refresh when the tab
+// is shown again. Reduced from 15s earlier to cut Supabase request volume.
+setInterval(() => { if (!document.hidden) _pollDashboard(); }, 30000);
+let _lastVisibleRefresh = Date.now();
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  if (Date.now() - _lastVisibleRefresh > 30000) { _lastVisibleRefresh = Date.now(); _pollDashboard(); }
+});
 
 function setLoading(el, state=true) {
   if (!el) return;
@@ -8829,3 +8870,10 @@ async function backfillCrm() {
     if (btn) { btn.disabled = false; btn.textContent = '⚡ Sync from Chats'; }
   }
 }
+
+// Search boxes that re-render a whole list on every keystroke: run once typing pauses (the
+// helper already guards filterConversations / filterCrmTable). Inline oninput handlers resolve
+// these names at call time, so reassigning the globals is enough.
+['filterOrdersBySearch', 'filterBookingsBySearch', 'applyProductFilters', 'applyAdminBizFilters'].forEach(n => {
+  if (typeof window[n] === 'function') window[n] = _debounce(window[n], 150);
+});

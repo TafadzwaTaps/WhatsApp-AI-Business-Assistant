@@ -4,7 +4,7 @@ routes/auth_routes.py — Authentication endpoints.
 Routes: POST /auth/signup, POST /auth/login, POST /auth/refresh, POST /auth/change-password
 """
 
-from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field, validator
 
@@ -56,6 +56,18 @@ def _token_pair(sub: str, role: str, business_id: int | None = None, pwd_ts: str
     }
 
 
+def _finish_session(request, response, pair: dict, extra: dict, *, sub, role, business_id) -> dict:
+    """Return the login/signup/refresh body. Normal clients get today's JSON unchanged. When cookie
+    sessions are enabled (flag OFF by default) AND this request opted in with X-Auth-Mode: cookie, the
+    tokens go into HttpOnly cookies and are NOT in the body (so JavaScript never sees either of them)."""
+    from core import cookie_auth
+    # Superadmin sessions stay Bearer-only in Stage 1 (smaller blast radius).
+    if response is not None and role != "superadmin" and cookie_auth.cookie_mode_requested(request):
+        cookie_auth.set_session_cookies(response, pair["access_token"], pair["refresh_token"], sub, role, business_id)
+        return {**extra, "auth_mode": "cookie"}
+    return {**pair, **extra}
+
+
 class SignupRequest(BaseModel):
     business_name:      str
     username:           str
@@ -94,7 +106,7 @@ class SignupRequest(BaseModel):
 
     @validator("password")
     def password_valid(cls, v):
-        if len(v) < 6: raise ValueError("Password must be ≥ 6 characters")
+        if len(v) < 8: raise ValueError("Password must be at least 8 characters")
         return v
 
     @validator("business_name")
@@ -105,7 +117,7 @@ class SignupRequest(BaseModel):
 
 
 @router.post("/auth/signup")
-def signup(data: SignupRequest, request: Request):
+def signup(data: SignupRequest, request: Request, response: Response = None):
     # SuperAdmin 2.0 emergency control — checked before any other work
     # (rate limiting, abuse checks, DB lookups) so a paused platform does
     # the least possible work per rejected request. Fails open: if this
@@ -135,7 +147,7 @@ def signup(data: SignupRequest, request: Request):
         # domain that isn't blocked.
         raise HTTPException(400, "We couldn't create your account with that email address. Please use a different email.")
 
-    pw_ok, pw_msg = check_password_strength(data.password)
+    pw_ok, pw_msg = check_password_strength(data.password, (data.username, data.email, data.business_name))
     if not pw_ok:
         raise HTTPException(400, pw_msg)
     if data.username == SUPER_ADMIN_USERNAME.lower():
@@ -257,15 +269,17 @@ def signup(data: SignupRequest, request: Request):
     _tier           = (data.tier or "").strip().lower()
     _billing_period = (data.billing_period or "monthly").strip().lower()
 
-    return {
-        **_token_pair(biz["owner_username"], "business", biz["id"]),
-        "role":           "business",
-        "business_name":  biz["name"],
-        "business_id":    biz["id"],
-        "selected_tier":  _tier or None,
-        "billing_period": _billing_period if _tier else None,
-        "email_verification_required": _verification_pending,
-    }
+    return _finish_session(
+        request, response, _token_pair(biz["owner_username"], "business", biz["id"]),
+        {
+            "role":           "business",
+            "business_name":  biz["name"],
+            "business_id":    biz["id"],
+            "selected_tier":  _tier or None,
+            "billing_period": _billing_period if _tier else None,
+            "email_verification_required": _verification_pending,
+        },
+        sub=biz["owner_username"], role="business", business_id=biz["id"])
 
 
 class LoginRequest(BaseModel):
@@ -288,7 +302,7 @@ def _dummy_verify(password: str) -> None:
 
 
 @router.post("/auth/login")
-def login(data: LoginRequest, request: Request):
+def login(data: LoginRequest, request: Request, response: Response = None):
     _rate_check("login", request)
     # Bug fix: this endpoint previously computed its own inline IP extraction
     # ("x-forwarded-for"...split(",")[0]) instead of using the shared,
@@ -332,7 +346,8 @@ def login(data: LoginRequest, request: Request):
             raise HTTPException(401, "Invalid credentials")
         clear_failed_logins(ip, username)
         clear_account_login_lockout(username)
-        return {**_token_pair(SUPER_ADMIN_USERNAME, "superadmin"), "role": "superadmin"}
+        return _finish_session(request, response, _token_pair(SUPER_ADMIN_USERNAME, "superadmin"),
+                               {"role": "superadmin"}, sub=SUPER_ADMIN_USERNAME, role="superadmin", business_id=None)
 
     biz = crud.get_business_by_username(username)
     if not biz and "@" in username:
@@ -367,16 +382,16 @@ def login(data: LoginRequest, request: Request):
     clear_failed_logins(ip, username)
     clear_account_login_lockout(username)
     log.info("🔑 Login: %s", biz["owner_username"])
-    return {
-        **_token_pair(biz["owner_username"], "business", biz["id"], biz.get("password_changed_at")),
-        "role":          "business",
-        "business_name": biz["name"],
-        "business_id":   biz["id"],
-    }
+    return _finish_session(
+        request, response,
+        _token_pair(biz["owner_username"], "business", biz["id"], biz.get("password_changed_at")),
+        {"role": "business", "business_name": biz["name"], "business_id": biz["id"]},
+        sub=biz["owner_username"], role="business", business_id=biz["id"])
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    # Optional only for cookie sessions (flag OFF by default): the refresh cookie is then used instead.
+    refresh_token: str | None = None
 
 
 class LogoutRequest(BaseModel):
@@ -384,7 +399,7 @@ class LogoutRequest(BaseModel):
 
 
 @router.post("/auth/logout")
-def logout_endpoint(data: LogoutRequest, request: Request):
+def logout_endpoint(data: LogoutRequest, request: Request, response: Response = None):
     """Server-side logout: revoke the presented access token (Authorization header) and
     refresh token so a copied token cannot be reused. Deliberately does not require a VALID
     access token (the user may be logging out because it expired); possession of a token is
@@ -394,6 +409,15 @@ def logout_endpoint(data: LogoutRequest, request: Request):
     attempted = 0
     auth = request.headers.get("authorization", "")
     candidates = ([auth[7:].strip()] if auth.lower().startswith("bearer ") else []) +                  ([data.refresh_token] if data.refresh_token else [])
+    from core import cookie_auth
+    if cookie_auth.enabled():                       # cookie sessions: revoke what the cookies hold too
+        candidates += [c for c in (request.cookies.get(cookie_auth.ACCESS_COOKIE),
+                                   request.cookies.get(cookie_auth.REFRESH_COOKIE)) if c]
+        # Cookies are only cleared when this request actually presented one and looks same-origin: a
+        # cross-site form POST cannot make the browser delete the user's session cookies.
+        if response is not None and (request.cookies.get(cookie_auth.ACCESS_COOKIE)
+                                     or request.cookies.get(cookie_auth.REFRESH_COOKIE)) and cookie_auth.origin_ok(request):
+            cookie_auth.clear_session_cookies(response)
     for tok in candidates:
         ok = revoke_token(tok)
         revoked += bool(ok)
@@ -436,7 +460,8 @@ def change_password(data: ChangePasswordRequest, request: Request, user: dict = 
             or not verify_password(data.current_password, stored_hash)):
         raise HTTPException(400, "Current password is incorrect")
 
-    pw_ok, pw_msg = check_password_strength(data.new_password)
+    pw_ok, pw_msg = check_password_strength(
+        data.new_password, (biz.get("owner_username"), biz.get("owner_email"), biz.get("name")))
     if not pw_ok:
         raise HTTPException(400, pw_msg)
     if len(data.new_password.encode("utf-8")) > 72:
@@ -500,12 +525,27 @@ def _rotate_refresh_token(payload: dict, token: str) -> None:
 
 
 @router.post("/auth/refresh")
-def refresh_token_endpoint(data: RefreshRequest, request: Request):
+def refresh_token_endpoint(data: RefreshRequest, request: Request, response: Response = None):
     _rate_check("refresh", request)
+    from core import cookie_auth
+    presented = data.refresh_token
+    from_cookie = False
+    if not presented and cookie_auth.enabled():
+        presented = request.cookies.get(cookie_auth.REFRESH_COOKIE)
+        from_cookie = bool(presented)
+    if not presented:
+        # Same body Pydantic produced before this field became optional (flag off must be identical).
+        raise HTTPException(422, [{"type": "missing", "loc": ["body", "refresh_token"], "msg": "Field required", "input": {}}])
     try:
-        payload = decode_token(data.refresh_token)
+        payload = decode_token(presented)
     except HTTPException:
         raise HTTPException(401, "Refresh token invalid or expired. Please log in again.")
+    if from_cookie:
+        # Ambient credential: the same CSRF protection as any cookie-authenticated write.
+        if payload.get("impersonated_by") or payload.get("role") == "superadmin" or cookie_auth.same_site_fetch_blocked(request) \
+                or not cookie_auth.check_csrf(
+                request, payload.get("sub"), payload.get("business_id"), payload.get("role", "business")):
+            raise HTTPException(403, "CSRF check failed.")
 
     if payload.get("type") != "refresh":
         raise HTTPException(401, "Not a refresh token.")
@@ -543,14 +583,24 @@ def refresh_token_endpoint(data: RefreshRequest, request: Request):
             raise HTTPException(401, "Your password was changed. Please log in again.")
         pwd_ts = current_pwd_ts
 
-    _rotate_refresh_token(payload, data.refresh_token)
+    _rotate_refresh_token(payload, presented)
 
     log.info("🔄 Token refreshed for: %s", sub)
-    return {
-        **_token_pair(sub, role, business_id, pwd_ts),
-        "role": role,
-        **({} if business_id is None else {"business_id": business_id}),
-    }
+    _extra = {"role": role, **({} if business_id is None else {"business_id": business_id})}
+    # A refresh by cookie always answers by cookie (the client never held a token to hand back).
+    if from_cookie and response is not None:
+        cookie_auth.set_session_cookies(response, *(lambda p: (p["access_token"], p["refresh_token"]))(
+            _token_pair(sub, role, business_id, pwd_ts)), sub, role, business_id)
+        return {**_extra, "auth_mode": "cookie"}
+    return _finish_session(request, response, _token_pair(sub, role, business_id, pwd_ts), _extra,
+                           sub=sub, role=role, business_id=business_id)
+
+
+@router.get("/auth/session-mode")
+def session_mode():
+    """Public, harmless: lets the web client feature-detect cookie sessions (OFF unless enabled)."""
+    from core import cookie_auth
+    return {"cookie_auth": cookie_auth.enabled()}
 
 
 # ── Email verification (Phase 4 follow-up) ────────────────────────────────────

@@ -15,7 +15,7 @@ console.info('[inbox.js] build 2026-06-12-authfix-1 loaded');
 const API = 'https://wazibothq.com';
 
 // Support both key names (dashboard saves as wazi_token / wazi_business_id)
-const token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token');
+let token = localStorage.getItem('wazi_token') || localStorage.getItem('wazibot_token');
 const bizId = parseInt(
   localStorage.getItem('wazi_business_id') ||
   localStorage.getItem('wazibot_biz_id') || '0'
@@ -92,33 +92,62 @@ function _hideOutageBanner() {
   try { const b = document.getElementById('outage-banner'); if (b) b.remove(); } catch (_) {}
 }
 
-async function apiFetch(path, opts = {}) {
-  // Merge headers properly — object spread (...opts) would otherwise REPLACE
-  // the entire headers object if opts.headers is set, silently dropping
-  // the Authorization header (this was the cause of "Unauthenticated" errors
-  // on any call that passed its own Content-Type header, e.g. POST with body).
+// Shared refresh: one request at a time, shared by every caller (the dashboard rotates the same
+// refresh token, so always send the newest one from storage). Returns true when `token` is fresh.
+let _refreshPromise = null;
+function _inboxRefresh() {
+  if (_refreshPromise) return _refreshPromise;
+  const rt = localStorage.getItem('wazi_refresh');
+  if (!rt) return Promise.resolve(false);
+  _refreshPromise = (async () => {
+    try {
+      const post = (r) => fetch(API + '/auth/refresh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: r }),
+      });
+      let res = await post(rt);
+      if (!res.ok) {
+        // Another tab (the dashboard) may have rotated the single refresh token: retry once with it.
+        const latest = localStorage.getItem('wazi_refresh');
+        if (latest && latest !== rt) res = await post(latest);
+      }
+      if (!res.ok) return false;
+      const d = await res.json().catch(() => null);
+      if (!d || !d.access_token) return false;
+      token = d.access_token;
+      localStorage.setItem('wazi_token', token);
+      if (d.refresh_token) localStorage.setItem('wazi_refresh', d.refresh_token);
+      return true;
+    } catch (_) { return false; }
+    finally { setTimeout(() => { _refreshPromise = null; }, 0); }
+  })();
+  return _refreshPromise;
+}
+
+const _API_TIMEOUT_MS = 30000;
+
+async function apiFetch(path, opts = {}, _retried = false) {
+  // Merge headers properly: object spread (...opts) would otherwise REPLACE the entire headers
+  // object if opts.headers is set, silently dropping the Authorization header.
   const mergedHeaders = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,
     ...(opts.headers || {}),
   };
-  const finalOpts = { ...opts, headers: mergedHeaders };
+  // A hung request must not leave the UI waiting forever.
+  const ctrl = opts.signal ? null : new AbortController();
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), _API_TIMEOUT_MS) : null;
+  const finalOpts = { ...opts, headers: mergedHeaders, ...(ctrl ? { signal: ctrl.signal } : {}) };
 
   try {
     const res = await fetch(API + path, finalOpts);
 
     if (res.status === 401) {
+      // The access token lasts an hour: try ONE silent refresh before sending the user away.
+      if (!_retried && await _inboxRefresh()) return apiFetch(path, opts, true);
       let detail = '';
       try { const e = await res.json(); detail = e.detail || ''; } catch {}
-      console.error(
-        '[apiFetch] 401 Unauthorized',
-        '\n  path:', path,
-        '\n  method:', finalOpts.method || 'GET',
-        '\n  hasAuthHeader:', !!mergedHeaders.Authorization,
-        '\n  tokenPresent:', !!token,
-        '\n  tokenPreview:', token ? token.slice(0, 12) + '…' : '(none)',
-        '\n  serverDetail:', detail || '(none)',
-      );
+      console.error('[apiFetch] 401 Unauthorized', path, finalOpts.method || 'GET', detail || '(none)');
       window.location.href = '/dashboard';
       throw new Error('Unauthorized' + (detail ? `: ${detail}` : ''));
     }
@@ -127,52 +156,89 @@ async function apiFetch(path, opts = {}) {
       throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.');
     }
     _hideOutageBanner();
+    if (res.status === 429) {
+      throw new Error('Too many requests — please wait a moment and try again.');
+    }
     if (!res.ok) {
       let msg = res.statusText || 'API error';
-      try { const e = await res.json(); msg = e.detail || msg; } catch {}
+      try { const e = await res.json(); msg = (typeof e.detail === 'string' ? e.detail : (e.detail && e.detail.message)) || msg; } catch {}
       console.error('[apiFetch] error', path, res.status, msg);
       throw new Error(msg);
     }
-    return res.json();
+    if (res.status === 204) return null;
+    const body = await res.text();
+    if (!body) return null;
+    try { return JSON.parse(body); }
+    catch { throw new Error('The server sent an unexpected response. Please try again.'); }
   } catch (err) {
+    if (err && err.name === 'AbortError') throw new Error('The request timed out. Please check your connection and try again.');
     if (err.message && err.message.startsWith('Unauthorized')) throw err;
     if (err instanceof TypeError) { _showOutageBanner(); throw new Error('System is experiencing issues — our technicians are working on it. Please try again shortly.'); }
     throw err;
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
 /* ── WEBSOCKET ──────────────────────────────────────────── */
+// Reconnect with exponential backoff and jitter; one socket at a time; the heartbeat is cleared on
+// close; after a reconnect the conversation list and the open chat are re-synced so nothing sent
+// during the outage is missed (the existing id-based dedup keeps redelivered events from doubling).
+let _wsTimer = null, _wsAttempt = 0, _wsHeartbeat = null, _wsEverOpened = false, _wsStopped = false;
+
+function _wsScheduleReconnect(refused) {
+  if (_wsStopped || _wsTimer) return;
+  const base = refused ? 30000 : Math.min(30000, 1000 * Math.pow(2, _wsAttempt));
+  const delay = base + Math.floor(Math.random() * 1000);
+  _wsAttempt = Math.min(_wsAttempt + 1, 10);
+  _wsTimer = setTimeout(() => { _wsTimer = null; connectWS(); }, delay);
+}
+
 function connectWS() {
-  if (!bizId) return;
+  if (!bizId || _wsStopped) return;
+  if (document.hidden && _wsEverOpened) { _wsScheduleReconnect(false); return; }   // reconnect when the tab is back
+  if (wsConn && (wsConn.readyState === WebSocket.CONNECTING || wsConn.readyState === WebSocket.OPEN)) return;
 
   // The token is sent as the FIRST message, never in the URL (URLs end up in proxy logs and
   // browser history). The server closes the socket if no valid auth frame arrives within 5 s.
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  wsConn = new WebSocket(`${proto}//${location.host}/ws/chat/${bizId}`);
+  const sock = new WebSocket(`${proto}//${location.host}/ws/chat/${bizId}`);
+  wsConn = sock;
 
-  wsConn.onopen = () => {
-    try { wsConn.send(JSON.stringify({ type: 'auth', token: token })); }
+  sock.onopen = () => {
+    try { sock.send(JSON.stringify({ type: 'auth', token: token })); }
     catch (e) { console.warn('WS auth send failed'); }
     setWsStatus('live', 'Live');
-    // Heartbeat every 25 s
-    const hb = setInterval(() => {
-      if (wsConn && wsConn.readyState === WebSocket.OPEN) {
-        wsConn.send(JSON.stringify({ type: 'ping' }));
-      } else {
-        clearInterval(hb);
-      }
+    const wasReconnect = _wsEverOpened;
+    _wsEverOpened = true;
+    _wsAttempt = 0;
+    // Heartbeat every 25 s; only one timer ever exists
+    if (_wsHeartbeat) clearInterval(_wsHeartbeat);
+    _wsHeartbeat = setInterval(() => {
+      if (wsConn === sock && sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify({ type: 'ping' }));
     }, 25000);
+    if (wasReconnect) _resyncAfterReconnect();
   };
 
-  wsConn.onclose = (ev) => {
+  sock.onclose = async (ev) => {
+    if (_wsHeartbeat) { clearInterval(_wsHeartbeat); _wsHeartbeat = null; }
+    if (wsConn !== sock) return;                      // a newer socket already replaced this one
     setWsStatus('dead', 'Reconnecting…');
-    // 4001 = auth rejected, 4003 = origin refused, 4008 = connection limit: retrying every
-    // 3 s would only hammer the server, so back off much further for those.
-    const refused = ev && (ev.code === 4001 || ev.code === 4003 || ev.code === 4008);
-    setTimeout(connectWS, refused ? 30000 : 3000);
+    const code = ev && ev.code;
+    if (code === 4001) {
+      // Auth rejected: usually an expired access token. Refresh it once; if that fails the session
+      // is over, so stop retrying and send the user to sign in instead of looping forever.
+      if (await _inboxRefresh()) { _wsAttempt = 0; _wsScheduleReconnect(false); return; }
+      _wsStopped = true;
+      setWsStatus('dead', 'Signed out');
+      window.location.href = '/dashboard';
+      return;
+    }
+    // 4003 = origin refused, 4008 = connection limit: back off much further
+    _wsScheduleReconnect(code === 4003 || code === 4008);
   };
 
-  wsConn.onmessage = (event) => {
+  sock.onmessage = (event) => {
     try {
       const payload = JSON.parse(event.data);
       if (payload.type === 'pong') return;
@@ -222,7 +288,12 @@ function connectWS() {
     }
   };
 
-  wsConn.onerror = () => wsConn.close();
+  sock.onerror = () => { try { sock.close(); } catch (_) {} };
+}
+
+function _resyncAfterReconnect() {
+  loadConversations(false).catch(() => {});
+  if (currentCustomerId) loadMessages(currentCustomerId, true).catch(() => {});
 }
 
 // Realtime/WebSocket delivery can redeliver the same event more than
@@ -500,7 +571,7 @@ function _applyRealtimeUpdateToSidebar(customerId, message) {
   renderContacts(allConversations);
 }
 
-function filterContacts(val) { renderContacts(allConversations); }
+const filterContacts = (() => { let tm = null; return function (val) { clearTimeout(tm); tm = setTimeout(() => renderContacts(allConversations), 150); }; })();
 
 function setFilter(f) {
   activeFilter = f;
@@ -868,6 +939,8 @@ function autoResize(el) {
 /* ── READ TRACKING ──────────────────────────────────────── */
 async function markRead() {
   if (!currentCustomerId) return;
+  // A read-only support session cannot change anything (the server answers 403): do not even try.
+  try { if (sessionStorage.getItem('wazi_impersonating')) return; } catch (_) {}
   try {
     await apiFetch(`/chat/read/${currentCustomerId}`, { method: 'POST' });
     const conv = allConversations.find(c => c.customer_id === currentCustomerId);
@@ -1184,8 +1257,18 @@ document.addEventListener('DOMContentLoaded', () => {
     .then(() => openChatFromQueryParam())
     .catch(e => console.warn('Initial load failed:', e));
 
-  // Fallback poll every 30s
-  setInterval(() => loadConversations(false).catch(() => {}), 30000);
+  // Fallback poll every 30s: skipped while the tab is hidden or the live socket is healthy; one
+  // refresh when the tab becomes visible again (and the socket is brought back if it dropped).
+  setInterval(() => {
+    if (document.hidden || !token) return;
+    if (wsConn && wsConn.readyState === WebSocket.OPEN) return;
+    loadConversations(false).catch(() => {});
+  }, 30000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden || !token) return;
+    loadConversations(false).catch(() => {});
+    if (!_wsStopped && (!wsConn || wsConn.readyState === WebSocket.CLOSED)) { clearTimeout(_wsTimer); _wsTimer = null; connectWS(); }
+  });
 });
 
 /* ── DEEP LINK: /inbox?phone=+263... opens that customer's chat ──

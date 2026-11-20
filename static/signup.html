@@ -248,7 +248,7 @@
       </div>
       <div class="form-group">
         <label>Password</label>
-        <input type="password" id="s-pass" placeholder="At least 6 characters" autocomplete="new-password"/>
+        <input type="password" id="s-pass" placeholder="At least 8 characters (a phrase works well)" autocomplete="new-password"/>
         <div class="ferr" id="ferr-pass"></div>
       </div>
       <div class="form-group">
@@ -675,7 +675,7 @@ function next(to) {
     var ok = true;
     if (u.length < 3)          { fieldErr('s-user',  'ferr-user',  'At least 3 characters'); ok = false; }
     if (!em || !em.includes('@')) { fieldErr('s-email', 'ferr-email', 'Enter a valid email address'); ok = false; }
-    if (p.length < 6)          { fieldErr('s-pass',  'ferr-pass',  'At least 6 characters'); ok = false; }
+    if (p.length < 8)          { fieldErr('s-pass',  'ferr-pass',  'At least 8 characters'); ok = false; }
     if (p !== p2)              { fieldErr('s-pass2', 'ferr-pass2', 'Passwords do not match'); ok = false; }
     if (!ok) return;
   }

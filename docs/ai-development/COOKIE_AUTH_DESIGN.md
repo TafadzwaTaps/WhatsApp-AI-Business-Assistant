@@ -1,6 +1,22 @@
 # HttpOnly cookie sessions — design and staged migration plan (2026-11-19)
 
-Status: **DESIGN ONLY. Nothing is implemented, nothing changes in production.** Approved scope: design plus a staged implementation that keeps every existing client working and keeps localStorage support until the replacement is tested and approved.
+Status: **STAGE 1 (server side) IMPLEMENTED LOCALLY, flag OFF by default, NOT committed, NOT deployed, NOT enabled anywhere.** Stages 2 to 4 are not started. Approved scope: design plus a staged implementation that keeps every existing client working and keeps localStorage support until the replacement is tested and approved.
+
+## Decisions approved by the owner (2026-11-20)
+SameSite **Strict**; the Flutter app and other API clients authenticate with `Authorization: Bearer` only (so they send no `X-Auth-Mode` header and are untouched); `https://wazibothq.com` is the only browser origin (no CORS credentials change); Stage 1 behind a flag that stays OFF.
+
+## Stage 1 as built (differences from the design below are marked)
+Code: `backend/core/cookie_auth.py`, `core/auth.py` (cookie fallback + cookie rules), `routes/auth_routes.py` (login, signup, refresh, logout, `GET /auth/session-mode`), `routes/webhook_routes.py` (WebSocket). Tests: `backend/tests/test_cookie_auth.py` (58).
+- **Flag:** `COOKIE_AUTH_ENABLED` (unset = off), read on every call, so it can be switched off in Render without a deploy. Nothing in the repository sets it.
+- **Opt-in per request:** only a request with `X-Auth-Mode: cookie` gets cookies (login, signup, refresh). Everything else gets today's JSON.
+- **Cookies:** `__Host-wazi_at` (HttpOnly, Secure, Strict, Path=/, 60 min), `__Secure-wazi_rt` (HttpOnly, Secure, Strict, **Path=/auth** instead of `/auth/refresh`, because logout must also receive it to revoke it; 7 days), `__Host-wazi_csrf` (readable, Secure, Strict, Path=/; **now carries the `__Host-` prefix** so a sibling subdomain cannot inject it). An opted-in response body carries **no access or refresh token**.
+- **CSRF** (cookie-authenticated POST/PUT/PATCH/DELETE and cookie refresh): `X-CSRF-Token` must equal the CSRF cookie and the value derived from the account (HMAC of sub, business id and role with the server key; **bound to the account, not to a token id, so it also works for refresh after the access cookie has expired**), and the request needs a same-origin signal: `Origin` host equal to the `Host` header (or an exact entry in `COOKIE_AUTH_ALLOWED_ORIGINS`, empty by default), or `Sec-Fetch-Site: same-origin|none` when there is no Origin; `cross-site`, `same-site`, `Origin: null`, and no signal at all are refused. Bearer requests are exempt. Logout is not CSRF-checked (forcing a logout is harmless, and Strict already blocks cross-site sends).
+- **Unchanged and still enforced for cookie sessions:** expiry, revocation by `jti`, password-change invalidation (`pwd_ts`), suspension, the refresh reuse tripwire, token type checks. Support (impersonation) tokens are rejected from cookies.
+- **WebSocket:** with the flag on, the handshake's access cookie is used, only if the browser also sent an allowed `Origin`; the first-frame token and `?token=` forms still work for current clients.
+- **Review fixes applied (independent security review, no critical/high):** `Sec-Fetch-Site: same-site|cross-site` is refused for cookie-authenticated requests on every method (a sibling subdomain could otherwise trigger a GET with side effects); logout clears cookies only when one was sent from a same-origin request (a cross-site form cannot delete them); the CSRF value is derived from a separate key; superadmin and support sessions are Bearer-only in Stage 1 (HTTP and WebSocket); with the flag off the missing-token 422 body is identical to before. **Known limits:** the CSRF value is bound to the account, not to one session, so it survives logout (it is useless without the HttpOnly cookie and a same-origin request); if Cloudflare ever rewrites the `Host` header, cookie writes answer 403 until `COOKIE_AUTH_ALLOWED_ORIGINS=https://wazibothq.com` is set (fail-closed, tested).
+- **Not changed:** the frontend (still localStorage + Bearer), CORS (no credentials allowed anywhere; tested), mobile behaviour.
+- **To switch on later (Stage 2/3, needs your approval):** set `COOKIE_AUTH_ENABLED=1` on a staging service only; the web client must send `X-Auth-Mode: cookie`, `credentials: 'same-origin'`, and `X-CSRF-Token` read from the `__Host-wazi_csrf` cookie. **Rollback:** unset the variable; cookie sessions then stop authenticating at once and users log in again (the Bearer path never changed).
+
 
 ## 1. Current state (verified in the repository)
 | Item | Today |

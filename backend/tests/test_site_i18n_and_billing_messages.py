@@ -755,7 +755,7 @@ def test_cross_tenant_cancel_cannot_touch_another_business(env):
 
 def test_store_page_escape_helper_escapes_quotes_for_attribute_contexts():
     import pathlib
-    html = (pathlib.Path(__file__).resolve().parents[2] / "static" / "store.html").read_text(encoding="utf-8")
+    html = "".join((pathlib.Path(__file__).resolve().parents[2] / "static" / n).read_text(encoding="utf-8") for n in ("store.html", "store.js"))   # script moved out of the page (Phase 5 CSP migration)
     m = re.search(r"function esc\(s\)\{(.*?)\}\n", html)
     assert m, "esc() helper missing"
     body = m.group(1)

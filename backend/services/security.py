@@ -709,23 +709,12 @@ def validate_phone(phone: str) -> str:
 # PASSWORD POLICY (Phase 8)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def check_password_strength(password: str) -> tuple[bool, str]:
-    """
-    Check password meets minimum security requirements.
+def check_password_strength(password: str, context=()) -> tuple[bool, str]:
+    """Single password policy for signup, reset and change (see services/password_policy.py).
 
-    Returns (ok: bool, message: str).
-    Message is empty when ok=True.
-    """
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters"
-    if len(password) > 128:
-        return False, "Password too long (max 128 characters)"
-    # Check for at least one letter and one digit
-    has_letter = any(c.isalpha() for c in password)
-    has_digit  = any(c.isdigit() for c in password)
-    if not has_letter or not has_digit:
-        return False, "Password must contain at least one letter and one number"
-    return True, ""
+    Returns (ok: bool, message: str). Message is empty when ok=True."""
+    from services.password_policy import check_password
+    return check_password(password, context)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

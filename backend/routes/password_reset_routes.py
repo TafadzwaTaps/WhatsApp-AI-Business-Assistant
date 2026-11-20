@@ -118,20 +118,13 @@ def reset_password(data: ResetPasswordRequest, request: Request):
         raise HTTPException(400, "Passwords do not match")
 
     # Enforce minimum strength (server-side — never trust frontend)
+    # One policy for signup, reset and change (services/password_policy.py): length, 72-byte bcrypt
+    # limit, common-password list. No uppercase/digit/symbol composition rules.
+    from services.security import check_password_strength
     pw = data.new_password or ""
-    errors = []
-    if len(pw) < 8:
-        errors.append("at least 8 characters")
-    if not any(c.isupper() for c in pw):
-        errors.append("an uppercase letter")
-    if not any(c.islower() for c in pw):
-        errors.append("a lowercase letter")
-    if not any(c.isdigit() for c in pw):
-        errors.append("a number")
-    if errors:
-        raise HTTPException(400, f"Password must contain {', '.join(errors)}")
-    if len(pw.encode("utf-8")) > 72:        # bcrypt would silently ignore everything past 72 bytes
-        raise HTTPException(400, "Password is too long (max 72 bytes in UTF-8; shorten it or use fewer non-ASCII characters)")
+    ok, msg = check_password_strength(pw)
+    if not ok:
+        raise HTTPException(400, msg)
 
     from services.password_reset_service import complete_password_reset
     result = complete_password_reset(data.token, data.new_password)
