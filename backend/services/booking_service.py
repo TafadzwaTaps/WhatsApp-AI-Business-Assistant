@@ -1336,6 +1336,19 @@ def send_reminders_for_business(business_id: int, business: Optional[dict] = Non
             phone = b.get("customer_phone", "")
             if not phone:
                 continue
+            # Persistent claim BEFORE sending (the reminder_24h_sent flag below is written after, and is
+            # read-then-write): two runs, or a crash between send and flag, can no longer double-send.
+            # Keyed by booking AND slot, so a rescheduled booking is reminded for its new time.
+            _claim_key = f"{b.get('id')}:{b.get('booking_date')}:{b.get('start_time')}"
+            try:
+                from crud import notification_ledger as _ledger
+                if not _ledger.claim(business_id, "booking_reminder_24h", _claim_key, table_only=True):
+                    skipped += 1
+                    continue
+            except Exception as exc:                       # fail closed: skip, retry on the next run
+                log.warning("booking reminder claim failed booking=%s: %s", b.get("id"), type(exc).__name__)
+                skipped += 1
+                continue
             if phone.strip() in _closed:
                 # Window closed: only an approved UTILITY template may be sent (no marketing consent needed:
                 # a booking reminder is transactional). Without one the reminder is skipped, as before.
@@ -1355,6 +1368,7 @@ def send_reminders_for_business(business_id: int, business: Optional[dict] = Non
                         log.warning("send_reminders_for_business: could not set reminder-response state for %s: %s", phone, exc)
                     sent += 1
                 else:
+                    _release_booking_claim(business_id, _claim_key)
                     skipped += 1
                     skipped_window += 1
                 continue
@@ -1371,6 +1385,7 @@ def send_reminders_for_business(business_id: int, business: Optional[dict] = Non
                                 phone, exc)
                 sent += 1
             else:
+                _release_booking_claim(business_id, _claim_key)
                 skipped += 1
 
         return {"ok": True, "sent": sent, "skipped": skipped, "skipped_window": skipped_window, "error": None}
@@ -1439,6 +1454,15 @@ def run_all_due_reminders() -> dict:
     summary = {"businesses": processed, "sent": sent_total, "skipped": skipped_total, "errors": errors}
     log.info("run_all_due_reminders: complete %s", summary)
     return summary
+
+
+def _release_booking_claim(business_id, claim_key) -> None:
+    """Nothing was delivered: undo the claim so the next run retries. Never raises."""
+    try:
+        from crud import notification_ledger as _ledger
+        _ledger.release(business_id, "booking_reminder_24h", claim_key)
+    except Exception as exc:
+        log.warning("booking reminder release failed: %s", type(exc).__name__)
 
 
 def attach_booking_reminder_scheduler(app) -> None:

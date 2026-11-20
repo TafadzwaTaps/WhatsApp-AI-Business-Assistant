@@ -312,6 +312,30 @@ def send_reminder(
         return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
                 "error": "no WhatsApp credentials configured for this business"}
 
+    # Persistent once-per-tier guard (survives restarts and deploys, unlike the in-process cooldown above):
+    # each order gets each reminder tier at most once. Claimed BEFORE sending, released when nothing was sent.
+    # If the ledger table is missing the claim is not recorded and the in-process cooldown still applies.
+    biz_id = order.get("business_id") or business.get("id")
+    claim_key = f"{order_id}:t{tier}"
+    try:
+        from crud import notification_ledger as _ledger
+        if not _ledger.claim(biz_id, "payment_reminder", claim_key, table_only=True):
+            return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
+                    "error": "cooldown — this reminder tier was already sent for this order"}
+    except Exception as exc:                       # fail closed: never risk a duplicate customer message
+        log.warning("reminder claim failed order=%s: %s", order_id, type(exc).__name__)
+        return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
+                "error": "cooldown — could not verify reminder history, try again shortly"}
+    result = _deliver_reminder(order, business, tier, message, phone, phone_id, token, biz_name, order_id)
+    if not result.get("ok"):
+        try:
+            _ledger.release(biz_id, "payment_reminder", claim_key)      # nothing went out: allow a retry
+        except Exception as exc:
+            log.warning("reminder release failed order=%s: %s", order_id, type(exc).__name__)
+    return result
+
+
+def _deliver_reminder(order, business, tier, message, phone, phone_id, token, biz_name, order_id) -> dict:
     # 24-hour window: a customer who last wrote more than a day ago cannot be sent free text.
     try:
         from services.wa_window import closed_phones

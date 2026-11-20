@@ -367,3 +367,8 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - **5 Campaigns/regional**: `scheduled_campaign_failure_info.sql` (additive, runner falls back without it), `phone_utils`, `address_utils`, `default_dialing_code` profile field, dashboard shows consent skips.
 - **6 Pricing display**: `/billing/pricing` adds `currency` and optional `local_estimate` (only with `PRICING_DISPLAY_RATES`); USD/Stripe authoritative; misleading "regional pricing" copy fixed.
 - **Tests**: 2597 passed, 3 skipped (dev); 2582 passed, 2 skipped (clean latest-library env, run before the final review fixes). Security and QA reviewed; no critical/high; review fixes applied.
+
+## 2026-11-20 — Phase 7 stage 1: persistent once-only job claims (uncommitted, no migration)
+- Payment reminders (once per order and tier, replaces the in-process-only guard), booking reminders (per booking and slot) and the monthly report (per business and month) now claim in the `notification_log` ledger BEFORE sending and release on failure. Fail closed on ledger errors; if the table is missing, behaviour is as before (in-process guards).
+- Behaviour change: an owner can no longer re-send the same payment-reminder tier to the same order; tiers escalate with order age.
+- Tests: 2617 passed, 3 skipped (dev); 8 of 8 mutations caught. See `PHASE_7_PLAN.md` for stages 2 to 5.
