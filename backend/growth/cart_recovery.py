@@ -29,6 +29,7 @@ from the existing payment_reminder scheduler — it's idempotent.
 from __future__ import annotations
 
 import logging
+from core.wa_version import graph_url
 import os
 import time
 from typing import Optional
@@ -130,6 +131,12 @@ def run_cart_recovery(business_id: int) -> dict:
         biz_name  = biz.get("name", "us")
         currency  = biz.get("currency_symbol") or "$"
 
+        # Abandoned-cart recovery is MARKETING: consent first, then the 24-hour window (an approved marketing
+        # template for customers outside it, else skipped). One batched lookup for the whole run.
+        from services.wa_outbound import plan_marketing, template_for_closed_window
+        _plan = plan_marketing(business_id, [c.get("phone") for c in carts])
+        _templates_sent = 0
+
         for cart in carts:
             phone     = cart.get("phone")
             items     = cart.get("items") or []
@@ -155,6 +162,9 @@ def run_cart_recovery(business_id: int) -> dict:
                     if age < CART_IDLE_SECONDS:
                         results["skipped"] += 1
                         continue
+                    if age > 30 * 86400:        # Stage 3: a cart idle for over 30 days is expired, never chased
+                        results["skipped"] += 1
+                        continue
                 except Exception as _swallowed_exc:
                     from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
@@ -173,7 +183,24 @@ def run_cart_recovery(business_id: int) -> dict:
                 results["skipped"] += 1
                 continue
 
-            sent = _send_recovery_message(business_id, biz, phone, msg)
+            # 24-hour window: a stale cart can belong to a customer who last wrote more than a day ago.
+            _p = str(phone).strip()
+            if _p in _plan["opted_out"] or _p in _plan["no_consent"]:
+                results["skipped"] += 1
+                results["skipped_no_consent"] = results.get("skipped_no_consent", 0) + 1
+                continue
+            if _p in _plan["closed"]:
+                tr = template_for_closed_window(
+                    biz, business_id, phone, "cart_recovery", {"business_name": biz_name},
+                    ref=str(updated_at or "")[:19], sent_in_run=_templates_sent)
+                if not tr.get("ok"):
+                    results["skipped"] += 1
+                    results["skipped_window"] = results.get("skipped_window", 0) + 1
+                    continue
+                _templates_sent += 1
+                sent = True
+            else:
+                sent = _send_recovery_message(business_id, biz, phone, msg)
             if sent:
                 # Record the send time in state_data (non-destructive merge)
                 try:
@@ -207,15 +234,22 @@ def _send_recovery_message(business_id: int, biz: dict, phone: str, msg: str) ->
         if not token or not phone_id:
             return False
 
-        # Use existing send_whatsapp function from main.py (injected at startup)
-        from routes.webhook_routes import _send_direct
-        if _send_direct:
-            _send_direct(phone_id, token, phone, msg)
-            return True
+        # Use the real sender from main.py (injected at startup) and HONOUR its result: it used to call a
+        # fire-and-forget helper and return True regardless, so a failed send was counted as sent and
+        # the 24-hour cooldown was set for a message the customer never received.
+        from routes import webhook_routes as _wh
+        _send = getattr(_wh, "send_whatsapp", None)
+        if callable(_send):
+            res = _send(phone_id, token, phone, msg)
+            ok = isinstance(res, dict) and "error" not in res
+            if not ok:
+                log.warning("cart recovery send failed  biz=%s  phone=%s  error=%s", business_id, phone,
+                            (res or {}).get("error") if isinstance(res, dict) else res)
+            return ok
 
         # Direct HTTP fallback if _send_direct not yet injected
         import requests as _req
-        url = f"https://graph.facebook.com/v18.0/{phone_id}/messages"
+        url = graph_url(f"{phone_id}/messages")
         resp = _req.post(url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
                          json={"messaging_product": "whatsapp", "to": phone,
                                "type": "text", "text": {"body": msg}}, timeout=10)

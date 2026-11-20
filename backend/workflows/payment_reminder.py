@@ -312,6 +312,27 @@ def send_reminder(
         return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
                 "error": "no WhatsApp credentials configured for this business"}
 
+    # 24-hour window: a customer who last wrote more than a day ago cannot be sent free text.
+    try:
+        from services.wa_window import closed_phones
+        if phone in closed_phones(business.get("id"), [phone]):
+            # Window closed: only an approved UTILITY template may be sent (a payment reminder is transactional).
+            from services.wa_outbound import template_for_closed_window
+            _amount = order.get("total_price") or order.get("total") or ""
+            tr = template_for_closed_window(
+                business, business.get("id"), phone, "payment_reminder",
+                {"business_name": biz_name, "order_id": f"ORDER-{order_id}", "amount": f"{order.get('currency_symbol', '')}{_amount}"},
+                ref=f"order:{order_id}:tier{tier}")
+            if tr.get("ok"):
+                _mark_reminded(order_id)
+                return {"ok": True, "order_id": order_id, "tier": tier, "phone": phone, "message": message,
+                        "sent_as_template": True}
+            return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone, "skipped_window": True,
+                    "error": "outside WhatsApp's 24-hour window: an approved message template is required",
+                    "message": message}
+    except Exception as exc:
+        log.debug("reminder window check skipped: %s", type(exc).__name__)
+
     try:
         # Import send_whatsapp from main without creating a circular import.
         # We call it through a lazy import at call time.

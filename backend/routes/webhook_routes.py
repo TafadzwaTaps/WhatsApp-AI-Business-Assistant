@@ -885,7 +885,21 @@ async def _handle_one_message(data: dict) -> dict:
                     log.debug("image understanding pipeline failed (ignored): %s", exc)
                     image_analysis = None
 
-        reply = await run_in_threadpool(generate_reply,
+        # WhatsApp marketing consent keywords (STOP, UNSUBSCRIBE, SUBSCRIBE, START after an opt-out) are
+        # handled here, before the AI: the customer is opted out/in immediately and gets a confirmation.
+        # Inactive until migrations/whatsapp_consent_and_templates.sql is applied. Any other message is
+        # untouched and goes to the AI exactly as before.
+        _consent_reply = None
+        if msg_type == "text" and not is_from_agent:
+            try:
+                from services import wa_consent as _wa_consent
+                _consent_reply = await run_in_threadpool(
+                    _wa_consent.handle_inbound, business["id"], customer_phone, text, business.get("name", ""))
+            except Exception as exc:
+                log.warning("consent keyword handling failed (ignored): %s", type(exc).__name__)
+        _reply_fn = (lambda **_kw: _consent_reply) if _consent_reply else generate_reply
+
+        reply = await run_in_threadpool(_reply_fn,
             message=text,
             phone=customer_phone,
             business_id=business["id"],

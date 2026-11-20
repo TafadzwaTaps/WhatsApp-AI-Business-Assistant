@@ -2636,7 +2636,11 @@ This will send a WhatsApp message to each selected recipient.`)) return;
     });
 
     if (!data) return;
-    const ok = data.failed === 0;
+    // Customers outside WhatsApp's 24-hour window are skipped (free text would fail): say so, and never
+    // show "Sent 0" as a success when nobody could be reached.
+    const skippedWin = data.skipped_window || 0;
+    const allSkipped = (data.sent || 0) === 0 && (skippedWin + consentSkipCount(data)) > 0;
+    const ok = data.failed === 0 && !allSkipped;
 
     // UI/UX audit — Phase 9 recommendation ("Broadcast -> reached
     // customers"): the successfully-reached phones were known client-side
@@ -2645,7 +2649,12 @@ This will send a WhatsApp message to each selected recipient.`)) return;
     // filterCrmByPhoneSet(), reusing the existing CRM table/filter-chip UI
     // rather than building a second customer list.
     const failedSet  = new Set((data.failed_numbers || []));
-    const reachedPhones = phones.filter(p => !failedSet.has(p));
+    const skippedSet = new Set([...(data.skipped_window_numbers || []), ...(data.skipped_no_consent_numbers || [])]);
+    const reachedPhones = phones.filter(p => !failedSet.has(p) && !skippedSet.has(p));
+    const windowNote = skippedWin
+      ? `<div style="font-size:11px;margin-top:6px;">⏳ ${skippedWin} customer${skippedWin !== 1 ? 's were' : ' was'} skipped: ${escHtml(data.window_note || 'outside WhatsApp\'s 24-hour window; an approved message template is required.')}</div>`
+      : '';
+    const consentNote = consentSkipNote(data);
     const viewReachedBtn = reachedPhones.length
       ? `<div style="margin-top:8px;"><button class="btn btn-ghost" style="font-size:11px;padding:5px 12px;" onclick="filterCrmByPhoneSet(${escHtml(JSON.stringify(reachedPhones))}, 'Reached by last broadcast')">👥 View these ${reachedPhones.length} customer${reachedPhones.length!==1?'s':''}</button></div>`
       : '';
@@ -2654,8 +2663,8 @@ This will send a WhatsApp message to each selected recipient.`)) return;
       result.style.display = 'block';
       result.className = 'broadcast-result ' + (ok ? 'success' : 'error');
       result.innerHTML = (ok
-        ? `✅ Sent to <strong>${data.sent}</strong> customer${data.sent !== 1 ? 's' : ''}!`
-        : `Sent: <strong>${data.sent}</strong>  |  Failed: <strong>${data.failed}</strong>` +
+        ? `✅ Sent to <strong>${data.sent}</strong> customer${data.sent !== 1 ? 's' : ''}!` + windowNote + consentNote
+        : `Sent: <strong>${data.sent}</strong>  |  Failed: <strong>${data.failed}</strong>` + windowNote + consentNote +
           (data.failed_numbers && data.failed_numbers.length
             ? `<div style="font-size:10px;margin-top:6px;opacity:0.7;">Failed: ${data.failed_numbers.slice(0,5).map(escHtml).join(', ')}${data.failed_numbers.length > 5 ? '…' : ''}</div>`
             : '') +
@@ -2663,8 +2672,13 @@ This will send a WhatsApp message to each selected recipient.`)) return;
       ) + viewReachedBtn;
     }
 
+    if (allSkipped) {
+      toast(skippedWin
+        ? `No messages sent: ${skippedWin} customer${skippedWin !== 1 ? 's are' : ' is'} outside WhatsApp's 24-hour window.`
+        : `No messages sent: ${consentSkipCount(data)} customer${consentSkipCount(data) !== 1 ? 's have' : ' has'} not agreed to receive promotional messages.`, true);
+    }
     if (ok) {
-      toast(`📢 Broadcast sent to ${data.sent}!`);
+      toast(`📢 Broadcast sent to ${data.sent}!` + (skippedWin ? ` (${skippedWin} skipped: outside the 24-hour window)` : ''));
       if (_bm) _bm.value = '';
       updatePreview();
       // Update last broadcast time
@@ -3882,6 +3896,7 @@ function _upRender(data) {
   up('up-display-name',  p.display_name || '');
   up('up-email',         data.owner_email || '');
   up('up-phone',         p.phone        || '');
+  up('up-dial',          p.default_dialing_code || '');
   up('up-biz-name',      data.name      || '');
   up('up-bio',           p.bio          || '');
 
@@ -3984,6 +3999,7 @@ async function saveUserProfile() {
     owner_name:   document.getElementById('up-owner-name')?.value.trim()   || null,
     display_name: document.getElementById('up-display-name')?.value.trim() || null,
     user_phone:   document.getElementById('up-phone')?.value.trim()        || null,
+    default_dialing_code: document.getElementById('up-dial')?.value.trim() ?? null,
     bio:          document.getElementById('up-bio')?.value.trim()          || null,
     country:      document.getElementById('up-country')?.value             || null,
     timezone:     document.getElementById('up-timezone')?.value            || null,
@@ -6460,13 +6476,24 @@ async function sendBroadcastSimple() {
 
     if (result) {
       result.style.display = 'block';
-      const ok = (r.failed || 0) === 0;
+      const skippedWin = r.skipped_window || 0;
+      const allSkipped = (r.sent || 0) === 0 && (skippedWin + consentSkipCount(r)) > 0;
+      const ok = (r.failed || 0) === 0 && !allSkipped;
+      const winNote = skippedWin
+        ? `<div style="font-size:11px;margin-top:6px;">⏳ ${skippedWin} customer${skippedWin !== 1 ? 's were' : ' was'} skipped: ${escHtml(r.window_note || 'outside WhatsApp\'s 24-hour window; an approved message template is required.')}</div>`
+        : '';
       result.className = 'broadcast-result ' + (ok ? 'success' : 'error');
-      result.innerHTML = ok
+      result.innerHTML = (ok
         ? `✅ Sent to <strong>${r.sent}</strong> customer${r.sent !== 1 ? 's' : ''}!`
-        : `Sent: <strong>${r.sent}</strong> &nbsp; Failed: <strong>${r.failed}</strong>`;
+        : `Sent: <strong>${r.sent}</strong> &nbsp; Failed: <strong>${r.failed}</strong>`) + winNote + consentSkipNote(r);
     }
-    toast(`📢 Message sent to ${r.sent || 0} customers!`);
+    if ((r.sent || 0) === 0 && (r.skipped_window || 0) > 0) {
+      toast(`No messages sent: ${r.skipped_window} customer${r.skipped_window !== 1 ? 's are' : ' is'} outside WhatsApp's 24-hour window.`, true);
+    } else if ((r.sent || 0) === 0 && consentSkipCount(r) > 0) {
+      toast(`No messages sent: ${consentSkipCount(r)} customer${consentSkipCount(r) !== 1 ? 's have' : ' has'} not agreed to receive promotional messages.`, true);
+    } else {
+      toast(`📢 Message sent to ${r.sent || 0} customers!` + (r.skipped_window ? ` (${r.skipped_window} skipped: outside the 24-hour window)` : ''));
+    }
     const statLast = document.getElementById('stat-last');
     if (statLast) statLast.textContent = 'Just now';
     if (ta) ta.value = '';
@@ -8877,3 +8904,12 @@ async function backfillCrm() {
 ['filterOrdersBySearch', 'filterBookingsBySearch', 'applyProductFilters', 'applyAdminBizFilters'].forEach(n => {
   if (typeof window[n] === 'function') window[n] = _debounce(window[n], 150);
 });
+
+
+// Marketing-consent skips (customers who have not opted in, or opted out): shown next to the 24-hour-window skips.
+function consentSkipCount(r) { return (r.skipped_no_consent || 0) + (r.skipped_opted_out || 0); }
+function consentSkipNote(r) {
+  const n = consentSkipCount(r);
+  if (!n) return '';
+  return `<div style="font-size:11px;margin-top:6px;">🔕 ${n} customer${n !== 1 ? 's were' : ' was'} skipped: ${escHtml(r.consent_note || 'they have not agreed to receive promotional messages.')}</div>`;
+}

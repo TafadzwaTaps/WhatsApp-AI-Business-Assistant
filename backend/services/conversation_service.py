@@ -98,6 +98,8 @@ class STATE:
         "awaiting_reminder_response",
         # Reschedule flow (Phase 7)
         "reschedule_awaiting_date", "reschedule_awaiting_time", "reschedule_confirm",
+        # Stage 3: re-confirm a changed total / confirm cancelling a placed order
+        "price_changed_confirm", "awaiting_cancel_confirm",
     }
 
 
@@ -216,6 +218,8 @@ def is_active_order_state(state: str) -> bool:
         STATE.CHECKOUT_BOOKING_DATE,
         STATE.CHECKOUT_BOOKING_TIME,
         STATE.CHECKOUT_BOOKING_CONFIRM,
+        "price_changed_confirm",
+        "awaiting_cancel_confirm",
     }
 
 

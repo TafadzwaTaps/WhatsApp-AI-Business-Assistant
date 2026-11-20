@@ -90,9 +90,17 @@ def resolve_audience(
     if audience == "custom":
         if not phone_list:
             return []
-        # Fetch memory rows for given phones
+        # Fetch memory rows for given phones. Numbers typed by the owner are put into the international
+        # form using the business's default dialing code (never an assumed country); unparseable ones are
+        # used exactly as given, as before.
+        from services.phone_utils import business_dialing_code, normalise_phone
+        try:
+            _dial = business_dialing_code(crud.get_business_by_id(business_id))
+        except Exception:
+            _dial = None
         result = []
         for phone in phone_list:
+            phone = normalise_phone(phone, _dial) or phone
             mem = crud.get_user_memory(phone, business_id) or {}
             mem["phone"] = phone
             result.append(mem)
@@ -267,11 +275,22 @@ class CampaignService:
         failed  = 0
         failed_numbers: list = []
         first_error = ""
+        first_error_reason = ""
 
         try:
             from main import send_whatsapp as _send
         except ImportError:
             return {"ok": False, "error": "Cannot import send_whatsapp from main"}
+
+        # A campaign is MARKETING. In order: (1) marketing consent: customers who have not opted in (or have
+        # opted out) are not sent anything; (2) WhatsApp's 24-hour window: customers who last wrote more than
+        # 24 hours ago cannot be sent free text, only an approved marketing template, and are skipped when none
+        # is registered. Inactive pieces (migration not applied, no template) leave today's behaviour unchanged.
+        from services.wa_window import WINDOW_NOTE
+        from services.wa_outbound import plan_marketing, run_reference, template_for_closed_window, CONSENT_NOTE
+        _plan = plan_marketing(business_id, [(r.get("phone") or "").strip() for r in recipients])
+        _ref = run_reference(message)
+        skipped_window = skipped_no_consent = skipped_opted_out = skipped_cap = sent_template = 0
 
         for recipient in recipients:
             phone = (recipient.get("phone") or "").strip()
@@ -279,9 +298,41 @@ class CampaignService:
                 skipped += 1
                 continue
 
+            if phone in _plan["opted_out"]:
+                skipped_opted_out += 1
+                continue
+            if phone in _plan["no_consent"]:
+                skipped_no_consent += 1
+                continue
+
             if _on_cooldown(business_id, phone):
                 log.debug("campaign: cooldown  phone=%s", phone)
                 skipped += 1
+                continue
+
+            if phone in _plan["closed"]:
+                tr = template_for_closed_window(
+                    business, business_id, phone, "campaign",
+                    {"customer_name": (recipient.get("name") or "").split(" ")[0], "business_name": biz_name},
+                    _ref, sent_in_run=sent_template)
+                if tr.get("ok"):
+                    _mark_sent(business_id, phone)
+                    sent += 1
+                    sent_template += 1
+                elif tr.get("skipped") == "no_template":
+                    skipped_window += 1
+                elif tr.get("skipped") == "cap":
+                    skipped_cap += 1
+                elif tr.get("skipped") == "duplicate":
+                    skipped += 1
+                elif tr.get("skipped") in ("no_consent", "opted_out"):
+                    skipped_no_consent += 1
+                else:
+                    failed += 1
+                    failed_numbers.append(phone)
+                    if not first_error:
+                        first_error = _friendly_send_error(RuntimeError(tr.get("error") or {}))
+                        first_error_reason = tr.get("reason") or "meta"
                 continue
 
             msg = personalise(message, recipient, biz_name, business.get("currency_symbol") or "$") if personalise_msg else message
@@ -298,10 +349,18 @@ class CampaignService:
                 failed_numbers.append(phone)
                 if not first_error:
                     first_error = _friendly_send_error(exc)
+                    first_error_reason = _error_reason(exc)
 
+        if not sent and not first_error:
+            if skipped_window:
+                first_error = WINDOW_NOTE
+            elif skipped_no_consent or skipped_opted_out:
+                first_error = CONSENT_NOTE
         log.info(
-            "campaign done  biz=%s  audience=%s  total=%d  sent=%d  skipped=%d  failed=%d",
-            business_id, audience, len(recipients), sent, skipped, failed,
+            "campaign done  biz=%s  audience=%s  total=%d  sent=%d  skipped=%d  skipped_window=%d  "
+            "skipped_no_consent=%d  skipped_opted_out=%d  sent_template=%d  failed=%d",
+            business_id, audience, len(recipients), sent, skipped, skipped_window,
+            skipped_no_consent, skipped_opted_out, sent_template, failed,
         )
         return {
             "ok":       True,
@@ -310,11 +369,88 @@ class CampaignService:
             "sent":     sent,
             "skipped":  skipped,
             "failed":   failed,
+            "skipped_window": skipped_window,
+            "window_note": WINDOW_NOTE if skipped_window else "",
+            "skipped_no_consent": skipped_no_consent,
+            "skipped_opted_out": skipped_opted_out,
+            "skipped_cap": skipped_cap,
+            "sent_template": sent_template,
+            "consent_note": CONSENT_NOTE if (skipped_no_consent or skipped_opted_out) else "",
             "failed_numbers": failed_numbers,
             "first_error": first_error,
+            "first_error_reason": first_error_reason,
             "dry_run":  False,
             "previews": previews,
         }
+
+
+# ── structured outcome for scheduled campaigns (Stage 5) ─────────────────────────────────────────────
+# Safe, fixed vocabulary: a code the dashboard can translate plus a short sentence. Never raw provider
+# messages, tokens or phone numbers.
+FAILURE_DETAILS = {
+    "window_closed": "Customers last wrote more than 24 hours ago, so WhatsApp only allows an approved template. None is set up for campaigns.",
+    "no_consent": "No recipient has agreed to receive promotional messages (marketing consent is required).",
+    "opted_out": "Every eligible recipient has opted out of promotional messages.",
+    "rate_limited": "WhatsApp limited how fast messages can be sent. Try again later or send in smaller batches.",
+    "template_error": "WhatsApp rejected the message template. Check that the template is approved and its fields are right.",
+    "recipient_invalid": "WhatsApp could not deliver to these phone numbers (not on WhatsApp or invalid).",
+    "meta_error": "WhatsApp rejected the messages. Check your WhatsApp connection in Settings.",
+    "internal_error": "The campaign could not be processed. Please try rescheduling it.",
+    "no_recipients": "The chosen audience has no customers with a phone number.",
+    "no_eligible_recipients": "No recipient was eligible to receive this message right now.",
+    "send_cap": "The per-run template limit was reached before anyone could be sent a message.",
+    "partial": "Some recipients were sent the message; others were skipped or failed.",
+}
+_REASON_TO_CODE = {"window": "window_closed", "rate_limit": "rate_limited", "template": "template_error",
+                   "recipient": "recipient_invalid", "opt_out": "opted_out", "meta": "meta_error",
+                   "internal": "internal_error"}
+
+
+def _error_reason(exc) -> str:
+    """Safe reason (wa_templates.classify_error vocabulary) for a send exception; never raises."""
+    try:
+        d = exc.args[0] if getattr(exc, "args", None) else None
+        if isinstance(d, dict):
+            from services.wa_templates import classify_error
+            return classify_error(d)
+    except Exception as e2:
+        log.debug("campaign error classification failed: %s", type(e2).__name__)
+    return "internal"
+
+
+def outcome_from_result(result: dict | None, *, error: bool = False) -> dict:
+    """Turn CampaignService.run's result (or a crash) into the structured fields stored on a scheduled campaign:
+    outcome (delivered | partial | failed), failure_code, failure_detail and the counts. A campaign is only
+    'delivered' when somebody was reached AND nobody eligible was left out; zero reached is always 'failed'."""
+    if error or not isinstance(result, dict) or result.get("ok") is False:
+        return {"outcome": "failed", "failure_code": "internal_error", "failure_detail": FAILURE_DETAILS["internal_error"],
+                "sent_count": 0, "failed_count": 0, "skipped_count": 0, "total_recipients": 0}
+    def n(key):
+        try:
+            return max(int(result.get(key) or 0), 0)
+        except (TypeError, ValueError):
+            return 0
+    sent, failed, total = n("sent"), n("failed"), n("total")
+    window, no_consent, opted_out, cap = n("skipped_window"), n("skipped_no_consent"), n("skipped_opted_out"), n("skipped_cap")
+    skipped = n("skipped") + window + no_consent + opted_out + cap
+    counts = {"sent_count": sent, "failed_count": failed, "skipped_count": skipped, "total_recipients": total}
+    if sent > 0:
+        if failed or window or no_consent or opted_out or cap:
+            dominant = max(((failed, _REASON_TO_CODE.get(str(result.get("first_error_reason") or "meta"), "meta_error")),
+                            (window, "window_closed"), (no_consent, "no_consent"), (opted_out, "opted_out"),
+                            (cap, "send_cap")), key=lambda x: x[0])
+            return {"outcome": "partial", "failure_code": "partial", "failure_detail":
+                    FAILURE_DETAILS["partial"] + " Main reason: " + FAILURE_DETAILS[dominant[1]], **counts}
+        return {"outcome": "delivered", "failure_code": None, "failure_detail": None, **counts}
+    if total == 0:
+        code = "no_recipients"
+    elif failed:
+        code = _REASON_TO_CODE.get(str(result.get("first_error_reason") or "meta"), "meta_error")
+    else:
+        top = max(((window, "window_closed"), (no_consent, "no_consent"), (opted_out, "opted_out"), (cap, "send_cap")),
+                  key=lambda x: x[0])
+        code = top[1] if top[0] else "no_eligible_recipients"
+    return {"outcome": "failed", "failure_code": code, "failure_detail": FAILURE_DETAILS[code], **counts}
 
 
 def _friendly_send_error(exc) -> str:

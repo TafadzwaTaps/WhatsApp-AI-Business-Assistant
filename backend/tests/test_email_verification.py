@@ -365,14 +365,16 @@ def test_require_email_verified_dependency(monkeypatch):
                                          ("/campaigns/scheduled", "POST")])
 def test_campaign_routes_carry_the_verification_guard(path, method):
     import main
-    route = next(r for r in main.app.routes if getattr(r, "path", "") == path and method in getattr(r, "methods", ()))
+    from _routes_util import find_route
+    route = find_route(main.app, path, method)
     names = [d.call.__qualname__ for d in route.dependant.dependencies]
     assert any(n.startswith("require_email_verified") for n in names), names
 
 
 def test_win_back_route_carries_the_guard():
     import main
-    route = next(r for r in main.app.routes if "win" in getattr(r, "path", "") and "POST" in getattr(r, "methods", ()))
+    from _routes_util import iter_routes
+    route = next(r for r in iter_routes(main.app.routes) if "win" in getattr(r, "path", "") and "POST" in (getattr(r, "methods", None) or ()))
     assert any(d.call.__qualname__.startswith("require_email_verified") for d in route.dependant.dependencies)
 
 

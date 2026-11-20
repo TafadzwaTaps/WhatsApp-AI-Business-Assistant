@@ -1322,12 +1322,41 @@ def send_reminders_for_business(business_id: int, business: Optional[dict] = Non
         if not token or not phone_id:
             return {"ok": False, "sent": 0, "skipped": 0, "error": "No WhatsApp credentials"}
 
+        # 24-hour window: a booking is often made days ahead, so the customer's window may be closed
+        # when the reminder is due. A free-text send would fail (and be retried on every run), so skip it
+        # until a template sender exists; the reminder stays unsent and nothing is attempted.
+        from services.wa_window import closed_phones
+        _closed = closed_phones(business_id, [(x.get("customer_phone") or "").strip() for x in reminders])
+        skipped_window = 0
+
         for b in reminders:
             if b.get("reminder_24h_sent"):
                 skipped += 1
                 continue
             phone = b.get("customer_phone", "")
             if not phone:
+                continue
+            if phone.strip() in _closed:
+                # Window closed: only an approved UTILITY template may be sent (no marketing consent needed:
+                # a booking reminder is transactional). Without one the reminder is skipped, as before.
+                from services.wa_outbound import template_for_closed_window
+                tr = template_for_closed_window(
+                    biz, business_id, phone, "booking_reminder",
+                    {"customer_name": (b.get("customer_name") or "").split(" ")[0], "business_name": biz_name,
+                     "service": b.get("service_name", ""), "date": b.get("booking_date", ""),
+                     "time": b.get("start_time", "")},
+                    ref=f"booking:{b.get('id')}", sent_in_run=sent)
+                if tr.get("ok"):
+                    supabase.table("bookings").update({"reminder_24h_sent": True}).eq("id", b["id"]).execute()
+                    try:
+                        from services._ai_state import _set_awaiting_reminder_response
+                        _set_awaiting_reminder_response(phone, business_id, booking_id=b["id"])
+                    except Exception as exc:
+                        log.warning("send_reminders_for_business: could not set reminder-response state for %s: %s", phone, exc)
+                    sent += 1
+                else:
+                    skipped += 1
+                    skipped_window += 1
                 continue
 
             msg = format_reminder_message(b, biz_name)
@@ -1344,7 +1373,7 @@ def send_reminders_for_business(business_id: int, business: Optional[dict] = Non
             else:
                 skipped += 1
 
-        return {"ok": True, "sent": sent, "skipped": skipped, "error": None}
+        return {"ok": True, "sent": sent, "skipped": skipped, "skipped_window": skipped_window, "error": None}
     except Exception as exc:
         log.warning("send_reminders_for_business error (biz=%s): %s", business_id, exc)
         return {"ok": False, "sent": 0, "skipped": 0, "error": str(exc)}

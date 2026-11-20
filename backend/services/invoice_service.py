@@ -118,13 +118,16 @@ def generate_invoice(order, business_id=None) -> str:
         or DEFAULT_PAYMENT_NAME
     )
 
-    # Build payment section based on available info
-    if pay_number:
+    # Build payment section based on available info. The label follows the order's own payment method
+    # (EcoCash stays the default when none is recorded); an EcoCash number is only shown for EcoCash.
+    from services.payment_labels import payment_method_label, is_ecocash
+    _method_label = payment_method_label(order)
+    if pay_number and is_ecocash(order):
         # Full verified payment block
         pay_section = (
             f"💳 *How to Pay:*\n"
             f"{'─' * 28}\n"
-            f"  Method     : EcoCash / Mobile Money\n"
+            f"  Method     : {_method_label}\n"
             f"  Pay to     : *{pay_number}*\n"
             f"  Name       : *{pay_name or biz_name}*\n"
             f"  Reference  : *ORDER-{order_id}*\n"
@@ -142,7 +145,7 @@ def generate_invoice(order, business_id=None) -> str:
         pay_section = (
             f"💳 *How to Pay:*\n"
             f"{'─' * 28}\n"
-            f"  Method     : EcoCash / Mobile Money\n"
+            f"  Method     : {_method_label}\n"
             f"  Reference  : *ORDER-{order_id}*\n"
             f"  Amount     : *{order.get('currency_symbol', '$')}{float(total):.2f}*\n"
             f"{'─' * 28}\n"

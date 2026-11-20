@@ -196,10 +196,21 @@ def billing_pricing(country: str = "", request: Request = None):
               request.headers.get("X-Country", "")).strip().upper()
 
     pricing = get_pricing_for_country(cc)
+    # Display-only local-currency estimate (None unless an operator supplied indicative rates). The USD
+    # amounts below stay authoritative: they are what Stripe charges. See services/pricing_display.py.
+    from services.pricing_display import BILLING_CURRENCY, local_estimate
+    try:
+        estimate = local_estimate(cc, pricing)
+    except Exception as exc:                       # never let a display extra break the pricing page
+        log.warning("pricing estimate skipped: %s", type(exc).__name__)
+        estimate = None
     return {
         "country_code":    cc or "GLOBAL",
         "region":          pricing["region"],
         "region_label":    pricing["region_label"],
+        "currency":        BILLING_CURRENCY,          # the currency actually charged at checkout
+        "billing_currency": BILLING_CURRENCY,
+        "local_estimate":  estimate,
         "starter_monthly": pricing["starter_monthly"],
         "starter_annual":  pricing["starter_annual"],
         "growth_monthly":  pricing["growth_monthly"],

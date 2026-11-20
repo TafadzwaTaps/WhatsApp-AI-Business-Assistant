@@ -344,7 +344,7 @@ def _get_features_for_type(business_type: str, focus: str = "general") -> list:
     _FEATURES_BY_TYPE = {
         "restaurant": [
             "Handles orders and menus automatically",
-            "Accepts EcoCash, PayPal and cash payments",
+            "Accepts the payment methods you set up: PayPal, mobile money, bank transfer or cash",
             "Sends order confirmations and delivery updates",
             "Runs targeted promotions to your regulars",
         ],
@@ -357,7 +357,7 @@ def _get_features_for_type(business_type: str, focus: str = "general") -> list:
         "general": [
             "Replies to customers instantly — even at 2am",
             "Processes orders and sends confirmations",
-            "Accepts payments via EcoCash, PayPal or cash",
+            "Accepts payments the way you choose: PayPal, mobile money, bank transfer or cash",
             "Sends promotions to your customer list",
         ],
     }

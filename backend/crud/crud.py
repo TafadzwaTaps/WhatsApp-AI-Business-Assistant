@@ -622,8 +622,10 @@ def get_all_customer_phones(business_id: int) -> list[str]:
     phones: list[str] = []
     for row in (res.data or []):
         p = row.get("phone")
-        if p and p not in seen:
-            seen.add(p)
+        # '+263 77 100 0111' and '263771000111' are one customer; the first stored form is kept unchanged.
+        key = "".join(ch for ch in str(p or "") if ch.isdigit()) or p
+        if p and key not in seen:
+            seen.add(key)
             phones.append(p)
     return phones
 

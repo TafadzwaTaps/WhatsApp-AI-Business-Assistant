@@ -7,6 +7,7 @@ Routes: /me, /me/*, /products, /orders, /conversations, /customers, /broadcast,
 """
 
 import logging
+from core.wa_version import graph_url
 from typing import Optional
 
 from starlette.concurrency import run_in_threadpool
@@ -122,6 +123,10 @@ def get_me(user=Depends(require_business)):
         "timezone":       fj.get("timezone",       "UTC"),
         "language":       fj.get("language",       "en"),
         "country":        fj.get("country",        ""),
+        # Stage 5b: optional default dialing code (digits, no '+') and the code actually in effect.
+        "default_dialing_code":   fj.get("default_dialing_code", ""),
+        "effective_dialing_code": _effective_dial(fj),
+        "postal_code_label":      _postal_label(fj.get("country", "")),
         "date_format":    fj.get("date_format",    "DD/MM/YYYY"),
         "avatar_url":     fj.get("avatar_url",     ""),
         "prefs": {
@@ -337,7 +342,7 @@ def test_whatsapp_connection(user=Depends(require_business)):
         return {"ok": False, "reason": "No access token saved"}
     try:
         resp = http_requests.get(
-            f"https://graph.facebook.com/v18.0/{b['whatsapp_phone_id']}",
+            graph_url(f"{b['whatsapp_phone_id']}"),
             headers={"Authorization": f"Bearer {token}"}, timeout=5,
         )
         if resp.status_code == 200:
@@ -548,6 +553,16 @@ def get_stripe_settings(user=Depends(require_business)):
 
 # ── User Profile endpoints ────────────────────────────────────────────────────
 
+def _effective_dial(fj: dict) -> str:
+    from services.phone_utils import business_dialing_code
+    return business_dialing_code({"features_json": fj}) or ""
+
+
+def _postal_label(country) -> str:
+    from services.address_utils import postal_label
+    return postal_label(country)
+
+
 class UserProfileUpdate(BaseModel):
     owner_name:             Optional[str]  = None
     display_name:           Optional[str]  = None
@@ -556,6 +571,7 @@ class UserProfileUpdate(BaseModel):
     timezone:               Optional[str]  = None
     language:               Optional[str]  = None
     country:                Optional[str]  = None
+    default_dialing_code:   Optional[str]  = None
     date_format:            Optional[str]  = None
     avatar_url:             Optional[str]  = None
     # Preferences
@@ -598,6 +614,24 @@ def update_user_profile(data: UserProfileUpdate, user=Depends(require_business))
         val = getattr(data, field, None)
         if val is not None:
             updates[fj_key] = val
+
+    # Stage 5b: the default dialing code is validated ("" clears it); the owner's own phone is stored in the
+    # international form when it can be made one with confidence (otherwise exactly as typed).
+    from services.phone_utils import clean_dialing_code, normalise_phone, display_number, dialing_code_for_country
+    if data.default_dialing_code is not None:
+        if data.default_dialing_code.strip() == "":
+            updates["default_dialing_code"] = ""
+        else:
+            _dial = clean_dialing_code(data.default_dialing_code)
+            if not _dial:
+                raise HTTPException(422, "Dialing code must be 1 to 4 digits, e.g. 44 or +263")
+            updates["default_dialing_code"] = _dial
+    if updates.get("user_phone"):
+        _eff = (clean_dialing_code(updates.get("default_dialing_code", existing_fj.get("default_dialing_code")))
+                or dialing_code_for_country(updates.get("country", existing_fj.get("country"))))
+        _n = normalise_phone(updates["user_phone"], _eff)
+        if _n:
+            updates["user_phone"] = display_number(_n)
 
     if not updates:
         return {"ok": True, "message": "Nothing to update"}
@@ -1289,15 +1323,45 @@ def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_bus
     if not all_phones: return {"sent": 0, "failed": 0, "total": 0, "message": "No customers found"}
 
     if body.phone_filter:
-        filter_set = {p.strip().lstrip("+") for p in body.phone_filter if p}
-        phones = [p for p in all_phones if p.strip().lstrip("+") in filter_set]
+        from services.phone_utils import digits as _digits
+        filter_set = {_digits(p) for p in body.phone_filter if p}
+        phones = [p for p in all_phones if _digits(p) in filter_set]
     else:
         phones = all_phones
 
     if not phones:
         return {"sent": 0, "failed": 0, "total": len(all_phones), "message": "No recipients matched"}
 
-    sent, failed, failed_phones = 0, 0, []
+    # Skip customers outside WhatsApp's 24-hour window (free text would fail with 131047 and could hurt
+    # the number's quality rating); unknown windows are still attempted.
+    # A broadcast is MARKETING: (1) only customers with recorded marketing consent; (2) free text only inside the
+    # 24-hour window, an approved marketing template (if registered) for customers outside it.
+    from services.wa_window import WINDOW_NOTE as _WA_NOTE
+    from services.wa_outbound import plan_marketing, run_reference, template_for_closed_window, CONSENT_NOTE
+    _plan = plan_marketing(bid, phones)
+    _ref = run_reference(body.message)
+    all_selected = list(phones)
+    _closed = [p for p in all_selected if str(p).strip() in _plan["closed"]]
+    _no_consent = [p for p in all_selected if str(p).strip() in _plan["no_consent"] or str(p).strip() in _plan["opted_out"]]
+    phones = [p for p in all_selected if str(p).strip() in _plan["allowed"] and str(p).strip() not in _plan["closed"]]
+    sent, failed, failed_phones, sent_template, _skipped_window = 0, 0, [], 0, []
+    for phone in _closed:
+        tr = template_for_closed_window(business, bid, phone, "campaign", {"business_name": business.get("name", "")},
+                                        _ref, sent_in_run=sent_template)
+        if tr.get("ok"):
+            sent += 1
+            sent_template += 1
+        elif tr.get("skipped") in ("no_template", "cap", "duplicate", "no_consent", "opted_out"):
+            _skipped_window.append(phone)
+        else:
+            failed += 1
+            failed_phones.append(phone)
+    if (_skipped_window or _no_consent) and not phones and not sent and not failed:
+        return {"sent": 0, "failed": 0, "total": len(all_selected), "skipped_window": len(_skipped_window),
+                "skipped_window_numbers": list(_skipped_window), "skipped_no_consent": len(_no_consent),
+                "skipped_no_consent_numbers": list(_no_consent),
+                "window_note": _WA_NOTE if _skipped_window else "", "consent_note": CONSENT_NOTE if _no_consent else "",
+                "failed_numbers": []}
     for phone in phones:
         try:
             result = send_whatsapp(phone_number_id, token, phone, body.message)
@@ -1308,7 +1372,18 @@ def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_bus
             failed += 1
             failed_phones.append(phone)
 
-    return {"sent": sent, "failed": failed, "total": len(phones), "failed_numbers": failed_phones}
+    out = {"sent": sent, "failed": failed, "total": len(all_selected), "failed_numbers": failed_phones}
+    if _skipped_window:
+        out["skipped_window"] = len(_skipped_window)
+        out["skipped_window_numbers"] = list(_skipped_window)
+        out["window_note"] = _WA_NOTE
+    if _no_consent:
+        out["skipped_no_consent"] = len(_no_consent)
+        out["skipped_no_consent_numbers"] = list(_no_consent)
+        out["consent_note"] = CONSENT_NOTE
+    if sent_template:
+        out["sent_template"] = sent_template
+    return out
 
 
 @router.get("/customers")

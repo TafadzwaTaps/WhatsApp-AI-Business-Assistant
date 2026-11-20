@@ -1504,7 +1504,7 @@ async function qaRequestPayment() {
   if (match) {
     const ref   = `ORDER-${match.id}`;
     const total = parseFloat(match.total_price || 0).toFixed(2);
-    const method = (match.payment_method || 'EcoCash').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
+    const method = (match.payment_method || 'Payment').replace(/_/g,' ').replace(/\b\w/g, c => c.toUpperCase());
     paymentMsg = `💳 *Payment Due*\n\n📦 Order: *${ref}*\n💰 Amount: *$${total}*\n📱 Method: *${method}*\n\nPlease complete your payment to confirm your order. Reply *paid* once done.`;
   }
 

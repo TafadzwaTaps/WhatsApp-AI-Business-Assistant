@@ -20,6 +20,7 @@ or a new background task — idempotent, cooldown-protected.
 from __future__ import annotations
 
 import logging
+from core.wa_version import graph_url
 import os
 import time
 from typing import Optional
@@ -102,6 +103,13 @@ def run_reengagement(business_id: int) -> dict:
         biz_name = biz.get("name", "us")
         currency = biz.get("currency_symbol") or "$"
 
+        # Re-engagement is MARKETING aimed at long-inactive customers: consent first, then the 24-hour window
+        # (these customers are outside it by definition, so only an approved marketing template can reach them).
+        from services.wa_outbound import plan_marketing, template_for_closed_window
+        from datetime import datetime as _dt, timezone as _tz
+        _plan = plan_marketing(business_id, [m.get("phone") for m in inactive])
+        _templates_sent = 0
+
         for mem in inactive:
             phone     = mem.get("phone")
             cust_name = mem.get("customer_name") or ""
@@ -138,8 +146,28 @@ def run_reengagement(business_id: int) -> dict:
             except Exception:
                 sd = {}
 
-            msg = _build_reengagement_message(biz_name, cust_name, last_prod, currency)
-            sent = _send_message(biz, phone, msg)
+            # 24-hour window: these customers have been inactive for days, so free text cannot reach them
+            # (an approved template is required). Skip instead of sending a message that will fail.
+            _p = str(phone).strip()
+            if _p in _plan["opted_out"] or _p in _plan["no_consent"]:
+                results["skipped"] += 1
+                results["skipped_no_consent"] = results.get("skipped_no_consent", 0) + 1
+                continue
+
+            if _p in _plan["closed"]:
+                tr = template_for_closed_window(
+                    biz, business_id, phone, "reengagement",
+                    {"customer_name": (cust_name or "").split(" ")[0], "business_name": biz_name},
+                    ref=_dt.now(_tz.utc).strftime("%Y%m"), sent_in_run=_templates_sent)
+                if not tr.get("ok"):
+                    results["skipped"] += 1
+                    results["skipped_window"] = results.get("skipped_window", 0) + 1
+                    continue
+                _templates_sent += 1
+                sent = True
+            else:
+                msg = _build_reengagement_message(biz_name, cust_name, last_prod, currency)
+                sent = _send_message(biz, phone, msg)
 
             if sent:
                 try:
@@ -173,7 +201,7 @@ def _send_message(biz: dict, phone: str, msg: str) -> bool:
         if not token or not phone_id:
             return False
         import requests as _req
-        url  = f"https://graph.facebook.com/v18.0/{phone_id}/messages"
+        url  = graph_url(f"{phone_id}/messages")
         resp = _req.post(url, headers={"Authorization": f"Bearer {token}",
                                        "Content-Type": "application/json"},
                          json={"messaging_product": "whatsapp", "to": phone,

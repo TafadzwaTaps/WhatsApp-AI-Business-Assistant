@@ -43,6 +43,7 @@ INTENT PRIORITY (do not reorder)
   P-1   Survey state
   P0    Global cancel
   P0.5  Refund / dispute request (now also triggers human handoff) — Phase 9
+  P0.55 Order-status inquiry ("where is my order?") — Stage 4, never a refund
   P0.6  Abusive / offensive language detection
   P0.7  Conversation completion detection
   P0.8  Urgency / delivery follow-up
@@ -130,7 +131,7 @@ from services._ai_memory import (
 
 # Intent detection
 from services._ai_intent import (
-    _is_cancel, _is_refund_request, _is_reorder_request,
+    _is_cancel, _is_refund_request, _is_order_status_inquiry, _is_reorder_request,
     _detect_fulfillment, _is_status_query,
     _extract_name, _is_conversation_done,
     _is_survey_response, _parse_survey_rating,
@@ -445,6 +446,63 @@ def _trigger_smart_handoff(
     return _handoff_mod().handoff_acknowledgement(business_name, ticket=ticket, reason=trigger_reason)
 
 
+def _ask_cancel_confirm(phone, business_id, order, currency_sym, resume_state="browsing",
+                        resume_pending=None, resume_proof=None):
+    """Ask the customer to confirm cancelling a PLACED order; remembers where to resume if they decline."""
+    _set_state(phone, business_id, "awaiting_cancel_confirm",
+               session={"order_id": order["id"], "resume_state": resume_state},
+               pending_payment=resume_pending, pending_proof=resume_proof)
+    try:
+        amount = f"💰 Amount: {currency_sym}{float(order.get('total_price') or 0):.2f}\n"
+    except (TypeError, ValueError):
+        amount = ""
+    return (
+        f"🚫 *Cancel ORDER-{order['id']}?*\n\n{amount}"
+        f"📍 Status: {str(order.get('status') or 'pending').upper()}\n\n"
+        "Reply *yes, cancel* to confirm, or anything else to keep your order.\n\n"
+        "_If you've already paid, we'll pass this to our team to arrange a refund; nothing is refunded automatically._"
+    )
+
+
+def _cancel_confirm_reply(phone, business_id, business_name, text, currency_sym):
+    """Handle the answer to _ask_cancel_confirm. Paid orders are never cancelled or refunded here."""
+    from services import _ai_lifecycle as _lc
+    sd = _read_state_data(phone, business_id)
+    session = sd.get("session") or {}
+    order_id = session.get("order_id")
+    if not _lc.confirms_cancel(text):
+        resume = session.get("resume_state") or "browsing"
+        if resume in ("awaiting_payment", "awaiting_proof"):
+            _set_state(phone, business_id, resume, session={}, pending_payment=sd.get("pending_payment"),
+                       pending_proof=sd.get("pending_proof"))
+        else:
+            _reset_state(phone, business_id)
+        return f"👍 Okay, your ORDER-{order_id} is kept as it is." if order_id else "👍 Okay, nothing was cancelled."
+    out = _lc.cancel_order(order_id, phone, business_id) if order_id else {"result": "not_found"}
+    r = out.get("result")
+    if r == "cancelled":
+        _reset_state(phone, business_id)
+        return (f"✅ *ORDER-{order_id} has been cancelled.*\n\nNothing further will be charged. "
+                "Type *menu* whenever you'd like to order again. 😊")
+    if r == "already_cancelled":
+        _reset_state(phone, business_id)
+        return f"ℹ️ ORDER-{order_id} was already cancelled. Nothing more was done."
+    if r == "needs_human":
+        _reset_state(phone, business_id)
+        o = out.get("order") or {}
+        return _trigger_smart_handoff(
+            phone, business_id, business_name, text,
+            trigger_reason=f"Cancellation of paid/processed order — ORDER-{order_id}",
+            issue=f"Customer asked to cancel ORDER-{order_id}, which is paid or already being processed.",
+            ai_summary=(f"Cancellation request for ORDER-{order_id} (status {o.get('status')}, payment "
+                        f"{o.get('payment_status')}). Not cancelled or refunded automatically; needs review."),
+            currency_sym=currency_sym)
+    _reset_state(phone, business_id)
+    if r == "not_found":
+        return "I couldn't find that order on your number, so nothing was cancelled. Type *menu* to continue."
+    return "⚠️ I couldn't cancel that just now. Nothing was changed. Please try again shortly or type *help*."
+
+
 def _generate_reply_core(
     message: str,
     phone: str,
@@ -486,6 +544,9 @@ def _generate_reply_core(
     _biz_category       = (_cfg.get("category") or "").lower().strip()
     _is_service_biz     = bool(_cfg.get("is_service_business", False))
     _biz_flavor = _resolve_biz_flavor(_biz_category, _is_service_biz)
+    # Stage 5b: the address prompt names the postal code only for countries that use one.
+    from services.address_utils import address_hint as _address_hint, tidy_address as _tidy_address
+    _addr_hint = _address_hint(((_cfg.get("features_json") or {}).get("country") if isinstance(_cfg.get("features_json"), dict) else None) or _cfg.get("country"))
 
     # Service businesses are never "out of stock" — this normalizes the
     # menu-listing `products` list (used for display and the "only X left"
@@ -735,75 +796,62 @@ def _generate_reply_core(
     # ══════════════════════════════════════════════════════════════════════════
     # P0 — GLOBAL CANCEL
     # ══════════════════════════════════════════════════════════════════════════
-    if _is_cancel(text):
+    from services import _ai_lifecycle as _lc
+    if current_state == "awaiting_cancel_confirm":
+        return _cancel_confirm_reply(phone, business_id, business_name, text, _currency_sym)
+
+    _cancel_phrase = (
+        current_state in ("browsing", "checkout", "confirm_order", "price_changed_confirm",
+                          "awaiting_payment", "awaiting_proof")
+        and ((_lc.is_cancel_order_request(text)
+              and (current_state in ("browsing", "awaiting_payment", "awaiting_proof")
+                   or not _lc.is_question_like(text)))
+             or (current_state == "browsing" and _lc.is_yes_cancel(text)))
+    )
+    if _is_cancel(text) or _cancel_phrase:
         if current_state == "browsing":
             t_lower      = text.lower()
             order_ref_id = _extract_order_id(text)
-            if order_ref_id or any(w in t_lower for w in ["cancel order", "cancel my order"]):
-                try:
-                    from core.db import supabase as _sb
-                    res = (
-                        _sb.table("orders")
-                        .select("id,status,payment_status,total_price")
-                        .eq("customer_phone", phone)
-                        .eq("business_id", business_id)
-                        .in_("status", ["pending", "confirmed"])
-                        .order("id", desc=True)
-                        .limit(1)
-                        .execute()
-                    )
-                    recent = res.data[0] if res.data else None
-                except Exception:
-                    recent = None
-
+            if _lc.is_yes_cancel(text) and not order_ref_id:
+                return ("ℹ️ There's nothing waiting for confirmation right now.\n\n"
+                        "To cancel an order, type *cancel my order*.")
+            if order_ref_id or _lc.is_cancel_order_request(text):
+                recent = _lc.find_cancellable_order(phone, business_id, order_ref_id)
+                if recent and str(recent.get("status") or "").lower() in ("cancelled", "refunded"):
+                    return f"ℹ️ ORDER-{recent['id']} is already cancelled. Nothing more to do."
                 if recent:
-                    return (
-                        f"🚫 *Cancel ORDER-{recent['id']}?*\n\n"
-                        f"💰 Amount: {_currency_sym}{float(recent['total_price']):.2f}\n"
-                        f"📍 Status: {recent['status'].upper()}\n\n"
-                        f"Reply *yes, cancel* to confirm cancellation, "
-                        f"or type anything else to keep your order.\n\n"
-                        f"_If you've already paid, reply *refund* and we'll arrange a refund._"
-                    )
+                    return _ask_cancel_confirm(phone, business_id, recent, _currency_sym)
 
             return (
                 "ℹ️ Nothing to cancel right now.\n\n"
                 "Type *menu* to browse, or *cart* to see what's in your cart. 😊"
             )
 
-        if current_state in ("checkout", "confirm_order"):
+        if current_state in ("checkout", "confirm_order", "price_changed_confirm"):
             _reset_state(phone, business_id)
             return (
-                "🚫 *Checkout cancelled.*\n\n"
+                "🚫 *Checkout cancelled.* Nothing was ordered or charged.\n\n"
                 f"{_format_cart(cart, _currency_sym)}\n\n"
                 "Your cart is saved. Type *checkout* whenever you're ready."
             )
 
-        if current_state == "awaiting_payment":
-            pending = _get_pending_payment(phone, business_id)
-            if pending:
-                order_id  = pending.get("order_id")
-                reference = pending.get("reference", f"ORDER-{order_id}")
-                try:
-                    if order_id:
-                        crud.update_order_payment(order_id, business_id, {
-                            "payment_status": "cancelled",
-                        })
-                        from workflows.order_lifecycle import update_order_status_supabase
-                        try:
-                            update_order_status_supabase(order_id, "pending")
-                        except Exception as _swallowed_exc:
-                            from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
-                except Exception as exc:
-                    log.warning("order cancel update failed: %s", exc)
-
+        if current_state in ("awaiting_payment", "awaiting_proof"):
+            # A PLACED order: confirm first, then cancel through the order lifecycle (stock restored once,
+            # paid orders go to a human). Previously this only flagged the payment and left the order open.
+            _p = (_get_pending_payment(phone, business_id) if current_state == "awaiting_payment"
+                  else _get_pending_proof(phone, business_id)) or {}
+            _oid = _p.get("order_id")
+            _placed = _lc.find_cancellable_order(phone, business_id, _oid) if _oid else None
+            if _placed and str(_placed.get("status") or "").lower() not in ("cancelled", "refunded"):
+                return _ask_cancel_confirm(
+                    phone, business_id, _placed, _currency_sym, resume_state=current_state,
+                    resume_pending=_get_pending_payment(phone, business_id),
+                    resume_proof=_get_pending_proof(phone, business_id))
             _reset_state(phone, business_id)
-            return (
-                "🚫 *Order cancelled.*\n\n"
-                "If you've already sent payment, please contact us immediately "
-                "and we'll sort it out.\n\n"
-                "Type *menu* to start a new order. 😊"
-            )
+            if current_state == "awaiting_proof":
+                return ("🚫 *Cancelled.*\n\nIf you've already made a payment, please contact us directly "
+                        "so we can verify and refund if needed.\n\nType *menu* to browse. 😊")
+            return ("🚫 *Cancelled.* Type *menu* to start a new order. 😊")
 
         if current_state == "awaiting_proof":
             _reset_state(phone, business_id)
@@ -864,6 +912,15 @@ def _generate_reply_core(
             ai_summary="Customer wants a refund or is disputing a payment. No matching order found on file yet — ask for their order reference.",
             currency_sym=_currency_sym,
         )
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P0.55 — ORDER-STATUS INQUIRY ("where is my order?", "has my order shipped?")
+    # A status question, not a refund or dispute (owner decision, Stage 4). Reads only THIS customer's orders.
+    # Explicit refund / return / cancel / non-delivery wording was already handled above.
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state in ("browsing", "awaiting_payment", "awaiting_proof") and _is_order_status_inquiry(text):
+        return _lc.order_status_reply(phone, business_id, text, _currency_sym, _biz_flavor,
+                                      _order_status_message, order_id=_extract_order_id(text))
 
     # ══════════════════════════════════════════════════════════════════════════
     # P0.6 — ABUSIVE / OFFENSIVE LANGUAGE DETECTION
@@ -1316,7 +1373,7 @@ def _generate_reply_core(
             _set_awaiting_address(phone, business_id, order_id=order_id, reference=reference)
             return (
                 f"📍 *Please send your delivery address* so we can arrange *{reference}*.\n\n"
-                f"_Just type your full address (street, suburb, city)._"
+                f"_{_addr_hint}_"
             )
 
         choice = _detect_fulfillment(text)
@@ -1331,7 +1388,7 @@ def _generate_reply_core(
                 f"🚚 *Delivery selected!*\n\n"
                 f"Please send your *delivery address* so we can arrange your order.\n\n"
                 f"📦 Order: *{reference}*\n\n"
-                f"_Just type your full address (street, suburb, city)._"
+                f"_{_addr_hint}_"
             )
 
         if choice == "pickup":
@@ -1387,7 +1444,7 @@ def _generate_reply_core(
                 "to arrange fulfillment."
             )
 
-        address = text.strip()
+        address = _tidy_address(text)
         if len(address) < 5:
             return (
                 "⚠️ That address looks too short. Please send your full delivery address.\n\n"
@@ -1550,7 +1607,7 @@ def _generate_reply_core(
                     f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
                     f"{'─' * 28}\n"
                     f"📍 *Please send your delivery address* so we can arrange your order.\n\n"
-                    f"_Just type your full address (street, suburb, city)._"
+                    f"_{_addr_hint}_"
                 )
 
         method_label = {"ecocash": "EcoCash", "paypal": "PayPal"}.get(method, "payment")
@@ -1635,6 +1692,40 @@ def _generate_reply_core(
         )
 
     # ══════════════════════════════════════════════════════════════════════════
+    # P2.9 — PRICE CHANGED: customer must confirm the new total before a payment request exists
+    # ══════════════════════════════════════════════════════════════════════════
+    if current_state == "price_changed_confirm":
+        session = _get_session(phone, business_id)
+        snap    = session.get("cart_snapshot") or cart
+        method  = session.get("method")
+        if _is_yes(text) and method:
+            try:
+                from core.plan_guard import get_access_status
+                if get_access_status(business_id).get("restricted"):
+                    _reset_state(phone, business_id)
+                    return ("🙏 *Sorry, this business isn't accepting new orders right now.*\n\n"
+                            "Please check back soon, or contact them directly for help.")
+            except Exception as _pg_exc:
+                log.debug("plan_guard check skipped (fail-open): %s", _pg_exc)
+            # Re-check once more: if it moved again the customer is asked again, never charged silently.
+            _gate = _lc.price_gate(phone, business_id, snap, method, _currency_sym, _is_service_biz)
+            if _gate["reply"] is not None:
+                return _gate["reply"]
+            return _process_payment(
+                method=method, cart=_gate["cart"],
+                phone=phone, business_id=business_id, business_name=business_name,
+                currency_sym=_currency_sym,
+                phone_number_id=_phone_number_id, wa_token=_wa_token,
+                is_service_business=_is_service_biz,
+            )
+        if _is_no(text):
+            _reset_state(phone, business_id)
+            return (f"👌 No problem, nothing was ordered.\n\n{_format_cart(snap, _currency_sym)}\n\n"
+                    "Type *checkout* when you're ready, or *remove [item]* to edit.")
+        return ("Please reply *yes* to continue at the updated total, or *no* to go back.\n\n"
+                + _format_cart(snap, _currency_sym))
+
+    # ══════════════════════════════════════════════════════════════════════════
     # P3 — CONFIRM ORDER STATE
     # ══════════════════════════════════════════════════════════════════════════
     if current_state == "confirm_order":
@@ -1709,6 +1800,11 @@ def _generate_reply_core(
 
             session     = _get_session(phone, business_id)
             cart_to_use = session.get("cart_snapshot") or cart
+            # Stage 3: read the CURRENT price/stock before any payment request; never trust the cart's price.
+            _gate = _lc.price_gate(phone, business_id, cart_to_use, method, _currency_sym, _is_service_biz)
+            if _gate["reply"] is not None:
+                return _gate["reply"]
+            cart_to_use = _gate["cart"]
             return _process_payment(
                 method=method, cart=cart_to_use,
                 phone=phone, business_id=business_id, business_name=business_name,
@@ -3345,6 +3441,14 @@ def generate_reply(
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
+    # Stage 3: expire an abandoned checkout (30 min) or an old cart (30 days) before handling the message.
+    _expiry_notice = None
+    if not message_is_from_agent:
+        from services import _ai_lifecycle as _lc_exp
+        _expiry_notice = _lc_exp.expire_stale(phone, business_id)
+        if _expiry_notice and _lc_exp.is_short_reply((voice_transcript or message or "")):
+            return _expiry_notice          # "yes"/"1" answered a question that no longer exists
+
     reply = _generate_reply_core(
         message=message, phone=phone, business_id=business_id,
         business_name=business_name, products=products,
@@ -3353,6 +3457,8 @@ def generate_reply(
         voice_transcript=voice_transcript, business_config=business_config,
         image_analysis=image_analysis,
     )
+    if _expiry_notice and isinstance(reply, str) and reply:
+        reply = _expiry_notice + "\n\n" + reply
 
     # Agent-echoed messages and image messages never go through the
     # misunderstanding/complexity checks below — nothing to escalate.

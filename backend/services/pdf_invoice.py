@@ -190,7 +190,8 @@ def generate_pdf_invoice(order: dict) -> str:
     story.append(HRFlowable(width="100%", thickness=0.5, color=colors.lightgrey))
     story.append(Spacer(1, 6))
     story.append(Paragraph("Payment Instructions", heading_style))
-    story.append(Paragraph("Pay via EcoCash / Mobile Money", normal_style))
+    from services.payment_labels import payment_method_label
+    story.append(Paragraph(f"Pay via {payment_method_label(order)}".replace("&", "&amp;").replace("<", "&lt;"), normal_style))
     story.append(Spacer(1, 4))
 
     ref_style = ParagraphStyle(

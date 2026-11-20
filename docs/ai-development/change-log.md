@@ -349,3 +349,21 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - **Tests**: 1893 passed, 1 skipped (was 1753); 140 new; protections mutation-verified. Security and QA reviewed; no critical/high.
 - **Open**: cookie Stage 1 awaits answers; responsive pass, modal focus trap, remaining CSP migration, browser verification.
 - **Cookie auth Stage 1** (flag `COOKIE_AUTH_ENABLED` OFF by default, server side only, 58 tests; SameSite Strict, Bearer clients untouched, no frontend change; reviewed). Tests now 1951 passed, 1 skipped.
+
+## 2026-11-20 — Phase 6 + cookie Stage 2 (uncommitted, no migration, no new environment variable)
+- **WhatsApp 24-hour window guard** (`services/wa_window.py`) on campaigns, broadcast, re-engagement, cart recovery, booking and payment reminders; skips only customers positively outside the window; dashboard explains skips; cart recovery honours the send result.
+- **Country-aware wording**: invoices (text and PDF) name the real payment method (EcoCash stays the default), help-bot and marketing copy no longer Zimbabwe-only; EcoCash kept.
+- **Translation**: storefront restores original text when a language has no translation; masking verified (no change).
+- **AI quality**: `_qty` ignores sizes and measurements, name stoplist, narrower handoff and injection patterns.
+- **Cookie Stage 2** client (`static/cookie-session.js`), inert unless the server flag is on; staging runbook.
+- **Tests**: 2129 passed, 3 skipped (dev) and 2130 passed, 2 skipped (clean latest-library environment). Security and QA reviewed; no critical/high.
+- **Needs decisions**: templates and WhatsApp opt-out, Graph API version, state/price/cancel flow changes, "where is my order", phone/address-format settings, regional pricing display.
+
+## 2026-11-20 — Phase 6 product decisions, stages 1-6 (uncommitted; 2 migrations, NOT applied)
+- **1 Consent/opt-out/templates**: `whatsapp_consent_and_templates.sql` (applying it turns marketing-consent enforcement ON), `wa_consent`, `wa_templates`, `wa_outbound`, owner API `/me/whatsapp/consent|templates`.
+- **2 Graph API**: `WA_GRAPH_VERSION` (default v18.0 unchanged), all 12 hard-coded URLs centralised; plan in `GRAPH_API_UPGRADE_PLAN.md`.
+- **3 Cart/checkout**: 30-minute checkout expiry, 30-day cart expiry, price/stock revalidation with confirm-new-total state, confirmed cancellation (paid orders go to a human), `services/_ai_lifecycle.py`.
+- **4 Order status**: "where is my order" is a status inquiry; refund/dispute/cancel wording keeps its own flow.
+- **5 Campaigns/regional**: `scheduled_campaign_failure_info.sql` (additive, runner falls back without it), `phone_utils`, `address_utils`, `default_dialing_code` profile field, dashboard shows consent skips.
+- **6 Pricing display**: `/billing/pricing` adds `currency` and optional `local_estimate` (only with `PRICING_DISPLAY_RATES`); USD/Stripe authoritative; misleading "regional pricing" copy fixed.
+- **Tests**: 2597 passed, 3 skipped (dev); 2582 passed, 2 skipped (clean latest-library env, run before the final review fixes). Security and QA reviewed; no critical/high; review fixes applied.
