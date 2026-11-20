@@ -295,6 +295,8 @@ def insights_opportunities(user=Depends(require_business), _plan=Depends(require
 # In-process scheduled campaign store (persisted to Supabase table)
 # Table: scheduled_campaigns
 #   id, business_id, audience, message, scheduled_at, status, created_at, sent_at
+#   (optional, migrations/scheduled_campaign_failure_info.sql) outcome, failure_code, failure_detail,
+#   sent_count, failed_count, skipped_count, total_recipients
 
 
 class ScheduledCampaignCreate(BaseModel):
@@ -498,10 +500,11 @@ async def run_scheduled_campaigns(request: Request):
     if not _hmac.compare_digest(request.headers.get("x-cron-secret", "").encode(), _secret.encode()):
         raise HTTPException(403, "Forbidden")
 
-    from services.campaign_service import CampaignService
+    from services.campaign_service import CampaignService, outcome_from_result
     from core.db import supabase
 
     now = datetime.now(timezone.utc).isoformat()
+    results: list = []
     processed, sent_total, failed_total = 0, 0, 0
     skipped_claimed = 0
     skipped_unverified = 0
@@ -548,20 +551,31 @@ async def run_scheduled_campaigns(request: Request):
                 personalise_msg=True,
                 dry_run=False,
             )
+            # Reached nobody (zero sent) is ALWAYS 'failed', never 'sent'.
             status     = "sent" if result.get("sent", 0) > 0 else "failed"
             sent_total += result.get("sent", 0)
             failed_total += result.get("failed", 0)
+            info = outcome_from_result(result)
         except Exception as exc:
-            log.error("scheduled campaign %s failed: %s", campaign_id, exc)
+            log.error("scheduled campaign %s failed: %s", campaign_id, type(exc).__name__)
             status = "failed"
+            info = outcome_from_result(None, error=True)
 
+        _final = {"status": status, "sent_at": datetime.now(timezone.utc).isoformat()}
         try:
-            supabase.table("scheduled_campaigns").update({
-                "status":  status,
-                "sent_at": datetime.now(timezone.utc).isoformat(),
-            }).eq("id", campaign_id).eq("business_id", bid).in_("status", ["processing", "pending"]).execute()
+            # Structured failure info (columns from migrations/scheduled_campaign_failure_info.sql).
+            (supabase.table("scheduled_campaigns").update({**_final, **info})
+             .eq("id", campaign_id).eq("business_id", bid).in_("status", ["processing", "pending"]).execute())
         except Exception as exc:
-            log.warning("scheduled campaign status update failed: %s", exc)
+            # The migration is not applied yet (unknown column): fall back to exactly the old update.
+            log.info("scheduled campaign %s: structured outcome not stored (%s)", campaign_id, type(exc).__name__)
+            try:
+                (supabase.table("scheduled_campaigns").update(_final)
+                 .eq("id", campaign_id).eq("business_id", bid).in_("status", ["processing", "pending"]).execute())
+            except Exception as exc2:
+                log.warning("scheduled campaign status update failed: %s", exc2)
+        results.append({"id": campaign_id, "status": status, "outcome": info["outcome"],
+                        "failure_code": info["failure_code"]})
 
         processed += 1
         log.info("scheduled_campaign processed  id=%s  biz=%s  status=%s",
@@ -575,6 +589,7 @@ async def run_scheduled_campaigns(request: Request):
         "skipped_already_claimed": skipped_claimed,
         "skipped_unverified_email": skipped_unverified,
         "interrupted_marked_failed": stalled,
+        "results": results,
     }
 
 

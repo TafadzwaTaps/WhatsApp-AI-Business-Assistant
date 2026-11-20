@@ -30,6 +30,7 @@ This service is an ADDITIONAL option, not a replacement.
 """
 
 import logging
+from core.wa_version import graph_url
 import time
 import threading
 from typing import Optional
@@ -266,7 +267,7 @@ async def transcribe_whatsapp_voice_note(
         async with httpx.AsyncClient() as client:
             # Step 1: resolve media id → downloadable URL
             meta_resp = await client.get(
-                f"https://graph.facebook.com/v18.0/{media_id}",
+                graph_url(f"{media_id}"),
                 headers={"Authorization": f"Bearer {wa_token}"},
                 timeout=15,
             )
@@ -331,7 +332,7 @@ async def download_whatsapp_media(media_id: str, wa_token: str):
         async with httpx.AsyncClient() as client:
             # Step 1: resolve media id → downloadable URL + declared mime type
             meta_resp = await client.get(
-                f"https://graph.facebook.com/v18.0/{media_id}",
+                graph_url(f"{media_id}"),
                 headers={"Authorization": f"Bearer {wa_token}"},
                 timeout=15,
             )

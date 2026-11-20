@@ -1114,14 +1114,17 @@ function _wzApplyLang(lang) {{
   }});
   document.querySelectorAll('[data-i18n-dyn]').forEach(el => {{
     const key = el.getAttribute('data-i18n-dyn');
-    // Falls back to whatever's already rendered (the source-language text)
-    // if this key wasn't translated (e.g. Argos not installed) — never
-    // blanks the element.
-    if (dynDict[key]) el.textContent = dynDict[key];
+    // The original (source-language) text is remembered the first time, and restored when this
+    // language has no translation for the key (e.g. Argos pair missing). Without this, switching
+    // from a translated language to an untranslated one left the PREVIOUS language on screen.
+    // Never blanks the element.
+    if (!el.hasAttribute('data-orig')) el.setAttribute('data-orig', el.textContent);
+    el.textContent = dynDict[key] ? dynDict[key] : el.getAttribute('data-orig');
   }});
   document.querySelectorAll('[data-i18n-dyn-content]').forEach(el => {{
     const key = el.getAttribute('data-i18n-dyn-content');
-    if (dynDict[key]) el.setAttribute('content', dynDict[key]);
+    if (!el.hasAttribute('data-orig-content')) el.setAttribute('data-orig-content', el.getAttribute('content') || '');
+    el.setAttribute('content', dynDict[key] ? dynDict[key] : el.getAttribute('data-orig-content'));
   }});
   // Honest status: if this language's dynamic content was not fully translated
   // (engine unavailable / pair missing) tell the visitor instead of implying it was.

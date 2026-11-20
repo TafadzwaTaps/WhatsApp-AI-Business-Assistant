@@ -7,6 +7,7 @@ Routes: /debug/*, /admin/*, /orders/{id}/lifecycle, /orders/{id}/approve-payment
 """
 
 import os
+from core.wa_version import graph_url
 import logging
 from typing import Optional
 
@@ -195,7 +196,7 @@ def debug_webhook(request: Request, user=Depends(require_business)):
     if token and business.get("whatsapp_phone_id"):
         try:
             resp = http_requests.get(
-                f"https://graph.facebook.com/v18.0/{business['whatsapp_phone_id']}",
+                graph_url(f"{business['whatsapp_phone_id']}"),
                 headers={"Authorization": f"Bearer {token}"}, timeout=5,
             )
             steps["whatsapp_api_status"] = resp.status_code

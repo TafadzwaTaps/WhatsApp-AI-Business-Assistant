@@ -11,6 +11,7 @@ All route logic lives in routes/. See routes/ for details.
 """
 
 import os
+from core.wa_version import graph_url
 import json
 import logging
 from datetime import datetime
@@ -544,7 +545,7 @@ def send_whatsapp(phone_number_id: str, token: str, to: str, message: str, _shar
         return {"error": f"missing credentials: {missing}"}
 
     to  = to.replace("whatsapp:", "").strip()
-    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+    url = graph_url(f"{phone_number_id}/messages")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     body    = {"messaging_product": "whatsapp", "to": to, "type": "text", "text": {"body": message}}
 
@@ -757,6 +758,8 @@ else:
 
 from routes.csp_routes import router as csp_router
 app.include_router(csp_router)
+from routes.wa_compliance_routes import router as wa_compliance_router
+app.include_router(wa_compliance_router)
 app.include_router(auth_router)
 app.include_router(password_reset_router)
 app.include_router(webhook_router)

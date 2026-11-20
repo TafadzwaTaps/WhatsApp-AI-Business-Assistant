@@ -36,16 +36,17 @@ _REFUND_WORDS = {
     "refund", "refund please", "i want a refund", "give me a refund",
     "money back", "get my money back", "want my money back",
     "dispute", "chargeback", "wrong order", "not received",
-    "didn't receive", "didnt receive", "never got", "where is my order",
-    "where is my food", "where is my delivery",
+    "didn't receive", "didnt receive", "never got",
 }
+# "Where is my order?" / "where is my food/delivery" are order-STATUS questions (Stage 4, owner decision),
+# not refund or dispute requests. See _is_order_status_inquiry below.
 
 
 def _is_refund_request(text: str) -> bool:
     t = text.lower().strip()
     return t in _REFUND_WORDS or any(w in t for w in [
         "refund", "money back", "dispute", "chargeback",
-        "not received", "never got", "where is my order",
+        "not received", "never got", "never arrived",
     ])
 
 
@@ -102,6 +103,29 @@ def _detect_fulfillment(text: str) -> str | None:
             return "pickup"
 
     return None
+
+
+# ── Order-status inquiries (NOT refunds) ─────────────────────────────────────
+
+_ORDER_NOUN = r"(?:order|food|delivery|package|parcel|purchase|items?|goods|stuff|booking)"
+_STATUS_INQUIRY_RES = [
+    re.compile(r"\bwhere(?:'s|s| is| are)?\s+(?:is\s+)?(?:my|the)\s+" + _ORDER_NOUN + r"\b"),
+    re.compile(r"\bhas\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:been\s+)?(?:shipped|dispatched|sent|left|arrived|come|been\s+delivered|been\s+sent|been\s+dispatched)\b"),
+    re.compile(r"\b(?:when|what\s+time)\s+(?:will|does|is|should)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:arrive|come|get\s+here|be\s+(?:delivered|ready|here)|ship|be\s+shipped)\b"),
+    re.compile(r"\b(?:is|has)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:ready|shipped|on\s+(?:its|the)\s+way|out\s+for\s+delivery)\b"),
+    re.compile(r"\b(?:order|delivery)\s+status\b|\bstatus\s+of\s+(?:my|the)\s+" + _ORDER_NOUN + r"\b|\btrack(?:ing)?\s+(?:my|the)\s+" + _ORDER_NOUN + r"\b"),
+]
+_NOT_A_STATUS_INQUIRY = ("refund", "money back", "dispute", "chargeback", "cancel", "never arrived", "never got",
+                         "not received", "wrong order", "didn't receive", "didnt receive")
+
+
+def _is_order_status_inquiry(text: str) -> bool:
+    """'Where is my order?', 'Has my order shipped?', 'When will my order arrive?' ... A message that also
+    asks for a refund, a cancellation or reports non-delivery is NOT a plain status question."""
+    t = (text or "").lower().strip()
+    if not t or len(t) > 120 or any(w in t for w in _NOT_A_STATUS_INQUIRY):
+        return False
+    return any(r.search(t) for r in _STATUS_INQUIRY_RES)
 
 
 # ── Status queries ────────────────────────────────────────────────────────────
@@ -161,7 +185,16 @@ def _extract_name(text: str) -> str | None:
         if m:
             name = m.group(1).strip().title()
             if name.lower() not in {"ok", "hi", "hey", "yes", "no", "not", "done",
-                                     "fine", "good", "just", "here", "there", "all"}:
+                                     "fine", "good", "just", "here", "there", "all",
+                                     # "I'm hungry" / "it's late" are not names (a shared phone's profile was
+                                     # being renamed "Hungry" and then greeted that way)
+                                     "hungry", "thirsty", "tired", "looking", "interested", "wondering", "ready",
+                                     "back", "new", "sorry", "happy", "sure", "trying", "ordering", "going",
+                                     "coming", "still", "also", "very", "so", "too", "please", "late", "busy",
+                                     "confused", "lost", "stuck", "waiting", "unhappy", "angry", "upset", "hoping",
+                                     "planning", "after", "from", "at", "in", "on", "for", "with", "about", "the",
+                                     "a", "an", "today", "tomorrow", "well", "okay", "wanting", "needing", "keen",
+                                     "late", "early", "open", "closed", "free", "alone", "outside", "home"}:
                 return name
     return None
 
@@ -259,9 +292,12 @@ _HUMAN_REQUEST_PATTERNS = [
     re.compile(r"speak.*to.*(?:a\s+)?(?:human|person|agent|someone)", re.I),
     re.compile(r"(?:want|would like|need).*(?:human|real person|agent|support)", re.I),
     re.compile(r"(?:connect|transfer|escalate).*(?:human|agent|person)", re.I),
-    re.compile(r"(?:call|contact|reach).*(?:someone|team|you)", re.I),
+    # "call someone / the team / a manager", "can someone call me". NOT "can you call me when it's ready".
+    re.compile(r"(?:call|contact|reach)\s+(?:someone|somebody|(?:the|your|a|an)\s+(?:team|human|person|agent|manager|owner|supervisor|staff|support))", re.I),
+    re.compile(r"(?:someone|somebody)\s+(?:to\s+)?(?:call|contact|phone)\s+me", re.I),
     re.compile(r"talk.*to.*(?:manager|supervisor|staff)", re.I),
-    re.compile(r"i would like.*(?:help|assistance|support)", re.I),
+    # only when the help is asked FROM a person ("I would like some help choosing" is an AI question)
+    re.compile(r"i would like.*(?:help|assistance|support)\s+from\s+(?:a\s+|an\s+|the\s+)?(?:human|real\s+person|person|agent|someone|staff|team|manager)", re.I),
 ]
 
 

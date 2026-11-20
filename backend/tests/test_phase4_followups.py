@@ -51,7 +51,8 @@ def test_dependency_refuses_support_sessions_only():
 @pytest.mark.parametrize("method,path", MONEY_ROUTES)
 def test_every_money_route_carries_the_guard(method, path):
     import main
-    route = next(r for r in main.app.routes if getattr(r, "path", "") == path and method in getattr(r, "methods", ()))
+    from _routes_util import find_route
+    route = find_route(main.app, path, method)
     assert any(d.call.__name__ == "require_not_impersonated" for d in route.dependant.dependencies), path
 
 

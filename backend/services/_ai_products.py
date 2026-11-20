@@ -86,8 +86,31 @@ _NUMBER_WORDS = {
 }
 
 
+# A number that is a MEASUREMENT or a SIZE is part of the product, not a quantity:
+# "Fanta 500ml" used to become 500 Fantas and "size 10 sneakers" 10 pairs.
+_MEASURE_ATTACHED = re.compile(r"\b(?P<n>\d+(?:\.\d+)?)(?P<u>ml|cl|l|lt|ltr|ltrs|kg|kgs|g|gm|gms|mg|cm|mm|oz|lb|lbs|inch|in)\b")
+_MEASURE_SPACED = re.compile(
+    r"\b(?P<n>\d+(?:\.\d+)?)\s+(?P<u>ml|cl|ltrs?|litres?|liters?|kgs?|grams?|gms?|mg|cm|mm|oz|lbs?|inch(?:es)?)\b")
+# Weights and volumes written FIRST ("3 kg rice", "2 litres milk") are how customers ask for an amount
+# of a loose product, so a small number there stays a quantity. Anything after the product name
+# ("rice 2kg", "Fanta 500ml") or any ml/cm/oz/inch value is a size.
+_AMOUNT_UNITS = {"l", "lt", "ltr", "ltrs", "litre", "litres", "liter", "liters", "kg", "kgs", "g", "gm", "gms", "gram", "grams", "lb", "lbs"}
+
+
+def _drop_measure(text: str, pattern) -> str:
+    def repl(m):
+        at_start = not text[:m.start()].strip()
+        if at_start and m.group("u") in _AMOUNT_UNITS and float(m.group("n")) <= 20:
+            return m.group(0)
+        return " "
+    return pattern.sub(repl, text)
+_SIZE_WORD = re.compile(r"\b(?:size|sz|no\.?|number|model|code)\s*#?\s*\d+\b")
+
+
 def _qty(text: str) -> int:
     t = text.lower()
+    # measurements and sizes are removed FIRST, so "2 x 1.5l coke" is 2 (not "x 1")
+    t = _SIZE_WORD.sub(" ", _drop_measure(_drop_measure(t, _MEASURE_ATTACHED), _MEASURE_SPACED))
     m = re.search(r"x\s*(\d+)", t)
     if m:
         return max(1, int(m.group(1)))

@@ -48,6 +48,8 @@ nav{display:flex;align-items:center;justify-content:space-between;
                background:var(--surface);border:1px solid var(--border);
                border-radius:20px;padding:6px 16px;margin-bottom:36px;}
 .region-dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0;}
+.est-line{font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;margin-top:4px;}
+.est-disclaimer{font-family:var(--mono);font-size:11px;color:var(--text-dim);max-width:560px;margin:-20px auto 28px;line-height:1.6;}
 
 /* ── Toggle ─────────────────────────────────────────── */
 .toggle-wrap{display:flex;align-items:center;gap:12px;
@@ -191,6 +193,7 @@ footer a{color:var(--green);}
 @media(max-width:1024px){.plans{grid-template-columns:repeat(2,1fr);}.testimonials{grid-template-columns:1fr 1fr;}}
 @media(max-width:640px){nav{padding:12px 16px;}.plans{grid-template-columns:1fr;padding:0 16px 48px;}.testimonials{grid-template-columns:1fr;}.trust{gap:14px;font-size:11px;}}
 </style>
+<script src="/static/cookie-session.js"></script>
 </head>
 <body>
 
@@ -210,6 +213,7 @@ footer a{color:var(--green);}
     <span class="region-dot"></span>
     <span id="region-text">Detecting your region…</span>
   </div>
+  <p class="est-disclaimer" id="est-disclaimer" hidden></p>
   <div class="toggle-wrap">
     <span class="toggle-lbl on" id="lbl-mo">Monthly</span>
     <div class="toggle" id="billing-tog" onclick="toggleBilling()"><div class="knob"></div></div>
@@ -250,8 +254,9 @@ footer a{color:var(--green);}
       <span class="curr">$</span>
       <span class="amount" id="p-starter">4.99</span>
     </div>
-    <div class="period">per month</div>
+    <div class="period">USD per month</div>
     <div class="annual-note" id="note-starter">Billed monthly</div>
+    <div class="est-line" id="est-starter" hidden></div>
     <div class="plan-sub">Perfect for solo entrepreneurs and small businesses.</div>
     <hr class="div"/>
     <div class="features">
@@ -282,8 +287,9 @@ footer a{color:var(--green);}
       <span class="curr">$</span>
       <span class="amount" id="p-growth">12</span>
     </div>
-    <div class="period">per month</div>
+    <div class="period">USD per month</div>
     <div class="annual-note" id="note-growth">Billed monthly</div>
+    <div class="est-line" id="est-growth" hidden></div>
     <div class="plan-sub">Built for growing businesses that need more power.</div>
     <hr class="div"/>
     <div class="features">
@@ -338,7 +344,7 @@ footer a{color:var(--green);}
   <div class="trust-item"><span class="trust-icon">✅</span>No hidden fees</div>
   <div class="trust-item"><span class="trust-icon">↩</span>Cancel anytime</div>
   <div class="trust-item"><span class="trust-icon">⚡</span>Instant activation</div>
-  <div class="trust-item"><span class="trust-icon">🌍</span>Regional pricing applied automatically</div>
+  <div class="trust-item"><span class="trust-icon">🌍</span>Billed in US dollars (USD) · secure checkout</div>
 </div>
 
 <!-- Comparison table -->
@@ -410,7 +416,7 @@ footer a{color:var(--green);}
   <h2 class="section-title">Frequently asked questions</h2>
   <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Do I need a credit card to start?</span><span class="faq-arrow">›</span></div><div class="faq-a">No. Your 30-day free trial requires zero payment details. You only need to enter payment information when you choose to upgrade to a paid plan.</div></div>
   <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>What happens when my trial ends?</span><span class="faq-arrow">›</span></div><div class="faq-a">Your account becomes read-only. All your data — products, customers, orders, conversations — is safely preserved. You can upgrade at any time to restore full access.</div></div>
-  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Why are prices different in my country?</span><span class="faq-arrow">›</span></div><div class="faq-a">WaziBot uses regional pricing to make the platform accessible worldwide. The plans and features are identical — only the price adjusts based on your region. Your price is automatically detected and shown above.</div></div>
+  <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Why are prices different in my country?</span><span class="faq-arrow">›</span></div><div class="faq-a">Plans and features are identical everywhere. Prices are set and charged in US dollars (USD), and the price shown above is the price for your region. Where we can, we also show an approximate amount in your local currency; that is an estimate only, because your bank or card issuer applies its own exchange rate.</div></div>
   <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Can I switch between plans?</span><span class="faq-arrow">›</span></div><div class="faq-a">Yes. Upgrade or downgrade anytime from Settings → Payments. Upgrades are instant. Downgrades take effect at the end of your current billing period.</div></div>
   <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Can I cancel anytime?</span><span class="faq-arrow">›</span></div><div class="faq-a">Yes. Cancel from Settings → Payments → Manage Subscription. You keep access until the end of your billing period. No cancellation fees, ever.</div></div>
   <div class="faq-item"><div class="faq-q" onclick="toggleFaq(this)"><span>Do I need my own WhatsApp Business account?</span><span class="faq-arrow">›</span></div><div class="faq-a">Not on Trial or Starter — you use WaziBot's shared WhatsApp number. On Growth, you connect your own dedicated WhatsApp Business number for a fully branded experience.</div></div>
@@ -458,13 +464,13 @@ window.addEventListener('DOMContentLoaded', async () => {
       updatePriceDisplay();
       const regionEl = document.getElementById('region-text');
       if (regionEl) {
-        const labels = { A: 'Global pricing', B: 'Regional pricing applied', C: 'Emerging market pricing applied' };
-        regionEl.textContent = labels[data.region] || 'Global pricing';
+        const labels = { A: 'Global pricing · charged in USD', B: 'Regional pricing · charged in USD', C: 'Emerging-market pricing · charged in USD' };
+        regionEl.textContent = labels[data.region] || 'Global pricing · charged in USD';
       }
     }
   } catch(e) {
     // Fallback to hardcoded global prices
-    document.getElementById('region-text').textContent = 'Global pricing';
+    document.getElementById('region-text').textContent = 'Global pricing · charged in USD';
   }
 });
 
@@ -494,10 +500,40 @@ function updatePriceDisplay() {
   document.getElementById('note-growth').innerHTML  = isAnnual
     ? `<s>$${(gm*12).toFixed(0)}</s> → $${ga}/year` : 'Billed monthly';
 
+  renderEstimates();
+
   document.getElementById('save-starter').textContent = isAnnual
     ? `Save $${((sm*12)-sa).toFixed(2)} with annual billing` : '';
   document.getElementById('save-growth').textContent  = isAnnual
     ? `Save $${((gm*12)-ga).toFixed(2)} with annual billing` : '';
+}
+
+// ── Local-currency ESTIMATE (display only) ────────────────────────────────────
+// The USD price is what Stripe charges. This figure is never sent to checkout and never used in a calculation
+// that reaches the server; it only helps the visitor picture the price, and is always labelled as an estimate.
+function fmtMoney(code, amount) {
+  try {
+    return new Intl.NumberFormat(navigator.language || 'en', { style: 'currency', currency: code,
+      maximumFractionDigits: amount % 1 === 0 ? 0 : 2 }).format(amount);
+  } catch (e) { return code + ' ' + amount; }
+}
+function renderEstimates() {
+  const est = _pricing.local_estimate;
+  const ok = est && /^[A-Z]{3}$/.test(String(est.currency)) && est.prices
+    && ['starter_monthly', 'starter_annual', 'growth_monthly', 'growth_annual'].every(k => Number.isFinite(est.prices[k]));
+  const note = document.getElementById('est-disclaimer');
+  ['starter', 'growth'].forEach(plan => {
+    const el = document.getElementById('est-' + plan);
+    if (!el) return;
+    if (!ok) { el.hidden = true; el.textContent = ''; return; }
+    const perMonth = isAnnual ? est.prices[plan + '_annual'] / 12 : est.prices[plan + '_monthly'];
+    el.textContent = '≈ ' + fmtMoney(est.currency, perMonth) + ' per month (estimate)';
+    el.hidden = false;
+  });
+  if (note) {
+    if (ok) { note.textContent = String(est.disclaimer || 'Estimate only. You are charged in USD at checkout.'); note.hidden = false; }
+    else { note.hidden = true; note.textContent = ''; }
+  }
 }
 
 // ── Checkout ──────────────────────────────────────────────────────────────────

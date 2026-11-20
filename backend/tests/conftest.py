@@ -93,3 +93,18 @@ def _reset_fake_db():
 @pytest.fixture
 def fake_supabase(_reset_fake_db):
     return _reset_fake_db
+
+
+@pytest.fixture(autouse=True)
+def _consent_off_by_default():
+    """The permissive fake database would make the WhatsApp consent table look 'present', which turns marketing
+    consent enforcement on for every older test. A deployment without the migration (the state these tests
+    describe) has it OFF, so that is the default here. Tests of the consent feature call wc._reset_for_tests()
+    (their `db` fixture does) to probe their own fake database instead."""
+    import time
+    try:
+        from services import wa_consent
+        wa_consent._ready, wa_consent._ready_at = False, time.monotonic() + 10_000_000
+    except ImportError:
+        pass
+    yield

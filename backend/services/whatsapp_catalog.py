@@ -32,6 +32,7 @@ are completely unmodified.
 from __future__ import annotations
 
 import logging
+from core.wa_version import graph_url
 import os
 from typing import Optional
 
@@ -73,7 +74,7 @@ def send_product_image(
 
     try:
         import requests as _req
-        url     = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+        url     = graph_url(f"{phone_number_id}/messages")
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         body    = {
             "messaging_product": "whatsapp",
@@ -112,7 +113,7 @@ def send_text_message(
         return {}
     try:
         import requests as _req
-        url     = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+        url     = graph_url(f"{phone_number_id}/messages")
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         body    = {
             "messaging_product": "whatsapp",

@@ -225,9 +225,10 @@ KNOWLEDGE_BASE: list[dict] = [
                      "payment settings", "receive payment", "configure payment",
                      "money", "wallet"],
         "content": (
-            "WaziBot supports three payment methods: EcoCash, PayPal, and Cash on delivery. "
+            "WaziBot supports several payment methods: PayPal, cash on delivery, bank transfer, BLIK "
+            "and EcoCash (for businesses in Zimbabwe), depending on how you set up your business. "
             "Configure them in Settings → Payment Settings. "
-            "Add your EcoCash number and name, and/or PayPal email. "
+            "Add the details for the methods you accept (for example your PayPal email, bank details or EcoCash number). "
             "Customers choose their preferred method at checkout."
         ),
         "steps": [

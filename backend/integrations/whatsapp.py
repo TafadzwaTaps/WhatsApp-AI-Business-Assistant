@@ -5,6 +5,7 @@ All actual HTTP sending goes through main.send_whatsapp() or the helpers below.
 """
 
 import logging
+from core.wa_version import graph_url
 import requests
 
 from fastapi import APIRouter, Request
@@ -112,7 +113,7 @@ def send_whatsapp_message(
 ) -> dict:
     """Send a plain text WhatsApp message via Meta Cloud API."""
     to = to.replace("whatsapp:", "").strip()
-    url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+    url = graph_url(f"{phone_number_id}/messages")
     headers = {
         "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json",
@@ -161,7 +162,7 @@ def send_whatsapp_document(
     headers_auth = {"Authorization": f"Bearer {access_token}"}
 
     # ── Step 1: Upload media ─────────────────────────────────────────────────
-    upload_url = f"https://graph.facebook.com/v18.0/{phone_number_id}/media"
+    upload_url = graph_url(f"{phone_number_id}/media")
     try:
         with open(file_path, "rb") as f:
             upload_resp = requests.post(
@@ -196,7 +197,7 @@ def send_whatsapp_document(
         return {"error": str(exc)}
 
     # ── Step 2: Send document message ────────────────────────────────────────
-    send_url = f"https://graph.facebook.com/v18.0/{phone_number_id}/messages"
+    send_url = graph_url(f"{phone_number_id}/messages")
     document_payload: dict = {
         "id":       media_id,
         "filename": file_path.split("/")[-1],
