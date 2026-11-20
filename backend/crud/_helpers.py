@@ -29,6 +29,14 @@ def clean_currency_symbol(value) -> str:
     return s
 
 
+def counts_as_revenue(order: dict) -> bool:
+    """One definition of revenue for every report: the order is PAID and was not cancelled or refunded.
+    (Unpaid, awaiting-payment, cancelled and refunded orders are not revenue.)"""
+    status = str(order.get("status") or "").lower()
+    pay = str(order.get("payment_status") or "").lower()
+    return pay in ("paid", "confirmed") and status not in ("cancelled", "refunded")
+
+
 def fetch_all(make_query, page: int = 1000, max_pages: int = 200) -> list:
     """Read every row of a query in pages of `page` (PostgREST silently truncates a plain
     select at its row cap). `make_query` must return a fresh query with a deterministic

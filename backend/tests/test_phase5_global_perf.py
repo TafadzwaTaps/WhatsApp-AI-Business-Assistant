@@ -127,7 +127,7 @@ class _TableFake:
 
 def test_dashboard_stats_totals_and_recent_orders_beyond_1000_rows(monkeypatch):
     from crud import orders as co
-    orders = [{"id": i, "business_id": 1, "total_price": 2.0, "status": "pending",
+    orders = [{"id": i, "business_id": 1, "total_price": 2.0, "status": "pending", "payment_status": "paid",
                "created_at": "2026-11-01T00:00:00", "customer_phone": "1", "product_name": "tea"}
               for i in range(1, 2501)]
     orders.append({"id": 9999, "business_id": 2, "total_price": 500.0, "status": "pending",

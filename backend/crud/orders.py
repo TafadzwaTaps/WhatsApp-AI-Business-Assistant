@@ -245,7 +245,12 @@ def get_dashboard_stats(business_id: int) -> dict:
         .order("id")
     ))
 
-    total_revenue   = round(sum(float(o.get("total_price") or 0) for o in orders), 2)
+    # Revenue = paid orders that were not cancelled or refunded (same rule as /analytics/stats and the monthly
+    # report). The previous figure, which also counted unpaid, cancelled and refunded orders, is kept as
+    # gross_order_value so nothing that wants it is lost.
+    from crud._helpers import counts_as_revenue
+    gross_order_value = round(sum(float(o.get("total_price") or 0) for o in orders), 2)
+    total_revenue   = round(sum(float(o.get("total_price") or 0) for o in orders if counts_as_revenue(o)), 2)
     total_orders    = len(orders)
     total_customers = len(customers)
 
@@ -258,7 +263,8 @@ def get_dashboard_stats(business_id: int) -> dict:
         raw_date = o.get("created_at", "")
         day = raw_date[:10] if raw_date else "unknown"
         orders_per_day[day]  += 1
-        revenue_per_day[day] += float(o.get("total_price") or 0)
+        if counts_as_revenue(o):
+            revenue_per_day[day] += float(o.get("total_price") or 0)
         status_counter[o.get("status", "pending")] += 1
 
         names = o.get("product_name", "")
@@ -295,6 +301,7 @@ def get_dashboard_stats(business_id: int) -> dict:
 
     return {
         "total_revenue":     total_revenue,
+        "gross_order_value": gross_order_value,
         "total_orders":      total_orders,
         "total_customers":   total_customers,
         "orders_per_day":    orders_by_day,

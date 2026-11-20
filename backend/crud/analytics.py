@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 
 from core.db import supabase
-from crud._helpers import _now, fetch_all
+from crud._helpers import _now, fetch_all, counts_as_revenue
 from crud.businesses import get_all_businesses
 
 log = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ def get_admin_stats() -> dict:
     except Exception as exc:       # a column missing in an older database: fall back to the old read
         log.warning("get_admin_stats narrow select failed (%s); using full read", type(exc).__name__)
         businesses = get_all_businesses()
-    orders = fetch_all(lambda: supabase.table("orders").select("id,total_price").order("id"))
+    orders = fetch_all(lambda: supabase.table("orders").select("id,total_price,status,payment_status").order("id"))
 
     trialing_count  = sum(1 for b in businesses if (b.get("billing_status") or "trialing") == "trialing")
     paid_count      = sum(1 for b in businesses if b.get("billing_status") == "active")
@@ -124,7 +124,9 @@ def get_admin_stats() -> dict:
         "businesses":            len(businesses),
         "active_businesses":     sum(1 for b in businesses if b.get("is_active")),
         "total_orders":          len(orders),
-        "total_revenue":         round(sum(float(o.get("total_price") or 0) for o in orders), 2),
+        # revenue = paid and not cancelled/refunded; gross_order_value is the old all-orders figure
+        "total_revenue":         round(sum(float(o.get("total_price") or 0) for o in orders if counts_as_revenue(o)), 2),
+        "gross_order_value":     round(sum(float(o.get("total_price") or 0) for o in orders), 2),
         "trialing_count":        trialing_count,
         "paid_count":            paid_count,
         "expired_trial_count":   expired_trial_count,
@@ -144,6 +146,7 @@ def get_top_customers(business_id: int, limit: int = 10) -> list[dict]:
     Falls back gracefully if user_memory lacks order_count.
     """
     try:
+        limit = max(1, min(int(limit), 100))      # the route passes the query value straight through
         res = (
             supabase.table("user_memory")
             .select("phone, customer_name, total_spent, order_count, last_seen")
@@ -205,11 +208,8 @@ def get_business_stats(business_id: int) -> dict:
         # must not count toward paid_orders or total_revenue, even if it
         # was paid before the cancellation happened. The service/product
         # was never actually delivered, so it shouldn't read as revenue.
-        paid_orders    = sum(1 for o in orders
-                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
-        total_revenue  = sum(float(o.get("total_price") or 0)
-                             for o in orders
-                             if o.get("payment_status") == "paid" and o.get("status") != "cancelled")
+        paid_orders    = sum(1 for o in orders if counts_as_revenue(o))
+        total_revenue  = sum(float(o.get("total_price") or 0) for o in orders if counts_as_revenue(o))
         pending_orders = sum(1 for o in orders
                              if o.get("status") in ("pending", "confirmed", "pending_cash"))
 
