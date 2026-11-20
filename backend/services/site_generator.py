@@ -613,27 +613,18 @@ def _get_business_and_products(slug: str) -> tuple[dict, list]:
     """Fetch business data, products, and recent ratings. Returns ({}, [], []) on error."""
     try:
         from core.db import supabase
-        name_pattern = _slug_to_name(slug)
-
         cols   = _get_businesses_columns()
         extra  = [f for f in _OPTIONAL_FIELDS if f in cols]
         fields = ",".join(_ALWAYS_SAFE_FIELDS.split(",") + extra)
 
-        # Try exact match first, then contains
-        for pattern in [name_pattern, f"%{name_pattern}%"]:
-            biz_res = (
-                supabase.table("businesses")
-                .select(fields)
-                .eq("is_active", True)
-                .ilike("name", pattern)
-                .limit(1)
-                .execute()
-            )
-            if biz_res.data:
-                break
-        if not biz_res.data:
+        # Same unambiguous lookup as the JSON API (core.slug): the slug is never used as an ILIKE
+        # pattern (so '_' or '%' cannot match another business) and a vague slug that matches several
+        # businesses resolves to none instead of whichever came first. The page bakes this
+        # business_id into its checkout, so a wrong match would send a customer's payment elsewhere.
+        from core.slug import find_active_business_by_slug
+        biz = find_active_business_by_slug(supabase, slug, fields)
+        if not biz:
             return {}, []
-        biz = biz_res.data[0]
 
         prod_cols   = _get_products_columns()
         prod_extra  = [f for f in _OPTIONAL_PRODUCT_FIELDS if f in prod_cols]
@@ -1245,8 +1236,8 @@ def _hero_html(biz: dict, settings: dict, wa_phone: str, is_service: bool = Fals
         _register_dynamic_text(category_key, raw_category, biz_id)
 
     logo_html = (
-        f'<img src="{_e(logo_url)}" alt="{name}" class="hero-logo">'
-        if logo_url else
+        f'<img src="{_e(_safe_logo_url(logo_url))}" alt="{name}" class="hero-logo">'
+        if _safe_logo_url(logo_url) else
         f'<div class="hero-logo-placeholder">{name[0].upper() if name else "W"}</div>'
     )
     _title_attr = ""
@@ -1358,6 +1349,7 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
         if available else
         f'<span class="stock-badge out">❌ <span data-i18n="out_of_stock">{SITE_I18N["en"]["out_of_stock"]}</span></span>'
     )
+    image_url = _safe_logo_url(image_url)          # http(s) only: no data:, javascript: or markup
     img_html = (
         f'<img src="{_e(image_url)}" alt="{name}" class="prod-img" loading="lazy">'
         if image_url else
@@ -1391,7 +1383,7 @@ def _product_card_html(p: dict, currency_sym: str, wa_phone: str = "", biz_name:
     )
     return (
         f'<div class="prod-card" data-category="{_e(category)}" data-id="{_e(str(p.get("id","")))}"'
-        f' data-name="{_e(name)}" data-price="{price}" data-img="{_e(p.get("image_url",""))}"'
+        f' data-name="{_e(name)}" data-price="{price}" data-img="{_e(image_url)}"'
         f' data-desc="{_e(str(p.get("description",""))[:120])}">'
         f'{img_html}'
         f'<div class="prod-body">'
@@ -1525,7 +1517,7 @@ def _reviews_html(reviews: list) -> str:
 
 
 def _gallery_html(products: list) -> str:
-    imgs = [p for p in products if p.get("image_url")]
+    imgs = [p for p in products if _safe_logo_url(p.get("image_url"))]
     if not imgs:
         return ""
     items = "".join(

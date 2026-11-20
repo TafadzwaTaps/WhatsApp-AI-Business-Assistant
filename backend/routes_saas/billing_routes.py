@@ -346,6 +346,15 @@ def _server_priced_items(business_id: int, items: list) -> list:
     if not isinstance(items, list) or not items:
         raise HTTPException(400, "No items provided")
     rows = (supabase.table("products").select("*").eq("business_id", business_id).execute().data) or []
+    # Stock is enforced here, not only by the disabled button on the page: a crafted request could
+    # otherwise buy an out-of-stock item. Same rule as the page: NULL = unlimited, a service business
+    # does not track stock, anything else needs stock >= the quantity asked for.
+    is_service = False
+    try:
+        _b = supabase.table("businesses").select("is_service_business").eq("id", business_id).limit(1).execute().data
+        is_service = bool((_b or [{}])[0].get("is_service_business"))
+    except Exception:
+        is_service = False
     by_id   = {str(r.get("id")): r for r in rows}
     by_name = {(r.get("name") or "").strip().lower(): r for r in rows}
     priced = []
@@ -363,6 +372,15 @@ def _server_priced_items(business_id: int, items: list) -> list:
             raise HTTPException(400, "Invalid item")
         if price <= 0:
             continue
+        _stock = row.get("stock")
+        if not is_service and _stock is not None:
+            try:
+                _s = int(_stock)
+            except (TypeError, ValueError):
+                _s = None
+            if _s is not None and _s < qty:
+                _nm = row.get("name") or "This item"
+                raise HTTPException(409, f"{_nm} is out of stock." if _s <= 0 else f"There is not enough stock of {_nm} for that quantity.")
         priced.append({"name": row.get("name") or "Item", "price": price, "quantity": qty,
                        "description": row.get("description") or None})
     if not priced:

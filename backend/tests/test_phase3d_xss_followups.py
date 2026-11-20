@@ -130,7 +130,7 @@ def test_business_update_and_onboarding_reject_bad_symbol():
 
 # ── frontend escapes ──────────────────────────────────────────────────────────
 def test_public_store_escapes_currency_symbol():
-    assert "const curr = esc(sym(biz));" in _read(STATIC / "store.html")
+    assert "const curr = esc(sym(biz));" in _read(STATIC / "store.html") + _read(STATIC / "store.js")
 
 
 def test_dashboard_currency_helper_strips_markup_chars():

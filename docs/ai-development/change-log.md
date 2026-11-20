@@ -338,3 +338,14 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - **Cookie auth**: design and staged plan only (`COOKIE_AUTH_DESIGN.md`).
 - **Follow-ups done**: impersonation refused on money/irreversible routes and owner-email change; unsubscribe secret from the effective key; SECRET_KEY length warning; reset password length cap. Plan for the rest in `SECURITY_FOLLOWUP_PLAN.md`.
 - **Tests**: 1752 passed, 1 skipped (was 1670); 82 new; 25 protections mutation-verified.
+
+## 2026-11-19 — Phase 5: support read-only, password policy, frontend reliability, storefront, CSP step 1 (uncommitted, no migration applied)
+- **Support sessions read-only** in the backend (writes and data-export GETs refused, audit-logged); owner/superadmin unchanged.
+- **One password policy** for signup/reset/change (8-128, no composition rules, common-password list, 72-byte limit, optional breach check OFF); UI aligned.
+- **Frontend reliability**: request timeouts and safe parsing, one shared token refresh, inbox silent refresh, WebSocket backoff/jitter/resync, polling pauses when hidden, debounced search, clipboard fallback.
+- **Storefront**: unambiguous slug lookup, server-side stock check, image URL checks.
+- **CSP step 1**: Report-Only strict policy + `/csp-report` collector, delegated-action dispatcher, store/forgot/reset pages migrated off inline code. Enforced policy unchanged.
+- **Migration**: `email_verification.sql` statically validated; runbook and validation script added; NOT applied.
+- **Tests**: 1893 passed, 1 skipped (was 1753); 140 new; protections mutation-verified. Security and QA reviewed; no critical/high.
+- **Open**: cookie Stage 1 awaits answers; responsive pass, modal focus trap, remaining CSP migration, browser verification.
+- **Cookie auth Stage 1** (flag `COOKIE_AUTH_ENABLED` OFF by default, server side only, 58 tests; SameSite Strict, Bearer clients untouched, no frontend change; reviewed). Tests now 1951 passed, 1 skipped.

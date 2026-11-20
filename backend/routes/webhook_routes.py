@@ -1240,6 +1240,18 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
         return
 
     token_param = websocket.query_params.get("token", "")
+    # Cookie sessions (flag OFF by default): a browser's handshake carries the HttpOnly access cookie.
+    # Only trusted when the browser also sent an Origin (already checked above): a non-browser has no
+    # cookie, and a cross-site page is refused by the Origin check.
+    _from_cookie = False
+    if not token_param and origin:
+        try:
+            from core import cookie_auth as _ck
+            if _ck.enabled():
+                token_param = (getattr(websocket, "cookies", None) or {}).get(_ck.ACCESS_COOKIE, "") or ""
+                _from_cookie = bool(token_param)
+        except Exception as _wce:
+            log.debug("ws cookie lookup skipped: %s", type(_wce).__name__)
     accepted = False
     if not token_param and hasattr(websocket, "accept"):
         # Preferred: token as the FIRST message ({"type":"auth","token":...}) so it never
@@ -1262,6 +1274,9 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
             return
         if payload.get("type") == "refresh":          # refresh tokens never authenticate
             await websocket.close(code=4001)
+            return
+        if _from_cookie and (payload.get("impersonated_by") or payload.get("role") == "superadmin"):
+            await websocket.close(code=4001)          # support and admin sessions are Bearer-only
             return
         if payload.get("business_id") != business_id and payload.get("role") != "superadmin":
             await websocket.close(code=4001)

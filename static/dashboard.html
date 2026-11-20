@@ -248,7 +248,7 @@
   <div id="impersonation-banner" style="display:none;background:rgba(168,85,247,0.15);border:1px solid rgba(168,85,247,0.4);
        border-radius:8px;padding:10px 14px;margin-bottom:14px;font-family:var(--mono);font-size:12px;
        display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-    <span>🕵️ Viewing as <strong id="impersonation-banner-text">—</strong></span>
+    <span>🕵️ Viewing as <strong id="impersonation-banner-text">—</strong> <em>(read-only support session)</em></span>
     <button class="btn btn-ghost" onclick="exitImpersonation()">Exit — Return to Admin</button>
   </div>
 
@@ -2420,9 +2420,7 @@
               <!-- Requirements -->
               <div style="margin-top:8px;background:var(--surface2);border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:4px;">
                 <div class="up-req" id="up-req-len">At least 8 characters</div>
-                <div class="up-req" id="up-req-upper">Uppercase letter (A–Z)</div>
-                <div class="up-req" id="up-req-lower">Lowercase letter (a–z)</div>
-                <div class="up-req" id="up-req-num">Number (0–9)</div>
+                <div class="up-req" id="up-req-max">No more than 72 bytes (about 72 letters)</div>
               </div>
             </div>
             <div class="form-group" style="margin-bottom:20px;">

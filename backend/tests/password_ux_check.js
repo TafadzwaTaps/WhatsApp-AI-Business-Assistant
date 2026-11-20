@@ -17,8 +17,9 @@ if(/object Object/.test(fmt([{x:1}],'fb')+fmt({a:1},'fb')))throw new Error('[obj
 eq(val('Old1pass','Newpass1','Newpass1'),'','valid');
 eq(val('','Newpass1','Newpass1')!=='',true,'no current');
 eq(/at least 8/.test(val('a','Ab1','Ab1')),true,'short');
-eq(/uppercase/.test(val('a','newpass12','newpass12')),true,'upper');
-eq(/number/.test(val('a','Newpassss','Newpassss')),true,'digit');
+eq(val('a','newpass12','newpass12'),'','no uppercase requirement');
+eq(val('a','Newpassss','Newpassss'),'','no digit requirement');
+eq(val('a','correct horse battery staple','correct horse battery staple'),'','passphrase with spaces ok');
 eq(/at most 128/.test(val('a','A1'+'x'.repeat(127),'A1'+'x'.repeat(127))),true,'128');
 const b72='A1'+'x'.repeat(70);   // exactly 72 bytes
 eq(val('a',b72,b72),'','72 ascii ok');

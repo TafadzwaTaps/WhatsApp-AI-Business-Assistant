@@ -62,7 +62,7 @@ def test_every_money_route_carries_the_guard(method, path):
 ])
 def test_support_session_gets_403_on_money_routes(client, authed, method, path, body):
     r = client.request(method, path, json=body, headers=_imp())
-    assert r.status_code == 403 and "viewing as another business" in r.text
+    assert r.status_code == 403 and ("read-only" in r.text.lower() or "viewing as another business" in r.text)
 
 
 def test_support_session_cannot_change_the_owner_email(client, authed, monkeypatch):
@@ -72,9 +72,9 @@ def test_support_session_cannot_change_the_owner_email(client, authed, monkeypat
     monkeypatch.setattr(crud, "update_business", lambda b, d: saved.append(d.dict()) or {"id": b})
     r = client.patch("/me", json={"owner_email": "attacker@example.com"}, headers=_imp())
     assert r.status_code == 403 and saved == []
-    # a support session can still look, and can save other profile fields
+    # support sessions are read-only: other profile edits are refused too (Phase 5 policy)
     r2 = client.patch("/me", json={"description": "hello"}, headers=_imp())
-    assert r2.status_code == 200 and saved
+    assert r2.status_code == 403 and saved == []
 
 
 def test_support_session_can_still_read(client, authed, monkeypatch):

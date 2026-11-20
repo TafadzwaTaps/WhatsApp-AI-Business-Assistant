@@ -92,6 +92,19 @@ class _LoggingOAuth2PasswordBearer(OAuth2PasswordBearer):
         try:
             return await super().__call__(request)
         except HTTPException as exc:
+            # Cookie sessions (Stage 1, flag OFF by default): with no usable Authorization header, an
+            # HttpOnly access cookie may authenticate. Bearer always wins when it is present.
+            if not auth_header:
+                try:
+                    from core import cookie_auth as _ck
+                    if _ck.enabled():
+                        _c = request.cookies.get(_ck.ACCESS_COOKIE)
+                        if _c:
+                            request.state.auth_from_cookie = True
+                            return _c
+                except Exception as _ce:
+                    import logging as _cl
+                    _cl.getLogger("wazibot.auth").debug("cookie auth lookup skipped: %s", type(_ce).__name__)
             import logging as _al
             _al.getLogger("wazibot.auth").warning(
                 "AUTH FAILED: reason=missing_or_malformed_auth_header  "
@@ -333,7 +346,67 @@ def revoke_token(token: str) -> bool:
         return False
 
 
-def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
+# ── Support ("view as business") sessions are READ-ONLY (Phase 5 policy) ──────────────────────
+# Enforced here, in the backend, for every route that authenticates through get_current_user:
+# a session minted by /admin/saas/tenants/{id}/impersonate may only read. Any write, and any
+# GET that reaches a paid or outbound service, is refused. Blocked attempts are audit-logged
+# every time; read access is logged once per (support user, business) per 10 minutes.
+# Exceptional writes need a separate, explicitly authorised and audited workflow (not built).
+_SUPPORT_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+_SUPPORT_POST_ALLOW = {"/campaigns/preview"}          # read-only: a dry run that sends nothing
+_SUPPORT_GET_DENY_PREFIXES = ("/debug/", "/me/test-whatsapp", "/me/export", "/me/data-export",
+                              "/billing/connect", "/billing/invoices", "/marketing/qr/download")
+# Anything that exports or downloads data, or fetches an invoice, is refused for a support session
+# wherever it lives (these are bulk customer data or outbound calls, not "looking at the dashboard").
+_SUPPORT_GET_DENY_FRAGMENTS = ("/export", "/download", "/invoice")
+_support_access_logged: dict = {}
+_SUPPORT_ACCESS_LOG_INTERVAL = 600
+
+
+def _audit_support(action: str, payload: dict, request, extra: dict | None = None) -> None:
+    try:
+        from crud.admin_audit import log_admin_action
+        log_admin_action(
+            actor_username=payload.get("impersonated_by"), action=action,
+            target_type="business", target_id=payload.get("business_id"),
+            business_id=payload.get("business_id"),
+            metadata={"method": request.method, "path": request.url.path, **(extra or {})},
+            ip_address=request.client.host if getattr(request, "client", None) else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    except Exception as exc:
+        import logging as _l
+        _l.getLogger("wazibot.auth").warning("SUPPORT AUDIT NOT RECORDED (%s): %s %s admin=%s business=%s",
+                                            type(exc).__name__, action, getattr(request, "method", "?"),
+                                            payload.get("impersonated_by"), payload.get("business_id"))
+
+
+def _enforce_support_read_only(request, payload: dict) -> None:
+    import logging as _l
+    method = (request.method or "").upper()
+    path = request.url.path or ""
+    denied = (method not in _SUPPORT_SAFE_METHODS and path not in _SUPPORT_POST_ALLOW) or \
+             (method in _SUPPORT_SAFE_METHODS and (path.startswith(_SUPPORT_GET_DENY_PREFIXES)
+                                                  or any(f in path for f in _SUPPORT_GET_DENY_FRAGMENTS)))
+    if denied:
+        _l.getLogger("wazibot.auth").warning(
+            "SUPPORT SESSION BLOCKED: %s %s  admin=%s  business=%s",
+            method, path, payload.get("impersonated_by"), payload.get("business_id"))
+        _audit_support("support.write_blocked", payload, request)
+        raise HTTPException(status_code=403,
+                            detail="Support (view-as) sessions are read-only. This action is not available.")
+    if method in _SUPPORT_SAFE_METHODS:
+        import time as _t
+        key = (payload.get("impersonated_by"), payload.get("business_id"))
+        now = _t.time()
+        if now - _support_access_logged.get(key, 0) > _SUPPORT_ACCESS_LOG_INTERVAL:
+            if len(_support_access_logged) > 2000:
+                _support_access_logged.clear()
+            _support_access_logged[key] = now
+            _audit_support("support.access", payload, request)
+
+
+def get_current_user(token: str = Depends(oauth2_scheme), request: Request = None) -> dict:
     import logging as _al
     _log = _al.getLogger("wazibot.auth")
     try:
@@ -350,6 +423,21 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     if not username:
         _log.warning("AUTH FAILED: reason=missing_sub_in_token")
         raise HTTPException(status_code=401, detail="Invalid token payload")
+
+    # Cookie sessions: never for support (impersonation) tokens, and state-changing requests need the
+    # CSRF double-submit token plus a same-origin signal (Bearer requests are exempt).
+    if request is not None and getattr(request.state, "auth_from_cookie", False):
+        if payload.get("impersonated_by") or payload.get("role") == "superadmin":
+            _log.warning("AUTH FAILED: reason=support_or_admin_token_in_cookie")
+            raise HTTPException(status_code=401, detail="Invalid session. Please log in again.")
+        from core import cookie_auth as _ck
+        if _ck.same_site_fetch_blocked(request):
+            _log.warning("AUTH FAILED: reason=cookie_from_other_site  path=%s", request.url.path)
+            raise HTTPException(status_code=403, detail="Cross-site request refused.")
+        if (request.method or "").upper() not in ("GET", "HEAD", "OPTIONS"):
+            if not _ck.check_csrf(request, username, business_id, role):
+                _log.warning("AUTH FAILED: reason=csrf_check_failed  path=%s", request.url.path)
+                raise HTTPException(status_code=403, detail="CSRF check failed.")
 
     # SECURITY: a refresh token (7-day lifetime) must never authenticate API
     # calls — it is only valid at /auth/refresh. Previously it was accepted
@@ -381,6 +469,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     impersonated_by = payload.get("impersonated_by")
     if impersonated_by:
         result["impersonated_by"] = impersonated_by
+        if request is not None:                        # None only for direct calls (tests, tools)
+            _enforce_support_read_only(request, payload)
     return result
 
 

@@ -181,6 +181,24 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "base-uri 'self'; "
             "form-action 'self'; "
         )
+        # Phase 5: the STRICT policy, sent in Report-Only mode next to the enforced one above. It drops
+        # 'unsafe-inline' from script-src and bans inline event handlers (script-src-attr); style-src keeps
+        # 'unsafe-inline' for now (about 1,300 inline style attributes, a separate later step). Browsers POST
+        # a report to /csp-report for every inline script or handler that WOULD be blocked, so the
+        # migration is driven by real data. It changes nothing for users. Switch off with CSP_REPORT_ONLY=0.
+        if os.getenv("CSP_REPORT_ONLY", "1").strip().lower() not in ("0", "false", "no", "off")                 and response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Content-Security-Policy-Report-Only"] = (
+                "default-src 'self'; "
+                "script-src 'self'; "
+                "script-src-attr 'none'; "
+                "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+                "font-src 'self' https://fonts.gstatic.com data:; "
+                "img-src 'self' data: blob: https:; "
+                "connect-src 'self' https://wazibothq.com wss://wazibothq.com wss://www.wazibothq.com " + _ws_origin(request) + "; "
+                "frame-src https://www.google.com; "
+                "frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+                "report-uri /csp-report"
+            )
         # Authenticated API responses must not be stored by browsers or shared caches.
         if ("authorization" in request.headers
                 and "cache-control" not in response.headers
@@ -737,6 +755,8 @@ if _SAAS_ROUTERS_LOADED:
 else:
     log.warning("No SaaS routers loaded — check warnings above")
 
+from routes.csp_routes import router as csp_router
+app.include_router(csp_router)
 app.include_router(auth_router)
 app.include_router(password_reset_router)
 app.include_router(webhook_router)
