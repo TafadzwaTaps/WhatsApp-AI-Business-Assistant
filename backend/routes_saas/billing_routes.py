@@ -454,6 +454,8 @@ def send_trial_warnings(request: Request):
     Call daily from Render cron or external scheduler.
     Protected by CRON_SECRET env var header to prevent abuse.
     """
+    from services import job_runs as _jr
+    _jr_started = _jr._now()
     secret = os.getenv("CRON_SECRET", "")
     # Fixed: previously "if secret and ..." meant an UNSET secret skipped
     # this check entirely, leaving the endpoint wide open to anyone who
@@ -542,8 +544,10 @@ def send_trial_warnings(request: Request):
 
     log.info("trial-warnings: sent=%d already_sent=%d opted_out=%d unverified=%d errors=%d",
              sent, already, opted_out, unverified, errors)
-    return {"ok": True, "sent": sent, "already_sent": already, "opted_out": opted_out,
+    _out = {"ok": True, "sent": sent, "already_sent": already, "opted_out": opted_out,
             "unverified_skipped": unverified, "errors": errors}
+    _jr.record_result("trial_warnings", _jr_started, _out)
+    return _out
 
 
 
@@ -607,7 +611,8 @@ def purge_deleted_accounts(request: Request):
         raise HTTPException(403, "Forbidden")
 
     from services.account_deletion import purge_due_accounts
-    result = purge_due_accounts()
+    from services.job_runs import run_tracked
+    result = run_tracked("account_purge", purge_due_accounts)
     log.info("account-purge: checked=%d purged=%d errors=%d",
               result["checked"], result["purged"], result["errors"])
     return {"ok": True, **result}
