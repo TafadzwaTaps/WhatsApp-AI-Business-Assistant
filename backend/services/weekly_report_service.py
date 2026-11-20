@@ -256,6 +256,18 @@ def send_weekly_reports() -> dict:
                 skipped += 1          # already sent for this month
                 continue
 
+            # Persistent claim BEFORE sending: a restart inside the window, or a second instance, can no
+            # longer send the same month twice (features_json above is a read-then-write fallback only).
+            try:
+                from crud import notification_ledger as _ledger
+                if not _ledger.claim(biz_id, "monthly_report", period_key, table_only=True):
+                    skipped += 1
+                    continue
+            except Exception as _cexc:             # fail closed: skip, the next run retries
+                log.warning("weekly_report: claim failed biz=%s: %s", biz_id, type(_cexc).__name__)
+                errors += 1
+                continue
+
             try:
                 stats    = _get_weekly_stats(biz_id, start, end)
                 dash_url = f"{_BASE_URL}/dashboard"
@@ -279,9 +291,14 @@ def send_weekly_reports() -> dict:
                     log.info("weekly_report: sent to biz=%s email=%s", biz_id, email)
                 else:
                     errors += 1
+                    _ledger.release(biz_id, "monthly_report", period_key)      # not delivered: retry next run
             except Exception as exc:
                 errors += 1
                 log.warning("weekly_report: failed for biz=%s: %s", biz_id, exc)
+                try:
+                    _ledger.release(biz_id, "monthly_report", period_key)
+                except Exception as _rexc:
+                    log.warning("weekly_report: release failed biz=%s: %s", biz_id, type(_rexc).__name__)
 
     except Exception as exc:
         log.error("weekly_report: top-level error: %s", exc)
