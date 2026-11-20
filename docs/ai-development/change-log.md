@@ -372,3 +372,9 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - Payment reminders (once per order and tier, replaces the in-process-only guard), booking reminders (per booking and slot) and the monthly report (per business and month) now claim in the `notification_log` ledger BEFORE sending and release on failure. Fail closed on ledger errors; if the table is missing, behaviour is as before (in-process guards).
 - Behaviour change: an owner can no longer re-send the same payment-reminder tier to the same order; tiers escalate with order age.
 - Tests: 2617 passed, 3 skipped (dev); 8 of 8 mutations caught. See `PHASE_7_PLAN.md` for stages 2 to 5.
+
+## 2026-11-20 — Phase 7 stage 2: background-job run log (uncommitted; 1 migration, NOT applied)
+- `services/job_runs.py` + `migrations/job_runs.sql` (new table, RLS on, no public access): one row per run with status, duration, integer counts and an error TYPE name only. Recording never raises and never changes a job; silent no-op until the migration is applied.
+- Recorded: monthly report, booking reminders (scheduler threads), trial warnings, account purge, scheduled campaigns (cron endpoints).
+- `GET /admin/saas/job-runs` (superadmin only): latest runs, per job last run / last success / last error, and a stale flag (booking reminders 2 h, monthly report 33 days, trial warnings and purge 36 h, scheduled campaigns 2 h).
+- Rows older than 60 days are pruned (at most hourly). Tests: 2645 passed, 3 skipped (dev); 9 of 9 mutations caught.

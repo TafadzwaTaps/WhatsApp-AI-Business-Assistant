@@ -1495,7 +1495,8 @@ def attach_booking_reminder_scheduler(app) -> None:
         while True:
             try:
                 _time.sleep(1800)   # 30 minutes
-                run_all_due_reminders()
+                from services.job_runs import run_tracked
+                run_tracked("booking_reminders", run_all_due_reminders)
             except Exception as exc:
                 log.warning("booking_reminder_scheduler: loop error: %s", exc)
                 _time.sleep(1800)

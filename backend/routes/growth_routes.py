@@ -502,6 +502,8 @@ async def run_scheduled_campaigns(request: Request):
 
     from services.campaign_service import CampaignService, outcome_from_result
     from core.db import supabase
+    from services import job_runs as _jr
+    _jr_started = _jr._now()
 
     now = datetime.now(timezone.utc).isoformat()
     results: list = []
@@ -581,7 +583,7 @@ async def run_scheduled_campaigns(request: Request):
         log.info("scheduled_campaign processed  id=%s  biz=%s  status=%s",
                  campaign_id, bid, status)
 
-    return {
+    _out = {
         "ok":        True,
         "processed": processed,
         "sent":      sent_total,
@@ -591,6 +593,8 @@ async def run_scheduled_campaigns(request: Request):
         "interrupted_marked_failed": stalled,
         "results": results,
     }
+    _jr.record_result("scheduled_campaigns", _jr_started, _out)
+    return _out
 
 
 # ═══════════════════════════════════════════════════════════════════════════

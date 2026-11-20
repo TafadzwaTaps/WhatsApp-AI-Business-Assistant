@@ -356,6 +356,16 @@ def saas_health(user=Depends(require_superadmin)):
     return {"status": overall, "checks": checks}
 
 
+# ── Background job runs (Phase 7, stage 2) ────────────────────────────────────
+
+@router.get("/admin/saas/job-runs")
+def saas_job_runs(limit: int = 100, user=Depends(require_superadmin)):
+    """Latest background-job runs and, per job, the last run / last success / last error and whether it looks
+    stale. Counts and error type names only. `available` is false until migrations/job_runs.sql is applied."""
+    from services import job_runs
+    return job_runs.overview(limit)
+
+
 # ── Tenant detail ─────────────────────────────────────────────────────────────
 
 @router.get("/admin/saas/tenants/{business_id}")

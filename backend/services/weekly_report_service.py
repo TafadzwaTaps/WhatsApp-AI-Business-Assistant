@@ -338,7 +338,8 @@ def attach_weekly_report_scheduler(app) -> None:
                 # sleep in <=1 day chunks so very long waits survive clock drift
                 _time.sleep(min(max(wait_seconds, 60), 86400))
                 if datetime.now(timezone.utc) >= next_run:
-                    send_weekly_reports()
+                    from services.job_runs import run_tracked
+                    run_tracked("monthly_report", send_weekly_reports)
             except Exception as exc:
                 log.warning("report_scheduler: loop error: %s", exc)
                 _time.sleep(3600)   # wait an hour and retry
