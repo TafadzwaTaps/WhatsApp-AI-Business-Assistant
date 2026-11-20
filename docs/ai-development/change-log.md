@@ -378,3 +378,10 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - Recorded: monthly report, booking reminders (scheduler threads), trial warnings, account purge, scheduled campaigns (cron endpoints).
 - `GET /admin/saas/job-runs` (superadmin only): latest runs, per job last run / last success / last error, and a stale flag (booking reminders 2 h, monthly report 33 days, trial warnings and purge 36 h, scheduled campaigns 2 h).
 - Rows older than 60 days are pruned (at most hourly). Tests: 2645 passed, 3 skipped (dev); 9 of 9 mutations caught.
+
+## 2026-11-20 — Phase 7 stage 3: reporting correctness (uncommitted, no migration)
+- **One revenue rule** (`crud/_helpers.counts_as_revenue`): paid and not cancelled/refunded. The business dashboard (`/analytics/{id}`) and platform admin totals previously counted unpaid, cancelled and refunded orders as revenue; both now use the rule. The old all-orders figure is kept as the new `gross_order_value` key (additive). `total_revenue` on those two screens will therefore be lower than before.
+- **Monthly report**: orders and revenue exclude cancelled/refunded; orders read in pages (a plain select was capped at 1000 rows); new/repeat customer counts use exact counts.
+- `/analytics/top-customers`: `limit` clamped to 1-100.
+- Not changed (documented): dashboard day buckets use UTC dates, not the business time zone; platform-wide totals add amounts across businesses with different currencies.
+- Tests: 2678 passed, 3 skipped (dev); 10 of 10 mutations caught.

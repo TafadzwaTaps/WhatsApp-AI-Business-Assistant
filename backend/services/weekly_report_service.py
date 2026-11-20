@@ -59,6 +59,14 @@ def _next_monthly_run(now: Optional[datetime] = None) -> datetime:
     return cand
 
 
+def _exact_count(query) -> int:
+    """Row count of a filtered query without reading the rows (a plain select is capped at 1000 rows, which
+    would silently under-count a large business). Falls back to the rows returned if no count comes back."""
+    res = query.execute()
+    n = getattr(res, "count", None)
+    return int(n) if isinstance(n, int) else len(res.data or [])
+
+
 def _get_weekly_stats(business_id: int, since: Optional[datetime] = None,
                       until: Optional[datetime] = None) -> dict:
     """
@@ -81,42 +89,37 @@ def _get_weekly_stats(business_id: int, since: Optional[datetime] = None,
         until_iso = until_dt.isoformat()
 
         # Orders last 7 days
-        orders_res = (
+        # Paged read (a plain select is silently capped at 1000 rows). Cancelled and refunded orders are
+        # not counted as orders or as revenue; revenue = paid orders (one rule shared with the dashboard).
+        from crud._helpers import fetch_all, counts_as_revenue
+        all_orders = fetch_all(lambda: (
             supabase.table("orders")
-            .select("id, total_price, payment_status, items, customer_phone, created_at")
+            .select("id, total_price, payment_status, status, items, customer_phone, created_at")
             .eq("business_id", business_id)
             .gte("created_at", since)
             .lt("created_at", until_iso)
-            .execute()
-        )
-        orders = orders_res.data or []
+            .order("id")
+        ))
+        orders = [o for o in all_orders if str(o.get("status") or "").lower() not in ("cancelled", "refunded")]
         total_orders  = len(orders)
-        total_revenue = sum(
-            float(o.get("total_price") or 0)
-            for o in orders
-            if o.get("payment_status") in ("paid", "confirmed")
-        )
+        total_revenue = sum(float(o.get("total_price") or 0) for o in orders if counts_as_revenue(o))
 
         # New customers last 7 days (first seen in this window)
-        new_cust_res = (
+        new_customers = _exact_count(
             supabase.table("user_memory")
-            .select("phone")
+            .select("phone", count="exact")
             .eq("business_id", business_id)
             .gte("created_at", since)
             .lt("created_at", until_iso)
-            .execute()
-        )
-        new_customers = len(new_cust_res.data or [])
+            .limit(1))
 
         # Repeat customers (order_count > 1 in user_memory)
-        repeat_res = (
+        repeat_customers = _exact_count(
             supabase.table("user_memory")
-            .select("phone, order_count")
+            .select("phone", count="exact")
             .eq("business_id", business_id)
             .gt("order_count", 1)
-            .execute()
-        )
-        repeat_customers = len(repeat_res.data or [])
+            .limit(1))
 
         # Top product by name frequency in order items
         product_counts: dict[str, int] = {}
