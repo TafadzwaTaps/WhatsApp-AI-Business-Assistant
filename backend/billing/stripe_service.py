@@ -985,6 +985,27 @@ def get_tier_features(business_id: int) -> dict:
 # Follows the same safe-by-default rule as the rest of this module: never
 # raise, always return a plain dict the route can pass straight through.
 
+def _connect_error_message(exc) -> str:
+    """A safe, specific message for a failed Connect call. Never includes keys or raw Stripe text; the full error
+    (type, code, param, message) is written to the log by the caller."""
+    kind = type(exc).__name__
+    msg = str(getattr(exc, "user_message", None) or exc).lower()
+    code = str(getattr(exc, "code", "") or "").lower()
+    if kind in ("AuthenticationError", "PermissionError") or "invalid api key" in msg or code == "api_key_invalid":
+        return ("Stripe rejected the platform's API key. The platform administrator needs to check the Stripe "
+                "settings (STRIPE_SECRET_KEY).")
+    if "signed up for connect" in msg or "connect" in msg and ("not enabled" in msg or "platform" in msg):
+        return ("Stripe Connect is not enabled on this platform's Stripe account yet. The platform administrator "
+                "must enable Connect in the Stripe dashboard.")
+    if "email" in msg and ("invalid" in msg or "valid" in msg):
+        return "Your business email address was not accepted by Stripe. Please update it in Settings and try again."
+    if "capabilit" in msg:
+        return "Stripe could not enable card payments for this account. Please try again or contact support."
+    if kind in ("APIConnectionError", "RateLimitError"):
+        return "Could not reach Stripe right now. Please try again in a minute."
+    return "The payment provider could not complete this request. Please try again."
+
+
 def create_connect_account(business_id: int, business_name: str, owner_email: str) -> dict:
     """
     Create (or resume) a Stripe Connect Express account for a merchant and
@@ -1007,13 +1028,20 @@ def create_connect_account(business_id: int, business_name: str, owner_email: st
         account_id = (res.data or [{}])[0].get("stripe_account_id")
 
         if not account_id:
-            account = stripe.Account.create(
-                type="express",
-                email=owner_email,
-                business_type="individual",
-                business_profile={"name": business_name} if business_name else None,
-                metadata={"wazibot_business_id": str(business_id)},
-            )
+            # Only send an email Stripe can accept (an empty string used to be sent when the business had none), and
+            # request the capabilities a destination-charge checkout needs, otherwise charges never get enabled.
+            _params = {
+                "type": "express",
+                "business_type": "individual",
+                "capabilities": {"card_payments": {"requested": True}, "transfers": {"requested": True}},
+                "metadata": {"wazibot_business_id": str(business_id)},
+            }
+            _email = (owner_email or "").strip()
+            if "@" in _email and "." in _email.rsplit("@", 1)[-1]:
+                _params["email"] = _email
+            if business_name:
+                _params["business_profile"] = {"name": business_name}
+            account = stripe.Account.create(**_params)
             account_id = account["id"]
             try:
                 supabase.table("businesses").update(
@@ -1023,18 +1051,26 @@ def create_connect_account(business_id: int, business_name: str, owner_email: st
                 log.debug("stripe_account_id column may not exist yet: %s", exc)
             log.info("Stripe Connect account created  business=%s  account=%s", business_id, account_id)
 
-        base = os.getenv("WAZIBOT_URL", "https://wazibothq.com")
+        base = os.getenv("WAZIBOT_URL", "https://wazibothq.com").rstrip("/")
+        if account_id:
+            try:        # best effort: an account created earlier may lack the capabilities checkout needs
+                stripe.Account.modify(account_id, capabilities={"card_payments": {"requested": True},
+                                                                "transfers": {"requested": True}})
+            except Exception as exc:
+                log.debug("connect capabilities update skipped: %s", type(exc).__name__)
+        # The dashboard already handles ?stripe_connect=success|refresh on load (the old /billing/connect/return
+        # and /billing/connect/refresh URLs were never routes, so the owner landed on a 404 after onboarding).
         link = stripe.AccountLink.create(
             account=account_id,
-            refresh_url=f"{base}/billing/connect/refresh",
-            return_url=f"{base}/billing/connect/return",
+            refresh_url=f"{base}/dashboard?stripe_connect=refresh",
+            return_url=f"{base}/dashboard?stripe_connect=success",
             type="account_onboarding",
         )
         return {"url": link["url"], "account_id": account_id}
     except Exception as exc:
-        log.error("create_connect_account error: %s", exc)
-        log.error("stripe_service error: %s", exc)
-        return {"error": "The payment provider could not complete this request. Please try again."}
+        log.error("create_connect_account error: type=%s code=%s param=%s message=%s", type(exc).__name__,
+                  getattr(exc, "code", None), getattr(exc, "param", None), exc)
+        return {"error": _connect_error_message(exc)}
 
 
 def get_connect_account_status(business_id: int) -> dict:

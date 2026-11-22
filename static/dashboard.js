@@ -2389,9 +2389,84 @@ function viewOrdersFromChat() {
   }, 300);
 }
 
+// Older-message paging for the Conversations pane. The server returns the NEWEST page first (offset 0 =
+// latest 50); older pages are fetched with offset and kept here so the periodic refresh re-renders them too.
+const _CHAT_PAGE = 50;
+let _chatHist = { phone: null, older: [], latest: [], done: false, loading: false };
+
+function _chatMsgKey(m) { return m && m.id != null ? 'id:' + m.id : null; }
+
+function _chatMerged() {
+  const seen = new Set();
+  const out = [];
+  for (const m of _chatHist.older.concat(_chatHist.latest)) {
+    const k = _chatMsgKey(m);
+    if (k && seen.has(k)) continue;
+    if (k) seen.add(k);
+    out.push(m);
+  }
+  return out;
+}
+
+function _chatMsgHtml(m) {
+  const text  = m.message || m.text || '';
+  const dir   = m.direction || '';
+  const isBc  = text.startsWith('[BROADCAST]');
+  const isOut = dir === 'outgoing' || dir === 'out';
+  const cls   = isBc ? 'msg-broadcast' : `msg-${isOut ? 'out' : 'in'}`;
+  const txt   = isBc ? '📢 ' + escHtml(text.replace('[BROADCAST] ', '')) : escHtml(text);
+  return `<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at || m.createdAt || m.timestamp)}</div></div>`;
+}
+
+function _renderChatMessages(msgsEl) {
+  const list = _chatMerged();
+  const top = _chatHist.done ? '' :
+    `<div id="chat-older-row" style="text-align:center;padding:4px 0 8px;"><button class="panel-action" style="font-size:11px;" onclick="loadOlderChatMessages()">↑ Load older messages</button></div>`;
+  msgsEl.innerHTML = top + list.map(_chatMsgHtml).join('');
+}
+
+async function loadOlderChatMessages() {
+  const phone = _chatHist.phone;
+  const msgsEl = document.getElementById('chat-msgs');
+  if (!phone || !msgsEl || _chatHist.loading || _chatHist.done) return;
+  _chatHist.loading = true;
+  const btn = document.querySelector('#chat-older-row button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Loading…'; }
+  try {
+    const offset = _chatHist.latest.length + _chatHist.older.length;
+    const raw = await apiFetch(`${ROUTES.conversations}/${encodeURIComponent(phone)}?limit=${_CHAT_PAGE}&offset=${offset}`);
+    if (_chatHist.phone !== phone) return;                       // switched chats while loading
+    const page = Array.isArray(raw) ? raw : (Array.isArray(raw && raw.messages) ? raw.messages : []);
+    const before = _chatMerged().length;
+    _chatHist.older = page.concat(_chatHist.older);
+    const added = _chatMerged().length - before;
+    if (page.length < _CHAT_PAGE || added === 0) _chatHist.done = true;
+    const prevHeight = msgsEl.scrollHeight, prevTop = msgsEl.scrollTop;
+    _renderChatMessages(msgsEl);
+    msgsEl.scrollTop = prevTop + (msgsEl.scrollHeight - prevHeight);   // keep the reader where they were
+  } catch (e) {
+    toast('Could not load older messages: ' + e.message, true);
+  } finally {
+    _chatHist.loading = false;
+    const b2 = document.querySelector('#chat-older-row button');
+    if (b2) { b2.disabled = false; b2.textContent = '↑ Load older messages'; }
+  }
+}
+
+// Scrolling to the top of the pane loads the previous page automatically.
+function _chatScrollHandler(ev) {
+  const el = ev.currentTarget;
+  if (el && el.scrollTop < 40) loadOlderChatMessages();
+}
+
 async function loadChatMessages(phone) {
   const msgsEl = document.getElementById('chat-msgs');
   if (!msgsEl) return;
+  if (_chatHist.phone !== phone) {
+    _chatHist = { phone, older: [], latest: [], done: false, loading: false };
+    msgsEl.dataset.loaded = '';
+  }
+  if (!msgsEl.dataset.scrollBound) { msgsEl.addEventListener('scroll', _chatScrollHandler); msgsEl.dataset.scrollBound = '1'; }
 
   // This function fully re-renders the message list on every call,
   // including the periodic background refresh added above — so a user
@@ -2409,16 +2484,11 @@ async function loadChatMessages(phone) {
     const raw = await apiFetch(`${ROUTES.conversations}/${encodeURIComponent(phone)}`);
     if (!raw) return;
     const msg_list = Array.isArray(raw) ? raw : (Array.isArray(raw.messages) ? raw.messages : []);
-    if (!msg_list.length) { msgsEl.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
-    msgsEl.innerHTML = msg_list.map(m => {
-      const text  = m.message || m.text || '';
-      const dir   = m.direction || '';
-      const isBc  = text.startsWith('[BROADCAST]');
-      const isOut = dir === 'outgoing' || dir === 'out';
-      const cls   = isBc ? 'msg-broadcast' : `msg-${isOut ? 'out' : 'in'}`;
-      const txt   = isBc ? '📢 ' + escHtml(text.replace('[BROADCAST] ', '')) : escHtml(text);
-      return `<div class="msg ${cls}">${txt}<div class="msg-time">${fmtTime(m.created_at || m.createdAt || m.timestamp)}</div></div>`;
-    }).join('');
+    if (!msg_list.length && !_chatHist.older.length) { msgsEl.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
+    if (_chatHist.phone !== phone) return;                       // switched chats while loading
+    _chatHist.latest = msg_list;
+    if (!_chatHist.older.length) _chatHist.done = msg_list.length < _CHAT_PAGE;
+    _renderChatMessages(msgsEl);
     msgsEl.dataset.loaded = '1';
 
     if (!hadContent || wasNearBottom) {
@@ -5884,9 +5954,63 @@ function openOrderDrawer(orderId) {
   sel.innerHTML = keys.filter(k => k !== 'all').map(k => `<option value="${k}">${labels[k]}</option>`).join('');
   sel.value = keys.includes(status) ? status : keys[0];
 
+  _renderOrderDrawerPayment(order);
+
   document.getElementById('order-drawer').classList.add('open');
   document.getElementById('drawer-overlay').classList.add('open');
   _focusIntoDrawer('order-drawer');
+}
+
+// Payment block of the order drawer: shows Paid / Unpaid and offers the opposite action. Cancelled and
+// refunded orders show their state only (the server refuses to change their payment).
+function _renderOrderDrawerPayment(order) {
+  const badge  = document.getElementById('order-drawer-pay-badge');
+  const paidBtn   = document.getElementById('order-drawer-markpaid-btn');
+  const unpaidBtn = document.getElementById('order-drawer-markunpaid-btn');
+  const notifyRow = document.getElementById('order-drawer-notify-row');
+  const noteEl    = document.getElementById('order-drawer-pay-note');
+  if (!badge || !paidBtn || !unpaidBtn) return;
+  const pay    = String(order.payment_status || 'pending').toLowerCase();
+  const status = String(order.status || '').toLowerCase();
+  const closed = ['cancelled', 'refunded'].includes(pay) || ['cancelled', 'refunded'].includes(status);
+  const isPaid = ['paid', 'confirmed'].includes(pay);
+  const labels = { paid: 'Paid', confirmed: 'Paid', pending: 'Unpaid', awaiting_payment: 'Unpaid — awaiting payment',
+                   pending_cash: 'Unpaid — cash on collection', payment_review: 'Unpaid — proof under review',
+                   awaiting_confirmation: 'Unpaid — awaiting confirmation', payment_failed: 'Unpaid — payment failed',
+                   cancelled: 'Cancelled', refunded: 'Refunded' };
+  badge.textContent = labels[pay] || (isPaid ? 'Paid' : 'Unpaid');
+  badge.style.background = isPaid ? 'rgba(34,197,94,.15)' : closed ? 'rgba(148,163,184,.15)' : 'rgba(245,158,11,.15)';
+  badge.style.color      = isPaid ? '#22c55e'             : closed ? 'var(--text-dim)'        : '#f59e0b';
+  paidBtn.style.display   = (!closed && !isPaid) ? '' : 'none';
+  unpaidBtn.style.display = (!closed && isPaid)  ? '' : 'none';
+  paidBtn.disabled = unpaidBtn.disabled = false;
+  if (notifyRow) { notifyRow.style.display = (!closed && !isPaid) ? 'flex' : 'none'; const c = document.getElementById('order-drawer-notify'); if (c) c.checked = false; }
+  if (noteEl) noteEl.textContent = closed ? 'Payment cannot be changed on a cancelled or refunded order.' : '';
+}
+
+async function setOrderPaymentFromDrawer(paid) {
+  const order = _orderDrawerOrder;
+  if (!order) return;
+  const paidBtn = document.getElementById('order-drawer-markpaid-btn');
+  const unpaidBtn = document.getElementById('order-drawer-markunpaid-btn');
+  const ask = paid ? `Mark ORDER #${order.id} as PAID?` : `Mark ORDER #${order.id} as UNPAID? It will go back to waiting for payment.`;
+  if (!confirm(ask)) return;
+  if (paidBtn) paidBtn.disabled = true;
+  if (unpaidBtn) unpaidBtn.disabled = true;
+  try {
+    const notify = !!(paid && document.getElementById('order-drawer-notify')?.checked);
+    const res = await apiFetch(`/orders/${order.id}/payment`, { method: 'POST', body: JSON.stringify({ paid, notify }) });
+    const newPay = (res && res.payment_status) || (paid ? 'paid' : 'awaiting_payment');
+    order.payment_status = newPay;
+    const row = (_ordersData || []).find(o => o.id === order.id);
+    if (row) row.payment_status = newPay;
+    toast(paid ? `✅ Order #${order.id} marked as paid` : `Order #${order.id} marked as unpaid`);
+    _renderOrderDrawerPayment(order);
+    try { await loadOrders(); } catch (_) { /* list refresh is best effort */ }
+  } catch (e) {
+    toast('Could not update payment: ' + e.message, true);
+    _renderOrderDrawerPayment(order);
+  }
 }
 
 function closeOrderDrawer() {
@@ -7259,6 +7383,11 @@ function renderReferralTab(data) {
 
   _el('ref-code-display',    code);
   _el('ref-link-display',    link);
+  _el('ref-hero-total',      total);
+  _el('ref-hero-converted',  conv);
+  _el('ref-hero-available',  `$${available.toFixed(2)}`);
+  const _nat = document.getElementById('ref-share-native');
+  if (_nat && navigator.share) _nat.style.display = '';
   _el('ref-stat-total',      total);
   _el('ref-stat-converted',  conv);
   _el('ref-stat-available',  `$${available.toFixed(2)}`);
@@ -8912,4 +9041,42 @@ function consentSkipNote(r) {
   const n = consentSkipCount(r);
   if (!n) return '';
   return `<div style="font-size:11px;margin-top:6px;">🔕 ${n} customer${n !== 1 ? 's were' : ' was'} skipped: ${escHtml(r.consent_note || 'they have not agreed to receive promotional messages.')}</div>`;
+}
+
+// ── Referral sharing to many apps (additive; the WhatsApp / copy buttons above are unchanged) ─────────────
+function _refShareParts() {
+  const link = (_refData && _refData.referral_link && _refData.referral_link !== '—') ? _refData.referral_link : '';
+  const preview = document.getElementById('ref-message-preview');
+  let text = (preview && preview.value && !/^Loading|^Could not load/.test(preview.value)) ? preview.value.trim() : '';
+  if (!text && link) text = 'I use WaziBot to run my WhatsApp business with an AI assistant. Join with my link: ' + link;
+  if (text && link && !text.includes(link)) text += '\n' + link;
+  return { link, text };
+}
+
+function shareRef(platform) {
+  const { link, text } = _refShareParts();
+  if (!link && !text) { toast('Your referral link is still loading, try again in a moment', true); return; }
+  const e = encodeURIComponent;
+  const short = (text || link).slice(0, 240);
+  const open = u => { const w = window.open(u, '_blank', 'noopener'); if (!w) toast('Allow pop-ups to open this share window', true); };
+  switch (platform) {
+    case 'whatsapp':  return open('https://wa.me/?text=' + e((text || link).slice(0, 1000)));
+    case 'telegram':  return open('https://t.me/share/url?url=' + e(link) + '&text=' + e(short));
+    case 'facebook':  return open('https://www.facebook.com/sharer/sharer.php?u=' + e(link) + '&quote=' + e(short));
+    case 'messenger': return /Android|iPhone|iPad/i.test(navigator.userAgent)
+                        ? (window.location.href = 'fb-messenger://share/?link=' + e(link))
+                        : open('https://www.facebook.com/sharer/sharer.php?u=' + e(link));
+    case 'x':         return open('https://twitter.com/intent/tweet?text=' + e(short) + '&url=' + e(link));
+    case 'linkedin':  return open('https://www.linkedin.com/sharing/share-offsite/?url=' + e(link));
+    case 'reddit':    return open('https://www.reddit.com/submit?url=' + e(link) + '&title=' + e('Run your WhatsApp business with an AI assistant'));
+    case 'pinterest': return open('https://pinterest.com/pin/create/button/?url=' + e(link) + '&description=' + e(short));
+    case 'email':     return void (window.location.href = 'mailto:?subject=' + e('Try WaziBot for your WhatsApp business') + '&body=' + e(text || link));
+    case 'sms':       return void (window.location.href = 'sms:?&body=' + e(text || link));
+    case 'instagram':
+    case 'tiktok':    // these apps have no web share link: copy the message so it can be pasted into a post, bio or story
+      return void navigator.clipboard.writeText(text || link).then(
+        () => toast('Message copied. Paste it into your ' + (platform === 'instagram' ? 'Instagram' : 'TikTok') + ' post, story or bio ✓'),
+        () => toast('Could not copy. Use "Copy Message" below.', true));
+    case 'native':    if (navigator.share) { navigator.share({ title: 'WaziBot', text: text || link, url: link }).catch(() => {}); } return;
+  }
 }

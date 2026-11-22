@@ -3345,6 +3345,38 @@
     <!-- REFERRALS TAB -->
     <div class="stab-content" id="stab-referrals">
       <div class="panels">
+        <!-- Referral hero: headline, key numbers and one-tap sharing to many apps. The panels below are unchanged. -->
+        <div class="panel ref-hero" style="grid-column:1/-1;">
+          <div class="panel-body">
+            <div class="ref-hero-top">
+              <div>
+                <div class="ref-hero-title">Earn <span>$0.20</span> for every business you refer</div>
+                <div class="ref-hero-sub">Share your link anywhere. Each signup counts toward your payout (minimum $5.00 via PayPal).</div>
+              </div>
+              <div class="ref-hero-stats">
+                <div class="ref-hero-stat"><div class="ref-hero-num" id="ref-hero-total">—</div><div class="ref-hero-lbl">Referrals</div></div>
+                <div class="ref-hero-stat"><div class="ref-hero-num" id="ref-hero-converted">—</div><div class="ref-hero-lbl">Converted</div></div>
+                <div class="ref-hero-stat"><div class="ref-hero-num" id="ref-hero-available" style="color:var(--green)">$0.00</div><div class="ref-hero-lbl">Available</div></div>
+              </div>
+            </div>
+            <div class="ref-share-label">Share on</div>
+            <div class="ref-share-grid" role="group" aria-label="Share your referral link">
+              <button class="ref-share-btn" style="--brand:#25d366" onclick="shareRef('whatsapp')"><span class="ref-dot"></span>WhatsApp</button>
+              <button class="ref-share-btn" style="--brand:#229ed9" onclick="shareRef('telegram')"><span class="ref-dot"></span>Telegram</button>
+              <button class="ref-share-btn" style="--brand:#1877f2" onclick="shareRef('facebook')"><span class="ref-dot"></span>Facebook</button>
+              <button class="ref-share-btn" style="--brand:#0a7cff" onclick="shareRef('messenger')"><span class="ref-dot"></span>Messenger</button>
+              <button class="ref-share-btn" style="--brand:#e7e9ea" onclick="shareRef('x')"><span class="ref-dot"></span>X (Twitter)</button>
+              <button class="ref-share-btn" style="--brand:#0a66c2" onclick="shareRef('linkedin')"><span class="ref-dot"></span>LinkedIn</button>
+              <button class="ref-share-btn" style="--brand:#ff4500" onclick="shareRef('reddit')"><span class="ref-dot"></span>Reddit</button>
+              <button class="ref-share-btn" style="--brand:#e60023" onclick="shareRef('pinterest')"><span class="ref-dot"></span>Pinterest</button>
+              <button class="ref-share-btn" style="--brand:#f59e0b" onclick="shareRef('email')"><span class="ref-dot"></span>Email</button>
+              <button class="ref-share-btn" style="--brand:#a78bfa" onclick="shareRef('sms')"><span class="ref-dot"></span>SMS</button>
+              <button class="ref-share-btn" style="--brand:#e1306c" onclick="shareRef('instagram')" title="Copies your message, then paste it into Instagram"><span class="ref-dot"></span>Instagram</button>
+              <button class="ref-share-btn" style="--brand:#69c9d0" onclick="shareRef('tiktok')" title="Copies your message, then paste it into TikTok"><span class="ref-dot"></span>TikTok</button>
+              <button class="ref-share-btn" id="ref-share-native" style="--brand:var(--green);display:none" onclick="shareRef('native')"><span class="ref-dot"></span>More…</button>
+            </div>
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-header"><div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-link"/></svg> Your Referral Link</div></div>
           <div class="panel-body">
@@ -3965,6 +3997,18 @@
           <select id="order-drawer-status-select" style="flex:1;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:8px;"></select>
           <button class="btn btn-primary" style="font-size:12px;padding:8px 14px;" onclick="updateOrderStatusFromDrawer()">Save</button>
         </div>
+      </div>
+      <div style="margin-top:16px;" id="order-drawer-payment">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Payment</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span id="order-drawer-pay-badge" style="font-size:11px;font-family:var(--mono);padding:3px 10px;border-radius:6px;background:var(--surface2);color:var(--text-dim);">—</span>
+          <button id="order-drawer-markpaid-btn" class="btn btn-primary" style="font-size:12px;padding:7px 12px;display:none;" onclick="setOrderPaymentFromDrawer(true)">✓ Mark as paid</button>
+          <button id="order-drawer-markunpaid-btn" class="btn btn-ghost" style="font-size:12px;padding:7px 12px;display:none;" onclick="setOrderPaymentFromDrawer(false)">Mark as unpaid</button>
+        </div>
+        <label id="order-drawer-notify-row" style="display:none;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text-dim);font-family:var(--mono);cursor:pointer;">
+          <input type="checkbox" id="order-drawer-notify" style="width:auto;flex:none;margin:0"> Also send the customer a payment confirmation on WhatsApp
+        </label>
+        <div id="order-drawer-pay-note" style="margin-top:6px;font-size:11px;color:var(--text-dim);font-family:var(--mono);"></div>
       </div>
       <div style="margin-top:16px;display:flex;gap:8px;flex-wrap:wrap;">
         <button class="btn btn-ghost" style="font-size:12px;flex:1;" onclick="contactCustomerFromOrderDrawer()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-chat"/></svg> Contact Customer</button>
