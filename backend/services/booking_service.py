@@ -1374,7 +1374,11 @@ def send_reminders_for_business(business_id: int, business: Optional[dict] = Non
                 continue
 
             msg = format_reminder_message(b, biz_name)
-            result = send_whatsapp(phone_id, token, phone, msg)
+            try:
+                result = send_whatsapp(phone_id, token, phone, msg)
+            except Exception as exc:                      # a raising sender is a failed send: release, retry next run
+                log.warning("booking reminder send raised booking=%s: %s", b.get("id"), type(exc).__name__)
+                result = {"error": type(exc).__name__}
             if "error" not in result:
                 supabase.table("bookings").update({"reminder_24h_sent": True}).eq("id", b["id"]).execute()
                 try:

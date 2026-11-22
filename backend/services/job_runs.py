@@ -147,7 +147,7 @@ def overview(limit: int = 100) -> dict:
     try:
         from core.db import supabase
         limit = max(1, min(int(limit), 500))
-        rows = (supabase.table("job_runs").select("*").order("started_at", desc=True).limit(limit).execute().data) or []
+        rows = (supabase.table("job_runs").select("id,job,status,started_at,finished_at,duration_ms,summary,error_code").order("started_at", desc=True).limit(limit).execute().data) or []
     except Exception as exc:
         log.warning("job_runs.overview failed: %s", type(exc).__name__)
         return {"available": True, "runs": [], "jobs": {}, "error": "could not read job runs"}
