@@ -245,24 +245,32 @@ def create_message(
     return msg
 
 
-# Cache for messages table columns
-_messages_columns: set | None = None
+# Cache for messages table columns.
+# Each column is probed on its own (select that column, limit 1): a column that EXISTS is remembered for the
+# life of the process, one that does not (or a failed probe) is re-checked after _COL_RECHECK_SECONDS. The old
+# approach inferred every column from the first row of the table and cached a guessed list forever when the
+# table was empty at that moment, which silently dropped sender_type/sender_name/agent_id from every later
+# message (agent replies then never showed up in the Handoff agent activity).
+_messages_columns: set | None = None          # kept for compatibility; no longer used for decisions
+_COL_RECHECK_SECONDS = 60
+_msg_col_cache: dict = {}                     # col -> (exists: bool, checked_at: monotonic seconds)
 
 
 def _has_messages_col(col: str) -> bool:
-    """Check if a column exists in the messages table — cached after first call."""
-    global _messages_columns
-    if _messages_columns is None:
-        try:
-            res = supabase.table("messages").select("*").limit(1).execute()
-            if res.data:
-                _messages_columns = set(res.data[0].keys())
-            else:
-                _messages_columns = {"id", "customer_id", "business_id", "text",
-                                     "direction", "is_read", "status", "created_at"}
-        except Exception:
-            _messages_columns = set()
-    return col in _messages_columns
+    """True if the messages table has this column. Confirmed columns are cached; misses are re-checked."""
+    import time as _time
+    hit = _msg_col_cache.get(col)
+    now = _time.monotonic()
+    if hit is not None and (hit[0] or now - hit[1] < _COL_RECHECK_SECONDS):
+        return hit[0]
+    try:
+        supabase.table("messages").select(col).limit(1).execute()
+        exists = True
+    except Exception as exc:
+        log.debug("messages column probe %s: %s", col, type(exc).__name__)
+        exists = False
+    _msg_col_cache[col] = (exists, now)
+    return exists
 
 
 def get_messages_by_customer(

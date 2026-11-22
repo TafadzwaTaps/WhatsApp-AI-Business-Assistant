@@ -2864,3 +2864,24 @@ img, video, canvas { max-width: 100%; }
 .bcr-x{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;display:inline-flex;align-items:center;justify-content:center;flex:none}
 .bcr-x:hover{color:var(--red);border-color:rgba(239,68,68,.5)}
 @media (pointer:coarse){.bcr-x{width:44px;height:44px}.bcp-bulk .panel-action{min-height:44px}.bcp-row{padding:10px}}
+
+/* Referral hero + share grid (additive) */
+.ref-hero { border-color: var(--green-dim); background: linear-gradient(135deg, var(--green-glow), transparent 60%), var(--surface); }
+.ref-hero-top { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+.ref-hero-title { font-size: 20px; font-weight: 800; line-height: 1.25; }
+.ref-hero-title span { color: var(--green); }
+.ref-hero-sub { margin-top: 6px; font-size: 12px; color: var(--text-dim); font-family: var(--mono); max-width: 46ch; line-height: 1.6; }
+.ref-hero-stats { display: flex; gap: 10px; flex-wrap: wrap; }
+.ref-hero-stat { min-width: 92px; padding: 10px 14px; text-align: center; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; }
+.ref-hero-num { font-size: 20px; font-weight: 800; }
+.ref-hero-lbl { margin-top: 2px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); font-family: var(--mono); }
+.ref-share-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); font-family: var(--mono); margin-bottom: 8px; }
+.ref-share-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 8px; }
+.ref-share-btn { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 8px 12px; cursor: pointer;
+  font-family: var(--mono); font-size: 12px; color: var(--text); background: var(--surface2); border: 1px solid var(--border); border-radius: 10px;
+  transition: border-color .15s ease, background-color .15s ease; }
+.ref-share-btn:hover { border-color: var(--brand, var(--green)); background: var(--surface); }
+.ref-share-btn:focus-visible { outline: 2px solid var(--brand, var(--green)); outline-offset: 2px; }
+.ref-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brand, var(--green)); flex: none; }
+@media (max-width: 600px) { .ref-hero-title { font-size: 17px; } .ref-hero-stats { width: 100%; } .ref-hero-stat { flex: 1; } }
+@media (prefers-reduced-motion: reduce) { .ref-share-btn { transition: none; } }

@@ -438,6 +438,80 @@ async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depe
             "message": f"Payment for {ref} approved and customer notified."}
 
 
+class OrderPaymentToggle(BaseModel):
+    paid: bool
+    # Marking paid is quiet by default (the owner may be recording a cash payment while standing next to the
+    # customer). Set notify=True to also send the usual "Payment Confirmed" message.
+    notify: bool = False
+
+
+@router.post("/orders/{order_id}/payment")
+async def set_order_payment_state(order_id: int, data: OrderPaymentToggle, user=Depends(require_not_impersonated)):
+    """Dashboard "Mark as paid" / "Mark as unpaid" for one order of THIS business.
+
+    paid=True : atomic once-only paid claim (same guard as every payment path), order moved forward when it was
+                still waiting, customer memory refreshed. Cancelled/refunded orders are refused (409).
+    paid=False: puts a paid order back to waiting for payment (awaiting_payment, or pending_cash for cash orders).
+                Order status is not touched. Cancelled/refunded orders are refused (409).
+    Both are idempotent."""
+    bid   = user["business_id"]
+    order = get_order(order_id)
+    if not order or order.get("business_id") != bid:
+        raise HTTPException(404, f"Order {order_id} not found")
+    if crud.payment_blocked(order):
+        raise HTTPException(409, f"Order {order_id} is {order.get('status') or order.get('payment_status')} "
+                                 "and its payment cannot be changed")
+    ref = f"ORDER-{order_id}"
+    current = str(order.get("payment_status") or "").lower()
+    is_paid = current in ("paid", "confirmed")
+
+    if data.paid:
+        if is_paid:
+            return {"ok": True, "order_id": order_id, "payment_status": current, "changed": False}
+        try:
+            claimed = crud.claim_order_paid(order_id, bid, {"payment_reference": ref})
+        except Exception:
+            raise HTTPException(503, "Temporary error - please retry")
+        if not claimed:                                   # lost a race: already paid, or closed in the meantime
+            again = get_order(order_id) or order
+            if crud.payment_blocked(again):
+                raise HTTPException(409, f"Order {order_id} is {again.get('status')} and its payment cannot be changed")
+            return {"ok": True, "order_id": order_id, "payment_status": "paid", "changed": False}
+        if str(order.get("status") or "").lower() in ("pending", "awaiting_payment", "payment_review", "awaiting_confirmation"):
+            try: update_order_status_supabase(order_id, "confirmed", business_id=bid)
+            except Exception as exc: log.warning("mark paid: status update failed order=%s: %s", order_id, type(exc).__name__)
+        phone = order.get("customer_phone", "")
+        if phone:
+            try:
+                from workflows.order_lifecycle import _sync_user_memory_after_order
+                _sync_user_memory_after_order(bid, phone)
+            except Exception as exc:
+                log.debug("mark paid: memory sync skipped: %s", type(exc).__name__)
+        if data.notify:
+            total = float(order.get("total_price") or 0)
+            await _notify_customer_payment(order,
+                f"\u2705 *Payment Confirmed!*\n\nYour payment for *{ref}* has been recorded.\n\n"
+                f"\U0001F4B0 Amount: {_order_currency_sym(order, bid)}{total:.2f}\n\nThank you! \U0001F64F")
+        log.info("order payment marked PAID order=%s biz=%s notify=%s", order_id, bid, data.notify)
+        return {"ok": True, "order_id": order_id, "payment_status": "paid", "changed": True}
+
+    if not is_paid:
+        return {"ok": True, "order_id": order_id, "payment_status": current or "pending", "changed": False}
+    back_to = "pending_cash" if str(order.get("payment_method") or "").lower() == "cash" else "awaiting_payment"
+    updated = crud.update_order_payment(order_id, bid, {"payment_status": back_to})
+    if not updated:
+        raise HTTPException(500, "Could not update the payment status")
+    phone = order.get("customer_phone", "")
+    if phone:
+        try:
+            from workflows.order_lifecycle import _sync_user_memory_after_order
+            _sync_user_memory_after_order(bid, phone)
+        except Exception as exc:
+            log.debug("mark unpaid: memory sync skipped: %s", type(exc).__name__)
+    log.info("order payment marked UNPAID order=%s biz=%s", order_id, bid)
+    return {"ok": True, "order_id": order_id, "payment_status": back_to, "changed": True}
+
+
 @router.post("/orders/{order_id}/reject-proof")
 async def admin_reject_proof(order_id: int, data: OrderAdminAction, user=Depends(require_business)):
     bid   = user["business_id"]
