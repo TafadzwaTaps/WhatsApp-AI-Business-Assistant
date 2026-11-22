@@ -410,7 +410,7 @@ def test_manual_payment_confirmation_does_not_repeat_side_effects(monkeypatch):
 
     class Req:
         async def json(self):
-            return {"order_id": 9, "reference": "ORDER-9", "amount": 5}
+            return {"order_id": 9, "reference": "ORDER-9"}
     order = {"id": 9, "business_id": 1, "customer_phone": "2637"}
     monkeypatch.setattr(ol, "get_order", lambda oid: order)
 
@@ -434,7 +434,7 @@ def test_manual_payment_confirmation_503_on_database_error(monkeypatch):
 
     class Req:
         async def json(self):
-            return {"order_id": 9, "reference": "ORDER-9", "amount": 5}
+            return {"order_id": 9, "reference": "ORDER-9"}
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1})
 
     def boom(*a):

@@ -47,6 +47,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from typing import Optional
+from services.order_money import order_amount_text as _order_amount
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +159,7 @@ def build_reminder_message(
     # ── Order summary ────────────────────────────────────────────────────────
     order_block = (
         f"\n\n📦 Order   : *{reference}*"
-        f"\n💰 Total   : *${total:.2f}*"
+        f"\n💰 Total   : *{_order_amount(order, total)}*"
     )
 
     # ── Payment-method-specific instructions ─────────────────────────────────
@@ -220,7 +221,7 @@ def _paypal_reminder(order: dict) -> str:
             return (
                 f"\n\n🌍 *Pay via PayPal:*"
                 f"\n  Send to: *{paypal_email}*"
-                f"\n  Amount: *${float(order.get('total_price') or 0):.2f}*"
+                f"\n  Amount: *{_order_amount(order)}*"
             )
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
@@ -349,7 +350,7 @@ def _deliver_reminder(order, business, tier, message, phone, phone_id, token, bi
             _amount = order.get("total_price") or order.get("total") or ""
             tr = template_for_closed_window(
                 business, business.get("id"), phone, "payment_reminder",
-                {"business_name": biz_name, "order_id": f"ORDER-{order_id}", "amount": f"{order.get('currency_symbol', '')}{_amount}"},
+                {"business_name": biz_name, "order_id": f"ORDER-{order_id}", "amount": _order_amount(order, _amount or None)},
                 ref=f"order:{order_id}:tier{tier}")
             if tr.get("ok"):
                 _mark_reminded(order_id)

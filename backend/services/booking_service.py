@@ -1000,8 +1000,20 @@ def cancel_booking(booking_id: int, business_id: int) -> Optional[dict]:
             linked_order_id = booking.get("order_id")
             if linked_order_id:
                 try:
-                    supabase.table("orders").update({"status": "cancelled"}) \
-                        .eq("id", linked_order_id).eq("business_id", business_id).execute()
+                    # Conditional on "not already cancelled": exactly ONE call wins the transition (a repeated
+                    # cancel or a race loses), and only the winner gives back stock. Stock is only restored for
+                    # items that were really deducted at order creation (stock_restore checks `stock_deducted`
+                    # per item and its own once-only ledger). A refunded order is cancelled as before but its
+                    # stock is not touched: a refund never restores by itself.
+                    prev = (supabase.table("orders").select("status") \
+                            .eq("id", linked_order_id).eq("business_id", business_id).limit(1).execute())
+                    prev_status = ((prev.data or [{}])[0].get("status") or "")
+                    won = (supabase.table("orders").update({"status": "cancelled"})
+                           .eq("id", linked_order_id).eq("business_id", business_id)
+                           .or_("status.is.null,status.neq.cancelled").execute())
+                    if won.data and prev_status != "refunded":
+                        from services.stock_restore import restore_order_stock
+                        restore_order_stock(won.data[0], reason="booking_cancelled", transition_won=True)
                 except Exception as exc_sync:
                     log.warning("cancel_booking: could not sync linked order=%s: %s",
                                 linked_order_id, exc_sync)

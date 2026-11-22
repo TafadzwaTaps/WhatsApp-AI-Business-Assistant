@@ -7,6 +7,7 @@ Returns the file path.
 
 import json
 import os
+from services.order_money import order_amount_text as _order_amount, order_date_text as _order_date
 import logging
 from datetime import datetime
 
@@ -60,7 +61,7 @@ def generate_pdf_invoice(order: dict) -> str:
     payment_ref    = order.get("payment_reference") or f"ORDER-{order_id}"
     customer_phone = order.get("customer_phone", "")
     business_name  = order.get("business_name", "")
-    date_str       = datetime.now().strftime("%Y-%m-%d %H:%M")
+    date_str       = _order_date(order)
 
     file_path = os.path.join(INVOICES_DIR, f"invoice_{order_id}.pdf")
 
@@ -142,7 +143,7 @@ def generate_pdf_invoice(order: dict) -> str:
             qty      = item.get("qty", item.get("quantity", 1))
             price    = float(item.get("price", 0))
             subtotal = float(item.get("subtotal", price * qty))
-            item_rows.append([name, str(qty), f"${price:.2f}", f"${subtotal:.2f}"])
+            item_rows.append([name, str(qty), _order_amount(order, price), _order_amount(order, subtotal)])
     else:
         item_rows.append(["—", "—", "—", "—"])
 
@@ -172,7 +173,7 @@ def generate_pdf_invoice(order: dict) -> str:
     story.append(Spacer(1, 8))
 
     # ── Total ────────────────────────────────────────────────────────────────
-    total_data = [["", "", "TOTAL", f"${total:.2f}"]]
+    total_data = [["", "", "TOTAL", _order_amount(order, total)]]
     total_table = Table(total_data, colWidths=col_widths)
     total_table.setStyle(TableStyle([
         ("FONTNAME",      (0, 0), (-1, -1), "Helvetica-Bold"),

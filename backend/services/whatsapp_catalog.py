@@ -31,6 +31,7 @@ are completely unmodified.
 
 from __future__ import annotations
 
+from services.money import format_money as _money
 import logging
 from core.wa_version import graph_url
 import os
@@ -132,6 +133,30 @@ def send_text_message(
 # CATALOG — batch of product cards
 # ─────────────────────────────────────────────────────────────────────────────
 
+def stable_product_order(products: list[dict]) -> list[dict]:
+    """Deterministic menu order: category, then name, then id. The same input always gives the same order, so
+    pages never skip or repeat items and 'more' always continues where the last page ended."""
+    def _key(p: dict):
+        try:
+            pid = int(p.get("id"))
+        except (TypeError, ValueError):
+            pid = 0
+        return (str(p.get("category") or "").strip().lower(), str(p.get("name") or "").strip().lower(), pid)
+    try:
+        return sorted(list(products or []), key=_key)
+    except Exception as exc:                      # never let ordering break a menu
+        log.debug("stable_product_order skipped: %s", type(exc).__name__)
+        return list(products or [])
+
+
+def catalog_nav_text(first_name: str, has_more: bool, remaining: int) -> str:
+    """The ONE navigation line that follows a product list."""
+    nav = f"Type an item name to order, e.g. *{first_name or 'an item'}*"
+    if has_more:
+        nav += f"\nType *more* for the next {max(remaining, 1)}"
+    return nav
+
+
 def send_catalog(
     phone_number_id: str,
     token:           str,
@@ -150,6 +175,7 @@ def send_catalog(
 
     Phase 9: batch_size caps how many are sent per call.
     """
+    products  = stable_product_order(products)
     start     = page * batch_size
     batch     = products[start: start + batch_size]
     total     = len(products)
@@ -161,20 +187,23 @@ def send_catalog(
 
     if has_images and phone_number_id and token:
         sent = 0
-        for p in batch:
-            result = send_product_image(phone_number_id, token, to, p, currency_sym)
+        # The navigation line rides INSIDE the last card (its caption), never as a separate text: WhatsApp delivers a
+        # plain text before an image that still has to be fetched, which put "Type more" ahead of the products.
+        remaining = min(batch_size, total - start - batch_size) if has_more else 0
+        nav = catalog_nav_text((batch[0].get("name") if batch else ""), has_more, remaining)
+        for idx, p in enumerate(batch):
+            is_last = idx == len(batch) - 1
+            result = send_product_image(phone_number_id, token, to, p, currency_sym,
+                                        caption=_build_product_caption(p, currency_sym, nav=nav) if is_last else "")
             if not result.get("fallback"):
                 sent += 1
             elif result.get("text"):
                 # Text fallback for this product
-                send_text_message(phone_number_id, token, to, result["text"])
+                send_text_message(phone_number_id, token, to,
+                                  result["text"] + (f"\n\n{nav}" if is_last else ""))
                 sent += 1
 
-        if has_more:
-            more_hint = f"\n_Type *more* to see the next {min(batch_size, total - start - batch_size)} products._"
-            send_text_message(phone_number_id, token, to, more_hint)
-
-        return {"sent": sent, "has_more": has_more, "next_page": next_page}
+        return {"sent": sent, "has_more": has_more, "next_page": next_page, "nav_included": True}
     else:
         # Full text catalog
         text = build_text_catalog(batch, currency_sym, page, total, batch_size)
@@ -225,7 +254,7 @@ def send_recommendation_card(
     caption   = (
         f"🌟 *Recommended for you*\n\n"
         f"*{name}*\n"
-        f"{currency_sym}{float(product.get('price', 0)):.2f}\n\n"
+        f"{_money(float(product.get('price', 0)), symbol=currency_sym)}\n\n"
         + (f"_{reason}_\n\n" if reason else "")
         + f"Type *{name.lower()}* to add to cart."
     )
@@ -263,7 +292,7 @@ def build_product_card_text(product: dict, currency_sym: str = "$") -> str:
 
     lines = [
         f"📦 *{name}*",
-        f"💰 *{currency_sym}{price:.2f}*",
+        f"💰 *{_money(price, symbol=currency_sym)}*",
     ]
     if cat:
         lines.append(f"🏷️ _{cat}_")
@@ -304,7 +333,7 @@ def build_text_catalog(
             stock_note = f" ⚠️_{stock} left_"
 
         desc_line = f"\n     _{desc[:60]}{'…' if len(desc) > 60 else ''}_" if desc else ""
-        lines.append(f"  {i}. *{name}* — {currency_sym}{price:.2f}{stock_note}{desc_line}")
+        lines.append(f"  {i}. *{name}* — {_money(price, symbol=currency_sym)}{stock_note}{desc_line}")
 
     header = f"🛍️ *Product Catalog*"
     if total > len(products):
@@ -318,25 +347,25 @@ def build_text_catalog(
     return header + "\n\n" + "\n".join(lines) + footer
 
 
-def _build_product_caption(product: dict, currency_sym: str = "$") -> str:
-    """Build the caption text for a WhatsApp image message."""
+def _build_product_caption(product: dict, currency_sym: str = "$", nav: str = "") -> str:
+    """Build the caption text for a WhatsApp image message. Concise: name, price and a stock note only when it
+    matters (sold out / low). `nav` (the single navigation line) is appended to the LAST card of a page."""
     name  = product.get("name", "Product")
     price = float(product.get("price") or 0)
     desc  = (product.get("description") or "").strip()
     stock = product.get("stock")
 
     stock_note = ""
-    if stock is None or stock > 5:
-        stock_note = "✅ Available"
-    elif stock == 0:
-        stock_note = "❌ Out of stock"
-    else:
-        stock_note = f"⚠️ Only {stock} left"
+    if stock is not None and stock == 0:
+        stock_note = "\n❌ Sold out"
+    elif stock is not None and stock <= 5:
+        stock_note = f"\n⚠️ Only {stock} left"
 
-    caption = f"*{name}*\n{currency_sym}{price:.2f}\n{stock_note}"
+    caption = f"*{name}*\n{_money(price, symbol=currency_sym)}{stock_note}"
     if desc:
         caption += f"\n\n{desc[:100]}"
-    caption += f"\n\nType *{name.lower()}* to add to cart."
+    if nav:
+        caption += f"\n\n{nav}"
     return caption
 
 

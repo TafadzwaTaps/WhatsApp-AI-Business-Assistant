@@ -5,6 +5,8 @@ confirmation handling, payment instructions, and PDF invoice dispatch.
 Imported by ai.py. Do not import ai.py from here (circular import).
 """
 
+from services.money import format_money as _money
+from services.money import order_money as _order_money
 import logging
 
 import crud
@@ -172,6 +174,91 @@ _DOT_ETA_HINTS = {
 }
 
 
+# ── Order progress (fulfilment only; payment is shown separately) ───────────────
+# Pickup and delivery have different last two steps. Payment never decides which step an order is on, except that a
+# PAID order is at least "Confirmed" (payment is frequently recorded before the owner moves the status).
+_PROGRESS_LABELS = {
+    "pickup":   ["Received", "Confirmed", "Preparing", "Ready for pickup", "Collected"],
+    "delivery": ["Received", "Confirmed", "Preparing", "Out for delivery", "Delivered"],
+    "generic":  ["Received", "Confirmed", "Preparing", "Ready", "Complete"],
+    "service":  ["Received", "Confirmed", "Getting ready", "Ready for you", "Completed"],
+}
+_PROGRESS_STAGE = {
+    "pending": 0, "pending_cash": 0, "awaiting_payment": 0, "awaiting_confirmation": 0, "payment_review": 0,
+    "payment_pending": 0,
+    "confirmed": 1, "paid": 1,
+    "preparing": 2,
+    "ready": 3, "out_for_delivery": 3,
+    "delivered": 4, "completed": 4,
+}
+_PROGRESS_ETA = {1: "Preparing shortly", 2: "10–15 minutes"}     # shown only BEFORE the order is ready
+
+
+def _progress_kind(fulfillment_method, flavor: str) -> str:
+    if flavor == "service":
+        return "service"
+    fm = str(fulfillment_method or "").strip().lower()
+    return fm if fm in ("pickup", "delivery") else "generic"
+
+
+def build_order_progress(status, payment_status, fulfillment_method=None, flavor: str = "food") -> dict:
+    """Pure: everything the status message shows about progress.
+
+    Returns {"closed": None|"cancelled"|"refunded", "kind", "stage", "labels", "header": (icon, text),
+             "progress": "✅ ✅ 🔵 ⬜ ⬜  Preparing", "legend": "Received → ...", "eta": str,
+             "payment": (icon, key)}.
+    The header and the dots come from the FULFILMENT status; the payment is a separate value."""
+    s = str(status or "pending").strip().lower()
+    p = str(payment_status or "pending").strip().lower()
+    kind = _progress_kind(fulfillment_method, flavor)
+    labels = _PROGRESS_LABELS[kind]
+    pay_icon = ("✅" if p in ("paid", "confirmed") else "↩️" if p == "refunded"
+                else "❌" if p in ("cancelled", "payment_failed") else "⏳")
+    out = {"kind": kind, "labels": labels, "payment": (pay_icon, p), "eta": "", "closed": None,
+           "legend": " → ".join(labels)}
+    if s in ("cancelled", "refunded"):
+        out.update(closed=s, stage=-1, header=("❌", "Order cancelled") if s == "cancelled" else ("↩️", "Order refunded"),
+                   progress="❌ Cancelled" if s == "cancelled" else "↩️ Refunded", legend="")
+        return out
+
+    stage = _PROGRESS_STAGE.get(s, 0)
+    if p in ("paid", "confirmed"):
+        stage = max(stage, 1)                       # paid pulls a still-"pending" order to Confirmed, never beyond
+    last = len(labels) - 1
+    marks = []
+    for i in range(len(labels)):
+        if stage >= last or i < stage:
+            marks.append("✅")
+        elif i == stage:
+            marks.append("🔵")
+        else:
+            marks.append("⬜")
+    out["stage"] = stage
+    out["progress"] = " ".join(marks) + "  " + labels[stage]
+    if stage in _PROGRESS_ETA:
+        out["eta"] = _PROGRESS_ETA[stage]
+
+    if s == "out_for_delivery":
+        header = ("🛵", "Out for delivery — on the way!")
+    elif s in ("delivered", "completed"):
+        header = (("🎉", "Collected — thank you!") if kind == "pickup" else
+                  ("📦", "Delivered — thank you!") if kind == "delivery" else
+                  ("✅", "Completed — thank you!") if kind == "service" else ("🎉", "Order completed"))
+    elif s == "ready":
+        header = (("🎉", "Ready for pickup!") if kind == "pickup" else
+                  ("📦", "Ready — it will go out for delivery soon") if kind == "delivery" else
+                  ("🎉", "Ready for you!") if kind == "service" else ("🎉", "Your order is ready!"))
+    elif s == "preparing":
+        header = (("🛠️", "Getting everything ready for you") if flavor == "service" else
+                  ("📦", "Your order is being packed") if flavor == "retail" else ("👨‍🍳", "Your order is being prepared"))
+    elif s in ("confirmed", "paid") or stage >= 1:
+        header = ("✅", "Order confirmed")
+    else:
+        header = ("🕐", "Order received")
+    out["header"] = header
+    return out
+
+
 def _order_status_message(order_id: int, phone: str, business_id: int, currency_sym: str = "$", flavor: str = "food") -> str:
     """Look up an order and return a rich formatted status message."""
     try:
@@ -205,65 +292,32 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
         status         = order.get("status", "pending")
         payment_status = order.get("payment_status", "pending")
         total          = float(order.get("total_price") or 0)
-        created        = (order.get("created_at") or "")[:16].replace("T", " ")
-        # Currency: prefer whatever is stored on the order itself (set when
-        # the order was created), then fall back to the symbol passed in by
-        # the caller (the business's current setting).
+        biz = None
+        try:
+            import crud as _crud
+            biz = _crud.get_business_by_id(business_id)
+        except Exception as _bexc:                      # only the date/currency polish is lost
+            log.debug("order status: business lookup skipped: %s", type(_bexc).__name__)
+        from services.tz_display import format_order_datetime
+        created = format_order_datetime(order.get("created_at"), biz)
+        # Currency: the order's own symbol, then the caller's (business setting), then the business row.
         sym = order.get("currency_symbol") or currency_sym or "$"
+        total_text = _order_money({**order, "currency_symbol": sym}, biz, amount=total)
 
-        effective_key = payment_status if payment_status in _LIFECYCLE_ICONS else status
-        icon, label   = _LIFECYCLE_ICONS.get(
-            effective_key,
-            _LIFECYCLE_ICONS.get(status, ("📋", status.upper()))
-        )
-        # Apply flavor-specific wording override (e.g. "being packed" instead
-        # of "being prepared" for retail, "getting ready for you" for a
-        # salon/service business).
-        _flavor_overrides = _LIFECYCLE_OVERRIDES.get(flavor, {})
-        if effective_key in _flavor_overrides:
-            icon, label = _flavor_overrides[effective_key]
-        elif status in _flavor_overrides:
-            icon, label = _flavor_overrides[status]
-
-        pay_icon = "✅" if payment_status in ("paid", "confirmed") else "⏳"
-
-        s_lower = status.lower()
-        p_lower = payment_status.lower()
-
-        if s_lower == "cancelled":
-            progress  = "❌ Cancelled"
-            eta_line  = ""
-        else:
-            # Status usually drives the stage; payment_status can pull it
-            # forward (e.g. "paid" while status is still "pending") but never
-            # backward — a delivered order stays at stage 5 even if payment
-            # bookkeeping shows something odd.
-            stage_from_status  = _DOT_STAGE_INDEX.get(s_lower, 0)
-            stage_from_payment = _DOT_STAGE_INDEX.get(p_lower, 0)
-            stage = max(stage_from_status, stage_from_payment)
-            stage = min(stage, 5)
-
-            dots = "".join("✅ " if i < stage else ("⏳ " if i == stage else "⬜ ") for i in range(5))
-            progress = f"{dots.strip()}  {_DOT_STAGE_LABELS[stage]}"
-
-            eta = _DOT_ETA_HINTS.get(stage, "")
-            eta_line = f"\n⏱ Estimated: *{eta}*" if eta else ""
+        prog = build_order_progress(status, payment_status, order.get("fulfillment_method"), flavor)
+        icon, label = prog["header"]
+        pay_icon = prog["payment"][0]
+        progress = prog["progress"]
+        eta_line = f"\n⏱ Estimated: *{prog['eta']}*" if prog["eta"] else ""
+        legend_line = f"\n_{prog['legend']}_" if prog["legend"] else ""
+        s_lower = str(status).lower()
+        p_lower = str(payment_status).lower()
 
         agent_note = ""
         if p_lower == "awaiting_confirmation":
             agent_note = "\n🔍 _A team member is reviewing your payment proof._"
         elif p_lower in ("awaiting_payment", "pending") and s_lower == "pending":
             agent_note = "\n⏳ _Waiting for your payment._"
-
-        # Short legend so first-time customers know what the dots mean —
-        # omitted for cancelled orders since the dot bar itself is replaced
-        # by a single "❌ Cancelled" line in that case.
-        _legend_text = (
-            "Received → Verifying → Confirmed → Complete"
-            if flavor == "service" else
-            "Received → Verifying → Confirmed → Preparing → Complete"
-        )
-        legend_line = f"\n_{_legend_text}_" if s_lower != "cancelled" else ""
 
         _status_title  = "Booking Status" if flavor == "service" else "Order Status"
         _status_label  = "Booking " if flavor == "service" else "Order   "
@@ -273,7 +327,7 @@ def _order_status_message(order_id: int, phone: str, business_id: int, currency_
             f"{'─' * 26}\n"
             f"  {_status_label}: *{_ref_word}-{order_id}*\n"
             f"  Date    : {created}\n"
-            f"  Total   : *{sym}{total:.2f}*\n"
+            f"  Total   : *{total_text}*\n"
             f"{'─' * 26}\n"
             f"{icon} {label}\n"
             f"{pay_icon} Payment : *{_friendly_payment_status(payment_status)}*\n"
@@ -380,7 +434,7 @@ def _handle_paypal_paid_message(
         _next_step = "We'll see you at your appointment!" if is_service_business else "We're now preparing your order. You'll hear from us shortly! 🙌"
         return (
             f"✅ *PayPal Payment Confirmed!*\n\n"
-            f"Thank you! Your payment of *{details.get('currency', '')} {amount:.2f}* has been verified.\n\n"
+            f"Thank you! Your payment of *{_money(amount, currency=details.get('currency'))}* has been verified.\n\n"
             f"📦 {_ref_word} : *{reference}*\n"
             f"📍 Status: *CONFIRMED*\n\n"
             f"{_next_step}\n\n"
@@ -437,7 +491,7 @@ def _notify_business_new_order(
             f"🔔 *New Order Received!*\n\n"
             f"📦 {ref}\n"
             f"🛍️ {items_txt}\n"
-            f"💰 Total: *{currency_sym}{total:.2f}*\n"
+            f"💰 Total: *{_money(total, symbol=currency_sym)}*\n"
             f"📱 Customer: {customer_phone}\n\n"
             f"_Check your WaziBot dashboard for full details._"
         )
@@ -785,7 +839,7 @@ def _process_payment(
                 f"✅ *All set!*\n\n"
                 f"📦 {_ref_label}       : *{ref}*\n"
                 f"🗓️ Appointment : *{date_disp} at {time_disp}*\n"
-                f"💰 Total       : *{currency_sym}{total:.2f}*\n"
+                f"💰 Total       : *{_money(total, symbol=currency_sym)}*\n"
                 f"💵 Payment     : *Cash on arrival*\n\n"
                 f"We look forward to seeing you! 😊\n"
                 f"_Type *{ref.lower()}* anytime to check your status._"
@@ -797,7 +851,7 @@ def _process_payment(
         return (
             f"✅ *Booking confirmed!* (payment received)\n\n"
             f"📦 Booking : *{ref}*\n"
-            f"💰 Total   : *{currency_sym}{total:.2f}*\n"
+            f"💰 Total   : *{_money(total, symbol=currency_sym)}*\n"
             f"💵 Payment : *Cash on arrival*\n\n"
             f"😔 Unfortunately your chosen time was just taken by someone else.\n"
             f"Please reply with another day/time and we'll lock it in — "
@@ -808,7 +862,7 @@ def _process_payment(
         return (
             f"✅ *Order confirmed!*\n\n"
             f"📦 Order   : *{ref}*\n"
-            f"💰 Total   : *{currency_sym}{total:.2f}*\n"
+            f"💰 Total   : *{_money(total, symbol=currency_sym)}*\n"
             f"💵 Payment : *Cash on delivery/pickup*\n\n"
             f"{'─' * 28}\n"
             f"🚚 *How would you like to receive your order?*\n\n"

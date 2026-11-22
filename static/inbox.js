@@ -1528,7 +1528,7 @@ async function qaMarkPaid() {
   }
 
   const order = orders[0];
-  if (!confirm(`Mark ORDER-${order.id} ($${parseFloat(order.total_price||0).toFixed(2)}) as PAID?`)) return;
+  if (!confirm(`Mark ORDER-${order.id} (${order.currency_symbol || '$'}${parseFloat(order.total_price||0).toFixed(2)}) as PAID?`)) return;
 
   try {
     // Marking paid only ever confirms — it must never also fire a "please

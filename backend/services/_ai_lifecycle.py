@@ -15,6 +15,7 @@ Imported by ai.py. Do not import ai.py from here (circular import).
 """
 from __future__ import annotations
 
+from services.money import format_money as _money
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -174,10 +175,10 @@ def reprice_cart(business_id, cart, *, is_service=False, lookup=None):
 
 
 def price_change_message(res, old_total, currency_sym="$") -> str:
-    lines = [f"  • {n}: {currency_sym}{o:.2f} → {currency_sym}{c:.2f}" for n, o, c in res["changed"]]
+    lines = [f"  • {n}: {_money(o, symbol=currency_sym)} → {_money(c, symbol=currency_sym)}" for n, o, c in res["changed"]]
     new_total = cart_total(res["cart"])
     return ("💲 *Some prices changed since you added these items:*\n\n" + "\n".join(lines) +
-            f"\n\nYour total was {currency_sym}{old_total:.2f}; it is now *{currency_sym}{new_total:.2f}*.\n\n"
+            f"\n\nYour total was {_money(old_total, symbol=currency_sym)}; it is now *{_money(new_total, symbol=currency_sym)}*.\n\n"
             "Reply *yes* to continue at the new total, or *no* to go back to your cart.")
 
 
@@ -337,7 +338,7 @@ def fulfilment_line(order: dict) -> str:
             base += "\nIt is out for delivery now."
         return base
     if fm == "pickup":
-        return "🏪 Pickup: it is ready for collection." if status == "ready" else "🏪 Pickup: we'll tell you when it is ready to collect."
+        return "🏪 Pickup: it is ready for collection." if status == "ready" else "🏪 Pickup: not ready for collection yet."
     return ""
 
 
@@ -363,12 +364,19 @@ def order_status_reply(phone, business_id, text, currency_sym, flavor, status_me
     open_rows = [r for r in rows if str(r.get("status") or "pending").lower() not in _OPEN_EXCLUDED]
     if not order_id and len(open_rows) > 1:
         lines = []
+        try:
+            import crud as _crud
+            _biz = _crud.get_business_by_id(business_id)
+        except Exception as _bexc:
+            log.debug("order list: business lookup skipped: %s", type(_bexc).__name__)
+            _biz = None
+        from services.tz_display import format_order_datetime as _fmt_dt
         for r in open_rows[:5]:
             try:
-                amt = f"{currency_sym}{float(r.get('total_price') or 0):.2f}"
+                amt = f"{_money(float(r.get('total_price') or 0), symbol=currency_sym)}"
             except (TypeError, ValueError):
                 amt = ""
-            when = str(r.get("created_at") or "")[:10]
+            when = _fmt_dt(r.get("created_at"), _biz)[:10]
             lines.append(f"  • {word}-{r['id']}  —  {str(r.get('status') or 'pending').replace('_', ' ')}  {amt}  {when}".rstrip())
         return ("You have more than one order in progress:\n\n" + "\n".join(lines) +
                 f"\n\nWhich one would you like an update on? Reply with the number, e.g. *{word}-{open_rows[0]['id']}*.")

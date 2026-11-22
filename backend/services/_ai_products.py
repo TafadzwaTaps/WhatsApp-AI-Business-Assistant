@@ -5,6 +5,7 @@ cart formatters, and multi-item parsing.
 Imported by ai.py. Do not import ai.py from here (circular import).
 """
 
+from services.money import format_money as _money
 import re
 import logging
 from difflib import get_close_matches
@@ -174,9 +175,9 @@ def _format_cart(cart: list, currency_sym: str = "$", is_service: bool = False) 
     for i in cart:
         sub = i["qty"] * float(i["price"])
         total += sub
-        lines.append(f"  • {i['name']} ×{i['qty']}  —  {currency_sym}{sub:.2f}")
+        lines.append(f"  • {i['name']} ×{i['qty']}  —  {_money(sub, symbol=currency_sym)}")
     header = "📝 *Booking Summary:*\n" if is_service else "🛒 *Your Cart:*\n"
-    return header + "\n".join(lines) + f"\n\n💰 *Total: {currency_sym}{total:.2f}*"
+    return header + "\n".join(lines) + f"\n\n💰 *Total: {_money(total, symbol=currency_sym)}*"
 
 
 def _build_confirm_prompt(cart: list, currency_sym: str = "$", is_service: bool = False) -> str:

@@ -29,7 +29,7 @@ PURPOSES = {
     "order_update": "utility", "booking_reminder": "utility", "payment_reminder": "utility",
     "cart_recovery": "marketing", "reengagement": "marketing", "campaign": "marketing",
 }
-CONTEXT_KEYS = {"customer_name", "business_name", "order_id", "amount", "date", "time", "service", "link"}
+CONTEXT_KEYS = {"customer_name", "business_name", "order_id", "amount", "date", "time", "service", "link", "status"}
 STATUSES = {"pending", "approved", "rejected", "paused", "disabled"}
 
 _RATE_CODES = {130429, 131056, 80007}
@@ -205,7 +205,7 @@ def classify_error(err: dict | None) -> str:
 
 
 def send_template(business_id: int, phone: str, purpose: str, context: dict, *, ref: str,
-                  business: dict | None = None, sender=None, sent_in_run: int = 0, cap: int | None = None) -> dict:
+                  business: dict | None = None, sender=None, sent_in_run: int = 0, cap: int | None = None, strict_ledger: bool = False) -> dict:
     """Send the approved template for `purpose` to `phone`.
 
     Returns {'ok': True, 'id': ...} or {'ok': False, 'skipped': 'no_template'|'no_consent'|'opted_out'|'duplicate'|
@@ -226,7 +226,16 @@ def send_template(business_id: int, phone: str, purpose: str, context: dict, *, 
     from crud import notification_ledger as ledger
     digits = re.sub(r"\D", "", str(phone))
     period = f"{purpose}:{ref}:{digits}"
-    if not ledger.claim(business_id, "wa_template", period):
+    try:
+        if strict_ledger:
+            # durable, cross-process, fail-closed: only the notification_log table counts (never the features_json
+            # marker, which is correct for one worker only). Used by customer order updates.
+            claimed = ledger.claim(business_id, "wa_template", period, table_only=True, strict=True)
+        else:
+            claimed = ledger.claim(business_id, "wa_template", period)
+    except ledger.LedgerUnavailable:
+        return {"ok": False, "skipped": "ledger_unavailable"}
+    if not claimed:
         return {"ok": False, "skipped": "duplicate"}
     try:
         result = (sender or _default_send)(business, build_payload(phone, tpl, context))

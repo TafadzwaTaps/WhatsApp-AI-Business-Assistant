@@ -171,7 +171,7 @@ def test_manual_confirm_already_paid_still_advances_the_status_without_renotifyi
 
     class Req:
         async def json(self):
-            return {"order_id": 9, "reference": "ORDER-9", "amount": 5}
+            return {"order_id": 9, "reference": "ORDER-9"}
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1, "customer_phone": "2637"})
     monkeypatch.setattr(cr.crud, "claim_order_paid", lambda *a: False)         # already paid
     monkeypatch.setattr(ol, "update_order_status_supabase", lambda *a, **k: calls.append((a, k)) or {})
@@ -190,7 +190,7 @@ def test_manual_confirm_already_paid_survives_a_rejected_status_change(monkeypat
 
     class Req:
         async def json(self):
-            return {"order_id": 9, "reference": "ORDER-9", "amount": 5}
+            return {"order_id": 9, "reference": "ORDER-9"}
     monkeypatch.setattr(ol, "get_order", lambda oid: {"id": 9, "business_id": 1})
     monkeypatch.setattr(cr.crud, "claim_order_paid", lambda *a: False)
 

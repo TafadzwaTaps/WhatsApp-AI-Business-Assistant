@@ -1258,6 +1258,16 @@ def update_order_status_api(order_id: int, data: OrderStatusUpdate, user=Depends
     resp = {"message": "Status updated", "order_id": order_id, "status": order["status"]}
     if order.get("_stock_restore") is not None:        # set only when this call cancelled the order
         resp["stock"] = order["_stock_restore"]
+    # Tell the customer, once, when the status genuinely changed. Never affects the update itself.
+    if order.get("_transitioned"):
+        try:
+            from services.order_notifications import notify_order_status
+            note = notify_order_status({**existing, **{k: v for k, v in order.items() if not str(k).startswith("_")}},
+                                       order["status"], source="dashboard")
+            resp["notification"] = {"outcome": note["outcome"], "reason": note["reason"], "customer_notified": note["notified"],
+                                    "stage": note.get("stage")}
+        except Exception as exc:
+            log.warning("order status notification skipped: %s", type(exc).__name__)
     return resp
 
 

@@ -12,6 +12,8 @@ from fastapi import APIRouter, Request, HTTPException, Depends, Query
 from pydantic import BaseModel, validator
 
 import crud
+from services.order_money import order_amount_text as _order_amount
+from services.money import format_money as _money
 from core.auth import require_business, get_current_user
 from core.crypto import TokenDecryptionError
 
@@ -316,6 +318,12 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     biz_name   = biz.get("name", "") if biz else ""
     agent_name = user.get("username", "Agent")
 
+    # Already paused (a repeated click, an Undo toast, two agents)? Update the details but do not message the
+    # customer again. "None" (state unreadable) is treated as "do not message" too.
+    from services._ai_state import is_in_human_handoff as _is_paused
+    from workflows.human_handoff import handoff_notice_seen_recently as _notice_recent
+    _already_paused = _is_paused(phone, actual_bid) is not False or _notice_recent(phone, actual_bid)
+
     _set_human_handoff(phone, actual_bid)
 
     # Generate a support ticket number for this handoff
@@ -330,6 +338,7 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
         from services._ai_state import _write_state_data
         _write_state_data(phone, actual_bid, {
             "state": "human_handoff",
+            "handoff_notice_at": time.time(),
             "session": {"agent_initiated": True, "agent_name": agent_name,
                          "ticket": ticket, "handoff_reason": "Agent took over"},
         })
@@ -342,8 +351,10 @@ async def handoff_request(customer_id: int, user=Depends(require_business)):
     try:
         token    = crud.get_decrypted_token(biz) if biz else ""
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
-        ack_msg  = handoff_acknowledgement(biz_name, ticket=ticket, reason="Agent took over")
-        if token and phone_id:
+        ack_msg  = handoff_acknowledgement(biz_name, ticket=ticket, reason="Agent took over", agent_initiated=True)
+        if _already_paused:
+            pass
+        elif token and phone_id:
             send_whatsapp(phone_id, token, phone, ack_msg)
         elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
             send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, ack_msg)
@@ -398,6 +409,12 @@ async def handoff_request_with_reason(
     biz_name   = biz.get("name", "") if biz else ""
     agent_name = user.get("username", "Agent")
 
+    # Already paused (a repeated click, an Undo toast, two agents)? Update the details but do not message the
+    # customer again. "None" (state unreadable) is treated as "do not message" too.
+    from services._ai_state import is_in_human_handoff as _is_paused
+    from workflows.human_handoff import handoff_notice_seen_recently as _notice_recent
+    _already_paused = _is_paused(phone, actual_bid) is not False or _notice_recent(phone, actual_bid)
+
     _set_human_handoff(phone, actual_bid)
 
     # Generate a support ticket number for this handoff
@@ -411,6 +428,7 @@ async def handoff_request_with_reason(
     try:
         _write_state_data(phone, actual_bid, {
             "state": "human_handoff",
+            "handoff_notice_at": time.time(),
             "session": {
                 "handoff_reason":   body.reason or "",
                 "handoff_priority": body.priority or "normal",
@@ -428,8 +446,10 @@ async def handoff_request_with_reason(
     try:
         token    = crud.get_decrypted_token(biz) if biz else ""
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
-        ack_msg  = handoff_acknowledgement(biz_name, ticket=ticket, reason=reason_label)
-        if token and phone_id:
+        ack_msg  = handoff_acknowledgement(biz_name, ticket=ticket, reason=reason_label, agent_initiated=True)
+        if _already_paused:
+            pass
+        elif token and phone_id:
             send_whatsapp(phone_id, token, phone, ack_msg)
         elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
             send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, ack_msg)
@@ -473,6 +493,9 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
     biz        = crud.get_business_by_id(actual_bid)
     biz_name   = biz.get("name", "") if biz else ""
 
+    from services._ai_state import is_in_human_handoff as _is_paused
+    _was_paused = _is_paused(phone, actual_bid) is True       # only a real pause is announced as "resumed"
+
     _reset_state(phone, actual_bid)
     clear_handoff_flag(phone, actual_bid)
 
@@ -480,7 +503,9 @@ async def handoff_release(customer_id: int, user=Depends(require_business)):
         token    = crud.get_decrypted_token(biz) if biz else ""
         phone_id = biz.get("whatsapp_phone_id", "") if biz else ""
         # Shared number fallback: business has no dedicated phone_id
-        if token and phone_id:
+        if not _was_paused:
+            pass
+        elif token and phone_id:
             send_whatsapp(phone_id, token, phone, ai_resumed_message(biz_name))
         elif SHARED_WA_TOKEN and SHARED_PHONE_NUMBER_ID:
             send_whatsapp(SHARED_PHONE_NUMBER_ID, SHARED_WA_TOKEN, phone, ai_resumed_message(biz_name))
@@ -711,7 +736,7 @@ async def paypal_success(
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
         await _notify_customer_payment(order,
             f"✅ *PayPal Payment Confirmed!*\n\nThank you! Payment for *{ref}* is complete.\n\n"
-            f"💰 Amount: {capture.get('currency', '')} {float(capture['amount']):.2f}\n📦 Your order is being prepared. 🙏"
+            f"💰 Amount: {_money(float(capture['amount']), currency=capture.get('currency'))}\n📦 Your order is being prepared. 🙏"
         )
         return {"status": "ok", "paid": True, "reference": ref,
                 "amount": capture["amount"], "message": "Payment confirmed!"}
@@ -846,7 +871,7 @@ async def paypal_webhook(request: Request):
                 except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
             await _notify_customer_payment(order,
-                f"✅ *Payment Received!*\n\nYour PayPal payment of *{paid_currency} {paid_amount:.2f}* has been confirmed.\n\n"
+                f"✅ *Payment Received!*\n\nYour PayPal payment of *{_money(paid_amount, currency=paid_currency)}* has been confirmed.\n\n"
                 f"📦 Order : *{ref}*\n📍 Status: *CONFIRMED*\n\nWe're preparing your order! 🙌\n\n_Thank you!_ 🙏"
             )
             return {"status": "ok", "order_id": order_id, "paid": True}
@@ -949,16 +974,35 @@ async def paypal_webhook(request: Request):
 async def manual_payment_confirm(request: Request, user=Depends(require_business)):
     from workflows.order_lifecycle import get_order, update_order_status_supabase
     body      = await request.json()
-    order_id  = int(body.get("order_id", 0))
-    reference = body.get("reference", f"ORDER-{order_id}")
-    amount    = float(body.get("amount", 0))
+    try:
+        order_id = int(body.get("order_id", 0))
+        amount   = float(body.get("amount") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "order_id and amount must be numbers")
     if not order_id: raise HTTPException(400, "order_id is required")
+    # The reference is free text typed by the dashboard: control characters stripped, length capped.
+    reference = "".join(ch for ch in str(body.get("reference") or f"ORDER-{order_id}") if ch.isprintable()).strip()[:80] \
+        or f"ORDER-{order_id}"
     order = get_order(order_id)
     if not order: raise HTTPException(404, f"Order {order_id} not found")
     if order.get("business_id") != user["business_id"]: raise HTTPException(403, "Access denied")
     if crud.payment_blocked(order):
         raise HTTPException(409, f"Order {order_id} is {order.get('status') or order.get('payment_status')} "
                                  "and cannot be marked as paid")
+    # Amount and currency come from the STORED order, never from the dashboard. A dashboard that still sends
+    # them (the inbox does) is only cross-checked: partial payments are not supported, so a different figure
+    # means the dashboard is looking at a stale or wrong order and is refused rather than recorded.
+    _stored_total = float(order.get("total_price") or 0)
+    if amount > 0 and abs(amount - _stored_total) > 0.005:
+        raise HTTPException(409, "The amount does not match this order's total. Partial payments cannot be "
+                                 "recorded here; refresh the order and try again.")
+    _sent_cur = str(body.get("currency") or "").strip().upper()
+    if _sent_cur:
+        from services.money import resolve_order_currency
+        _stored_cur = str(resolve_order_currency(order, crud.get_business_by_id(user["business_id"]))[0] or "").upper()
+        if _stored_cur and _sent_cur != _stored_cur:
+            raise HTTPException(409, "The currency does not match this order. Refresh the order and try again.")
+    amount = 0.0     # customer text always shows the stored total in the order's own currency
     # Atomic "mark paid once", like the PayPal and payment-webhook paths: a double click (or a
     # retried request) must not re-run the side effects or notify the customer twice.
     try:
@@ -984,7 +1028,7 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
         log.debug("memory sync on manual confirm: %s", _me)
     await _notify_customer_payment(order,
         f"✅ *Payment Confirmed!*\n\nYour payment for *{reference}* has been manually verified.\n\n"
-        f"💰 Amount: ${amount:.2f}\n📦 Your order is confirmed. Thank you! 🙏"
+        f"💰 Amount: {_order_amount(order, amount if amount > 0 else None)}\n📦 Your order is confirmed. Thank you! 🙏"
     )
     return {"ok": True, "order_id": order_id, "reference": reference,
             "message": "Payment confirmed and customer notified."}

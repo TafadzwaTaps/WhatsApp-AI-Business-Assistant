@@ -38,9 +38,9 @@ def run_reference(text: str) -> str:
 
 
 def template_for_closed_window(business, business_id: int, phone: str, purpose: str, context: dict, ref: str,
-                               sent_in_run: int = 0, sender=None) -> dict:
+                               sent_in_run: int = 0, sender=None, strict_ledger: bool = False) -> dict:
     """The recipient's window is closed: send the approved template for `purpose` if there is one.
     Returns send_template's result; {'ok': False, 'skipped': 'no_template'} means "nothing could be sent"."""
     from services import wa_templates
     return wa_templates.send_template(business_id, phone, purpose, context, ref=ref, business=business,
-                                      sent_in_run=sent_in_run, sender=sender)
+                                      sent_in_run=sent_in_run, sender=sender, strict_ledger=strict_ledger)
