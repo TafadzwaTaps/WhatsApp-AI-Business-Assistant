@@ -740,6 +740,16 @@ def _generate_reply_core(
     # ══════════════════════════════════════════════════════════════════════════
     # P-1 — SURVEY STATE
     # ══════════════════════════════════════════════════════════════════════════
+    # Phase 8 (F-4): a customer who answers the survey with a real request ("cancel my order", "refund", "where is
+    # my order", "cancel my booking") must be served, not thanked for a "suggestion". The survey is dropped and
+    # the message continues down the normal priority chain. A rating or ordinary chat is handled as before.
+    if current_state == "survey" and not _is_survey_response(text):
+        from services import _ai_lifecycle as _lc_survey
+        if (_lc_survey.is_cancel_order_request(text) or _is_refund_request(text)
+                or _is_order_status_inquiry(text) or _is_cancel_booking(text)):
+            _reset_state(phone, business_id)
+            current_state = "browsing"
+
     if current_state == "survey":
         if _is_survey_response(text):
             rating = _parse_survey_rating(text)
@@ -808,7 +818,16 @@ def _generate_reply_core(
                    or not _lc.is_question_like(text)))
              or (current_state == "browsing" and _lc.is_yes_cancel(text)))
     )
-    if _is_cancel(text) or _cancel_phrase:
+    # Phase 8 (F-3): "cancel my booking/appointment" on a service business is a BOOKING cancellation. It must reach
+    # the booking handler (it used to be swallowed here: "Nothing to cancel right now", booking left active).
+    # The handler itself ignores questions/negations. Not while an order/payment is in flight (there "cancel"
+    # keeps meaning the order).
+    _booking_cancel = (
+        _is_service_biz and _is_cancel_booking(text)
+        and current_state not in ("checkout", "confirm_order", "price_changed_confirm",
+                                  "awaiting_payment", "awaiting_proof")
+    )
+    if (_is_cancel(text) or _cancel_phrase) and not _booking_cancel:
         if current_state == "browsing":
             t_lower      = text.lower()
             order_ref_id = _extract_order_id(text)
@@ -1921,7 +1940,9 @@ def _generate_reply_core(
         # message — checking these first is what makes that work, rather
         # than an actual cancel/reschedule request silently being answered
         # with a bookings list instead.
-        if _is_cancel_booking(text):
+        # Phase 8: a question or negation ("how do I cancel my booking?", "don't cancel my booking") is not an
+        # instruction: it must never cancel anything (it falls through to the bookings list / normal handling).
+        if _is_cancel_booking(text) and not _lc.is_question_like(text) and not _lc._NEGATION_RE.search(text[:120]):
             bookings = get_bookings_for_customer(business_id, phone)
             active   = [b for b in bookings if b.get("status") in ("confirmed","pending","rescheduled")]
             if not active:
