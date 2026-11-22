@@ -1160,11 +1160,20 @@ async def payment_webhook(data: PaymentConfirmRequest, request: Request):
         return {"success": True, "message": f"Order {order_id} already paid.", "order_id": order_id}
 
     biz_id = order.get("business_id")
+    if crud.payment_blocked(order):
+        # Cancelled/refunded: never marked paid and never "confirmed" to the customer. The owner is told so
+        # the money can be returned. 200 so the provider does not keep retrying.
+        crud.alert_owner_payment_on_closed_order(order, "payment_webhook")
+        return {"success": False, "order_id": order_id, "message": f"Order {order_id} is closed; manual review needed."}
     try:
         _claimed = crud.claim_order_paid(order_id, biz_id, {"payment_reference": reference})
     except Exception:
         raise HTTPException(503, "Temporary error - please retry")   # provider re-delivers
     if not _claimed:
+        _now_order = get_order(order_id) or order
+        if crud.payment_blocked(_now_order):
+            crud.alert_owner_payment_on_closed_order(_now_order, "payment_webhook")
+            return {"success": False, "order_id": order_id, "message": f"Order {order_id} is closed; manual review needed."}
         return {"success": True, "message": f"Order {order_id} already paid.", "order_id": order_id}
     try:
         update_order_status_supabase(order_id, "paid", business_id=biz_id)

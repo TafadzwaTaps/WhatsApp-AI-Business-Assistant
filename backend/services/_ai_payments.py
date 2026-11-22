@@ -345,6 +345,9 @@ def _handle_paypal_paid_message(
             _verified = bool(_order and _order.get("business_id") == business_id)
             if _verified and _order.get("payment_status") == "refunded":
                 _verified = False                    # a refunded order is never re-confirmed as paid
+            if _verified and crud.payment_blocked(_order):
+                crud.alert_owner_payment_on_closed_order(_order, "customer_paid_message")
+                _verified = False                    # a cancelled order is never confirmed as paid
             if _verified:
                 _internal = details.get("internal_order_id")
                 if _internal is not None and int(_internal) != int(order_id):
