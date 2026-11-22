@@ -312,3 +312,102 @@ def test_referral_share_platforms_are_wired(platform):
 def test_existing_referral_buttons_are_still_there():
     for needle in ("shareRefWhatsApp()", "copyRef('code')", "copyRef('link')", "copyRefMessage()", "submitReferralWithdrawal()"):
         assert needle in HTML
+
+
+# ── Stripe Connect: a saved account id that this platform cannot use (seen in production logs) ──
+STALE_TEXT = "You requested an account link for an account that is not connected to your platform or does not exist."
+
+
+class _StaleStripe(_FakeStripe):
+    def __init__(self, link_error_for=None, create_error=None):
+        super().__init__()
+        self.link_error_for, self.create_error, self.n = set(link_error_for or ()), create_error, 0
+        outer = self
+        base_create = self.Account.create
+
+        class Account:
+            @staticmethod
+            def create(**kw):
+                if outer.create_error:
+                    raise outer.create_error
+                outer.n += 1
+                outer.created.append(kw)
+                return {"id": f"acct_new{outer.n}"}
+
+            @staticmethod
+            def modify(aid, **kw):
+                raise type("PermissionError", (Exception,), {})("platform_account_required")
+
+        class AccountLink:
+            @staticmethod
+            def create(**kw):
+                if kw["account"] in outer.link_error_for:
+                    raise type("InvalidRequestError", (Exception,), {})(STALE_TEXT)
+                outer.links.append(kw)
+                return {"url": "https://connect.stripe.com/setup/" + kw["account"]}
+        self.Account, self.AccountLink = Account, AccountLink
+
+
+@pytest.fixture
+def stale(monkeypatch):
+    import core.db as coredb
+    db = {"id": "acct_old", "updates": []}
+
+    class Q:
+        def select(self, *a): return self
+        def eq(self, *a): return self
+        def limit(self, *a): return self
+        def update(self, row): db["updates"].append(row); return self
+        def execute(self): return types.SimpleNamespace(data=[{"stripe_account_id": db["id"]}])
+    monkeypatch.setattr(coredb, "supabase", types.SimpleNamespace(table=lambda n: Q()))
+    monkeypatch.setenv("WAZIBOT_URL", "https://example.test")
+    return db
+
+
+def test_a_saved_account_this_platform_cannot_use_is_replaced(stale, monkeypatch):
+    fake = _StaleStripe(link_error_for={"acct_old"})
+    monkeypatch.setattr(ss, "_stripe", lambda: fake)
+    out = ss.create_connect_account(3, "Flavoury Foods", "owner@example.com")
+    assert out["account_id"] == "acct_new1" and out["url"].endswith("acct_new1")
+    assert stale["updates"] == [{"stripe_account_id": "acct_new1"}]
+
+
+def test_the_saved_account_is_kept_when_a_new_one_cannot_be_created(stale, monkeypatch):
+    # Platform without Connect: creating fails, so the old id must not be overwritten.
+    fake = _StaleStripe(link_error_for={"acct_old"},
+                        create_error=type("InvalidRequestError", (Exception,), {})("You can only create new accounts if you've signed up for Connect"))
+    monkeypatch.setattr(ss, "_stripe", lambda: fake)
+    out = ss.create_connect_account(3, "Shop", "owner@example.com")
+    assert "Connect is not enabled" in out["error"] and stale["updates"] == []
+
+
+def test_an_unrelated_link_error_does_not_replace_the_saved_account(stale, monkeypatch):
+    fake = _StaleStripe()
+    monkeypatch.setattr(ss, "_stripe", lambda: fake)
+
+    def boom(**kw):
+        raise type("APIConnectionError", (Exception,), {})("network")
+    fake.AccountLink.create = staticmethod(boom)
+    out = ss.create_connect_account(3, "Shop", "owner@example.com")
+    assert "Could not reach Stripe" in out["error"] and fake.created == [] and stale["updates"] == []
+
+
+def test_a_healthy_saved_account_is_reused(stale, monkeypatch):
+    fake = _StaleStripe()
+    monkeypatch.setattr(ss, "_stripe", lambda: fake)
+    out = ss.create_connect_account(3, "Shop", "owner@example.com")
+    assert out["account_id"] == "acct_old" and fake.created == []
+
+
+def test_platform_account_required_is_reported_as_connect_not_enabled():
+    exc = type("PermissionError", (Exception,), {"code": "platform_account_required"})(
+        "Only Stripe Connect platforms can work with other accounts.")
+    assert "Connect is not enabled" in ss._connect_error_message(exc)
+
+
+def test_a_brand_new_account_is_never_replaced_again_in_the_same_call(stale, monkeypatch):
+    stale["id"] = None
+    fake = _StaleStripe(link_error_for={"acct_new1"})
+    monkeypatch.setattr(ss, "_stripe", lambda: fake)
+    out = ss.create_connect_account(3, "Shop", "owner@example.com")
+    assert "error" in out and len(fake.created) == 1
