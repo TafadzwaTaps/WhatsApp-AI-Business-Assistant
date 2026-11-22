@@ -166,14 +166,59 @@ def update_order_payment(order_id: int, business_id: int, data: dict) -> Optiona
         return None
 
 
+_CLOSED_STATES = ("cancelled", "refunded")
+
+
+def payment_blocked(order: Optional[dict]) -> bool:
+    """True when an order was cancelled or refunded: no payment may be marked against it. A payment that
+    arrives for such an order is a MANUAL REVIEW case (see alert_owner_payment_on_closed_order)."""
+    if not order:
+        return False
+    return (str(order.get("payment_status") or "").lower() in _CLOSED_STATES
+            or str(order.get("status") or "").lower() in _CLOSED_STATES)
+
+
+def alert_owner_payment_on_closed_order(order: dict, source: str) -> None:
+    """A payment event arrived for a cancelled/refunded order. Nothing is marked paid and the customer is not
+    told 'confirmed'. The owner is told on WhatsApp (best effort) so the money can be refunded or the order
+    re-created. Never raises."""
+    try:
+        biz_id = order.get("business_id")
+        oid = order.get("id", "?")
+        log.error("PAYMENT ON CLOSED ORDER order=%s biz=%s source=%s status=%s payment_status=%s: MANUAL REVIEW NEEDED",
+                  oid, biz_id, source, order.get("status"), order.get("payment_status"))
+        biz = supabase.table("businesses").select(
+            "contact_phone, whatsapp_phone_id, whatsapp_token"
+        ).eq("id", biz_id).limit(1).execute()
+        row = (biz.data or [{}])[0]
+        owner_phone = (row.get("contact_phone") or "").strip()
+        _sw = globals().get("send_whatsapp")
+        if not owner_phone or _sw is None:
+            return
+        phone_id = (row.get("whatsapp_phone_id") or "").strip()
+        token = (row.get("whatsapp_token") or "").strip()
+        if not phone_id or not token:
+            import os as _os
+            phone_id, token = _os.getenv("SHARED_PHONE_NUMBER_ID", ""), _os.getenv("SHARED_WA_TOKEN", "")
+        if not phone_id or not token:
+            return
+        _sw(phone_id, token, owner_phone,
+            f"⚠️ *Payment received for a cancelled order*\n\n"
+            f"Order: *ORDER-{oid}* (status: {order.get('status')})\n"
+            "A payment came in after this order was cancelled or refunded. It was NOT marked paid and the customer "
+            "was not told it was confirmed. Please check your payment provider and refund or re-create the order.")
+    except Exception as exc:
+        log.warning("alert_owner_payment_on_closed_order failed: %s", type(exc).__name__)
+
+
 def claim_order_paid(order_id: int, business_id: int, data: dict) -> bool:
     """Atomically move an order to paid. Returns True only for the caller that actually
     made the transition, so duplicate/concurrent payment notifications (provider retries,
     double-clicked return URLs) run their side effects - customer message, stock/memory
     sync - exactly once. Scoped by business_id like update_order_payment.
 
-    Returns False when the order is already paid, was REFUNDED (a refunded order must never be
-    flipped back to paid by a late event or a customer's "paid" message) or is not this
+    Returns False when the order is already paid, was REFUNDED or CANCELLED (such an order must never be
+    flipped to paid by a late event or a customer's "paid" message) or is not this
     business's. A database
     failure RAISES (it must never look like "already paid": the caller should answer
     with a retryable error so the payment provider re-delivers)."""
@@ -187,7 +232,7 @@ def claim_order_paid(order_id: int, business_id: int, data: dict) -> bool:
             .update(safe)
             .eq("id", order_id)
             .eq("business_id", business_id)
-            .or_("payment_status.is.null,and(payment_status.neq.paid,payment_status.neq.refunded)")
+            .or_("payment_status.is.null,and(payment_status.neq.paid,payment_status.neq.refunded,payment_status.neq.cancelled)")
             .execute()
         )
         return bool(res.data)

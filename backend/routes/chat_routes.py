@@ -647,6 +647,11 @@ async def paypal_success(
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
         if order.get("payment_status") == "refunded":
             return {"status": "error", "detail": "This order was refunded and can no longer be paid."}
+        if crud.payment_blocked(order):
+            # Cancelled: refuse BEFORE capturing, so the customer is never charged for it.
+            log.warning("paypal_success: order %s is cancelled - NOT captured", order_id)
+            return {"status": "error", "detail": "This order was cancelled and can no longer be paid. "
+                                                  "You have not been charged."}
 
         # 3) VALIDATE BEFORE CAPTURING: the PayPal order must belong to this order, in the currency
         #    and for the amount we asked for. Nothing has been charged yet, so a failure here costs
@@ -697,6 +702,12 @@ async def paypal_success(
         # A database error propagates to the handler below (generic "contact the business"
         # reply) instead of being reported as "already confirmed".
         if not crud.claim_order_paid(order_id, biz_id, {"payment_reference": ref, "paypal_order_id": token}):
+            _now_order = get_order(order_id) or order
+            if crud.payment_blocked(_now_order):
+                # Cancelled between the capture and the claim: money was taken for a closed order.
+                crud.alert_owner_payment_on_closed_order(_now_order, "paypal_return")
+                return {"status": "error", "detail": "Payment received but the order was cancelled. "
+                                                      "Please contact the business."}
             return {"status": "ok", "paid": True, "reference": ref, "message": "Already confirmed."}
         await _notify_customer_payment(order,
             f"✅ *PayPal Payment Confirmed!*\n\nThank you! Payment for *{ref}* is complete.\n\n"
@@ -805,6 +816,11 @@ async def paypal_webhook(request: Request):
                     return {"status": "ok", "detail": "duplicate_event"}
                 _ev_claimed = True
 
+            if crud.payment_blocked(order):
+                # Already captured by PayPal for an order the customer cancelled: do not mark it paid or
+                # confirm it. Tell the owner; the event counts as handled (a retry would change nothing).
+                crud.alert_owner_payment_on_closed_order(order, "paypal_webhook")
+                return {"status": "ok", "detail": "order_closed_manual_review"}
             try:
                 _claimed = crud.claim_order_paid(order_id, biz_id, {"payment_reference": ref, "paypal_order_id": paypal_order_id})
             except Exception:
@@ -814,6 +830,10 @@ async def paypal_webhook(request: Request):
                     _release_once(biz_id, "paypal_event", _event_id)
                 raise HTTPException(503, "Temporary error - please retry")
             if not _claimed:
+                _now_order = get_order(order_id) or order
+                if crud.payment_blocked(_now_order):
+                    crud.alert_owner_payment_on_closed_order(_now_order, "paypal_webhook")
+                    return {"status": "ok", "detail": "order_closed_manual_review"}
                 return {"status": "ok", "detail": "already_paid"}
             try: update_order_status_supabase(order_id, "paid", business_id=biz_id)
             except Exception as exc: log.warning("paypal_webhook: status update failed: %s", exc)
@@ -936,6 +956,9 @@ async def manual_payment_confirm(request: Request, user=Depends(require_business
     order = get_order(order_id)
     if not order: raise HTTPException(404, f"Order {order_id} not found")
     if order.get("business_id") != user["business_id"]: raise HTTPException(403, "Access denied")
+    if crud.payment_blocked(order):
+        raise HTTPException(409, f"Order {order_id} is {order.get('status') or order.get('payment_status')} "
+                                 "and cannot be marked as paid")
     # Atomic "mark paid once", like the PayPal and payment-webhook paths: a double click (or a
     # retried request) must not re-run the side effects or notify the customer twice.
     try:

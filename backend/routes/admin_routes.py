@@ -301,6 +301,9 @@ async def push_lifecycle_update(
     valid = {"preparing", "ready", "out_for_delivery", "delivered", "completed"}
     if new_status not in valid:
         raise HTTPException(422, f"Invalid status. Valid: {sorted(valid)}")
+    if crud.payment_blocked(order):
+        raise HTTPException(409, f"Order {order_id} is {order.get('status') or order.get('payment_status')}: "
+                                 "it cannot be moved forward or marked as paid")
 
     try: crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
     except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
@@ -398,6 +401,9 @@ async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depe
     order = get_order(order_id)
     if not order or order.get("business_id") != bid:
         raise HTTPException(404, f"Order {order_id} not found")
+    if crud.payment_blocked(order):
+        raise HTTPException(409, f"Order {order_id} is {order.get('status') or order.get('payment_status')} "
+                                 "and cannot be marked as paid")
 
     crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
     try: update_order_status_supabase(order_id, "confirmed", business_id=bid)
