@@ -133,13 +133,13 @@ def _ord(**kw):
 def test_success_accepts_a_matching_capture(monkeypatch):
     out, claims, notes = _success(monkeypatch, order=_ord(), capture=_cap())
     assert out["status"] == "ok" and len(claims) == 1 and len(notes) == 1
-    assert "USD 10.00" in notes[0]
+    assert "$10.00" in notes[0]
 
 
 def test_success_works_for_a_non_usd_business(monkeypatch):
     out, claims, notes = _success(monkeypatch, order=_ord(currency="EUR", total_price=25.0),
                                   capture=_cap(25.0, "EUR"))
-    assert out["status"] == "ok" and "EUR 25.00" in notes[0]
+    assert out["status"] == "ok" and "€25.00" in notes[0]
 
 
 @pytest.mark.parametrize("capture", [_cap(10.0, "EUR"), _cap(10.0, ""), _cap(9.5), _cap(10.5)])
@@ -335,7 +335,7 @@ def _details(**kw):
 
 def test_customer_paid_message_confirms_only_a_verified_payment(monkeypatch):
     out, claims = _paid_message(monkeypatch, _details())
-    assert "Confirmed" in out and len(claims) == 1 and "USD 10.00" in out
+    assert "Confirmed" in out and len(claims) == 1 and "$10.00" in out
 
 
 @pytest.mark.parametrize("bad", [

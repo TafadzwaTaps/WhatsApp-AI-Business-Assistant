@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 import crud
+from services.order_money import order_amount_text as _order_amount
 from core.auth import decode_token, require_business
 from core.crypto import TokenDecryptionError
 from services.ai import generate_reply
@@ -967,19 +968,21 @@ async def _handle_one_message(data: dict) -> dict:
     # STEP 7: Save outgoing
     out_msg: dict = {}
     try:
-        await run_in_threadpool(crud.log_message, business["id"], customer_phone, "out", reply)
-        out_msg = await run_in_threadpool(
-            crud.create_message,
-            customer["id"], business["id"], reply, "outgoing", sender_type="ai",
-        )
+        if reply:      # an empty reply (menu cards already sent, suppressed echo) is not stored as an empty message
+            await run_in_threadpool(crud.log_message, business["id"], customer_phone, "out", reply)
+            out_msg = await run_in_threadpool(
+                crud.create_message,
+                customer["id"], business["id"], reply, "outgoing", sender_type="ai",
+            )
     except Exception as exc:
         log.exception("💾 STEP 7 FAIL: %s", exc)
 
     try:
-        await manager.broadcast(business["id"], {
-            "event": "new_message", "customer_id": customer["id"],
-            "phone": customer_phone, "message": out_msg,
-        })
+        if out_msg:
+            await manager.broadcast(business["id"], {
+                "event": "new_message", "customer_id": customer["id"],
+                "phone": customer_phone, "message": out_msg,
+            })
     except Exception as _swallowed_exc:
         from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
 
@@ -1154,7 +1157,7 @@ async def payment_webhook(data: PaymentConfirmRequest, request: Request):
     order_total = float(order.get("total_price") or 0)
     if round(float(data.amount), 2) != round(order_total, 2):
         raise HTTPException(400,
-            f"Amount mismatch: expected ${order_total:.2f}, received ${data.amount:.2f}")
+            f"Amount mismatch: expected {_order_amount(order, order_total)}, received {_order_amount(order, data.amount)}")
 
     if order.get("payment_status") == "paid":
         return {"success": True, "message": f"Order {order_id} already paid.", "order_id": order_id}
@@ -1191,7 +1194,7 @@ async def payment_webhook(data: PaymentConfirmRequest, request: Request):
                     _sent = send_whatsapp(phone_id, token, phone,
                         f"✅ *Payment Confirmed!*\n\n"
                         f"Thank you! Your payment for *{reference}* has been verified.\n\n"
-                        f"💰 Amount: ${order_total:.2f}\n"
+                        f"💰 Amount: {_order_amount(order, order_total)}\n"
                         f"📦 Your order is now being prepared. Thank you! 🙏"
                     )
                     if isinstance(_sent, dict) and "error" in _sent:

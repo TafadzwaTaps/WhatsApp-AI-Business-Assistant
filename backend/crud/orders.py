@@ -8,6 +8,7 @@ import logging
 from typing import Optional
 
 from core.db import supabase
+from services.money import format_money as _money
 from crud._helpers import _now, _one, fetch_all
 from crud.products import get_product_price
 
@@ -397,7 +398,7 @@ def notify_owner_new_order(business_id: int, order: dict) -> None:
             f"👤 Customer: {customer}\n"
             f"🛍️ Items: {item_count}" +
             (f" ({first_item})" if first_item else "") +
-            f"\n💰 Total: *{(biz_row.get('currency_symbol') or '$').strip() or '$'}{total:.2f}*\n\n"
+            f"\n💰 Total: *{_money(total, symbol=(biz_row.get('currency_symbol') or '').strip() or None)}*\n\n"
             f"_Open your dashboard to manage this order._"
         )
 

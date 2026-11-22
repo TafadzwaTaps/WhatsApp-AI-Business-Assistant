@@ -29,6 +29,7 @@ from the existing payment_reminder scheduler — it's idempotent.
 from __future__ import annotations
 
 import logging
+from services.money import format_money as _money
 from core.wa_version import graph_url
 import os
 import time
@@ -79,7 +80,7 @@ def _build_recovery_message(business_name: str, cart_items: list, currency_sym: 
         price = float(item.get("price") or 0)
         sub   = qty * price
         total += sub
-        item_lines.append(f"  • {name} ×{qty} — {currency_sym}{sub:.2f}")
+        item_lines.append(f"  • {name} ×{qty} — {_money(sub, symbol=currency_sym)}")
 
     if len(cart_items) > 3:
         item_lines.append(f"  ...and {len(cart_items) - 3} more item(s)")
@@ -88,7 +89,7 @@ def _build_recovery_message(business_name: str, cart_items: list, currency_sym: 
     return (
         f"👋 Hey! You left something behind at *{business_name}*.\n\n"
         f"🛒 *Your cart is waiting:*\n{items_text}\n\n"
-        f"💰 *Total: {currency_sym}{total:.2f}*\n\n"
+        f"💰 *Total: {_money(total, symbol=currency_sym)}*\n\n"
         f"Ready to complete your order? Just type *checkout* to continue, "
         f"or *menu* to browse more. 😊\n\n"
         f"_This cart will be saved for you._"

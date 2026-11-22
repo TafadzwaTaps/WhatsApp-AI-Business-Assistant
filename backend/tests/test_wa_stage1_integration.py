@@ -277,7 +277,7 @@ def test_payment_reminder_uses_the_utility_template_even_without_marketing_conse
     wc.record(1, CLOSED, "opted_out", "customer_message")             # opted out of MARKETING: reminders are transactional
     out = pr.send_reminder(order, {"id": 1, "name": "Shop"}, 1)
     assert out["ok"] is True and out.get("sent_as_template") is True and free == []
-    assert [x["text"] for x in env[1][0]["template"]["components"][0]["parameters"]] == ["Shop", "ORDER-9", "$12.5"]
+    assert [x["text"] for x in env[1][0]["template"]["components"][0]["parameters"]] == ["Shop", "ORDER-9", "$12.50"]
     again = pr.send_reminder(order, {"id": 1, "name": "Shop"}, 1)      # same order and tier: never duplicated
     assert again["ok"] is False and len(env[1]) == 1
 

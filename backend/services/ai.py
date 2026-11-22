@@ -101,6 +101,10 @@ AI COST OPTIMIZATION (Phase 12)
   names, and a cost estimate computed from a fixed local pricing table.
 """
 
+from services.money import format_money as _money
+from services.order_notifications import updates_promise_line as _updates_promise_line
+
+_GREET_EVERY_SECONDS = 6 * 3600     # "Welcome back" at most once per visit (6h without a menu greeting)
 import re
 import time
 import logging
@@ -453,7 +457,7 @@ def _ask_cancel_confirm(phone, business_id, order, currency_sym, resume_state="b
                session={"order_id": order["id"], "resume_state": resume_state},
                pending_payment=resume_pending, pending_proof=resume_proof)
     try:
-        amount = f"💰 Amount: {currency_sym}{float(order.get('total_price') or 0):.2f}\n"
+        amount = f"💰 Amount: {_money(float(order.get('total_price') or 0), symbol=currency_sym)}\n"
     except (TypeError, ValueError):
         amount = ""
     return (
@@ -577,6 +581,11 @@ def _generate_reply_core(
 
     current_state = _get_state(phone, business_id)
     cart          = _load_cart(phone, business_id)
+    try:
+        from services.whatsapp_catalog import stable_product_order as _stable_order
+        products = _stable_order(products)       # same order every time: pages never skip or repeat items
+    except Exception as _so_exc:
+        log.debug("stable product order skipped: %s", type(_so_exc).__name__)
 
     log.info("state=%s  cart=%d", current_state, len(cart))
 
@@ -736,6 +745,33 @@ def _generate_reply_core(
     if _is_agent_message(text):
         log.info("agent message detected — suppressing reply  phone=%s", phone)
         return ""
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P-1.5 — "START <THIS BUSINESS>" (QR code / marketing link entry)
+    # ══════════════════════════════════════════════════════════════════════════
+    # The router already picked this business from the keyword; the text itself used to reach the fallback
+    # ("I'm not sure what you mean" + an old cart). It is an entry greeting: welcome, offer actions, and mention an
+    # existing cart in ONE line instead of printing it. Cart, state and consent are untouched.
+    from services._ai_intent import is_business_start
+    if current_state != "human_handoff" and is_business_start(text, business_name):
+        try:
+            _mem0 = _get_memory(phone, business_id) or {}
+        except Exception as _m0exc:
+            log.debug("start greeting: memory lookup skipped: %s", type(_m0exc).__name__)
+            _mem0 = {}
+        _cn0 = (_mem0.get("customer_name") or "").strip()
+        if _welcome_msg:
+            _hello = _welcome_msg.replace("{name}", _cn0) if (_cn0 and "{name}" in _welcome_msg) else _welcome_msg
+        else:
+            _hello = (f"👋 Welcome{(', *' + _cn0 + '*') if _cn0 else ''}! You're chatting with *{business_name}*.")
+        _n_items = sum(int(i.get("qty", 1) or 1) for i in (cart or []))
+        _cart_note = (f"\n\n🛒 You still have {_n_items} item{'s' if _n_items != 1 else ''} in your cart. "
+                      f"Type *cart* to review it.") if _n_items else ""
+        return (f"{_hello}\n\nWhat would you like to do?\n"
+                f"  📋 *menu* — see what we offer\n"
+                f"  🔍 *where is my order* — track an order\n"
+                f"  🙋 *talk to a person* — contact the team"
+                f"{_cart_note}")
 
     # ══════════════════════════════════════════════════════════════════════════
     # P-1 — SURVEY STATE
@@ -920,7 +956,7 @@ def _generate_reply_core(
                 issue=f"Customer is requesting a refund or disputing a payment on {ref}.",
                 ai_summary=(
                     f"Customer wants a refund or is disputing payment on {ref} "
-                    f"(amount {_currency_sym}{total:.2f}, payment status: {pay_status})."
+                    f"(amount {_money(total, symbol=_currency_sym)}, payment status: {pay_status})."
                 ),
                 currency_sym=_currency_sym,
             )
@@ -937,7 +973,9 @@ def _generate_reply_core(
     # A status question, not a refund or dispute (owner decision, Stage 4). Reads only THIS customer's orders.
     # Explicit refund / return / cancel / non-delivery wording was already handled above.
     # ══════════════════════════════════════════════════════════════════════════
-    if current_state in ("browsing", "awaiting_payment", "awaiting_proof") and _is_order_status_inquiry(text):
+    if current_state in ("browsing", "awaiting_payment", "awaiting_proof", "checkout", "confirm_order",
+                         "price_changed_confirm", "awaiting_fulfillment", "awaiting_address") \
+            and _is_order_status_inquiry(text):
         return _lc.order_status_reply(phone, business_id, text, _currency_sym, _biz_flavor,
                                       _order_status_message, order_id=_extract_order_id(text))
 
@@ -1421,6 +1459,7 @@ def _generate_reply_core(
 
             # Look up business address — show if present, hide gracefully if not
             address_line = ""
+            biz_row = None
             try:
                 biz_row = crud.get_business_by_id(business_id)
                 addr = (biz_row.get("address") or "").strip() if biz_row else ""
@@ -1434,8 +1473,7 @@ def _generate_reply_core(
                 f"📦 Order: *{reference}*\n\n"
                 f"⏱ *Estimated preparation time:*\n10–15 minutes\n"
                 f"{address_line}\n"
-                f"We'll notify you as soon as your order is ready. 😊\n\n"
-                f"_Any questions? Type *{reference.lower()}* to check status._"
+                f"{_updates_promise_line(biz_row)} 😊"
             )
 
         log.warning("awaiting_fulfillment: unrecognised reply  text_len=%d  order=%s", len(text), order_id)
@@ -1506,7 +1544,7 @@ def _generate_reply_core(
             log.warning("delivery address save failed: %s", exc)
 
         if new_total is not None:
-            fee_line = f"\n  Delivery fee : *+{_currency_sym}{delivery_fee:.2f}*\n  New total    : *{_currency_sym}{new_total:.2f}*\n"
+            fee_line = f"\n  Delivery fee : *+{_money(delivery_fee, symbol=_currency_sym)}*\n  New total    : *{_money(new_total, symbol=_currency_sym)}*\n"
 
         _reset_state(phone, business_id)
         return (
@@ -1613,7 +1651,7 @@ def _generate_reply_core(
                     f"{proof_display}\n"
                     f"📦 *{reference}* | 💳 {method_label}\n\n"
                     f"🔍 We're verifying your payment — usually *5–15 minutes*.\n\n"
-                    f"🏪 *Your order will be ready for pickup.* We'll let you know when it's ready!"
+                    f"🏪 *Your order will be ready for pickup.* {_updates_promise_line(crud.get_business_by_id(business_id))}"
                 )
             else:
                 # Delivery only (no pickup) — move straight to address
@@ -2477,7 +2515,7 @@ def _generate_reply_core(
             _write_state_data(phone, business_id, {"session": _existing_session})
 
             price_note = f" under {_currency_sym}{max_price:.0f}" if max_price is not None else ""
-            lines = [f"• *{p['name']}* — {_currency_sym}{float(p['price']):.2f}" for p in picks]
+            lines = [f"• *{p['name']}* — {_money(float(p['price']), symbol=_currency_sym)}" for p in picks]
             return (
                 f"Here's what I'd recommend{price_note} 😊\n\n" + "\n".join(lines) +
                 f"\n\n_Just tell me which one, e.g. \"{picks[0]['name']}\" or \"the cheaper one\"._"
@@ -2524,7 +2562,7 @@ def _generate_reply_core(
                     {"name": p["name"], "price": float(p["price"]), "id": p.get("id")} for p in picks
                 ]
                 _write_state_data(phone, business_id, {"session": _p69_session})
-                lines = [f"• *{p['name']}* — {_currency_sym}{float(p['price']):.2f}" for p in picks]
+                lines = [f"• *{p['name']}* — {_money(float(p['price']), symbol=_currency_sym)}" for p in picks]
                 return (
                     f"Great, here's what fits a {_currency_sym}{_budget:.0f} budget 😊\n\n" +
                     "\n".join(lines) +
@@ -2561,7 +2599,7 @@ def _generate_reply_core(
                 {"name": p["name"], "price": float(p["price"]), "id": p.get("id")} for p in cheaper
             ]
             _write_state_data(phone, business_id, {"session": _p69_session})
-            lines = [f"• *{p['name']}* — {_currency_sym}{float(p['price']):.2f}" for p in cheaper]
+            lines = [f"• *{p['name']}* — {_money(float(p['price']), symbol=_currency_sym)}" for p in cheaper]
             return (
                 "I understand 😊 I can show you some more affordable options.\n\n" +
                 "\n".join(lines) +
@@ -2665,7 +2703,7 @@ def _generate_reply_core(
                     )
                     return (
                         f"📸 Based on your photo, this looks similar to "
-                        f"*{_p13_match['name']}* — {_currency_sym}{float(_p13_match['price']):.2f}"
+                        f"*{_p13_match['name']}* — {_money(float(_p13_match['price']), symbol=_currency_sym)}"
                         f"{_p13_stock_note}.\n\n"
                         f"_Type the item name to add it to your cart, or *menu* to see more._"
                     )
@@ -2765,7 +2803,7 @@ def _generate_reply_core(
                         _pq_d = (_pq_match.get("description") or "").strip()
                         _pq_desc = f"\n_{_pq_d[:200]}_" if _pq_d else ""
                         return (
-                            f"💰 *{_pq_match['name']}* is {_currency_sym}{float(_pq_match['price']):.2f}"
+                            f"💰 *{_pq_match['name']}* is {_money(float(_pq_match['price']), symbol=_currency_sym)}"
                             f"{_pq_stock_note}.{_pq_desc}\n\n"
                             f"_Type the item name to add it to your cart._"
                         )
@@ -2776,7 +2814,7 @@ def _generate_reply_core(
                         )
                     return (
                         f"✅ Yes, we have *{_pq_match['name']}* — "
-                        f"{_currency_sym}{float(_pq_match['price']):.2f}.\n\n"
+                        f"{_money(float(_pq_match['price']), symbol=_currency_sym)}.\n\n"
                         f"_Type the item name to add it to your cart._"
                     )
                 # No product matched this question — do NOT claim "not
@@ -2788,6 +2826,34 @@ def _generate_reply_core(
                 # block existed. Only a REAL match short-circuits here.
         except Exception as exc:
             log.debug("P6.96 product price/availability question check failed (%s) — falling through", exc)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # P6.97 — EXPLICIT PRODUCT SEARCH ("search salmon", "find the omelette", "looking for beef")  (Phase 8, #8)
+    # Searches the WHOLE product list (not just the page on screen), says plainly when an item is sold out or low,
+    # and mentions it when the item is already in the customer's cart. Never changes the cart.
+    # ══════════════════════════════════════════════════════════════════════════
+    if intent == "order":
+        try:
+            _sq = re.match(r"^\s*(?:search|find|look\s*for|looking\s+for)\s+(?:for\s+)?(?:an?\s+|the\s+|some\s+)?(.+?)\s*[?!.]*$",
+                           text or "", re.IGNORECASE)
+            if _sq and len(_sq.group(1)) <= 60:
+                _sq_match = _find_product(_sq.group(1), products)
+                if not _sq_match:
+                    return (f"🔍 I couldn't find *{_sq.group(1)[:40]}*.\n\n"
+                            f"_Type *menu* to see everything we offer._")
+                _sq_stock = _resolve_stock(_sq_match, _is_service_biz)
+                _sq_price = _money(float(_sq_match.get("price") or 0), symbol=_currency_sym)
+                _sq_in_cart = sum(int(i.get("qty", 1) or 1) for i in (cart or [])
+                                  if str(i.get("name", "")).lower() == str(_sq_match.get("name", "")).lower())
+                _sq_cart = f"\n🛒 You already have {_sq_in_cart} in your cart." if _sq_in_cart else ""
+                if _sq_stock is not None and _sq_stock == 0:
+                    return (f"🔍 *{_sq_match['name']}* — {_sq_price}\n❌ Sold out right now.{_sq_cart}\n\n"
+                            f"_Type *menu* to see what's available._")
+                _sq_note = f"\n⚠️ Only {_sq_stock} left." if (_sq_stock is not None and _sq_stock <= 5) else "\n✅ Available."
+                return (f"🔍 *{_sq_match['name']}* — {_sq_price}{_sq_note}{_sq_cart}\n\n"
+                        f"_Type the item name to add it to your cart._")
+        except Exception as exc:
+            log.debug("P6.97 product search failed (%s) — falling through", exc)
 
     # ══════════════════════════════════════════════════════════════════════════
     # P7 — ADD TO CART (order parser → multi-item → single item)
@@ -3045,7 +3111,7 @@ def _generate_reply_core(
                     # Image sent directly via API — return short follow-up text
                     name = matched.get("name", target)
                     return (
-                        f"*{name}* — {_currency_sym}{float(matched.get('price', 0)):.2f}\n\n"
+                        f"*{name}* — {_money(float(matched.get('price', 0)), symbol=_currency_sym)}\n\n"
                         f"Type *{name.lower()}* to add to cart. 🛒"
                     )
                 except Exception as _exc:
@@ -3104,6 +3170,8 @@ def _generate_reply_core(
         fallback_text = result.get("fallback_text")
         if fallback_text:
             return fallback_text
+        if result.get("nav_included"):
+            return ""        # the single navigation line is the caption of the last card (keeps it in order)
         # Images were sent directly via API — return a short guide text
         section = _cat_filter.title() if _cat_filter else business_name
         more_hint = "\n_Type *more* to see more products._" if result.get("has_more") else ""
@@ -3129,6 +3197,18 @@ def _generate_reply_core(
             greeting = f"👋 Welcome back, *{cust_name}*! Great to see you again.\n\n"
         elif order_count >= 2:
             greeting = f"👋 Welcome back! You've ordered *{order_count} times* from us. 🙏\n\n"
+        # A menu request is about the menu: greet only at the start of a visit (first message, or after a long gap).
+        if greeting:
+            _sess_g = _get_session(phone, business_id) or {}
+            _now_g = time.time()
+            if _now_g - float(_sess_g.get("last_greeted_at", 0) or 0) < _GREET_EVERY_SECONDS:
+                greeting = ""
+            else:
+                try:
+                    _write_state_data(phone, business_id, {"state": current_state,
+                                                           "session": {**_sess_g, "last_greeted_at": _now_g}})
+                except Exception as _gexc:
+                    log.debug("greeting marker not saved: %s", type(_gexc).__name__)
 
         # ── Visual menu: send images when products have image_url ────────────
         try:
@@ -3142,6 +3222,16 @@ def _generate_reply_core(
                 result = send_catalog(_phone_number_id, _wa_token, phone, products, _currency_sym, page=0)
                 fallback = result.get("fallback_text")
                 if not fallback:
+                    # Remember that page 1 was shown so the next "more" shows page 2 (it used to repeat page 1).
+                    try:
+                        _sess_b = _get_session(phone, business_id) or {}
+                        _write_state_data(phone, business_id, {
+                            "state": current_state,
+                            "session": {**_sess_b, "catalog_page": result.get("next_page", 0) if result.get("has_more") else 0}})
+                    except Exception as _pexc:
+                        log.debug("catalog page not saved: %s", type(_pexc).__name__)
+                    if result.get("nav_included"):
+                        return ""    # navigation is the caption of the last card
                     hint = products[0]["name"] if products else "an item"
                     more = "\n_Type *more* to see more._" if result.get("has_more") else ""
                     return (
@@ -3157,11 +3247,13 @@ def _generate_reply_core(
         for i, p in enumerate(products):
             note = "  ♾️ _always available_" if _is_service_biz else ""
             s = _resolve_stock(p, _is_service_biz)
-            if s is not None and s <= 5:
+            if s is not None and s == 0:
+                note = "  ❌ _sold out_"
+            elif s is not None and s <= 5:
                 note = f"  ⚠️ _only {s} left_"
             _d = (p.get("description") or "").strip()
             _dl = f"\n      _{_d[:80]}{'…' if len(_d) > 80 else ''}_" if _d else ""
-            lines.append(f"  {i+1}. *{p['name']}* — {_currency_sym}{float(p['price']):.2f}{note}{_dl}")
+            lines.append(f"  {i+1}. *{p['name']}* — {_money(float(p['price']), symbol=_currency_sym)}{note}{_dl}")
 
         recs     = _recommend(phone, business_id, products)
         rec_text = ""
@@ -3239,7 +3331,7 @@ def _generate_reply_core(
             f"  🛒 *cart* — review what you've added\n"
             f"  ✅ *checkout* — place your {action_verb}\n"
             f"  ❌ *remove [item]* — remove from cart\n"
-            f"  🔍 *ORDER-9* — check an order status\n"
+            f"  🔍 *where is my order* — check an order\n"
             f"  🚫 *cancel* — cancel checkout at any time\n"
             f"  🔄 *repeat last order* — reorder quickly\n\n"
             f"{flavor_copy['closing']}"
@@ -3369,7 +3461,7 @@ def _generate_reply_core(
         f"  🛍️ Type a product name — {hint}\n"
         f"  🛒 *cart* — view your cart\n"
         f"  ✅ *checkout* — place your order\n"
-        f"  🔍 *ORDER-9* — check order status\n"
+        f"  🔍 *where is my order* — check order status\n"
         f"  🔄 *repeat last order* — reorder quickly\n"
         f"  🙋 *agent* — talk to a human\n\n"
         f"_Type *help* anytime to see this list again._"

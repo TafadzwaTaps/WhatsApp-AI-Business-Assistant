@@ -110,20 +110,32 @@ def is_handoff_request(text: str) -> bool:
 
 # ── Response messages ─────────────────────────────────────────────────────────
 
-def handoff_acknowledgement(business_name: str, ticket: str = "", reason: str = "") -> str:
+def handoff_acknowledgement(business_name: str, ticket: str = "", reason: str = "",
+                            agent_initiated: bool = False, eta: str = "") -> str:
     """
-    Message sent to the customer when they are handed off to a human agent.
-    If a ticket number / reason is provided, shows them as a support-ticket
-    style header — falls back to the original plain message if not provided
-    (e.g. older callers that don't pass these args still work unchanged).
+    Message sent to the customer when a conversation is handed to a human.
+
+    agent_initiated=True: the OWNER/agent paused the AI themselves (nobody asked for help), so the message does not
+    say the customer requested anything and shows no internal reason or ticket.
+    eta: a response-time estimate is only ever shown when the caller supplies a real one (there is no configured,
+    supported estimate today, so none is invented).
+    With a ticket / reason the support-ticket style header is used; older callers that pass neither get the plain
+    message.
     """
+    eta_block = f"Estimated Response Time:\n*{eta}*\n\n" if eta else ""
+    if agent_initiated:
+        return (
+            f"👋 A team member from *{business_name}* is joining this conversation to help you.\n\n"
+            f"{eta_block}"
+            f"_The automatic assistant is paused while they reply._"
+        )
     if ticket:
         reason_line = f"Reason:\n*{reason}*\n\n" if reason else ""
         return (
             f"🙋 *Connecting you to a human agent...*\n\n"
             f"{reason_line}"
             f"Ticket:\n*{ticket}*\n\n"
-            f"Estimated Response Time:\n*5–15 minutes*\n\n"
+            f"{eta_block}"
             f"_Your conversation has been transferred. "
             f"The AI assistant has been paused._\n\n"
             f"_If this is urgent, please call us directly._"
@@ -131,7 +143,7 @@ def handoff_acknowledgement(business_name: str, ticket: str = "", reason: str = 
     return (
         f"🙋 *Connecting you to our support team...*\n\n"
         f"A member of the *{business_name}* team will be with you shortly.\n\n"
-        f"⏱ Typical response time: *5–15 minutes* during business hours.\n\n"
+        + (f"⏱ Typical response time: *{eta}*.\n\n" if eta else "") +
         f"_Your conversation is now with a human agent. "
         f"The AI assistant has been paused._\n\n"
         f"_If this is urgent, please call us directly._"
@@ -145,6 +157,21 @@ def ai_resumed_message(business_name: str) -> str:
         f"You're now chatting with the *{business_name}* ordering assistant again.\n\n"
         f"Type *menu* to browse or *cart* to see your current order. 😊"
     )
+
+
+def handoff_notice_seen_recently(phone: str, business_id: int, within_seconds: int = 10) -> bool:
+    """True when this conversation's handoff state was written moments ago. Used so a quick Pause -> Undo -> Pause
+    sequence from the dashboard does not message the customer several times. Never raises."""
+    try:
+        from core.db import supabase
+        res = (supabase.table("carts").select("state_data").eq("phone", phone)
+               .eq("business_id", business_id).limit(1).execute())
+        sd = (res.data or [{}])[0].get("state_data") or {}
+        last = float(sd.get("handoff_notice_at") or 0)
+        return (time.time() - last) < within_seconds
+    except Exception as exc:
+        log.debug("handoff_notice_seen_recently: %s", type(exc).__name__)
+        return False
 
 
 def handoff_paused_reply() -> str:

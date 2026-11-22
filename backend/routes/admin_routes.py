@@ -20,6 +20,7 @@ from core.auth import (
 )
 from core.crypto import TokenDecryptionError
 from crud.admin_audit import log_admin_action
+from services.order_money import order_amount_text as _order_amount
 from workflows.order_lifecycle import (
     update_order_status_supabase, get_order,
     format_order_status, get_progress_bar, next_order_stage,
@@ -271,7 +272,7 @@ def admin_stats(_=Depends(require_superadmin)):
 # ── Order lifecycle ───────────────────────────────────────────────────────────
 
 _LIFECYCLE_MESSAGES = {
-    "preparing": "👨‍🍳 *Your order is being prepared!*\n\n📦 Order: *{ref}*\n\nWe're working on it now. Estimated: *{eta}*\n\n_We'll let you know when it's ready! 😊_",
+    "preparing": "👨‍🍳 *Your order is being prepared!*\n\n📦 Order: *{ref}*\n\nWe're working on it now. Estimated: *{eta}*\n\n_Ask *where is my order* any time to check progress. 😊_",
     "ready": "🎉 *Your order is ready!*\n\n📦 Order: *{ref}*\n\nReady for pickup or dispatch. 🙌",
     "out_for_delivery": "🛵 *Your order is on the way!*\n\n📦 Order: *{ref}*\n\n{eta}\n_Please be available to receive your order. 😊_",
     "delivered": "✅ *Order delivered!*\n\n📦 Order: *{ref}*\n\nThank you for ordering from *{biz}*! 🙏\n\n_Type *menu* to order again._",
@@ -305,14 +306,22 @@ async def push_lifecycle_update(
         raise HTTPException(409, f"Order {order_id} is {order.get('status') or order.get('payment_status')}: "
                                  "it cannot be moved forward or marked as paid")
 
-    try: crud.update_order_payment(order_id, bid, {"payment_status": "paid"})
-    except Exception as _swallowed_exc: from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
+    # Moving an order through fulfilment never changes its payment state: "paid" comes only from a verified
+    # payment (webhook / PayPal / Stripe) or an authorised manual confirmation (POST /orders/{id}/payment,
+    # /payments/manual/confirm, /orders/{id}/approve-payment).
 
-    status_map = {
-        "preparing": "confirmed", "ready": "confirmed",
-        "out_for_delivery": "confirmed", "delivered": "delivered", "completed": "delivered",
-    }
-    try: update_order_status_supabase(order_id, status_map.get(new_status, "confirmed"), business_id=bid)
+    # Store the REAL fulfilment state (preparing / ready / out_for_delivery / delivered / completed), the same as
+    # PUT /orders/{id}/status does, so the dashboard, customer tracking and notifications all agree. An order that
+    # has not been confirmed yet is confirmed first (exactly what the old flattening did), then moved on.
+    try:
+        try:
+            update_order_status_supabase(order_id, new_status, business_id=bid)
+        except ValueError:
+            if str(order.get("status") or "pending") in ("pending", "awaiting_payment", "payment_review"):
+                update_order_status_supabase(order_id, "confirmed", business_id=bid)
+                update_order_status_supabase(order_id, new_status, business_id=bid)
+            else:
+                raise
     except Exception as exc: log.warning("lifecycle: db update failed: %s", exc)
 
     ref      = f"ORDER-{order_id}"
@@ -330,17 +339,16 @@ async def push_lifecycle_update(
         customer_msg = template.format(ref=ref, biz=biz_name, eta=eta_text)
 
     phone     = order.get("customer_phone", "")
-    wa_result = {}
+    notified  = False
+    notif     = {"outcome": "skipped_no_phone", "reason": "no_phone", "notified": False}
     if phone:
         try:
-            biz_row  = crud.get_business_by_id(bid)
-            token    = crud.get_decrypted_token(biz_row) if biz_row else ""
-            phone_id = biz_row.get("whatsapp_phone_id", "") if biz_row else ""
-            if token and phone_id:
-                wa_result = send_whatsapp(phone_id, token, phone, customer_msg)
+            from services.order_notifications import notify_order_status
+            notif = notify_order_status(order, new_status, source="lifecycle", text_override=customer_msg,
+                                        sender=send_whatsapp)
+            notified = bool(notif.get("notified"))
         except Exception as exc:
-            log.error("admin order notify failed biz=%s: %s", bid, exc)
-            wa_result = {"error": "notification failed"}
+            log.error("admin order notify failed biz=%s: %s", bid, type(exc).__name__)
 
     if new_status in ("delivered", "completed") and phone:
         try:
@@ -350,7 +358,7 @@ async def push_lifecycle_update(
             log.warning("lifecycle: survey trigger failed: %s", exc)
 
     return {"ok": True, "order_id": order_id, "new_status": new_status,
-            "customer_notified": bool(phone and not wa_result.get("error")),
+            "customer_notified": notified, "notification": notif,
             "message_sent": customer_msg[:80] + "..." if len(customer_msg) > 80 else customer_msg}
 
 
@@ -414,7 +422,7 @@ async def admin_approve_payment(order_id: int, data: OrderAdminAction, user=Depe
     note_line = f"\n_Note: {data.note}_" if data.note else ""
     await _notify_customer_payment(order,
         f"✅ *Payment Confirmed!*\n\nYour payment for *{ref}* has been verified.\n\n"
-        f"💰 Amount: {_order_currency_sym(order, bid)}{total:.2f}\n📍 Status: *CONFIRMED*{note_line}\n\nWe're now preparing your order! 🙌"
+        f"💰 Amount: {_order_amount(order, total)}\n📍 Status: *CONFIRMED*{note_line}\n\nWe're now preparing your order! 🙌"
     )
     phone = order.get("customer_phone", "")
     if phone and not order.get("fulfillment_method"):
@@ -491,7 +499,7 @@ async def set_order_payment_state(order_id: int, data: OrderPaymentToggle, user=
             total = float(order.get("total_price") or 0)
             await _notify_customer_payment(order,
                 f"\u2705 *Payment Confirmed!*\n\nYour payment for *{ref}* has been recorded.\n\n"
-                f"\U0001F4B0 Amount: {_order_currency_sym(order, bid)}{total:.2f}\n\nThank you! \U0001F64F")
+                f"\U0001F4B0 Amount: {_order_amount(order, total)}\n\nThank you! \U0001F64F")
         log.info("order payment marked PAID order=%s biz=%s notify=%s", order_id, bid, data.notify)
         return {"ok": True, "order_id": order_id, "payment_status": "paid", "changed": True}
 
@@ -585,7 +593,7 @@ async def admin_refund_order(order_id: int, data: OrderAdminAction, user=Depends
     note  = data.note or "Your refund has been processed."
     total = float(order.get("total_price") or 0)
     await _notify_customer_payment(order,
-        f"💳 *Refund Processed*\n\n*{ref}* — {_order_currency_sym(order, bid)}{total:.2f}\n\n_{note}_\n\nPlease allow 3–5 business days. 🙏"
+        f"💳 *Refund Processed*\n\n*{ref}* — {_order_amount(order, total)}\n\n_{note}_\n\nPlease allow 3–5 business days. 🙏"
     )
     return {"ok": True, "order_id": order_id, "message": f"{ref} marked refunded.", "stock": _stock}
 

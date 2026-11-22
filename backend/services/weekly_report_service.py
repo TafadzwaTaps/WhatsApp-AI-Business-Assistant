@@ -28,6 +28,7 @@ SCHEDULING:
 from __future__ import annotations
 
 import logging
+from services.money import format_money as _money
 from html import escape as _html_escape
 import os
 from datetime import datetime, timezone, timedelta
@@ -145,7 +146,7 @@ def _get_weekly_stats(business_id: int, since: Optional[datetime] = None,
 
 
 def _build_report_html(business_name: str, stats: dict, dash_url: str,
-                       period_label: str = "", unsubscribe_link: str = "") -> str:
+                       period_label: str = "", unsubscribe_link: str = "", currency_symbol: str = "") -> str:
     """Build the monthly report HTML body."""
     period_label = period_label or _month_window()[2]
     top_product_line = (
@@ -170,7 +171,7 @@ def _build_report_html(business_name: str, stats: dict, dash_url: str,
     <div style='font-family:monospace;font-size:11px;color:#6b8f71;text-transform:uppercase;letter-spacing:1px;'>Orders</div>
   </div>
   <div style='text-align:center;'>
-    <div style='font-size:32px;font-weight:800;color:#22c55e;'>${stats['revenue_7d']:.2f}</div>
+    <div style='font-size:32px;font-weight:800;color:#22c55e;'>{_money(stats['revenue_7d'], symbol=currency_symbol or None)}</div>
     <div style='font-family:monospace;font-size:11px;color:#6b8f71;text-transform:uppercase;letter-spacing:1px;'>Revenue</div>
   </div>
   <div style='text-align:center;'>
@@ -222,7 +223,7 @@ def send_weekly_reports() -> dict:
         # Fetch all active businesses with an email address
         res = (
             supabase.table("businesses")
-            .select("id, name, owner_email, owner_username, features_json")
+            .select("id, name, owner_email, owner_username, features_json, currency_symbol")
             .eq("is_active", True)
             .execute()
         )
@@ -275,7 +276,8 @@ def send_weekly_reports() -> dict:
                 stats    = _get_weekly_stats(biz_id, start, end)
                 dash_url = f"{_BASE_URL}/dashboard"
                 body     = _build_report_html(biz_name, stats, dash_url, period,
-                                              unsubscribe_address_url(email))
+                                              unsubscribe_address_url(email),
+                                              currency_symbol=(biz.get("currency_symbol") or ""))
                 html     = _base_template(f"Monthly Report — {_html_escape(biz_name)}", body)
 
                 ok = _send(

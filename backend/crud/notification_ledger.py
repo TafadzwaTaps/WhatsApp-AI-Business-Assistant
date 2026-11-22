@@ -63,13 +63,19 @@ def _marker(kind: str, period_key: str) -> str:
 
 # ── claim ─────────────────────────────────────────────────────────────────────
 
-def claim(business_id: int, kind: str, period_key: str, table_only: bool = False) -> bool:
+class LedgerUnavailable(RuntimeError):
+    """strict claim() could not be recorded because the notification_log table does not exist."""
+
+
+def claim(business_id: int, kind: str, period_key: str, table_only: bool = False, strict: bool = False) -> bool:
     """True if THIS call won the right to send; False if it was already claimed/sent.
 
     table_only=True: for high-volume or settings-sensitive claims (payment events, checkout
     sessions) that must never fall back to the features_json marker. If the notification_log
     table is missing the claim is NOT recorded and True is returned (the caller keeps its own
-    other guards, e.g. the atomic paid claim); a warning is logged."""
+    other guards, e.g. the atomic paid claim); a warning is logged.
+    strict=True: with the table missing the claim FAILS CLOSED (raises LedgerUnavailable) so the caller
+    sends nothing. Used by customer order-status updates, where a repeat message is worse than none."""
     global _table_ok, _missing_since
     period_key = str(period_key)
     if _table_ok is False and _missing_since is not None and time.monotonic() - _missing_since >= _REPROBE_SECONDS:
@@ -91,10 +97,14 @@ def claim(business_id: int, kind: str, period_key: str, table_only: bool = False
                             "(apply backend/migrations/notification_ledger.sql for cross-process safety)")
                 _table_ok = False
                 _missing_since = time.monotonic()
+                if strict:
+                    raise LedgerUnavailable("notification_log table missing")
                 if table_only:
                     return True
             else:
                 raise
+    if strict:
+        raise LedgerUnavailable("notification_log table missing")   # fail closed: never risk a repeat
     if table_only:
         return True                     # table known missing: no features_json fallback for this claim
     return _claim_fallback(business_id, kind, period_key)

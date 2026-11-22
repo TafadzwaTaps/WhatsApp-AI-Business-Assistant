@@ -17,6 +17,7 @@ PAYMENT DETAILS:
 
 import json
 import logging
+from services.order_money import order_amount_text as _order_amount, order_date_text as _order_date
 import os
 from datetime import datetime
 
@@ -92,7 +93,7 @@ def generate_invoice(order, business_id=None) -> str:
                 qty      = item.get("qty", item.get("quantity", 1))
                 price    = float(item.get("price", 0))
                 subtotal = float(item.get("subtotal", price * qty))
-                lines.append(f"  • {name} ×{qty}  —  {order.get('currency_symbol', '$')}{subtotal:.2f}")
+                lines.append(f"  • {name} ×{qty}  —  {_order_amount(order, subtotal)}")
             items_text = "\n".join(lines)
         except Exception:
             items_text = str(items_raw)
@@ -131,7 +132,7 @@ def generate_invoice(order, business_id=None) -> str:
             f"  Pay to     : *{pay_number}*\n"
             f"  Name       : *{pay_name or biz_name}*\n"
             f"  Reference  : *ORDER-{order_id}*\n"
-            f"  Amount     : *{order.get('currency_symbol', '$')}{float(total):.2f}*\n"
+            f"  Amount     : *{_order_amount(order, float(total))}*\n"
             f"{'─' * 28}\n"
             f"🔒 *Verified Business:*\n"
             f"  {biz_name}\n"
@@ -147,7 +148,7 @@ def generate_invoice(order, business_id=None) -> str:
             f"{'─' * 28}\n"
             f"  Method     : {_method_label}\n"
             f"  Reference  : *ORDER-{order_id}*\n"
-            f"  Amount     : *{order.get('currency_symbol', '$')}{float(total):.2f}*\n"
+            f"  Amount     : *{_order_amount(order, float(total))}*\n"
             f"{'─' * 28}\n"
             f"  ℹ Contact *{biz_name}* directly\n"
             f"  for payment number details.\n"
@@ -158,11 +159,11 @@ def generate_invoice(order, business_id=None) -> str:
         f"🧾 *INVOICE — {biz_name}*\n"
         f"{'─' * 28}\n"
         f"Order ID : *#{order_id}*\n"
-        f"Date     : {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+        f"Date     : {_order_date(order)}\n"
         f"{'─' * 28}\n"
         f"Items:\n{items_text}\n"
         f"{'─' * 28}\n"
-        f"💰 *Total: {order.get('currency_symbol', '$')}{float(total):.2f}*\n"
+        f"💰 *Total: {_order_amount(order, float(total))}*\n"
         f"Status   : {status.upper()}\n"
         f"{pay_icon} Payment : {pay_label}\n"
         f"{'─' * 28}\n"

@@ -114,6 +114,13 @@ _STATUS_INQUIRY_RES = [
     re.compile(r"\b(?:when|what\s+time)\s+(?:will|does|is|should)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:arrive|come|get\s+here|be\s+(?:delivered|ready|here)|ship|be\s+shipped)\b"),
     re.compile(r"\b(?:is|has)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:ready|shipped|on\s+(?:its|the)\s+way|out\s+for\s+delivery)\b"),
     re.compile(r"\b(?:order|delivery)\s+status\b|\bstatus\s+of\s+(?:my|the)\s+" + _ORDER_NOUN + r"\b|\btrack(?:ing)?\s+(?:my|the)\s+" + _ORDER_NOUN + r"\b"),
+    # Phase 8 (#14): pickup / "how long" / "did it ship" wording customers actually use
+    re.compile(r"\b(?:when|what\s+time)\s+(?:can|could|may)\s+i\s+(?:collect|pick\s*up|get|come\s+(?:and\s+)?(?:get|collect|pick\s*up))\s+(?:my|the)\s+" + _ORDER_NOUN + r"\b"),
+    re.compile(r"\b(?:can|could)\s+i\s+(?:collect|pick\s*up)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\b"),
+    re.compile(r"\bhow\s+long\s+(?:until|till|before)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:is\s+|will\s+be\s+)?ready\b"),
+    re.compile(r"\bis\s+(?:my\s+" + _ORDER_NOUN + r"|it)\s+ready\s+(?:for\s+)?(?:collection|pick\s*up|pickup)\b"),
+    re.compile(r"\b(?:did|has)\s+(?:my|the)\s+" + _ORDER_NOUN + r"\s+(?:ship|get\s+sent|go\s+out)\b"),
+    re.compile(r"\btrack\s+(?:an?\s+)?" + _ORDER_NOUN + r"\b"),
 ]
 _NOT_A_STATUS_INQUIRY = ("refund", "money back", "dispute", "chargeback", "cancel", "never arrived", "never got",
                          "not received", "wrong order", "didn't receive", "didnt receive")
@@ -597,6 +604,21 @@ _MY_BOOKINGS_RE = _booking_re.compile(
 def _is_booking_intent(text: str) -> bool:
     """Returns True if the message looks like a booking/appointment request."""
     return bool(_BOOKING_INTENT_RE.search(text))
+
+
+def is_business_start(text: str, business_name: str) -> bool:
+    """True for the QR / marketing-link entry text 'START <THIS-BUSINESS-SLUG>' (e.g. 'START FLAVOURY-FOODS').
+
+    The slug must equal THIS business's own slug (same rule as the router's match): another business's slug, a bare
+    'start' and ordinary sentences are not matched, so a customer can never be greeted as a different business."""
+    try:
+        m = _booking_re.match(r"^\s*start\s+(.+?)\s*$", text or "", _booking_re.IGNORECASE)
+        if not m:
+            return False
+        slug = lambda v: _booking_re.sub(r"[^a-z0-9]+", "-", (v or "").lower()).strip("-")
+        return bool(slug(m.group(1))) and slug(m.group(1)) == slug(business_name)
+    except Exception:
+        return False
 
 
 def _is_cancel_booking(text: str) -> bool:

@@ -6047,6 +6047,20 @@ function _orderStockStatus(order) {
   return closed ? 'Stock not returned to inventory' : 'Stock reserved for this order';
 }
 
+// What happened with the automatic customer message after a status change (from the status API's `notification`).
+function _notifyNote(res) {
+  const n = res && res.notification;
+  if (!n) return '';
+  if (n.customer_notified) return ' · update sent to WhatsApp (delivery not confirmed)';
+  if (n.outcome === 'duplicate') return '';
+  if (n.outcome === 'skipped_disabled') return '';   // automatic customer updates are off for this business
+  if (n.reason === 'ledger_unavailable') return ' · customer NOT notified (notification log not set up)';
+  if (String(n.outcome).startsWith('skipped_window')) return ' · customer NOT notified (outside WhatsApp 24h window, no approved template)';
+  if (n.outcome === 'skipped_no_credentials') return ' · customer NOT notified (WhatsApp not connected)';
+  if (n.outcome === 'failed') return ' · customer could not be notified';
+  return '';
+}
+
 async function updateOrderStatusFromDrawer() {
   if (!_orderDrawerOrder) return;
   const sel = document.getElementById('order-drawer-status-select');
@@ -6054,7 +6068,7 @@ async function updateOrderStatusFromDrawer() {
   if (pick === (_orderDrawerOrder.status || 'pending')) { closeOrderDrawer(); return; }
   try {
     const _res = await apiFetch(`/orders/${_orderDrawerOrder.id}/status`, { method: 'PUT', body: JSON.stringify({ status: pick }) });
-    toast(`✅ Order #${_orderDrawerOrder.id} → ${pick}${_stockNote(_res)}`);
+    toast(`✅ Order #${_orderDrawerOrder.id} → ${pick}${_stockNote(_res)}${_notifyNote(_res)}`);
     closeOrderDrawer();
     await loadOrders();
   } catch (e) { toast('Update failed: ' + e.message, true); }
