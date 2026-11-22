@@ -145,6 +145,42 @@ def test_without_the_ledger_table_the_in_process_cooldown_still_protects(pay, db
     assert pr.send_reminder(ORDER, BIZ, 1)["ok"] is False and len(pay) == 1      # same process: cooldown holds
 
 
+def test_owner_nudge_can_resend_a_tier_that_was_already_sent(pay, db):
+    assert pr.send_reminder(ORDER, BIZ, 1)["ok"] is True
+    assert pr.send_reminder(ORDER, BIZ, 1)["ok"] is False                      # the bulk run stays once-only
+    out = pr.send_reminder(ORDER, BIZ, 1, force=True)
+    assert out["ok"] is True and len(pay) == 2 and db.claims("payment_reminder") == ["7:t1"]
+
+
+def test_a_forced_resend_still_fails_closed_on_a_ledger_outage(pay, db):
+    db.fail = True
+    assert pr.send_reminder(ORDER, BIZ, 1, force=True)["ok"] is False and pay == []
+
+
+def test_a_failed_forced_resend_keeps_the_original_claim(pay, db, monkeypatch):
+    import main
+    pr.send_reminder(ORDER, BIZ, 1)
+    monkeypatch.setattr(main, "send_whatsapp", lambda *a: {"error": "boom"})
+    assert pr.send_reminder(ORDER, BIZ, 1, force=True)["ok"] is False
+    assert db.claims("payment_reminder") == ["7:t1"]                          # not released: the first send happened
+
+
+def test_the_nudge_route_forces_the_resend():
+    import inspect
+    import routes.business_routes as br
+    assert "force=True" in inspect.getsource(br.reminder_nudge)
+
+
+def test_ledger_rechecks_a_missing_table_after_the_interval(db, monkeypatch):
+    db.missing = {"notification_log"}
+    assert ledger.claim(1, "k", "a", table_only=True) is True and db.claims("k") == []
+    db.missing = set()                                                       # migration applied meanwhile
+    assert ledger.claim(1, "k", "b", table_only=True) is True and db.claims("k") == []   # inside the interval: still off
+    monkeypatch.setattr(ledger.time, "monotonic", lambda: ledger._missing_since + ledger._REPROBE_SECONDS + 1)
+    assert ledger.claim(1, "k", "c", table_only=True) is True and db.claims("k") == ["c"]
+    assert ledger.claim(1, "k", "c", table_only=True) is False                # protection is back
+
+
 def test_concurrent_runs_send_exactly_once(pay, db):
     out = []
     ts = [threading.Thread(target=lambda: out.append(pr.send_reminder(ORDER, BIZ, 1)["ok"])) for _ in range(8)]

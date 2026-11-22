@@ -12,7 +12,7 @@ For the person operating the deployment. Names only: **no secret values belong i
 | Account purge | cron `POST /billing/purge-deleted-accounts` (daily) | only processes deletions still marked pending past their purge date (each account independent); not ledger-claimed | `account_purge` | 36 h |
 | Cart cleanup | cron `POST /billing/cleanup-carts` (daily) | deletes orphan carts only | not recorded | n/a |
 | Lost-reply recovery | cron `POST /webhook/recover-unanswered` (dry run by default) | reply lock + reply-exists check | not recorded | n/a |
-| Payment reminders | owner button `POST /payments/reminders/send` | ledger claim per order and tier | not recorded | n/a |
+| Payment reminders | owner buttons `POST /payments/reminders/send` (once per tier) and `.../{order_id}/nudge` (may re-send a tier) | ledger claim per order and tier; nudge bypasses the refusal | not recorded | n/a |
 | Cart recovery / re-engagement | per business, dashboard/growth settings | cooldown in `carts.state_data` + template ledger | not recorded | n/a |
 
 Cron endpoints need header `X-Cron-Secret: <CRON_SECRET>` and refuse to run if `CRON_SECRET` is unset. Check health at `GET /admin/saas/job-runs` (superadmin; needs `job_runs.sql`).

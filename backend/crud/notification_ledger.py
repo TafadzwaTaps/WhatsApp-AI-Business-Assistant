@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 
 from core.db import supabase
@@ -32,6 +33,8 @@ log = logging.getLogger(__name__)
 
 _LOCK = threading.Lock()
 _table_ok: bool | None = None          # None = unknown, True/False after the first probe
+_REPROBE_SECONDS = 60                # a table found missing is re-checked after this long
+_missing_since: float | None = None   # monotonic time the table was found missing
 _MAX_MARKERS = 40                      # keep the fallback marker small
 
 
@@ -67,8 +70,10 @@ def claim(business_id: int, kind: str, period_key: str, table_only: bool = False
     sessions) that must never fall back to the features_json marker. If the notification_log
     table is missing the claim is NOT recorded and True is returned (the caller keeps its own
     other guards, e.g. the atomic paid claim); a warning is logged."""
-    global _table_ok
+    global _table_ok, _missing_since
     period_key = str(period_key)
+    if _table_ok is False and _missing_since is not None and time.monotonic() - _missing_since >= _REPROBE_SECONDS:
+        _table_ok = None                # re-probe: the migration may have been applied since
     if _table_ok is not False:
         try:
             supabase.table("notification_log").insert({
@@ -85,6 +90,7 @@ def claim(business_id: int, kind: str, period_key: str, table_only: bool = False
                 log.warning("notification_log table not found - using the features_json fallback "
                             "(apply backend/migrations/notification_ledger.sql for cross-process safety)")
                 _table_ok = False
+                _missing_since = time.monotonic()
                 if table_only:
                     return True
             else:
@@ -147,5 +153,5 @@ def release(business_id: int, kind: str, period_key: str) -> None:
 
 
 def _reset_probe_for_tests() -> None:
-    global _table_ok
-    _table_ok = None
+    global _table_ok, _missing_since
+    _table_ok, _missing_since = None, None
