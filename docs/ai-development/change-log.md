@@ -385,3 +385,7 @@ Approved by user ("continue with Phase 3"). Uncommitted; nothing deployed; no mi
 - `/analytics/top-customers`: `limit` clamped to 1-100.
 - Not changed (documented): dashboard day buckets use UTC dates, not the business time zone; platform-wide totals add amounts across businesses with different currencies.
 - Tests: 2678 passed, 3 skipped (dev); 10 of 10 mutations caught.
+
+## 2026-11-20 — Phase 7 stage 4: maintainability documentation (uncommitted, documentation only)
+- Added `ARCHITECTURE_MAP.md` and `OPERATIONS_RUNBOOK.md`; indexed in `README.md`. No code changed; nothing deleted or moved.
+- Noted (not changed): the comment above the report scheduler in `main.py` still says "every Monday" while the job is monthly.
