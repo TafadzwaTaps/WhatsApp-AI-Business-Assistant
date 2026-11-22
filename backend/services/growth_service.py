@@ -524,6 +524,12 @@ def update_commission_status(
 # MIGRATION SQL
 # ─────────────────────────────────────────────────────────────────────────────
 """
+-- !!! WARNING: DO NOT PASTE THIS WHOLE BLOCK INTO THE SQL EDITOR ON AN EXISTING DATABASE. !!!
+-- The "Backfill" UPDATE below gives EVERY business without trial_started_at a 10-year trial_ends_at and sets
+-- plan = 'active' (effectively a free plan), overwriting billing fields that the billing code also uses.
+-- It is historical, was written for the first deployment only, and is NOT part of the versioned migrations.
+-- Run only the ADD COLUMN / CREATE TABLE statements you actually need, and never the UPDATE, without review.
+--
 -- Add trial + referral fields to businesses (safe on existing deployments)
 ALTER TABLE businesses
   ADD COLUMN IF NOT EXISTS trial_started_at  TIMESTAMPTZ DEFAULT NULL,
