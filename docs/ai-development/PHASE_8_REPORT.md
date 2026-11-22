@@ -15,8 +15,8 @@ F-1 and F-2 (the must-fix payment items) are **fixed** (see below). Remaining op
 |---|---|---|---|
 | F-1 | High, **FIXED** | `claim_order_paid` (`crud/orders.py`) refuses only paid/refunded. A cancelled order can be flipped to paid by a late PayPal return, PayPal webhook or `/payment/webhook`: customer charged, "Payment Confirmed" sent, stock already restored, no human alerted. Phase 6 made cancel reachable in awaiting-payment; the payment side was not updated. Same cause for cancelling a PayPal-approved, not-yet-captured order. | Yes, if PayPal or the payment webhook is live |
 | F-2 | Medium, **FIXED** | Owner routes `/orders/{id}/lifecycle` and `approve-payment` (`routes/admin_routes.py`) set `payment_status=paid` on cancelled/refunded orders without the claim guard. | No, but same guard |
-| F-3 | Medium | "cancel my booking" is caught by the global cancel (`_ai_intent._is_cancel`, `ai.py` P0) before the booking cancel handler: reply "Nothing to cancel right now", booking stays active, reminder still fires. Pre-existing gap, now hiding the Phase 7 ordering fix. | Yes for service businesses (feature broken, no data loss) |
-| F-4 | Medium | Survey state precedes cancel, status and refund: after "thanks", "cancel my order" is stored as feedback. Pre-existing. | No |
+| F-3 | Medium, **FIXED** | "cancel my booking" is caught by the global cancel (`_ai_intent._is_cancel`, `ai.py` P0) before the booking cancel handler: reply "Nothing to cancel right now", booking stays active, reminder still fires. Pre-existing gap, now hiding the Phase 7 ordering fix. | Yes for service businesses (feature broken, no data loss) |
+| F-4 | Medium, **FIXED** | Survey state precedes cancel, status and refund: after "thanks", "cancel my order" is stored as feedback. Pre-existing. | No |
 | F-5 | Medium | Migration/schema: baseline schema is not in the repo (24 tables); `billing_lifecycle_hardening.sql` is empty; `integer` id-type assumption in four migrations is unproven; rollback snapshot in the consent migration creates an unprotected public table with phone numbers. | No (ship code), needs owner action before applying SQL |
 | F-6 | Medium | Deployment settings unverified: `EDGE_SHARED_SECRET`, `TRUSTED_PROXY_DEPTH`, `ALLOW_UNSIGNED_WEBHOOKS` (must be unset), unique index on `messages.wa_message_id`. | No, verify before release |
 | F-7 | Low-Medium | `/payment/webhook` uses a shared static secret and does not check currency; `growth_service.py` docstring contains a hazardous backfill SQL (10-year free plan) that must never be pasted; superadmin password is a plaintext env value; auth revocation and email gating fail open during a DB outage (documented). | No |
@@ -33,9 +33,18 @@ F-1 and F-2 (the must-fix payment items) are **fixed** (see below). Remaining op
 - Tests: `tests/test_phase8_closed_order_payment.py` (29). 11 mutation checks, all caught. One branch is not pinned by a test: the PayPal return page's "cancelled between capture and claim" reply (harness limitation).
 - Suites after the change: dev 2713 passed, 3 skipped; clean venv 2714 passed, 2 skipped.
 
+## F-3: what was changed
+- `services/ai.py`: on a service business, "cancel my booking/appointment" now bypasses the global order cancel and reaches the booking handler, except while an order or payment is in flight (checkout, confirm, awaiting payment/proof), where "cancel" still means the order. Plain "cancel" is unchanged.
+- Also found and fixed on the way: the booking handler cancelled the booking even for questions and negations ("how do I cancel my booking?", "don't cancel my booking"). It now ignores them.
+- Only the first active booking is cancelled (existing behaviour, unchanged); a customer with several bookings cannot choose which. Not addressed.
+- Tests: `tests/test_phase8_booking_cancel.py` (15, through `generate_reply`); 6 mutation checks, all caught. Suites: dev 2728 passed, 3 skipped.
+
+## F-4: what was changed
+- `services/ai.py`: in survey state, a message that is a cancel-order request, a refund request, an order-status question or a booking cancellation ends the survey and continues down the normal priority chain. Ratings (1-4, excellent/good/average/poor, emoji), ordinary feedback ("Thank you for your suggestion") and short replies like "no" or a bare "cancel" behave exactly as before.
+- Handoff triggers already ran before the survey, so they were not affected.
+- Tests: `tests/test_phase8_survey_fallthrough.py` (9, through `generate_reply`); 6 mutation checks, all caught. Suites: dev 2737 passed, 3 skipped; clean venv 2738 passed, 2 skipped.
+
 ## Remaining proposed fixes (need your approval; none made)
-2. **F-3:** skip the global cancel when the text is a booking-cancel phrase on a service business, so the booking handler answers. End-to-end tests through `generate_reply`.
-3. **F-4:** in survey state, let cancel, refund, status and handoff intents fall through. Tests.
 4. **F-5 (docs/SQL text only):** fix the rollback snapshot instructions to protect the backup table; mark `billing_lifecycle_hardening.sql` clearly as an empty placeholder; add a warning above the growth backfill docstring.
 5. **F-7 currency check** on `/payment/webhook` if the provider sends currency.
 
