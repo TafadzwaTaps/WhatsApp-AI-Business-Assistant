@@ -1578,7 +1578,7 @@ async def reminder_nudge(order_id: int, dry_run: bool = False, user=Depends(requ
     if not business: raise HTTPException(404, "Business not found")
     tier = get_reminder_tier(order) or 1
     _last_reminder_sent.pop(order_id, None)
-    return send_reminder(order, business, tier, dry_run=dry_run)
+    return send_reminder(order, business, tier, dry_run=dry_run, force=True)
 
 
 @router.get("/payments/reminders/{order_id}/preview")

@@ -9,7 +9,7 @@ Scope: reporting correctness, background-job safety, maintainability. Commits `c
 4. **Docs** (stage 4): `ARCHITECTURE_MAP.md`, `OPERATIONS_RUNBOOK.md`.
 
 ## Verification (stage 5)
-- Dev environment: 2679 passed, 3 skipped (after fixes). Clean venv before the fixes: 2679 passed, 2 skipped.
+- Dev environment: 2684 passed, 3 skipped (after all fixes, including nudge and ledger re-check). Clean venv before the fixes: 2679 passed, 2 skipped.
 - Mutation checks: stage 3 reporting file, 10 mutations, all caught (one earlier "survivor" was a malformed mutation; the real paging mutation is caught). Stage 1 and 2 mutation runs were 8/8 and 9/9 earlier.
 - Independent Security and QA reviews: no Critical or High findings.
 
@@ -19,8 +19,8 @@ Scope: reporting correctness, background-job safety, maintainability. Commits `c
 | QA M2: a raising `send_whatsapp` left the booking claim held, so the reminder was lost | **Fixed** with test |
 | Security L3: job-runs read used `select("*")` | **Fixed** (explicit columns) |
 | Security L2: `job_runs.sql` lacked service_role grants and sequence revoke | **Fixed** (mirrors `notification_ledger.sql`) |
-| QA M1: owner "nudge" re-send is blocked after the first send of a tier (returns HTTP 200 with `ok:false`) | **Decision needed** |
-| Security M1: ledger "table missing" state is sticky until restart; a transient schema-cache error is read as missing | Open: proposed re-probe every 60 s; until then restart after applying `notification_ledger.sql` |
+| QA M1: owner "nudge" re-send is blocked after the first send of a tier (returns HTTP 200 with `ok:false`) | **Fixed** after your decision: the nudge route passes `force=True`; the claim is still recorded so the bulk run does not repeat the tier; a failed forced send does not release the original claim; ledger outage still fails closed |
+| Security M1: ledger "table missing" state is sticky until restart; a transient schema-cache error is read as missing | **Fixed**: a table found missing is re-checked every 60 s, so no restart is needed after applying `notification_ledger.sql` |
 | Security M2: a send that reached Meta but raised afterwards releases the claim, so a duplicate is possible | Accepted trade-off (at-least-once); documented here |
 | QA M3: dashboard `total_revenue` is now lower (paid only); frontend does not show `gross_order_value`; `payment_status="confirmed"` accepted as paid | Owner-visible change: tell customers; `confirmed` as a payment_status is not written by current code |
 | QA L1/L2/L5: some wiring tests are source-text checks; no test for a missing ledger table on the booking and monthly paths | Open, low |
@@ -29,6 +29,6 @@ Scope: reporting correctness, background-job safety, maintainability. Commits `c
 | Security L1/L4, I1, I2 | Low or informational, not changed |
 
 ## Remaining risks and manual steps
-- Apply `notification_ledger.sql` (if not yet) and `job_runs.sql` in staging first; restart afterwards.
+- Apply `notification_ledger.sql` (if not yet) and `job_runs.sql` in staging first; the app notices within about a minute.
 - Migrations still unverified in production: see runbook section 2.
 - Nothing deployed, pushed or applied by me.

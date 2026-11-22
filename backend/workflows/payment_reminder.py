@@ -268,6 +268,7 @@ def send_reminder(
     business:      dict,
     tier:          int,
     dry_run:       bool = False,
+    force:         bool = False,
 ) -> dict:
     """
     Send a single payment reminder WhatsApp message.
@@ -278,6 +279,8 @@ def send_reminder(
     business   Full business row from DB
     tier       Reminder tier (1 | 2 | 3)
     dry_run    If True, build the message but do not send (for preview/testing)
+    force      Owner-initiated re-send: ignores an existing once-per-tier claim (the claim is still
+               recorded, so the bulk run will not repeat the tier afterwards)
 
     Returns dict with keys:
       ok          bool
@@ -295,7 +298,7 @@ def send_reminder(
         return {"ok": False, "order_id": order_id, "tier": tier,
                 "error": "no customer_phone on order"}
 
-    if _is_on_cooldown(order_id):
+    if _is_on_cooldown(order_id) and not force:
         log.debug("reminder: on cooldown  order=%s", order_id)
         return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
                 "error": "cooldown — reminder sent recently"}
@@ -319,7 +322,8 @@ def send_reminder(
     claim_key = f"{order_id}:t{tier}"
     try:
         from crud import notification_ledger as _ledger
-        if not _ledger.claim(biz_id, "payment_reminder", claim_key, table_only=True):
+        won = _ledger.claim(biz_id, "payment_reminder", claim_key, table_only=True)
+        if not won and not force:
             return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
                     "error": "cooldown — this reminder tier was already sent for this order"}
     except Exception as exc:                       # fail closed: never risk a duplicate customer message
@@ -327,7 +331,7 @@ def send_reminder(
         return {"ok": False, "order_id": order_id, "tier": tier, "phone": phone,
                 "error": "cooldown — could not verify reminder history, try again shortly"}
     result = _deliver_reminder(order, business, tier, message, phone, phone_id, token, biz_name, order_id)
-    if not result.get("ok"):
+    if not result.get("ok") and won:
         try:
             _ledger.release(biz_id, "payment_reminder", claim_key)      # nothing went out: allow a retry
         except Exception as exc:
