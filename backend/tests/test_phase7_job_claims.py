@@ -192,6 +192,18 @@ def test_a_failed_booking_send_releases_the_claim(book, db, monkeypatch):
     assert bs.send_reminders_for_business(1)["sent"] == 1
 
 
+def test_a_raising_booking_sender_releases_the_claim(book, db, monkeypatch):
+    import routes.webhook_routes as wh
+
+    def boom(*a):
+        raise TimeoutError("network")
+    monkeypatch.setattr(wh, "send_whatsapp", boom)
+    out = bs.send_reminders_for_business(1)
+    assert out["ok"] is True and out["sent"] == 0 and db.claims("booking_reminder_24h") == []
+    monkeypatch.setattr(wh, "send_whatsapp", lambda pid, tok, phone, msg: book.sent.append(phone) or {"ok": 1})
+    assert bs.send_reminders_for_business(1)["sent"] == 1
+
+
 def test_a_rescheduled_booking_is_reminded_for_its_new_slot(book, db):
     bs.send_reminders_for_business(1)
     book.bookings[0]["start_time"] = "15:00"
