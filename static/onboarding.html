@@ -3,6 +3,12 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<link rel="icon" href="/favicon.ico" sizes="any"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"/>
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"/>
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+<link rel="manifest" href="/site.webmanifest"/>
+<meta name="theme-color" content="#0a0f0d"/>
 <title>WaziBot Setup Wizard</title>
 <meta name="robots" content="noindex, nofollow"/>
 <link href="/static/fonts/syne-dm-mono.css" rel="stylesheet"/>
@@ -35,6 +41,7 @@ nav{padding:0 24px;height:56px;display:flex;align-items:center;gap:12px;
 /* Step header */
 .step-num{font-family:var(--mono);font-size:10px;color:var(--green);
   text-transform:uppercase;letter-spacing:2px;margin-bottom:8px;}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;}
 .step-title{font-size:clamp(22px,4vw,30px);font-weight:800;margin-bottom:6px;}
 .step-sub{font-family:var(--mono);font-size:13px;color:var(--text-dim);
   line-height:1.6;margin-bottom:28px;}
@@ -124,6 +131,7 @@ select option{background:var(--surface2);}
 <script src="/static/cookie-session.js"></script>
 </head>
 <body>
+<h1 class="sr-only">WaziBot Setup Wizard</h1>
 
 <nav>
   <a href="/" class="logo">WaziBot</a>
@@ -139,7 +147,7 @@ select option{background:var(--surface2);}
   <!-- STEP 1: Business Info -->
   <div class="step active" id="step1">
     <div class="step-num">Step 1 of 6</div>
-    <h1 class="step-title">Your Business</h1>
+    <h2 class="step-title">Your Business</h2>
     <p class="step-sub">Tell us about your business. This is what customers will see.</p>
     <div class="form-group">
       <label>Business Name *</label>
@@ -170,7 +178,7 @@ select option{background:var(--surface2);}
   <!-- STEP 2: Contact & Payments -->
   <div class="step" id="step2">
     <div class="step-num">Step 2 of 6</div>
-    <h1 class="step-title">Contact & Payments</h1>
+    <h2 class="step-title">Contact & Payments</h2>
     <p class="step-sub">How should customers reach you, and how will they pay?</p>
     <div class="form-group">
       <label>Your WhatsApp Number</label>
@@ -225,7 +233,7 @@ select option{background:var(--surface2);}
   <!-- STEP 3: WhatsApp Connection -->
   <div class="step" id="step3">
     <div class="step-num">Step 3 of 6</div>
-    <h1 class="step-title">WhatsApp Connection</h1>
+    <h2 class="step-title">WhatsApp Connection</h2>
     <p class="step-sub">Choose how your bot connects to WhatsApp.</p>
     <div class="notice">
       <strong>✅ Recommended: Shared Number</strong><br/>
@@ -258,7 +266,7 @@ select option{background:var(--surface2);}
   <!-- STEP 4: AI Config -->
   <div class="step" id="step4">
     <div class="step-num">Step 4 of 6</div>
-    <h1 class="step-title">AI Personality</h1>
+    <h2 class="step-title">AI Personality</h2>
     <p class="step-sub">Customise how your AI assistant talks to customers.</p>
     <div class="form-group">
       <label>AI Role</label>
@@ -289,7 +297,7 @@ select option{background:var(--surface2);}
   <!-- STEP 5: Add First Product -->
   <div class="step" id="step5">
     <div class="step-num">Step 5 of 6</div>
-    <h1 class="step-title">Add a Product</h1>
+    <h2 class="step-title">Add a Product</h2>
     <p class="step-sub">Add at least one product so customers can order right away. You can add more later.</p>
     <div class="form-group">
       <label>Product Name *</label>
@@ -314,7 +322,7 @@ select option{background:var(--surface2);}
   <!-- STEP 6: Review & Launch -->
   <div class="step" id="step6">
     <div class="step-num">Step 6 of 6</div>
-    <h1 class="step-title">Review & Launch</h1>
+    <h2 class="step-title">Review & Launch</h2>
     <p class="step-sub">Check everything looks right, then launch your AI assistant.</p>
     <div class="summary-card" id="summary-card"></div>
     <div class="btn-row">
