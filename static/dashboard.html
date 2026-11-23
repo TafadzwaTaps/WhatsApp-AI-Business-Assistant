@@ -14,6 +14,12 @@
 </script>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<link rel="icon" href="/favicon.ico" sizes="any"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"/>
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"/>
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+<link rel="manifest" href="/site.webmanifest"/>
+<meta name="theme-color" content="#0a0f0d"/>
 <title>WaziBot SaaS</title>
 <meta name="robots" content="noindex, nofollow"/>
 <link href="/static/fonts/syne-dm-mono.css" rel="stylesheet"/>
@@ -27,7 +33,7 @@
 <!-- LOGIN -->
 <div id="login-screen">
   <div class="login-box">
-    <div class="login-logo">WaziBot</div>
+    <h1 class="login-logo">WaziBot</h1>
     <div class="login-sub">SaaS Platform</div>
 
     <div class="login-tabs">
@@ -263,7 +269,7 @@
 
   <!-- SUPERADMIN OVERVIEW -->
   <div id="section-admin-overview" class="section">
-    <div class="topbar"><div class="page-title">Platform <span class="purple">Overview</span></div></div>
+    <div class="topbar"><h1 class="page-title">Platform <span class="purple">Overview</span></h1></div>
     <div class="stats-grid">
       <div class="stat-card purple"><div class="stat-label">Businesses</div><div class="stat-value" id="sa-businesses">—</div><div class="stat-sub">Registered</div></div>
       <div class="stat-card purple"><div class="stat-label">Active</div><div class="stat-value" id="sa-active">—</div><div class="stat-sub">Running bots</div></div>
@@ -334,7 +340,7 @@
 
   <!-- SUPERADMIN BUSINESSES -->
   <div id="section-admin-businesses" class="section">
-    <div class="topbar"><div class="page-title">Manage <span class="purple">Businesses</span></div><button class="btn btn-purple" onclick="openModal()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg> Add Business</button></div>
+    <div class="topbar"><h1 class="page-title">Manage <span class="purple">Businesses</span></h1><button class="btn btn-purple" onclick="openModal()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-plus"/></svg> Add Business</button></div>
 
     <div class="panel full" style="margin-bottom:14px;">
       <div class="panel-body" style="display:flex;gap:10px;flex-wrap:wrap;padding:14px 16px;">
@@ -375,7 +381,7 @@
   <!-- SUPERADMIN AUDIT & ABUSE (SuperAdmin 2.0) -->
   <div id="section-admin-audit" class="section">
     <div class="topbar">
-      <div class="page-title">Audit, Abuse <span class="purple">& Security</span></div>
+      <h1 class="page-title">Audit, Abuse <span class="purple">& Security</span></h1>
       <button class="btn btn-purple" onclick="runAbuseScan()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-search"/></svg> Run Abuse Scan</button>
     </div>
     <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:14px;">
@@ -456,7 +462,7 @@
 
   <!-- SUPERADMIN PLATFORM CONTROLS (SuperAdmin 2.0 Phase 8) -->
   <div id="section-admin-controls" class="section">
-    <div class="topbar"><div class="page-title">Platform <span class="purple">Controls</span></div></div>
+    <div class="topbar"><h1 class="page-title">Platform <span class="purple">Controls</span></h1></div>
     <div style="font-family:var(--mono);font-size:11px;color:var(--red);margin-bottom:14px;border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.06);border-radius:8px;padding:10px 14px;">
       <svg class="ic" aria-hidden="true" focusable="false"><use href="#i-alert"/></svg> These are platform-wide emergency switches — pausing one affects <strong>every</strong> business at once. Each pause requires a reason and is permanently audit-logged.
     </div>
@@ -504,7 +510,7 @@
 
   <!-- SUPERADMIN COHORTS & CHURN (SuperAdmin 2.0 Phase 9) -->
   <div id="section-admin-cohorts" class="section">
-    <div class="topbar"><div class="page-title">Cohorts <span class="purple">& Churn</span></div><button class="panel-action" onclick="loadCohortsChurn()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg> Refresh</button></div>
+    <div class="topbar"><h1 class="page-title">Cohorts <span class="purple">& Churn</span></h1><button class="panel-action" onclick="loadCohortsChurn()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg> Refresh</button></div>
     <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:14px;">
       Cohort rows show each signup month's businesses by CURRENT status, not a point-in-time retention curve —
       the schema has no cancellation timestamp for historical churn. Recent-churn windows only cover cancellations
@@ -579,7 +585,7 @@
   <!-- BUSINESS OVERVIEW -->
   <div id="section-overview" class="section">
     <div class="topbar">
-      <div class="page-title">Dashboard <span>Overview</span></div>
+      <h1 class="page-title">Dashboard <span>Overview</span></h1>
       <div style="font-family:var(--mono);font-size:12px;color:var(--text-dim);background:var(--surface);border:1px solid var(--border);padding:8px 14px;border-radius:20px;" id="biz-name-header">—</div>
     </div>
 
@@ -593,7 +599,7 @@
         You have full access to all WaziBot features.
         Trial ends: <span id="trial-ends-label" style="color:var(--text);"></span>
       </div>
-      <a href="/static/pricing.html"
+      <a href="/pricing"
          style="font-family:var(--mono);font-size:11px;color:var(--green);
                 text-decoration:none;white-space:nowrap;border:1px solid rgba(34,197,94,0.3);
                 padding:4px 12px;border-radius:6px;">
@@ -610,7 +616,7 @@
         <strong style="color:var(--amber);">Your trial has ended.</strong>
         <span id="trial-grace-message">Choose a plan from $5.99/month to keep your business running — all your data is safe.</span>
       </div>
-      <a href="/static/pricing.html"
+      <a href="/pricing"
          style="background:var(--amber);color:#000;font-weight:800;font-size:12px;
                 padding:8px 18px;border-radius:8px;text-decoration:none;white-space:nowrap;">
         View Plans →
@@ -628,7 +634,7 @@
         your WhatsApp bot is no longer accepting new orders. Upgrade now to restore full access —
         your products, orders, and data are all safe.
       </div>
-      <a href="/static/pricing.html"
+      <a href="/pricing"
          style="background:var(--red);color:#fff;font-weight:800;font-size:12px;
                 padding:8px 18px;border-radius:8px;text-decoration:none;white-space:nowrap;">
         Upgrade Now →
@@ -850,7 +856,7 @@
   <!-- ORDERS (Phase 5: with Kanban toggle) -->
   <div id="section-orders" class="section">
     <div class="topbar">
-      <div class="page-title">All <span>Orders</span></div>
+      <h1 class="page-title">All <span>Orders</span></h1>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
         <div style="position:relative;">
           <input type="text" id="order-search" placeholder="Search orders…" aria-label="Search orders by ID, phone, or product" oninput="filterOrdersBySearch(this.value)"
@@ -889,7 +895,7 @@
   <!-- PRODUCTS / INVENTORY ─────────────────────────────── -->
   <div id="section-products" class="section">
     <div class="topbar">
-      <div class="page-title">Manage <span>Products</span></div>
+      <h1 class="page-title">Manage <span>Products</span></h1>
       <!-- Feature 4: CSV import button -->
       <div style="display:flex;gap:10px;align-items:center;">
         <label class="panel-action" for="csv-import-file" title="Import products from CSV"
@@ -1506,7 +1512,7 @@
   <div id="section-conversations" class="section">
     <div class="topbar">
       <div>
-        <div class="page-title">Customer <span>Conversations</span></div>
+        <h1 class="page-title">Customer <span>Conversations</span></h1>
         <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:2px;">
           Browse and reply to past conversations. For live, real-time chats and handoffs, use
           <a href="/inbox" target="_blank" style="color:var(--green);">Live Inbox →</a>
@@ -1536,7 +1542,7 @@
   <!-- BROADCAST / SEND MESSAGE (simple) -->
   <div id="section-broadcast" class="section">
     <div class="topbar">
-      <div class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg> <span>Send Message</span></div>
+      <h1 class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg> <span>Send Message</span></h1>
     </div>
 
     <div class="broadcast-layout">
@@ -1725,7 +1731,7 @@
   <!-- ═══ Feature 10: GROWTH AUTOMATION SECTION ══════════════════════════ -->
   <div id="section-growth-automation" class="section">
     <div class="topbar">
-      <div class="page-title">Growth <span>Automation</span></div>
+      <h1 class="page-title">Growth <span>Automation</span></h1>
     </div>
     <p style="font-family:var(--mono);font-size:13px;color:var(--text-dim);margin-bottom:24px;">
       Automatically recover abandoned carts and re-engage inactive customers.
@@ -1797,7 +1803,7 @@
   </div><!-- /section-growth-automation -->
 
     <div id="section-settings" class="section">
-    <div class="topbar"><div class="page-title">Store <span>Settings</span></div></div>
+    <div class="topbar"><h1 class="page-title">Store <span>Settings</span></h1></div>
 
     <!-- Settings tabs -->
     <div class="settings-tabs" id="settings-tabs">
@@ -3514,7 +3520,7 @@
   <!-- MARKETING KIT SECTION -->
   <div id="section-marketing-kit" class="section">
     <div class="topbar">
-      <div class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg> <span>Marketing Kit</span></div>
+      <h1 class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-megaphone"/></svg> <span>Marketing Kit</span></h1>
     </div>
     <div class="panels-grid">
 
@@ -3624,7 +3630,7 @@
   <!-- CUSTOMERS SECTION (simple view) -->
   <div id="section-crm" class="section">
     <div class="topbar">
-      <div class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-customers"/></svg> <span>Customers</span></div>
+      <h1 class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-customers"/></svg> <span>Customers</span></h1>
       <div style="position:relative;">
         <input type="text" id="crm-search" placeholder="Search name or phone…" aria-label="Search customers by name or phone" oninput="filterCrmTable(this.value)"
                style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:11px;padding:6px 26px 6px 10px;border-radius:6px;width:180px;"/>
@@ -3690,7 +3696,7 @@
   <!-- PAYMENT REMINDERS SECTION (Phase 4) -->
   <div id="section-bookings" class="section">
     <div class="topbar">
-      <div class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-calendar"/></svg> <span>Bookings</span></div>
+      <h1 class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-calendar"/></svg> <span>Bookings</span></h1>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
         <div style="position:relative;">
           <input type="text" id="bk-search" placeholder="Search name/phone…" aria-label="Search bookings by customer name or phone" oninput="filterBookingsBySearch(this.value)"
@@ -3851,7 +3857,7 @@
 
   <div id="section-reminders" class="section">
     <div class="topbar">
-      <div class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg> <span>Payment Reminders</span></div>
+      <h1 class="page-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-reminders"/></svg> <span>Payment Reminders</span></h1>
       <button class="btn btn-primary" onclick="sendAllReminders()"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-send"/></svg> Send All Reminders</button>
     </div>
 

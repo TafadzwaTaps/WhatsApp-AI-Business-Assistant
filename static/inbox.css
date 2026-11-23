@@ -144,6 +144,8 @@ body {
   display: none; /* hidden on small mobile, shown on wider */
 }
 
+h1.topbar-title { font-weight: 400; }
+
 .topbar-center { flex: 1; }
 
 .topbar-right {

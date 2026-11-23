@@ -380,6 +380,36 @@ def robots_txt():
     return Response(content="\n".join(lines), media_type="text/plain")
 
 
+# ── Favicon / app-icon files at the site root ───────────────────────────────
+# Browsers and crawlers (Googlebot, iOS, Android) request these at the root,
+# unauthenticated. The files live in static/ and are also reachable there.
+_ICON_FILES = {
+    "/favicon.ico":                 ("favicon.ico", "image/x-icon"),
+    "/favicon-16x16.png":           ("favicon-16x16.png", "image/png"),
+    "/favicon-32x32.png":           ("favicon-32x32.png", "image/png"),
+    "/apple-touch-icon.png":        ("apple-touch-icon.png", "image/png"),
+    "/android-chrome-192x192.png":  ("android-chrome-192x192.png", "image/png"),
+    "/android-chrome-512x512.png":  ("android-chrome-512x512.png", "image/png"),
+    "/site.webmanifest":            ("site.webmanifest", "application/manifest+json"),
+}
+
+
+def _register_icon_route(route_path: str, filename: str, media_type: str) -> None:
+    def _serve():
+        path = os.path.join(STATIC_DIR, filename)
+        if not os.path.exists(path):
+            from fastapi import HTTPException
+            raise HTTPException(404, detail=f"{filename} not found")
+        return FileResponse(path, media_type=media_type,
+                            headers={"Cache-Control": "public, max-age=86400"})
+    app.add_api_route(route_path, _serve, methods=["GET", "HEAD"], include_in_schema=False,
+                      name="icon_" + filename.replace(".", "_").replace("-", "_"))
+
+
+for _p, (_f, _mt) in _ICON_FILES.items():
+    _register_icon_route(_p, _f, _mt)
+
+
 # ── Static page routes ────────────────────────────────────────────────────────
 @app.get("/")
 def landing():    return _html("landing.html")

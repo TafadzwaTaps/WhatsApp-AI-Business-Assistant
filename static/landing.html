@@ -13,11 +13,16 @@
 </script>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>WaziBot — AI Employee for WhatsApp Businesses</title>
-<meta name="description" content="WaziBot gives your business a 24/7 AI employee on WhatsApp — handles orders, answers questions, sends promotions. Free to start, live in minutes."/>
+<link rel="icon" href="/favicon.ico" sizes="any"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"/>
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"/>
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"/>
+<link rel="manifest" href="/site.webmanifest"/>
+<meta name="theme-color" content="#0a0f0d"/>
+<title>WaziBot | AI WhatsApp Business Assistant &amp; Automation</title>
+<meta name="description" content="Automate customer conversations, manage orders, respond to WhatsApp messages and grow your business with WaziBot, your AI-powered business assistant."/>
 <link rel="canonical" href="https://wazibothq.com/"/>
-<link rel="icon" type="image/x-icon" href="/static/favicon.ico"/>
-<meta property="og:title" content="WaziBot — AI Employee for WhatsApp Businesses"/>
+<meta property="og:title" content="WaziBot | AI WhatsApp Business Assistant &amp; Automation"/>
 <meta property="og:description" content="Your WhatsApp sales bot, running while you sleep. Free to start."/>
 <meta property="og:type" content="website"/>
 <meta property="og:url" content="https://wazibothq.com/"/>
@@ -25,7 +30,7 @@
 <meta property="og:image:width" content="1200"/>
 <meta property="og:image:height" content="630"/>
 <meta name="twitter:card" content="summary_large_image"/>
-<meta name="twitter:title" content="WaziBot — AI Employee for WhatsApp Businesses"/>
+<meta name="twitter:title" content="WaziBot | AI WhatsApp Business Assistant &amp; Automation"/>
 <meta name="twitter:description" content="Your WhatsApp sales bot, running while you sleep. Free to start."/>
 <meta name="twitter:image" content="https://wazibothq.com/static/og-image.png"/>
 <script type="application/ld+json">
@@ -34,7 +39,7 @@
   "@type": "Organization",
   "name": "WaziBot",
   "url": "https://wazibothq.com/",
-  "logo": "https://wazibothq.com/static/favicon.ico",
+  "logo": "https://wazibothq.com/android-chrome-512x512.png",
   "description": "WaziBot gives businesses a 24/7 AI employee on WhatsApp — handling orders, answering questions, and sending promotions."
 }
 </script>
@@ -55,11 +60,10 @@
   "operatingSystem": "Web",
   "description": "WaziBot gives businesses a 24/7 AI employee on WhatsApp — handling orders, answering questions, and sending promotions.",
   "url": "https://wazibothq.com/",
-  "offers": {
-    "@type": "Offer",
-    "price": "4.99",
-    "priceCurrency": "USD"
-  }
+  "offers": [
+    {"@type": "Offer", "name": "Starter (monthly)", "price": "4.99", "priceCurrency": "USD"},
+    {"@type": "Offer", "name": "Growth (monthly)", "price": "12", "priceCurrency": "USD"}
+  ]
 }
 </script>
 <link href="/static/fonts/syne-dm-mono.css" rel="stylesheet"/>
@@ -758,7 +762,7 @@ footer {
     <a href="#features" class="nav-link">Features</a>
     <a href="#how-it-works" class="nav-link">How it works</a>
     <a href="/what-is-wazibot" class="nav-link">What Is WaziBot?</a>
-    <a href="/static/pricing.html" class="nav-link">Pricing</a>
+    <a href="/pricing" class="nav-link">Pricing</a>
     <button onclick="toggleLightMode()" aria-label="Toggle light/dark mode"
             style="background:none;border:1px solid var(--border);border-radius:8px;
                    padding:6px 10px;cursor:pointer;font-size:14px;line-height:1;
@@ -766,7 +770,7 @@ footer {
       <span id="theme-toggle-icon">🌙</span>
     </button>
     <a href="/dashboard" class="nav-login">Sign in</a>
-    <a href="/static/signup.html" class="nav-cta">Get Started Free →</a>
+    <a href="/signup" class="nav-cta">Get Started Free →</a>
   </div>
 
         <button class="nav-hamburger" id="hamburger-btn" onclick="document.querySelector('.nav-links').classList.toggle('mobile-open');this.textContent=document.querySelector('.nav-links').classList.contains('mobile-open')?'✕':'☰'" aria-label="Toggle navigation">☰</button>
@@ -785,7 +789,7 @@ footer {
     WaziBot connects to your WhatsApp Business account and automatically handles customer enquiries, takes orders, and sends promos — no code, no fuss.
   </p>
   <div class="hero-actions">
-    <a href="/static/signup.html" class="btn-hero-primary">🚀 Start for free</a>
+    <a href="/signup" class="btn-hero-primary">🚀 Start for free</a>
     <a href="/dashboard" class="btn-hero-secondary">Already have an account →</a>
   </div>
 
@@ -961,7 +965,7 @@ footer {
         <div class="price-feature"><span class="check">✓</span> Live inbox &amp; chat</div>
         <div class="price-feature"><span class="check">✓</span> No credit card required</div>
       </div>
-      <a href="/static/signup.html" class="btn-price btn-price-outline" style="border-color:rgba(245,158,11,0.4);color:#f59e0b;">Start free trial →</a>
+      <a href="/signup" class="btn-price btn-price-outline" style="border-color:rgba(245,158,11,0.4);color:#f59e0b;">Start free trial →</a>
     </div>
 
     <!-- Starter -->
@@ -982,8 +986,8 @@ footer {
         <div class="price-feature locked"><span class="cross">✗</span> Broadcast campaigns</div>
         <div class="price-feature locked"><span class="cross">✗</span> Live inbox &amp; chat</div>
       </div>
-      <a href="/static/pricing.html" class="btn-price btn-price-outline">Get started →</a>
-      <p class="price-save-note">Annual: <a href="/static/pricing.html">$48/year</a> (save 20%)</p>
+      <a href="/pricing" class="btn-price btn-price-outline">Get started →</a>
+      <p class="price-save-note">Annual: <a href="/pricing">$48/year</a> (save 20%)</p>
     </div>
 
     <!-- Growth — featured -->
@@ -1003,8 +1007,8 @@ footer {
         <div class="price-feature"><span class="check">✓</span> Live inbox &amp; chat</div>
         <div class="price-feature"><span class="check">✓</span> Human handoff &amp; tickets</div>
       </div>
-      <a href="/static/pricing.html" class="btn-price btn-price-primary">Start Growth →</a>
-      <p class="price-save-note">Save 20% with annual billing · <a href="/static/pricing.html">$115/year</a></p>
+      <a href="/pricing" class="btn-price btn-price-primary">Start Growth →</a>
+      <p class="price-save-note">Save 20% with annual billing · <a href="/pricing">$115/year</a></p>
     </div>
 
     <!-- Enterprise -->
@@ -1035,7 +1039,7 @@ footer {
   <h2 class="cta-title">Get your bot <span class="green">live today</span></h2>
   <p class="cta-sub">Free to start. No credit card. No code. Just your business on autopilot.</p>
   <div class="hero-actions">
-    <a href="/static/signup.html" class="btn-hero-primary">🚀 Create your free account</a>
+    <a href="/signup" class="btn-hero-primary">🚀 Create your free account</a>
   </div>
   <p style="margin-top:16px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">
     Questions? <a href="mailto:hello@wazibothq.com" style="color:var(--green)">hello@wazibothq.com</a>
@@ -1054,13 +1058,14 @@ footer {
     <a href="#pricing">Pricing</a>
     <a href="/what-is-wazibot">What Is WaziBot?</a>
     <a href="/features">All Features</a>
+    <a href="/solutions">Solutions</a>
     <a href="/whatsapp-ai">WhatsApp AI</a>
     <a href="/whatsapp-marketing">WhatsApp Marketing</a>
     <a href="/about">About</a>
     <a href="/faq">FAQ</a>
     <a href="/contact">Contact</a>
     <a href="/directory">Marketplace</a>
-    <a href="/static/signup.html">Sign up</a>
+    <a href="/signup">Sign up</a>
     <a href="/dashboard">Sign in</a>
   </div>
   <div style="width:100%;border-top:1px solid var(--border);padding-top:20px;margin-top:8px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:11px;">
