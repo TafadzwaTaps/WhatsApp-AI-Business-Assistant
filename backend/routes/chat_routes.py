@@ -27,6 +27,15 @@ SHARED_WA_TOKEN        = ""
 SHARED_PHONE_NUMBER_ID = ""
 
 
+def _cross_tenant_reply_enabled() -> bool:
+    """Security audit F-01: replying to / closing another tenant's customer through the
+    shared-number fallback is OFF unless ALLOW_SHARED_NUMBER_CROSS_TENANT_REPLY=1.
+    /chat/conversations is strictly per-tenant, so the inbox never lists such customers;
+    the fallback was only reachable by guessing customer ids."""
+    import os
+    return os.getenv("ALLOW_SHARED_NUMBER_CROSS_TENANT_REPLY", "").strip() == "1"
+
+
 def _shared_number_customer_lookup(customer_id: int, bid: int):
     """
     Security fix: the "shared number" fallback below exists so agents at
@@ -162,7 +171,7 @@ async def chat_send(body: ChatSendRequest, user=Depends(require_business)):
     customer = crud.get_customer_by_id(body.customer_id, bid)
     # Shared number: only resolved when BOTH businesses are shared-number
     # tenants, never for a business on its own dedicated number.
-    if not customer:
+    if not customer and _cross_tenant_reply_enabled():
         customer = _shared_number_customer_lookup(body.customer_id, bid)
     if not customer:
         raise HTTPException(404, "Customer not found")
@@ -758,7 +767,8 @@ async def paypal_webhook(request: Request):
     import os
 
     WEBHOOK_ID = os.getenv("PAYPAL_WEBHOOK_ID", "").strip()
-    raw_body   = await request.body()
+    from services.security import read_body_capped
+    raw_body   = await read_body_capped(request)
 
     if WEBHOOK_ID:
         if not verify_paypal_webhook_signature(headers=dict(request.headers), raw_body=raw_body, webhook_id=WEBHOOK_ID):
@@ -1057,7 +1067,7 @@ async def close_conversation(
     bid      = user["business_id"]
     agent    = user.get("username", "Agent")
     customer = crud.get_customer_by_id(customer_id, bid)
-    if not customer:
+    if not customer and _cross_tenant_reply_enabled():
         customer = _shared_number_customer_lookup(customer_id, bid)
     if not customer:
         raise HTTPException(404, "Customer not found")
