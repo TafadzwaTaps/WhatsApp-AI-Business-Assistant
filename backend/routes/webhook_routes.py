@@ -21,7 +21,7 @@ from services.order_money import order_amount_text as _order_amount
 from core.auth import decode_token, require_business
 from core.crypto import TokenDecryptionError
 from services.ai import generate_reply
-from services.security import verify_meta_signature
+from services.security import verify_meta_signature, read_body_capped
 from workflows.order_lifecycle import update_order_status_supabase, get_order
 
 log = logging.getLogger("wazibot")
@@ -212,7 +212,7 @@ def _wa_error_code(result) -> int | None:
 
 @router.post("/webhook")
 async def receive_message(request: Request):
-    raw_body   = await request.body()
+    raw_body   = await read_body_capped(request)
     sig_header = request.headers.get("X-Hub-Signature-256", "")
     if not verify_meta_signature(raw_body, sig_header, WHATSAPP_APP_SECRET):
         log.error("webhook: INVALID signature  ip=%s",

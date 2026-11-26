@@ -283,6 +283,38 @@ def check(name: str, request) -> None:
     rate_limit(name, request, cfg["max_calls"], cfg["window"])
 
 
+# Security audit F-02: unauthenticated webhooks buffered the whole body before
+# verifying the signature. Cap it first (Meta/Stripe/PayPal payloads are small).
+MAX_WEBHOOK_BODY_BYTES = 1_000_000
+
+
+async def read_body_capped(request, max_bytes: int = MAX_WEBHOOK_BODY_BYTES) -> bytes:
+    """Read the request body, raising HTTP 413 once it exceeds max_bytes.
+
+    Checks Content-Length up front, then enforces the cap while streaming so a
+    chunked or lying client cannot make the server buffer an unbounded body.
+    """
+    from fastapi import HTTPException
+    try:
+        if int(request.headers.get("content-length") or 0) > max_bytes:
+            raise HTTPException(413, "Payload too large")
+    except ValueError:
+        raise HTTPException(400, "Invalid Content-Length")
+    chunks, size = [], 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > max_bytes:
+            raise HTTPException(413, "Payload too large")
+        chunks.append(chunk)
+    body = b"".join(chunks)
+    # Cache like Request.body() does so a later request.json()/body() still works.
+    try:
+        request._body = body
+    except Exception as exc:
+        log.debug("read_body_capped: could not cache body: %s", type(exc).__name__)
+    return body
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SIGNUP ABUSE PROTECTION
 #

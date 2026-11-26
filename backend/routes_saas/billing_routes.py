@@ -625,7 +625,8 @@ async def stripe_webhook(request: Request):
     Signature is verified inside handle_stripe_webhook() using STRIPE_WEBHOOK_SECRET.
     This endpoint MUST receive the raw request body (not parsed JSON).
     """
-    payload    = await request.body()
+    from services.security import read_body_capped
+    payload    = await read_body_capped(request)
     sig_header = request.headers.get("stripe-signature", "")
 
     from billing.stripe_service import handle_stripe_webhook
