@@ -10,7 +10,7 @@ Endpoints (all require business auth — Feature 8 security):
 All endpoints return only the authenticated business's own data.
 Never exposes another business's QR or keyword.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, RedirectResponse
 import logging
 import re
@@ -77,8 +77,20 @@ def _build_wa_redirect(business_name: str) -> str:
     return f"https://wa.me/{number}?text={encoded}"
 
 
+def _may_record_hit(request) -> bool:
+    """Security audit F-11: cap analytics writes per IP. The redirect itself is never blocked."""
+    if request is None:
+        return True
+    from services.security import rate_limit, RateLimitExceeded
+    try:
+        rate_limit("redirect_event", request, 30, 60)
+    except RateLimitExceeded:
+        return False
+    return True
+
+
 @router.get("/qr/{slug}", include_in_schema=False)
-def qr_redirect(slug: str):
+def qr_redirect(slug: str, request: Request = None):
     """
     QR code redirect endpoint.
     QR codes point here instead of directly to WhatsApp.
@@ -90,7 +102,8 @@ def qr_redirect(slug: str):
         # Fire-and-forget — never block the redirect
         try:
             from services.acquisition_service import record_qr_scan
-            record_qr_scan(business_id)
+            if _may_record_hit(request):
+                record_qr_scan(business_id)
         except Exception as _swallowed_exc:
             from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         wa_url = _build_wa_redirect(name)
@@ -103,7 +116,7 @@ def qr_redirect(slug: str):
 
 
 @router.get("/go/{slug}", include_in_schema=False)
-def link_click_redirect(slug: str):
+def link_click_redirect(slug: str, request: Request = None):
     """
     WhatsApp button click redirect endpoint.
     Website 'Chat on WhatsApp' buttons point here.
@@ -113,7 +126,8 @@ def link_click_redirect(slug: str):
     if business_id:
         try:
             from services.acquisition_service import record_whatsapp_click
-            record_whatsapp_click(business_id)
+            if _may_record_hit(request):
+                record_whatsapp_click(business_id)
         except Exception as _swallowed_exc:
             from core.safelog import swallow as _swallow; _swallow(__name__, _swallowed_exc)
         wa_url = _build_wa_redirect(name)

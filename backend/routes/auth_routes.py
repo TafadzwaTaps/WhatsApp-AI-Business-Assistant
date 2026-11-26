@@ -34,6 +34,12 @@ from routes._deps import log
 router = APIRouter()
 
 
+def _like_literal(value: str) -> str:
+    """Narrow an ilike() filter to the text itself. PostgREST turns "*" into "%" and it cannot
+    be escaped, so it becomes a one-character wildcard: callers must still compare exactly."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_").replace("*", "_")
+
+
 def _token_pair(sub: str, role: str, business_id: int | None = None, pwd_ts: str | None = None) -> dict:
     """
     pwd_ts (optional) embeds the business's password_changed_at value at
@@ -162,12 +168,13 @@ def signup(data: SignupRequest, request: Request, response: Response = None):
             from core.db import supabase as _sdb
             _ec = (
                 _sdb.table("businesses")
-                .select("id")
-                .ilike("owner_email", _signup_email)
-                .limit(1)
+                .select("id, owner_email")
+                .ilike("owner_email", _like_literal(_signup_email))
+                .limit(10)
                 .execute()
             )
-            if _ec.data:
+            if any((r.get("owner_email") or "").strip().lower() == _signup_email
+                   for r in (_ec.data or [])):
                 raise HTTPException(
                     400,
                     "An account with that email address already exists. "

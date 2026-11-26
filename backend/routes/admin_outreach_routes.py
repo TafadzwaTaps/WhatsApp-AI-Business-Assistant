@@ -96,6 +96,14 @@ def _greeting(biz) -> str:
             f"WhatsApp assistant working? It takes about 10 minutes.")
 
 
+
+def _safe_count(value) -> int:
+    """features_json values can be stale or hand-edited; one bad row must not break the list."""
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
 @router.get("/admin/outreach/never-activated")
 def never_activated(min_days: int = 0, user=Depends(require_superadmin)):
     """Businesses with zero products AND zero orders, oldest signup first."""
@@ -146,7 +154,7 @@ def never_activated(min_days: int = 0, user=Depends(require_superadmin)):
             "days_since_signup": days,
             "trial_state": trial_state,
             "trial_ends_at": b.get("trial_ends_at"),
-            "trial_restarts": int(feats.get("trial_restarts") or 0),
+            "trial_restarts": _safe_count(feats.get("trial_restarts")),
             "last_outreach": feats.get("last_outreach"),
             "whatsapp_link": wa_link(phone, _greeting(b)),
             "email_link": mailto_link(email, "Need a hand setting up WaziBot?", _greeting(b)),
@@ -201,7 +209,7 @@ def restart_trial(business_id: int, body: RestartTrialBody, request: Request,
     ends = now + timedelta(days=days)
     feats = biz.get("features_json") if isinstance(biz.get("features_json"), dict) else {}
     feats = dict(feats)
-    feats["trial_restarts"] = int(feats.get("trial_restarts") or 0) + 1
+    feats["trial_restarts"] = _safe_count(feats.get("trial_restarts")) + 1
     feats["last_trial_restart"] = {"at": now.isoformat(), "by": user.get("username"),
                                    "reason": reason[:300], "days": days}
     try:

@@ -127,10 +127,13 @@ app = FastAPI(title="WaziBot API", docs_url=None, redoc_url=None, openapi_url=No
 _default_origins = [
     "https://wazibothq.com",
     "https://www.wazibothq.com",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
 ]
+if not os.getenv("RENDER"):      # security audit F-12: local dev origins never apply in production
+    _default_origins += [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+    ]
 _extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 _cors_origins = list(dict.fromkeys(_default_origins + _extra_origins))  # dedupe, keep order
 
@@ -138,7 +141,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_headers=["Accept", "Accept-Language", "Authorization", "Content-Language",
+                   "Content-Type", "X-Auth-Mode", "X-CSRF-Token", "X-Requested-With"],
 )
 
 

@@ -61,6 +61,28 @@ class RateLimitExceeded(Exception):
 _rate_lock  = threading.Lock()
 # Structure: { "limit_name:ip": deque([timestamp, ...]) }
 _rate_store: dict[str, deque] = defaultdict(deque)
+_rate_windows: dict[str, int] = {}     # key -> window seconds, so expired keys can be dropped
+_rate_maxima:  dict[str, int] = {}     # key -> its limit, so limited keys are evicted last
+
+# Security audit F-03: every tracker below is keyed by client-controlled values (IP, username),
+# so each is capped. Nothing happens until a store exceeds the cap.
+MAX_TRACKER_KEYS = 20_000
+_MAX_KEY_PART = 200
+
+
+def _bound_store(store: dict, window_of, now: float, max_of=lambda _k: 10**9) -> None:
+    """Call with the store's lock held. Over the cap: drop expired keys, then (if still above
+    90% of the cap) evict down to 90%. Keys that have reached their limit (max_of) go last,
+    otherwise the fewest and oldest hits go first. The headroom keeps sweeps infrequent."""
+    if len(store) <= MAX_TRACKER_KEYS:
+        return
+    for k in [k for k, v in store.items() if not v or v[-1] < now - window_of(k)]:
+        del store[k]
+    target = int(MAX_TRACKER_KEYS * 0.9)
+    if len(store) > target:
+        order = sorted(store, key=lambda k: (len(store[k]) >= max_of(k), len(store[k]), store[k][-1]))
+        for k in order[:len(store) - target]:
+            del store[k]
 
 
 def get_client_ip(request) -> str:
@@ -194,41 +216,72 @@ def rate_limit(
     Never raises any other exception.
     """
     try:
-        ip  = get_client_ip(request)
-        key = f"{limit_name}:{ip}:{key_suffix}"
-        now = time.time()
-
-        if limit_name not in _SHARED_SKIP:
-            _n = _shared_hit(key, window_seconds)
-            if _n is not None:
-                if _n > max_calls:
-                    log.warning("rate_limit: EXCEEDED (shared)  limit=%s  ip=%s  calls=%d  max=%d",
-                                limit_name, ip, _n, max_calls)
-                    raise RateLimitExceeded(limit_name, retry_after=window_seconds)
-                return
-
-        with _rate_lock:
-            window = _rate_store[key]
-
-            # Remove entries outside the window
-            cutoff = now - window_seconds
-            while window and window[0] < cutoff:
-                window.popleft()
-
-            if len(window) >= max_calls:
-                log.warning(
-                    "rate_limit: EXCEEDED  limit=%s  ip=%s  calls=%d  max=%d",
-                    limit_name, ip, len(window), max_calls,
-                )
-                raise RateLimitExceeded(limit_name, retry_after=window_seconds)
-
-            window.append(now)
-
+        ip = get_client_ip(request)
+        _hit_key(limit_name, f"{limit_name}:{ip}:{str(key_suffix)[:_MAX_KEY_PART]}",
+                 ip, max_calls, window_seconds)
     except RateLimitExceeded:
         raise
     except Exception as exc:
         # Rate limiter must never crash the endpoint
         log.debug("rate_limit error (non-fatal): %s", exc)
+
+
+def _hit_key(limit_name: str, key: str, who: str, max_calls: int, window_seconds: int) -> None:
+    """Count one hit against `key`; raise RateLimitExceeded when over the limit."""
+    now = time.time()
+    if limit_name not in _SHARED_SKIP:
+        _n = _shared_hit(key, window_seconds)
+        if _n is not None:
+            if _n > max_calls:
+                log.warning("rate_limit: EXCEEDED (shared)  limit=%s  ip=%s  calls=%d  max=%d",
+                            limit_name, who, _n, max_calls)
+                raise RateLimitExceeded(limit_name, retry_after=window_seconds)
+            return
+
+    with _rate_lock:
+        window = _rate_store[key]
+
+        # Remove entries outside the window
+        cutoff = now - window_seconds
+        while window and window[0] < cutoff:
+            window.popleft()
+
+        if len(window) >= max_calls:
+            log.warning(
+                "rate_limit: EXCEEDED  limit=%s  ip=%s  calls=%d  max=%d",
+                limit_name, who, len(window), max_calls,
+            )
+            raise RateLimitExceeded(limit_name, retry_after=window_seconds)
+
+        window.append(now)
+        _rate_windows[key] = window_seconds
+        _rate_maxima[key] = max_calls
+        if len(_rate_store) > MAX_TRACKER_KEYS:
+            _bound_store(_rate_store, lambda k: _rate_windows.get(k, 86400), now,
+                         lambda k: _rate_maxima.get(k, 10**9))
+            for meta in (_rate_windows, _rate_maxima):
+                for k in [k for k in meta if k not in _rate_store]:
+                    del meta[k]
+
+
+# Per-account write limit (security audit Stage 3). Keyed by the signed-in account, not
+# the IP. Set either variable to 0 to disable.
+def check_account_write(role: str, identity) -> None:
+    """Cap state-changing API calls per business (or per Super Admin) per minute."""
+    import os as _o
+    admin = role == "superadmin"
+    # The business default leaves room for the dashboard's bulk actions (one request per item).
+    var, default = (("ADMIN_WRITE_LIMIT_PER_MIN", 120) if admin
+                    else ("USER_WRITE_LIMIT_PER_MIN", 600))
+    try:
+        limit = int(_o.getenv(var, str(default)))
+    except ValueError:
+        limit = default
+    if limit <= 0:
+        return
+    name = "admin_write" if admin else "account_write"
+    who = str(identity)[:_MAX_KEY_PART]
+    _hit_key(name, f"{name}:{who}", who, limit, 60)
 
 
 def get_rate_limit_headers(limit_name: str, request, max_calls: int, window_seconds: int) -> dict:
@@ -375,7 +428,7 @@ def check_signup_success_limit(request) -> None:
     ip = get_client_ip(request)
     now = time.time()
     with _signup_success_lock:
-        window = _signup_success_store[ip]
+        window = _signup_success_store.get(ip, deque())     # checking never creates an entry
         cutoff = now - _SIGNUP_SUCCESS_WINDOW
         while window and window[0] < cutoff:
             window.popleft()
@@ -389,7 +442,9 @@ def record_signup_success(request) -> None:
     """Call exactly once, immediately after an account is genuinely created."""
     ip = get_client_ip(request)
     with _signup_success_lock:
-        _signup_success_store[ip].append(time.time())
+        now = time.time()
+        _signup_success_store[ip].append(now)
+        _bound_store(_signup_success_store, lambda _k: _SIGNUP_SUCCESS_WINDOW, now)
 
 
 # ── Disposable email protection ─────────────────────────────────────────────
@@ -436,28 +491,34 @@ FAILED_LOGIN_MAX    = 10    # lock after 10 failures in window
 
 
 def record_failed_login(ip: str, username: str) -> None:
-    key = f"{ip}:{username.lower()}"
+    key = f"{ip}:{username.lower()[:_MAX_KEY_PART]}"
     now = time.time()
     with _failed_login_lock:
         _failed_logins[key].append(now)
         # Prune old entries
         _failed_logins[key] = [t for t in _failed_logins[key]
                                  if now - t < FAILED_LOGIN_WINDOW]
+        count = len(_failed_logins[key])
+        _bound_store(_failed_logins, lambda _k: FAILED_LOGIN_WINDOW, now,
+                     lambda _k: FAILED_LOGIN_MAX)
     log.warning("failed_login  ip=%s  username=%s  count=%d",
-                ip, username, len(_failed_logins[key]))
+                ip, username[:_MAX_KEY_PART], count)
 
 
 def is_login_locked(ip: str, username: str) -> bool:
-    key = f"{ip}:{username.lower()}"
+    key = f"{ip}:{username.lower()[:_MAX_KEY_PART]}"
     now = time.time()
     with _failed_login_lock:
-        recent = [t for t in _failed_logins[key] if now - t < FAILED_LOGIN_WINDOW]
-        _failed_logins[key] = recent
+        recent = [t for t in _failed_logins.get(key, []) if now - t < FAILED_LOGIN_WINDOW]
+        if recent:
+            _failed_logins[key] = recent
+        else:
+            _failed_logins.pop(key, None)      # a mere check must not create an entry
     return len(recent) >= FAILED_LOGIN_MAX
 
 
 def clear_failed_logins(ip: str, username: str) -> None:
-    key = f"{ip}:{username.lower()}"
+    key = f"{ip}:{username.lower()[:_MAX_KEY_PART]}"
     with _failed_login_lock:
         _failed_logins.pop(key, None)
 
@@ -500,6 +561,8 @@ def record_failed_login_ip(ip: str) -> None:
     with _ip_login_lock:
         _ip_login_fails[ip].append(now)
         _ip_login_fails[ip] = [t for t in _ip_login_fails[ip] if now - t < _IP_LOGIN_WINDOW]
+        _bound_store(_ip_login_fails, lambda _k: _IP_LOGIN_WINDOW, now,
+                     lambda _k: LOGIN_MAX_ATTEMPTS_PER_IP)
     _shared_hit(f"loginip:{ip}", _IP_LOGIN_WINDOW)
 
 
@@ -514,8 +577,11 @@ def check_ip_login_limit(ip: str) -> None:
     """
     now = time.time()
     with _ip_login_lock:
-        recent = [t for t in _ip_login_fails[ip] if now - t < _IP_LOGIN_WINDOW]
-        _ip_login_fails[ip] = recent
+        recent = [t for t in _ip_login_fails.get(ip, []) if now - t < _IP_LOGIN_WINDOW]
+        if recent:
+            _ip_login_fails[ip] = recent
+        else:
+            _ip_login_fails.pop(ip, None)
     _sn = _shared_peek(f"loginip:{ip}", _IP_LOGIN_WINDOW)
     if _sn is not None and _sn > len(recent):
         recent = [0.0] * _sn
@@ -529,12 +595,14 @@ def record_failed_login_account(username: str) -> None:
     """Record a failed login attempt against this account, independent of
     which IP it came from — this is what catches distributed brute force
     (the same account attacked from many rotating IPs)."""
-    key = username.lower()
+    key = username.lower()[:_MAX_KEY_PART]
     now = time.time()
     with _account_login_lock:
         _account_login_fails[key].append(now)
         window = LOGIN_LOCKOUT_MINUTES * 60
         _account_login_fails[key] = [t for t in _account_login_fails[key] if now - t < window]
+        _bound_store(_account_login_fails, lambda _k: window, now,
+                     lambda _k: LOGIN_MAX_ATTEMPTS_PER_ACCOUNT)
     _shared_hit(f"loginacct:{key}", LOGIN_LOCKOUT_MINUTES * 60)
 
 
@@ -546,12 +614,15 @@ def check_account_login_lockout(username: str) -> None:
     lock, so this can't be weaponized as a denial-of-service against a
     real business by an attacker who just wants them locked out.
     """
-    key = username.lower()
+    key = username.lower()[:_MAX_KEY_PART]
     now = time.time()
     window = LOGIN_LOCKOUT_MINUTES * 60
     with _account_login_lock:
-        recent = [t for t in _account_login_fails[key] if now - t < window]
-        _account_login_fails[key] = recent
+        recent = [t for t in _account_login_fails.get(key, []) if now - t < window]
+        if recent:
+            _account_login_fails[key] = recent
+        else:
+            _account_login_fails.pop(key, None)
     _sn = _shared_peek(f"loginacct:{key}", window)
     if _sn is not None and _sn > len(recent):
         recent = [0.0] * _sn
@@ -567,7 +638,7 @@ def clear_account_login_lockout(username: str) -> None:
     them. Deliberately NOT mirrored for the IP-level tracker: a successful
     login by one legitimate user on a shared IP shouldn't erase evidence
     that the same IP was recently used to attack OTHER accounts."""
-    key = username.lower()
+    key = username.lower()[:_MAX_KEY_PART]
     with _account_login_lock:
         _account_login_fails.pop(key, None)
     _shared_clear(f"loginacct:{key}")
