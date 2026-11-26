@@ -6,6 +6,7 @@ All routes are ADDITIVE — no existing endpoints modified.
 """
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -552,6 +553,74 @@ def get_referral_balance(user=Depends(require_business)):
     }
 
 
+_CLAIM_BATCH = 200      # ids per UPDATE, to keep the request URL short
+
+
+def _cents(value) -> int:
+    return int(round(float(value or 0) * 100))
+
+
+def _release_credits(supabase, bid: int, ids: list) -> None:
+    """Return credits this request claimed. A failure leaves them claimed (never paid twice)."""
+    try:
+        for i in range(0, len(ids), _CLAIM_BATCH):
+            supabase.table("referral_credits").update(
+                {"status": "available", "withdrawn_at": None}
+            ).eq("business_id", bid).eq("status", "withdrawn").in_("id", ids[i:i + _CLAIM_BATCH]).execute()
+    except Exception as exc:
+        log.error("referral withdrawal: could not release credits  business=%s  ids=%s  error=%s",
+                  bid, ids, type(exc).__name__)
+
+
+def _claim_credits(supabase, bid: int, amount_cents: int, now: str) -> list:
+    """Security audit F-19: move enough 'available' credits to 'withdrawn' before any payout
+    request exists. The UPDATE only matches rows that are still available, so two concurrent
+    requests can never claim the same credit. Raises 409 if another request got there first."""
+    rows = (
+        supabase.table("referral_credits")
+        .select("id, amount")
+        .eq("business_id", bid)
+        .eq("status", "available")
+        .order("created_at", desc=False)
+        .execute()
+    ).data or []
+    wanted, covered = [], 0
+    for credit in rows:                      # whole credits, oldest first; integer cents
+        if covered >= amount_cents:
+            break
+        wanted.append(credit["id"])
+        covered += _cents(credit.get("amount"))
+
+    claimed: list = []
+    if covered >= amount_cents:
+        try:
+            for i in range(0, len(wanted), _CLAIM_BATCH):
+                res = supabase.table("referral_credits").update(
+                    {"status": "withdrawn", "withdrawn_at": now}
+                ).eq("business_id", bid).eq("status", "available").in_("id", wanted[i:i + _CLAIM_BATCH]).execute()
+                claimed += [r["id"] for r in (res.data or [])]
+        except Exception:
+            _release_credits(supabase, bid, claimed)
+            raise
+        if len(claimed) == len(wanted):
+            return claimed
+    _release_credits(supabase, bid, claimed)
+    raise HTTPException(409, "Your balance changed while processing this request. "
+                             "Check your balance and payout requests before trying again.")
+
+
+def _withdrawal_exists(supabase, bid: int, requested_at: str) -> Optional[bool]:
+    """Did the insert commit even though the call failed? None means it cannot be told."""
+    try:
+        res = (supabase.table("referral_withdrawals").select("id")
+               .eq("business_id", bid).eq("requested_at", requested_at).limit(1).execute())
+        return bool(res.data)
+    except Exception as exc:
+        log.error("referral withdrawal: state unknown, credits kept claimed for manual review  "
+                  "business=%s  requested_at=%s  error=%s", bid, requested_at, type(exc).__name__)
+        return None
+
+
 @router.post("/me/referral/withdraw")
 def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_not_impersonated)):
     """
@@ -571,7 +640,10 @@ def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_not_
         raise HTTPException(400, "Valid PayPal email required")
 
     # Validate amount
-    if body.amount < 5.00:
+    if not math.isfinite(body.amount):
+        raise HTTPException(400, "Enter a valid amount")
+    amount_cents = _cents(body.amount)
+    if amount_cents < 500:
         raise HTTPException(400, f"Minimum withdrawal is $5.00. You requested ${body.amount:.2f}.")
 
     # Check available balance
@@ -583,7 +655,7 @@ def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_not_
             f"Insufficient balance. Available: ${available:.2f}. Minimum: $5.00. "
             f"Keep referring to build your balance — each referral earns you $0.20.")
 
-    if body.amount > available:
+    if amount_cents > _cents(available):
         raise HTTPException(400,
             f"Requested ${body.amount:.2f} exceeds available balance of ${available:.2f}.")
 
@@ -591,44 +663,25 @@ def request_referral_withdrawal(body: WithdrawRequest, user=Depends(require_not_
         from datetime import datetime, timezone as tz
         now = datetime.now(tz.utc).isoformat()
 
-        # Create withdrawal request
-        withdrawal = supabase.table("referral_withdrawals").insert({
-            "business_id":  bid,
-            "amount":       round(body.amount, 2),
-            "paypal_email": body.paypal_email.strip().lower(),
-            "status":       "pending",
-            "requested_at": now,
-            "admin_note":   None,
-        }).execute()
+        # Claim the credits first, then record the payout request
+        claimed = _claim_credits(supabase, bid, amount_cents, now)
+        try:
+            supabase.table("referral_withdrawals").insert({
+                "business_id":  bid,
+                "amount":       amount_cents / 100,
+                "paypal_email": body.paypal_email.strip().lower(),
+                "status":       "pending",
+                "requested_at": now,
+                "admin_note":   None,
+            }).execute()
+        except Exception:
+            recorded = _withdrawal_exists(supabase, bid, now)
+            if recorded is False:
+                _release_credits(supabase, bid, claimed)
+            if not recorded:        # unknown: keep the credits claimed so they cannot be paid twice
+                raise
 
-        # Mark credits as withdrawn (up to the requested amount)
-        credits_res = (
-            supabase.table("referral_credits")
-            .select("id, amount")
-            .eq("business_id", bid)
-            .eq("status", "available")
-            .order("created_at", desc=False)
-            .execute()
-        )
-        remaining = round(body.amount, 2)
-        for credit in (credits_res.data or []):
-            if remaining <= 0:
-                break
-            credit_amt = float(credit.get("amount", 0))
-            if credit_amt <= remaining:
-                supabase.table("referral_credits").update(
-                    {"status": "withdrawn", "withdrawn_at": now}
-                ).eq("id", credit["id"]).execute()
-                remaining -= credit_amt
-            else:
-                # Partial — split not needed at $0.20 granularity, just mark whole credit
-                supabase.table("referral_credits").update(
-                    {"status": "withdrawn", "withdrawn_at": now}
-                ).eq("id", credit["id"]).execute()
-                remaining = 0
-
-        log.info("Withdrawal requested  business=%s  amount=%.2f  paypal=%s",
-                 bid, body.amount, body.paypal_email)
+        log.info("Withdrawal requested  business=%s  amount=%.2f", bid, amount_cents / 100)
 
         return {
             "ok":           True,
