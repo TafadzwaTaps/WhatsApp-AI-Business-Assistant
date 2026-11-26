@@ -245,6 +245,9 @@ async def _media_url_ok(url: str) -> bool:
     return ok
 
 
+_MAX_AUDIO_BYTES = 16 * 1024 * 1024  # WhatsApp's own audio limit
+
+
 async def transcribe_whatsapp_voice_note(
     media_id: str,
     wa_token: str,
@@ -272,7 +275,14 @@ async def transcribe_whatsapp_voice_note(
                 timeout=15,
             )
             meta_resp.raise_for_status()
-            media_url = meta_resp.json().get("url", "")
+            meta = meta_resp.json()
+            media_url = meta.get("url", "")
+            try:
+                if int(meta.get("file_size") or 0) > _MAX_AUDIO_BYTES:
+                    log.info("transcribe_whatsapp_voice_note: rejected, declared size over cap  media_id=%s", media_id)
+                    return None
+            except (TypeError, ValueError):
+                pass
             if not media_url:
                 log.warning("transcribe_whatsapp_voice_note: no media url  media_id=%s", media_id)
                 return None
@@ -287,6 +297,9 @@ async def transcribe_whatsapp_voice_note(
             )
             audio_resp.raise_for_status()
             audio_bytes = audio_resp.content
+            if len(audio_bytes) > _MAX_AUDIO_BYTES:
+                log.info("transcribe_whatsapp_voice_note: rejected, size over cap  media_id=%s", media_id)
+                return None
 
         async with httpx.AsyncClient() as client:
             whisper_resp = await client.post(

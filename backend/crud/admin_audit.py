@@ -8,7 +8,7 @@ optional-table pattern as ai_usage_log_migration.sql).
 
 Every function here is best-effort and NEVER raises: a missing table (not
 migrated yet), a Supabase outage, or any other DB error is caught, logged
-at debug level, and treated as "nothing recorded" / "no history yet".
+(a dropped audit write at warning level), and treated as "nothing recorded" / "no history yet".
 Audit logging must never be able to break the admin action it is
 recording — an admin who suspends a business must have that suspension
 succeed even if the audit-log insert fails.
@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from core.db import supabase
+from core.safelog import record_dropped, redact
 
 log = logging.getLogger(__name__)
 
@@ -52,13 +53,13 @@ def log_admin_action(
             "target_id":      str(target_id) if target_id is not None else None,
             "business_id":    business_id,
             "reason":         reason,
-            "metadata":       metadata or {},
+            "metadata":       redact(metadata or {}),
             "ip_address":     ip_address,
             "user_agent":     user_agent,
         }
         supabase.table("admin_audit_logs").insert(row).execute()
     except Exception as exc:
-        log.debug("log_admin_action skipped (%s) — table may not exist yet", exc)
+        record_dropped("admin_audit_logs", action, exc)
 
 
 def list_audit_logs(

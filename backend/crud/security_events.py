@@ -8,7 +8,7 @@ same optional-table pattern as every other SuperAdmin 2.0 table).
 
 Every function here is best-effort and NEVER raises: a missing table (not
 migrated yet), a Supabase outage, or any other DB error is caught, logged
-at debug level, and treated as "nothing recorded". Logging a security
+(a dropped write at warning level), and treated as "nothing recorded". Logging a security
 event must never be able to affect the actual security check it's
 attached to — a login lockout still locks, a bad webhook signature is
 still rejected, whether or not this write succeeds.
@@ -20,6 +20,7 @@ import logging
 from typing import Optional
 
 from core.db import supabase
+from core.safelog import record_dropped, redact
 
 log = logging.getLogger(__name__)
 
@@ -48,10 +49,10 @@ def log_security_event(
             "ip":          ip,
             "username":    username,
             "business_id": business_id,
-            "metadata":    metadata or {},
+            "metadata":    redact(metadata or {}),
         }).execute()
     except Exception as exc:
-        log.debug("log_security_event skipped (%s) — table may not exist yet", exc)
+        record_dropped("security_events", event_type, exc)
 
 
 def list_security_events(

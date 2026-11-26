@@ -37,7 +37,19 @@ SHARED_PHONE_NUMBER_ID = ""
 
 # ── Debug endpoints ───────────────────────────────────────────────────────────
 
-@router.get("/debug/env")
+def _audit_debug_use(request: Request, user=Depends(require_superadmin)):
+    from services.security import get_client_ip
+    log_admin_action(
+        actor_username=user.get("username"), action="debug.access", target_type="system",
+        metadata={"path": request.url.path}, ip_address=get_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
+
+
+_AUDITED = [Depends(_audit_debug_use)]
+
+
+@router.get("/debug/env", dependencies=_AUDITED)
 def debug_env(user=Depends(require_superadmin)):
     fernet_key = os.getenv("FERNET_KEY", "")
     secret_key = os.getenv("SECRET_KEY", "")
@@ -52,7 +64,7 @@ def debug_env(user=Depends(require_superadmin)):
     }
 
 
-@router.get("/debug/security")
+@router.get("/debug/security", dependencies=_AUDITED)
 def debug_security(user=Depends(require_superadmin)):
     return {
         "webhook_signature_verification": "enabled" if WHATSAPP_APP_SECRET else "DISABLED - WHATSAPP_APP_SECRET not set: webhooks are rejected (fail closed) unless ALLOW_UNSIGNED_WEBHOOKS=1 (dev only)",
@@ -63,7 +75,7 @@ def debug_security(user=Depends(require_superadmin)):
     }
 
 
-@router.get("/debug/supabase")
+@router.get("/debug/supabase", dependencies=_AUDITED)
 def debug_supabase(user=Depends(require_superadmin)):
     import re
     url = os.getenv("SUPABASE_URL", "").strip()
@@ -89,7 +101,7 @@ def debug_supabase(user=Depends(require_superadmin)):
                 "action": "Check Supabase project is active at https://supabase.com/dashboard"}
 
 
-@router.get("/debug/verify-deploy")
+@router.get("/debug/verify-deploy", dependencies=_AUDITED)
 def debug_verify_deploy(user=Depends(require_superadmin)):
     """
     Returns the ACTUAL running source code of functions that have repeatedly
@@ -147,7 +159,7 @@ def debug_verify_deploy(user=Depends(require_superadmin)):
     return result
 
 
-@router.get("/debug/token")
+@router.get("/debug/token", dependencies=_AUDITED)
 def debug_token(user=Depends(require_superadmin)):
     from core.crypto import encrypt_token, decrypt_token
     from fastapi.responses import JSONResponse
@@ -213,7 +225,7 @@ def debug_webhook(request: Request, user=Depends(require_business)):
     return steps
 
 
-@router.get("/debug/schema")
+@router.get("/debug/schema", dependencies=_AUDITED)
 def debug_schema(user=Depends(require_superadmin)):   # Phase 4: lists DB columns, clears a cache shared by all tenants
     from workflows.order_lifecycle import _get_orders_columns, _invalidate_column_cache
     _invalidate_column_cache()
