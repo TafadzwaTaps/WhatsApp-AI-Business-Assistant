@@ -471,6 +471,10 @@ def get_current_user(token: str = Depends(oauth2_scheme), request: Request = Non
         result["impersonated_by"] = impersonated_by
         if request is not None:                        # None only for direct calls (tests, tools)
             _enforce_support_read_only(request, payload)
+    # Security audit Stage 3: per-account cap on state-changing calls (429 via the app handler).
+    if request is not None and (request.method or "").upper() not in _SUPPORT_SAFE_METHODS:
+        from services.security import check_account_write
+        check_account_write(role, business_id if business_id is not None else username)
     return result
 
 

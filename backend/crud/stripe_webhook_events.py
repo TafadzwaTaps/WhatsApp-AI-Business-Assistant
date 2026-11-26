@@ -98,12 +98,19 @@ def claim_event(event_id: str, event_type: str) -> str:
             return "in_progress"
         # failed, or abandoned claim → take it over (conditional on the status we saw)
         try:
-            supabase.table("stripe_webhook_events").update({
+            query = supabase.table("stripe_webhook_events").update({
                 "status": "processing", "attempts": int(row.get("attempts") or 1) + 1,
                 "updated_at": _now().isoformat(),
-            }).eq("event_id", event_id).eq("status", status).execute()
+            }).eq("event_id", event_id).eq("status", status)
+            if row.get("updated_at"):    # also separates two takeovers of the same stale claim
+                query = query.eq("updated_at", row["updated_at"])
+            res = query.execute()
         except Exception as exc:
             log.debug("stripe_webhook_events takeover failed: %s", exc)
+            return "process"
+        # No row matched: another delivery claimed it between our read and this update.
+        if isinstance(getattr(res, "data", None), list) and not res.data:
+            return "in_progress"
         return "process"
 
 

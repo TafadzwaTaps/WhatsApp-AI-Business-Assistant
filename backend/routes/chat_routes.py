@@ -274,8 +274,8 @@ def _handoff_get_customer(customer_id: int, bid: int, agent_user: dict, action: 
     requesting agent. This prevents Business A from pausing/resuming AI
     or messaging Business B's customers on a shared WhatsApp number.
 
-    Raises HTTPException(404) if no customer is found, or
-    HTTPException(403) if the customer belongs to a different business.
+    Raises HTTPException(404) if no customer is found or it belongs to a different
+    business (the cross-tenant case is only distinguished in the security log).
     """
     customer = crud.get_customer_by_id(customer_id, bid)
     if customer:
@@ -304,7 +304,8 @@ def _handoff_get_customer(customer_id: int, bid: int, agent_user: dict, action: 
             "reason=cross_tenant  customer_business_id=%s",
             action, agent_user.get("username"), bid, customer_id, other_bid,
         )
-        raise HTTPException(403, "This conversation belongs to a different business")
+        # Security audit F-09: same answer as an unknown id, so ids cannot be probed.
+        raise HTTPException(404, "Customer not found")
 
     log.warning(
         "HANDOFF AUTH FAILED  action=%s  user=%s  business_id=%s  customer_id=%s  reason=not_found",

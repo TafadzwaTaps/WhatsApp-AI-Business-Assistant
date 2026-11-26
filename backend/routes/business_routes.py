@@ -166,6 +166,12 @@ _SYM_TO_ISO: dict = {
 }
 
 _FEATURES_JSON_MAX_BYTES = 64_000
+# Written only by the server (unsubscribe links, Super Admin outreach, report scheduler).
+# Keys starting "_" are also server-managed.
+_SERVER_FEATURE_KEYS = frozenset({
+    "marketing_emails_opt_out", "trial_restarts", "last_trial_restart",
+    "last_outreach", "last_monthly_report",
+})
 
 
 _SG_ENUM_RE = __import__("re").compile(r"^[a-z0-9_]{1,40}$")
@@ -247,6 +253,12 @@ def update_me(data: BusinessUpdate, user=Depends(require_business), request: Req
         current = crud.get_business_by_id(user["business_id"]) or {}
         cur_fj = current.get("features_json") if isinstance(current.get("features_json"), dict) else {}
         fj = dict(safe["features_json"])
+        # Security audit F-08: server-managed keys keep their stored value.
+        for k in {k for k in (*fj, *cur_fj) if str(k).startswith("_") or k in _SERVER_FEATURE_KEYS}:
+            if k in cur_fj:
+                fj[k] = cur_fj[k]
+            else:
+                fj.pop(k, None)
         if "stripe" in cur_fj:
             fj["stripe"] = cur_fj["stripe"]
         else:
@@ -1029,7 +1041,8 @@ def create_product(product: ProductCreate, user=Depends(require_business)):
 
 @router.patch("/products/{product_id}")
 def update_product(product_id: int, data: dict, user=Depends(require_business)):
-    data.pop("business_id", None); data.pop("id", None)
+    for _k in ("business_id", "id", "created_at", "updated_at"):   # server-managed columns
+        data.pop(_k, None)
     if not data: raise HTTPException(422, "No fields to update")
     updated = crud.update_product(product_id, user["business_id"], data)
     if not updated: raise HTTPException(404, f"Product {product_id} not found")
