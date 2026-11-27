@@ -1,11 +1,11 @@
 /* Super Admin Security Center (security audit Stage 4b): overview, event explorer, audit trail.
-   Read-only. Uses apiFetch, escHtml, fmtTime, toast and exportDataset from dashboard.js.
+   Only reads; incidents and findings are in security_cases.js. Uses apiFetch, escHtml, fmtTime, toast and exportDataset from dashboard.js.
    No inline handlers: everything is wired with addEventListener. */
 (function () {
   'use strict';
 
   const SEVERITY_BADGE = { critical: 'badge-red', high: 'badge-red', medium: 'badge-amber', low: 'badge-blue', info: 'badge-green' };
-  const state = { eventsPage: 1, auditPage: 1, events: [], wired: false, requests: {} };
+  const state = { eventsPage: 1, auditPage: 1, events: [], selected: new Set(), wired: false, requests: {} };
   const AUDIT_PAGE_SIZE = 25;
 
   const byId = id => document.getElementById(id);
@@ -18,6 +18,12 @@
   }
 
   // Only the newest request of each kind may draw, so a slow answer cannot overwrite a newer one.
+  function badge(severity) {
+    return `<span class="badge ${SEVERITY_BADGE[severity] || 'badge-blue'}">${escHtml(severity)}</span>`;
+  }
+
+  function showSelection() { byId('sc-selected').textContent = `${state.selected.size} selected`; }
+
   function ticket(kind) {
     const mine = (state.requests[kind] || 0) + 1;
     state.requests[kind] = mine;
@@ -60,8 +66,8 @@
       byId('sc-headline').textContent = headline;
 
       byId('sc-cards').innerHTML = [
-        card('Open critical incidents', incidents ? incidents.critical : null, 'incident tracking not built yet'),
-        card('Open high incidents', incidents ? incidents.high : null, 'incident tracking not built yet'),
+        card('Open critical incidents', incidents ? incidents.critical : null, 'right now'),
+        card('Open high incidents', incidents ? incidents.high : null, 'right now'),
         card('Blocked requests', ev.blocked, `${period}, not all malicious`),
         card('Failed sign-ins', counts.failed_logins, period),
         card('Rate limit refusals', counts.rate_limited, period),
@@ -128,14 +134,15 @@
     const current = ticket('events');
     state.eventsPage = page;
     const body = byId('sc-events');
-    body.innerHTML = emptyRow(7, 'Loading…');
+    body.innerHTML = emptyRow(8, 'Loading…');
     try {
       const data = await apiFetch(`/admin/saas/security/events?${query({ ...eventFilters(), page })}`);
       if (!data || !current()) return;
       state.events = data.events || [];
       pager('sc-events', page, data.has_more);
-      if (!data.available) { body.innerHTML = emptyRow(7, data.problem || 'Unavailable.'); return; }
+      if (!data.available) { body.innerHTML = emptyRow(8, data.problem || 'Unavailable.'); return; }
       body.innerHTML = state.events.length ? state.events.map((e, index) => `<tr>
+          <td>${e.incident_id ? '#' + escHtml(e.incident_id) : `<input type="checkbox" data-select="${escHtml(e.id)}" aria-label="Select event ${escHtml(e.id)}" style="width:auto;"${state.selected.has(Number(e.id)) ? ' checked' : ''}/>`}</td>
           <td style="color:var(--text-dim);font-size:11px;">${escHtml(fmtTime(e.last_seen))}</td>
           <td>${escHtml(e.name)}</td>
           <td><span class="badge ${SEVERITY_BADGE[e.severity] || 'badge-blue'}">${escHtml(e.severity)}</span></td>
@@ -143,11 +150,11 @@
           <td>${e.business_id === null || e.business_id === undefined ? '—' : '#' + escHtml(e.business_id)}</td>
           <td>${escHtml(e.occurrences)}</td>
           <td><button type="button" class="btn btn-ghost" data-event="${index}">Details</button></td>
-        </tr>`).join('') : emptyRow(7, 'No events match these filters.');
+        </tr>`).join('') : emptyRow(8, 'No events match these filters.');
     } catch (error) {
       if (!current()) return;
       pager('sc-events', page, false);
-      body.innerHTML = emptyRow(7, 'Unavailable — ' + error.message);
+      body.innerHTML = emptyRow(8, 'Unavailable — ' + error.message);
     }
   }
 
@@ -216,6 +223,12 @@
       const button = e.target.closest('[data-event]');
       if (button) showEvent(state.events[Number(button.dataset.event)]);
     });
+    on('sc-events', 'change', e => {
+      const box = e.target.closest('[data-select]');
+      if (!box) return;
+      if (box.checked) state.selected.add(Number(box.dataset.select)); else state.selected.delete(Number(box.dataset.select));
+      showSelection();
+    });
     on('sc-review', 'click', e => {
       const button = e.target.closest('[data-review]');
       if (!button) return;
@@ -237,7 +250,15 @@
     loadOverview();
     loadEvents(1);
     loadAudit(1);
+    if (window.loadSecurityCases) window.loadSecurityCases();
   }
 
+  window.SecurityCenter = {
+    byId, text, query, ticket, pager, emptyRow, badge,
+    selectedEvents: () => [...state.selected],
+    clearSelection: () => { state.selected.clear(); showSelection(); loadEvents(state.eventsPage); },
+    reloadEvents: () => loadEvents(state.eventsPage),
+    reloadOverview: () => { loadOverview(); loadAudit(state.auditPage); },
+  };
   window.loadSecurityCenter = loadSecurityCenter;
 })();
