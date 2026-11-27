@@ -71,6 +71,9 @@ def list_audit_logs(
     offset: int = 0,
     business_id: Optional[int] = None,
     action: Optional[str] = None,
+    actor: Optional[str] = None,
+    since_iso: Optional[str] = None,
+    before_iso: Optional[str] = None,
 ) -> list[dict]:
     """Recent audit-log rows, newest first. Returns [] on any error."""
     try:
@@ -84,6 +87,12 @@ def list_audit_logs(
             q = q.eq("business_id", business_id)
         if action:
             q = q.eq("action", action)
+        if actor:
+            q = q.eq("actor_username", actor)
+        if since_iso:
+            q = q.gte("created_at", since_iso)
+        if before_iso:
+            q = q.lt("created_at", before_iso)
         res = q.execute()
         return res.data or []
     except Exception as exc:

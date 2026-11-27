@@ -111,7 +111,8 @@ EXPORT_DATASETS: dict[str, dict] = {
     "security_events": {
         "description": "Persisted security-event history (Phase 11).",
         "fetch": _fetch_security_events,
-        "fields": ["id", "created_at", "event_type", "ip", "username", "business_id", "metadata"],
+        "fields": ["id", "created_at", "event_type", "ip", "username", "business_id", "metadata",
+                   "severity", "outcome", "rule", "endpoint", "occurrence_count", "last_seen_at"],
     },
 }
 

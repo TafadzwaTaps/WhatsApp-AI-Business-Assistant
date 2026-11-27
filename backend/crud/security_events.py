@@ -155,9 +155,11 @@ def list_security_events(
         return []
 
 
-def list_all_security_events_since(since_iso: str, page: int = 1000, max_rows: int = 20000) -> tuple:
+def list_all_security_events_since(since_iso: str, page: int = 1000, max_rows: int = 20000,
+                                   raise_errors: bool = False) -> tuple:
     """(rows, truncated): every event since `since_iso`, newest first, read in pages because the
-    database API returns at most 1000 rows per request by default. ([], False) on error."""
+    database API returns at most 1000 rows per request by default. On error: ([], False), or the
+    exception when `raise_errors` (so a failure is not mistaken for "nothing happened")."""
     rows: list = []
     try:
         while len(rows) < max_rows:
@@ -173,8 +175,49 @@ def list_all_security_events_since(since_iso: str, page: int = 1000, max_rows: i
                 return rows, False
         return rows, True
     except Exception as exc:
+        if raise_errors:
+            raise
         log.warning("list_all_security_events_since failed (%s)", type(exc).__name__)
         return rows, bool(rows)
+
+
+def _ilike_text(value: str) -> str:
+    """The value as literal text inside an ilike pattern ("*" cannot be escaped, so it is removed)."""
+    return value.replace("*", "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def query_security_events(
+    *, since_iso: Optional[str] = None, before_iso: Optional[str] = None, severity: Optional[str] = None,
+    event_type: Optional[str] = None, business_id: Optional[int] = None, username: Optional[str] = None,
+    endpoint: Optional[str] = None, ip: Optional[str] = None, incident_id: Optional[int] = None,
+    search: Optional[str] = None, offset: int = 0, limit: int = 25,
+) -> tuple:
+    """(rows, has_more, problem) for one filtered page, newest first. `problem` is None on success.
+    `search` must already be restricted to harmless characters (see the route)."""
+    try:
+        q = supabase.table("security_events").select("*")
+        if since_iso:
+            q = q.gte("created_at", since_iso)
+        if before_iso:
+            q = q.lt("created_at", before_iso)
+        for column, value in (("severity", severity), ("event_type", event_type), ("ip", ip),
+                              ("business_id", business_id), ("incident_id", incident_id)):
+            if value is not None and value != "":
+                q = q.eq(column, value)
+        for column, value in (("username", username), ("endpoint", endpoint)):
+            if value:
+                q = q.ilike(column, f"%{_ilike_text(value)}%")
+        if search:
+            # Only columns that exist both before and after the database changes.
+            q = q.or_(",".join(f'{column}.ilike."*{search}*"' for column in ("event_type", "username", "ip")))
+        rows = (q.order("created_at", desc=True).order("id", desc=True)
+                .range(offset, offset + limit).execute()).data or []
+        return rows[:limit], len(rows) > limit, None
+    except Exception as exc:
+        log.warning("query_security_events failed (%s)", type(exc).__name__)
+        missing = str(getattr(exc, "code", "")) in ("42703", "42P01", "PGRST204", "PGRST205")
+        return [], False, ("This filter needs a database change that has not been applied." if missing
+                           else "Security events could not be read.")
 
 
 def earliest_event_timestamp() -> Optional[str]:

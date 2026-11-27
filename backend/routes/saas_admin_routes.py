@@ -28,6 +28,8 @@ They are only accessible to the superadmin role (require_superadmin dep).
 They do NOT affect any existing business-facing endpoints.
 """
 
+from datetime import date, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 import logging
 
@@ -465,10 +467,17 @@ def saas_set_tenant_tier(
 def saas_audit_logs(
     limit: int = 50, offset: int = 0,
     business_id: int = None, action: str = None,
+    actor: str = None, date_from: date = None, date_to: date = None,
     user=Depends(require_superadmin),
 ):
-    """Recent SuperAdmin audit-log entries, optionally filtered."""
-    return {"logs": list_audit_logs(limit=limit, offset=offset, business_id=business_id, action=action)}
+    """SuperAdmin audit-log entries, newest first, optionally filtered. `has_more` says whether a
+    further page exists."""
+    limit = max(1, min(limit, 500))
+    logs = list_audit_logs(
+        limit=limit + 1, offset=max(0, offset), business_id=business_id, action=action, actor=actor,
+        since_iso=date_from.isoformat() if date_from else None,
+        before_iso=(date_to + timedelta(days=1)).isoformat() if date_to and date_to < date.max else None)
+    return {"logs": logs[:limit], "has_more": len(logs) > limit}
 
 
 @router.get("/admin/saas/tenants/{business_id}/notes")
