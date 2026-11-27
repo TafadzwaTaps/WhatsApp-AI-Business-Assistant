@@ -44,6 +44,10 @@ def log_admin_action(
     actor_role: str = "superadmin",
 ) -> None:
     """Best-effort insert of one audit-log row. Never raises."""
+    if not str(action).startswith("support."):
+        from services.security_events import emit
+        emit("data_export" if action == "data_export" else "admin_action", username=actor_username,
+             business_id=business_id, ip=ip_address, user_agent=user_agent, rule=action)
     try:
         row = {
             "actor_username": actor_username,

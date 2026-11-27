@@ -29,6 +29,7 @@ from services.security import (
     clear_account_login_lockout,
     rate_limit as _rate_limit,
 )
+from services.security_events import emit as emit_security_event
 from routes._deps import log
 
 router = APIRouter()
@@ -347,12 +348,15 @@ def login(data: LoginRequest, request: Request, response: Response = None):
             log.error("superadmin login attempt blocked — SUPER_ADMIN_PASSWORD not configured  ip=%s", ip)
             raise HTTPException(403, "Superadmin login is disabled until a secure password is configured.")
         if not verify_password(data.password, SUPER_ADMIN_PASSWORD):
+            emit_security_event("login_failed", request=request, username=SUPER_ADMIN_USERNAME,
+                                rule="superadmin", severity="medium")
             record_failed_login(ip, username)
             record_failed_login_ip(ip)
             record_failed_login_account(username)
             raise HTTPException(401, "Invalid credentials")
         clear_failed_logins(ip, username)
         clear_account_login_lockout(username)
+        emit_security_event("superadmin_login", request=request, username=SUPER_ADMIN_USERNAME)
         return _finish_session(request, response, _token_pair(SUPER_ADMIN_USERNAME, "superadmin"),
                                {"role": "superadmin"}, sub=SUPER_ADMIN_USERNAME, role="superadmin", business_id=None)
 
@@ -369,6 +373,11 @@ def login(data: LoginRequest, request: Request, response: Response = None):
     if not biz:
         _dummy_verify(data.password)      # same bcrypt cost as a wrong password: no timing oracle
     if not biz or not verify_password(data.password, biz["owner_password"]):
+        # The typed name is only stored when it matches an account: people do type passwords there.
+        emit_security_event("login_failed", request=request,
+                            username=biz.get("owner_username") if biz else None,
+                            business_id=biz.get("id") if biz else None,
+                            rule="wrong_password" if biz else "unknown_account")
         record_failed_login(ip, username)
         record_failed_login_ip(ip)
         record_failed_login_account(username)
@@ -524,6 +533,8 @@ def _rotate_refresh_token(payload: dict, token: str) -> None:
         return
     if now - first > _ROTATE_GRACE_SECONDS:
         log.warning("refresh token reuse detected after rotation; token revoked  sub=%s", payload.get("sub"))
+        emit_security_event("refresh_token_reuse", username=payload.get("sub"),
+                            business_id=payload.get("business_id"))
         try:
             revoke_token(token)
         except Exception as exc:

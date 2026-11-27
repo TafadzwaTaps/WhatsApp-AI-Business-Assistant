@@ -712,8 +712,8 @@ def _record_webhook_sig_failure() -> None:
 def _persist_security_event(event_type: str, *, ip: Optional[str] = None,
                              username: Optional[str] = None, metadata: Optional[dict] = None) -> None:
     try:
-        from crud.security_events import log_security_event
-        log_security_event(event_type=event_type, ip=ip, username=username, metadata=metadata)
+        from services.security_events import emit
+        emit(event_type, ip=ip, username=username, metadata=metadata)
     except Exception as exc:
         log.debug("_persist_security_event skipped  type=%s  error=%s", event_type, exc)
 

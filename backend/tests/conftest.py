@@ -108,3 +108,16 @@ def _consent_off_by_default():
     except ImportError:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _security_events_stay_in_memory():
+    """No background writer in tests: events queue in memory until a test calls flush()."""
+    from services import security_events
+    import crud.security_events as store
+    # Its own patcher: requesting `monkeypatch` here would change when older fixtures tear down.
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(security_events, "_start_worker", lambda: None)
+        patch.setattr(store, "_rpc_retry_at", 0.0)
+        security_events._reset_for_tests()
+        yield

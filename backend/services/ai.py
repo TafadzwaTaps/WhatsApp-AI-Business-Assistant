@@ -664,6 +664,8 @@ def _generate_reply_core(
         if is_injection_attempt(text):
             log.warning("prompt_injection: blocked  phone=%s  biz=%s  text_len=%d",
                         phone, business_id, len(text))
+            from services.security_events import emit
+            emit("prompt_injection_blocked", business_id=business_id)
             return refusal_reply()
     except Exception as exc:
         log.debug("prompt_injection_guard check failed (ignored): %s", exc)

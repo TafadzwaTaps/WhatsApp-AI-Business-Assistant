@@ -393,6 +393,9 @@ def _enforce_support_read_only(request, payload: dict) -> None:
             "SUPPORT SESSION BLOCKED: %s %s  admin=%s  business=%s",
             method, path, payload.get("impersonated_by"), payload.get("business_id"))
         _audit_support("support.write_blocked", payload, request)
+        from services.security_events import emit
+        emit("support_write_blocked", request=request, username=payload.get("impersonated_by"),
+             business_id=payload.get("business_id"), rule="read_only")
         raise HTTPException(status_code=403,
                             detail="Support (view-as) sessions are read-only. This action is not available.")
     if method in _SUPPORT_SAFE_METHODS:
@@ -416,6 +419,9 @@ def get_current_user(token: str = Depends(oauth2_scheme), request: Request = Non
         raise
     if is_token_revoked(payload.get("jti")):
         _log.warning("AUTH FAILED: reason=token_revoked")
+        from services.security_events import emit
+        emit("revoked_token_used", request=request, username=payload.get("sub"),
+             business_id=payload.get("business_id"))
         raise HTTPException(status_code=401, detail="Session ended. Please log in again.")
     username    = payload.get("sub")
     role        = payload.get("role", "business")
@@ -503,6 +509,9 @@ def require_not_impersonated(user: dict = Depends(require_business)):
         _al.getLogger("wazibot.auth").warning(
             "AUTH BLOCKED: impersonation token on a restricted action  admin=%s  business=%s",
             user.get("impersonated_by"), user.get("business_id"))
+        from services.security_events import emit
+        emit("support_write_blocked", username=user.get("impersonated_by"),
+             business_id=user.get("business_id"), rule="restricted_action")
         raise HTTPException(status_code=403, detail="This action is not available while viewing as another business.")
     return user
 

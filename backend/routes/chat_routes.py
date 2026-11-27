@@ -304,6 +304,9 @@ def _handoff_get_customer(customer_id: int, bid: int, agent_user: dict, action: 
             "reason=cross_tenant  customer_business_id=%s",
             action, agent_user.get("username"), bid, customer_id, other_bid,
         )
+        from services.security_events import emit
+        emit("cross_tenant_blocked", username=agent_user.get("username"), business_id=bid,
+             rule=f"handoff:{action}", metadata={"customer_id": customer_id, "owner_business_id": other_bid})
         # Security audit F-09: same answer as an unknown id, so ids cannot be probed.
         raise HTTPException(404, "Customer not found")
 
@@ -773,6 +776,8 @@ async def paypal_webhook(request: Request):
 
     if WEBHOOK_ID:
         if not verify_paypal_webhook_signature(headers=dict(request.headers), raw_body=raw_body, webhook_id=WEBHOOK_ID):
+            from services.security_events import emit
+            emit("webhook_invalid_signature", request=request, rule="paypal")
             raise HTTPException(400, "Invalid PayPal webhook signature")
     elif os.getenv("RENDER") or os.getenv("ALLOW_UNSIGNED_WEBHOOKS", "").strip() != "1":
         # SECURITY: fail closed. Without PAYPAL_WEBHOOK_ID a forged

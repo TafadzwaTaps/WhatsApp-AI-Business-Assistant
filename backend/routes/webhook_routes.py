@@ -1305,6 +1305,9 @@ async def websocket_chat(websocket: WebSocket, business_id: int):
             await websocket.close(code=4001)          # support and admin sessions are Bearer-only
             return
         if payload.get("business_id") != business_id and payload.get("role") != "superadmin":
+            from services.security_events import emit
+            emit("cross_tenant_blocked", username=payload.get("sub"), business_id=payload.get("business_id"),
+                 rule="websocket", metadata={"requested_business_id": business_id})
             await websocket.close(code=4001)
             return
         # Phase 4: same session checks as get_current_user: a token issued before a password

@@ -163,6 +163,8 @@ def export_bookings_csv(
     )
     if error is not None:
         raise HTTPException(500, f"Could not export bookings: {error}")
+    from services.security_events import emit
+    emit("data_export", username=user.get("username"), business_id=user["business_id"], rule="bookings_csv")
 
     buf = io.StringIO()
     fields = ["id", "booking_date", "start_time", "end_time", "duration_hrs",
