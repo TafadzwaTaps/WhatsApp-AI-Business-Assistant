@@ -1325,6 +1325,8 @@ def handle_stripe_webhook(payload: bytes, sig_header: str) -> dict:
         event = stripe.Webhook.construct_event(payload, sig_header, secret)
     except Exception as exc:
         log.warning("Stripe webhook verification failed: %s", type(exc).__name__)
+        from services.security_events import emit
+        emit("webhook_invalid_signature", rule="stripe")
         return {"error": "Invalid signature", "status": 400}
 
     etype    = event["type"]

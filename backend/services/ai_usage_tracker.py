@@ -83,7 +83,11 @@ def business_llm_quota_ok(business_id: int) -> bool:
     outage."""
     try:
         from core.plan_guard import check_ai_usage_limit
-        return check_ai_usage_limit(business_id) is None
+        if check_ai_usage_limit(business_id) is None:
+            return True
+        from services.security_events import emit
+        emit("ai_quota_reached", business_id=business_id)
+        return False
     except Exception as exc:
         log.warning("business_llm_quota_ok: check failed for biz %s (%s) — allowing", business_id, exc)
         return True

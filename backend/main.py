@@ -242,6 +242,8 @@ async def rate_limit_handler(request, exc: RateLimitExceeded):
     from services.security import _get_client_ip
     log.warning("rate_limit_exceeded  endpoint=%s  ip=%s", request.url.path,
                 _get_client_ip(request))
+    from services.security_events import emit
+    emit("rate_limit_exceeded", request=request, rule=exc.limit_name)
     return JSONResponse(
         status_code=429,
         content={"detail": "Too many requests. Please wait and try again."},
@@ -868,6 +870,13 @@ try:
     attach_booking_reminder_scheduler(app)
 except Exception as _brs_err:
     log.warning("booking_reminder_scheduler: failed to start (non-fatal): %s", _brs_err)
+
+# ── Security event writer and retention (security audit Stage 4a) ──────────
+try:
+    from services.security_events import attach_security_event_worker
+    attach_security_event_worker(app)
+except Exception as _sev_err:
+    log.warning("security_events: writer not attached (non-fatal): %s", _sev_err)
 
 # 9 core routers are imported unconditionally above; the rest are optional.
 _registered_modules = 9 + sum(

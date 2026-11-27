@@ -967,7 +967,8 @@ def saas_security_history(days: int = 7, user=Depends(require_superadmin)):
     """
     try:
         import datetime as _dt
-        from crud.security_events import list_security_events, earliest_event_timestamp, EVENT_TYPES
+        from crud.security_events import (list_all_security_events_since, earliest_event_timestamp,
+                                          occurrences_of, EVENT_TYPES)
 
         days = max(1, min(days, 90))
         tracking_since = earliest_event_timestamp()
@@ -982,7 +983,7 @@ def saas_security_history(days: int = 7, user=Depends(require_superadmin)):
 
         now = _dt.datetime.now(_dt.timezone.utc)
         cutoff = now - _dt.timedelta(days=days)
-        events = list_security_events(since_iso=cutoff.isoformat(), limit=5000)
+        events, truncated = list_all_security_events_since(cutoff.isoformat())
 
         daily: dict = {}
         totals: dict = {t: 0 for t in EVENT_TYPES}
@@ -991,15 +992,17 @@ def saas_security_history(days: int = 7, user=Depends(require_superadmin)):
             raw   = e.get("created_at") or ""
             day   = raw[:10] if len(raw) >= 10 else "unknown"
             bucket = daily.setdefault(day, {"date": day, **{t: 0 for t in EVENT_TYPES}})
+            count = occurrences_of(e)
             if etype in bucket:
-                bucket[etype] += 1
-            totals[etype] = totals.get(etype, 0) + 1
+                bucket[etype] += count
+            totals[etype] = totals.get(etype, 0) + count
 
         return {
             "tracking_since":  tracking_since,
             "window_days":     days,
             "daily_counts":    sorted(daily.values(), key=lambda d: d["date"]),
             "totals_by_type":  totals,
+            "truncated":       truncated,       # True: the totals do not cover the whole window
         }
     except Exception as exc:
         log.error("saas_security_history error: %s", exc)
