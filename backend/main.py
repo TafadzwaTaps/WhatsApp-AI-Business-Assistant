@@ -871,6 +871,13 @@ try:
 except Exception as _brs_err:
     log.warning("booking_reminder_scheduler: failed to start (non-fatal): %s", _brs_err)
 
+# ── Security Center, read-only Super Admin API (security audit Stage 4b) ───
+try:
+    from routes.security_center_routes import router as security_center_router
+    app.include_router(security_center_router)
+except Exception as _sc_err:
+    log.warning("security_center routes not loaded (non-fatal): %s", _sc_err)
+
 # ── Security event writer and retention (security audit Stage 4a) ──────────
 try:
     from services.security_events import attach_security_event_worker

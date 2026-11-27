@@ -460,6 +460,93 @@
     </div>
   </div>
 
+  <!-- SUPERADMIN SECURITY CENTER (security audit Stage 4b, read-only) -->
+  <div id="section-admin-security" class="section">
+    <div class="topbar">
+      <h1 class="page-title">Security <span class="purple">Center</span></h1>
+      <button type="button" class="btn btn-purple" id="sc-refresh"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-refresh"/></svg> Refresh</button>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg> Overview</div>
+        <label style="font-family:var(--mono);font-size:11px;color:var(--text-dim);display:flex;gap:6px;align-items:center;">Period
+          <select id="sc-days" style="width:auto;"><option value="1">24 hours</option><option value="7" selected>7 days</option><option value="30">30 days</option></select>
+        </label>
+      </div>
+      <div class="panel-body">
+        <div id="sc-headline" role="status" style="font-family:var(--mono);font-size:12px;margin-bottom:14px;">Loading…</div>
+        <div class="stats-grid" id="sc-cards"></div>
+        <div id="sc-review" style="display:flex;flex-direction:column;gap:6px;font-family:var(--mono);font-size:12px;margin-bottom:14px;"></div>
+        <div id="sc-monitoring" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:1.9;"></div>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-search"/></svg> Event Explorer</div>
+        <button type="button" class="panel-action" id="sc-export" title="Exports the newest security events up to the export limit; the filters are not applied. The export is audit-logged.">Export CSV (unfiltered)</button>
+      </div>
+      <div class="panel-body">
+        <form id="sc-event-filters">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Search type, account or address<input id="sc-f-search" type="search" maxlength="80" pattern="[A-Za-z0-9 @._:\-]*" title="Letters, numbers, spaces and @ . _ : -"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Severity<select id="sc-f-severity"><option value="">Any</option><option value="critical">critical</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Event<select id="sc-f-type"><option value="">Any</option></select></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Business ID<input id="sc-f-business" type="number" min="1"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Account<input id="sc-f-user" type="text" maxlength="120"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Route<input id="sc-f-endpoint" type="text" maxlength="200"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">IP address<input id="sc-f-ip" type="text" maxlength="64"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Incident ID<input id="sc-f-incident" type="number" min="1"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">From<input id="sc-f-from" type="date"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">To<input id="sc-f-to" type="date"/></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:14px;"><button type="submit" class="btn btn-purple">Apply filters</button><button type="reset" class="btn btn-ghost">Clear</button></div>
+        </form>
+        <table><thead><tr><th scope="col">Last seen</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Account or address</th><th scope="col">Business</th><th scope="col">Count</th><th scope="col">Details</th></tr></thead>
+        <tbody id="sc-events"></tbody></table>
+        <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;font-family:var(--mono);font-size:11px;">
+          <button type="button" class="btn btn-ghost" id="sc-events-prev" disabled>Previous</button>
+          <span id="sc-events-page">Page 1</span>
+          <button type="button" class="btn btn-ghost" id="sc-events-next" disabled>Next</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel full">
+      <div class="panel-header"><div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-file"/></svg> Audit Trail</div></div>
+      <div class="panel-body">
+        <form id="sc-audit-filters">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Admin (exact)<input id="sc-a-actor" type="text" maxlength="120"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Action (exact)<input id="sc-a-action" type="text" maxlength="80"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Business ID<input id="sc-a-business" type="number" min="1"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">From<input id="sc-a-from" type="date"/></label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">To<input id="sc-a-to" type="date"/></label>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:14px;"><button type="submit" class="btn btn-purple">Apply filters</button><button type="reset" class="btn btn-ghost">Clear</button></div>
+        </form>
+        <table><thead><tr><th scope="col">When</th><th scope="col">Admin</th><th scope="col">Action</th><th scope="col">Resource</th><th scope="col">Business</th><th scope="col">Reason</th><th scope="col">IP address</th></tr></thead>
+        <tbody id="sc-audit"></tbody></table>
+        <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;font-family:var(--mono);font-size:11px;">
+          <button type="button" class="btn btn-ghost" id="sc-audit-prev" disabled>Previous</button>
+          <span id="sc-audit-page">Page 1</span>
+          <button type="button" class="btn btn-ghost" id="sc-audit-next" disabled>Next</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="sc-detail-modal" role="dialog" aria-modal="true" aria-labelledby="sc-detail-title">
+    <div class="modal" style="max-width:620px;">
+      <div class="modal-title" id="sc-detail-title">Security Event</div>
+      <div id="sc-detail-body" style="font-family:var(--mono);font-size:12px;line-height:1.9;overflow-wrap:anywhere;"></div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:12px;">Recorded details (secrets removed)</div>
+      <pre id="sc-detail-json" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;"></pre>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-detail-close">Close</button></div>
+    </div>
+  </div>
+
   <!-- SUPERADMIN PLATFORM CONTROLS (SuperAdmin 2.0 Phase 8) -->
   <div id="section-admin-controls" class="section">
     <div class="topbar"><h1 class="page-title">Platform <span class="purple">Controls</span></h1></div>
@@ -4028,6 +4115,7 @@
 
 <script src="/static/dashboard.js"></script>
 <script src="/static/admin_outreach.js"></script>
+<script src="/static/security_center.js"></script>
 
   <!-- ═══ Feature 9: FIRST ORDER CELEBRATION MODAL ═══════════════════════ -->
   <div id="first-order-modal" role="dialog" aria-modal="true" aria-label="Your first order" data-a11y-esc-hide style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);

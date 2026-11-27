@@ -721,6 +721,7 @@ function buildSidebar() {
       <button class="nav-item admin-item active" aria-current="page" onclick="showSection('admin-overview',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-globe"/></svg></span> Overview <span class="status-dot"></span></button>
       <button class="nav-item admin-item" onclick="showSection('admin-businesses',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-building"/></svg></span> Businesses</button>
       <button class="nav-item admin-item" onclick="showSection('admin-audit',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg></span> Audit & Abuse</button>
+      <button class="nav-item admin-item" onclick="showSection('admin-security',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg></span> Security Center</button>
       <button class="nav-item admin-item" onclick="showSection('admin-controls',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-alert-circle"/></svg></span> Platform Controls</button>
       <button class="nav-item admin-item" onclick="showSection('admin-cohorts',this);closeSidebar()"><span class="icon"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-trending"/></svg></span> Cohorts & Churn</button>`;
   } else {
@@ -772,6 +773,7 @@ function showSection(name, btn) {
   document.querySelectorAll('.nav-item').forEach(n => { if (n.classList.contains('active')) n.setAttribute('aria-current','page'); else n.removeAttribute('aria-current'); });
   if (name==='admin-overview'||name==='admin-businesses') loadAdminData();
   if (name==='admin-audit') { loadAdminAudit(); loadCampaignUsage(); }
+  if (name==='admin-security') loadSecurityCenter();
   if (name==='admin-controls') loadPlatformControls();
   if (name==='admin-cohorts') loadCohortsChurn();
   if (name==='orders') loadOrders();
@@ -1476,8 +1478,8 @@ async function loadSecurityHistory() {
 // JSON, which would break the CSV path. Both formats trigger an actual
 // browser file download (Blob + temporary <a>) rather than displaying the
 // data inline, since this is meant to produce a file the SuperAdmin keeps.
-async function exportDataset(format) {
-  const dataset = document.getElementById('sa-export-dataset')?.value;
+async function exportDataset(format, name) {
+  const dataset = name || document.getElementById('sa-export-dataset')?.value;
   if (!dataset) { toast('Pick a dataset first', true); return; }
   try {
     const res = await fetch(`${API}/admin/saas/export/${dataset}?format=${format}`, {
