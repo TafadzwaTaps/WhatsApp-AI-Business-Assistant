@@ -877,6 +877,11 @@ try:
     app.include_router(security_center_router)
 except Exception as _sc_err:
     log.warning("security_center routes not loaded (non-fatal): %s", _sc_err)
+try:
+    from routes.security_cases_routes import router as security_cases_router
+    app.include_router(security_cases_router)
+except Exception as _scc_err:
+    log.warning("security_cases routes not loaded (non-fatal): %s", _scc_err)
 
 # ── Security event writer and retention (security audit Stage 4a) ──────────
 try:

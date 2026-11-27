@@ -460,7 +460,7 @@
     </div>
   </div>
 
-  <!-- SUPERADMIN SECURITY CENTER (security audit Stage 4b, read-only) -->
+  <!-- SUPERADMIN SECURITY CENTER (security audit Stages 4b and 4c) -->
   <div id="section-admin-security" class="section">
     <div class="topbar">
       <h1 class="page-title">Security <span class="purple">Center</span></h1>
@@ -479,6 +479,23 @@
         <div class="stats-grid" id="sc-cards"></div>
         <div id="sc-review" style="display:flex;flex-direction:column;gap:6px;font-family:var(--mono);font-size:12px;margin-bottom:14px;"></div>
         <div id="sc-monitoring" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);line-height:1.9;"></div>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-alert"/></svg> Incidents</div><button type="button" class="panel-action" id="sc-inc-new">New incident</button></div>
+      <div class="panel-body">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Status<select id="sc-i-status"><option value="">Any</option><option value="detected">detected</option><option value="under_investigation">under investigation</option><option value="contained">contained</option><option value="remediation_in_progress">remediation in progress</option><option value="awaiting_verification">awaiting verification</option><option value="resolved">resolved</option><option value="false_positive">false positive</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Severity<select id="sc-i-severity"><option value="">Any</option><option value="critical">critical</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select></label>
+</div>
+<table><thead><tr><th scope="col">Detected</th><th scope="col">Title</th><th scope="col">Severity</th><th scope="col">Classification</th><th scope="col">Status</th><th scope="col">Investigator</th><th scope="col">Open</th></tr></thead>
+<tbody id="sc-incidents"></tbody></table>
+<div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;font-family:var(--mono);font-size:11px;">
+<button type="button" class="btn btn-ghost" id="sc-incidents-prev" disabled>Previous</button>
+<span id="sc-incidents-page">Page 1</span>
+<button type="button" class="btn btn-ghost" id="sc-incidents-next" disabled>Next</button>
+</div>
       </div>
     </div>
 
@@ -503,13 +520,36 @@
           </div>
           <div style="display:flex;gap:8px;margin-bottom:14px;"><button type="submit" class="btn btn-purple">Apply filters</button><button type="reset" class="btn btn-ghost">Clear</button></div>
         </form>
-        <table><thead><tr><th scope="col">Last seen</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Account or address</th><th scope="col">Business</th><th scope="col">Count</th><th scope="col">Details</th></tr></thead>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;font-family:var(--mono);font-size:11px;">
+<span id="sc-selected" role="status">0 selected</span>
+<select id="sc-link-target" aria-label="Incident to add the selected events to" style="width:auto;max-width:100%;"><option value="">Choose an open incident</option></select>
+<button type="button" class="btn btn-ghost" id="sc-link">Add to incident</button>
+<button type="button" class="btn btn-ghost" id="sc-link-new">New incident from selected</button>
+</div>
+        <table><thead><tr><th scope="col">Select</th><th scope="col">Last seen</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Account or address</th><th scope="col">Business</th><th scope="col">Count</th><th scope="col">Details</th></tr></thead>
         <tbody id="sc-events"></tbody></table>
         <div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;font-family:var(--mono);font-size:11px;">
           <button type="button" class="btn btn-ghost" id="sc-events-prev" disabled>Previous</button>
           <span id="sc-events-page">Page 1</span>
           <button type="button" class="btn btn-ghost" id="sc-events-next" disabled>Next</button>
         </div>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-shield"/></svg> Vulnerabilities</div><button type="button" class="panel-action" id="sc-vuln-new">Add finding</button></div>
+      <div class="panel-body">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Status<select id="sc-v-fstatus"><option value="">Any</option><option value="open">open</option><option value="acknowledged">acknowledged</option><option value="investigating">investigating</option><option value="mitigated">mitigated</option><option value="resolved">resolved</option><option value="accepted_risk">accepted risk</option><option value="false_positive">false positive</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Severity<select id="sc-v-fseverity"><option value="">Any</option><option value="critical">critical</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select></label>
+</div>
+<table><thead><tr><th scope="col">Detected</th><th scope="col">Title</th><th scope="col">Severity</th><th scope="col">Component</th><th scope="col">Status</th><th scope="col">Owner</th><th scope="col">Open</th></tr></thead>
+<tbody id="sc-vulns"></tbody></table>
+<div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;font-family:var(--mono);font-size:11px;">
+<button type="button" class="btn btn-ghost" id="sc-vulns-prev" disabled>Previous</button>
+<span id="sc-vulns-page">Page 1</span>
+<button type="button" class="btn btn-ghost" id="sc-vulns-next" disabled>Next</button>
+</div>
       </div>
     </div>
 
@@ -544,6 +584,94 @@
       <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:12px;">Recorded details (secrets removed)</div>
       <pre id="sc-detail-json" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;"></pre>
       <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-detail-close">Close</button></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="sc-new-modal" role="dialog" aria-modal="true" aria-labelledby="sc-new-heading">
+    <div class="modal" style="max-width:720px;width:720px;">
+      <div class="modal-title" id="sc-new-heading">New Incident</div>
+<form id="sc-new-form">
+<div id="sc-new-events" style="font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;margin-bottom:10px;"></div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Title<input id="sc-n-title" type="text" maxlength="200" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Severity<select id="sc-n-severity"><option value="critical">critical</option><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option><option value="info">info</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Classification<select id="sc-n-class"><option value="suspicious" selected>suspicious</option><option value="suspected_incident">suspected incident</option><option value="confirmed_incident">confirmed incident</option><option value="confirmed_breach">confirmed breach</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Investigator<input id="sc-n-assigned" type="text" maxlength="120"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Affected business IDs (comma separated)<input id="sc-n-businesses" type="text"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Affected accounts (comma separated)<input id="sc-n-accounts" type="text"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Data categories (comma separated)<input id="sc-n-data" type="text"/></label>
+</div>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Summary<textarea id="sc-n-summary" maxlength="5000" style="min-height:70px;"></textarea></label>
+<div style="display:flex;justify-content:flex-end;margin:10px 0;"><button type="submit" class="btn btn-purple">Create incident</button></div>
+</form>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-new-modal-close">Close</button></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="sc-inc-modal" role="dialog" aria-modal="true" aria-labelledby="sc-inc-title">
+    <div class="modal" style="max-width:720px;width:720px;">
+      <div class="modal-title" id="sc-inc-title">Incident</div>
+<div id="sc-inc-facts" style="font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;line-height:1.9;white-space:pre-wrap;"></div>
+<h3 style="font-size:13px;text-transform:uppercase;margin:18px 0 10px;border-top:1px solid var(--border);padding-top:12px;">Change status</h3>
+<form id="sc-status-form">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">New status<select id="sc-s-status"></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">What happened and why<textarea id="sc-s-note" maxlength="5000" style="min-height:70px;" required></textarea></label>
+<label id="sc-s-evidence-row" style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Verification evidence (how the fix was confirmed)<textarea id="sc-s-evidence" maxlength="5000" style="min-height:70px;"></textarea></label>
+<div style="display:flex;justify-content:flex-end;margin:10px 0;"><button type="submit" class="btn btn-purple">Change status</button></div>
+</form>
+<h3 style="font-size:13px;text-transform:uppercase;margin:18px 0 10px;border-top:1px solid var(--border);padding-top:12px;">Timeline</h3>
+<div id="sc-inc-notes" style="font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;"></div>
+<form id="sc-note-form">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Entry type<select id="sc-t-kind"><option value="note">note</option><option value="containment">containment</option><option value="verification">verification</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Add to the timeline<textarea id="sc-t-body" maxlength="5000" style="min-height:70px;" required></textarea></label>
+<div style="display:flex;justify-content:flex-end;margin:10px 0;"><button type="submit" class="btn btn-purple">Add entry</button></div>
+</form>
+<h3 style="font-size:13px;text-transform:uppercase;margin:18px 0 10px;border-top:1px solid var(--border);padding-top:12px;">Linked events</h3>
+<div id="sc-inc-events" style="font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;display:flex;flex-direction:column;gap:6px;"></div>
+<h3 style="font-size:13px;text-transform:uppercase;margin:18px 0 10px;border-top:1px solid var(--border);padding-top:12px;">Details</h3>
+<form id="sc-edit-form">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Title<input id="sc-e-title" type="text" maxlength="200" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Severity<select id="sc-e-severity"><option value="critical">critical</option><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option><option value="info">info</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Classification<select id="sc-e-class"><option value="suspicious" selected>suspicious</option><option value="suspected_incident">suspected incident</option><option value="confirmed_incident">confirmed incident</option><option value="confirmed_breach">confirmed breach</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Investigator<input id="sc-e-assigned" type="text" maxlength="120"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Affected business IDs (comma separated)<input id="sc-e-businesses" type="text"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Affected accounts (comma separated)<input id="sc-e-accounts" type="text"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Data categories (comma separated)<input id="sc-e-data" type="text"/></label>
+</div>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Summary<textarea id="sc-e-summary" maxlength="5000" style="min-height:70px;"></textarea></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Notification assessment (does anyone need to be told, and why)<textarea id="sc-e-notify" maxlength="5000" style="min-height:70px;"></textarea></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Reason for this change<input id="sc-e-reason" type="text" maxlength="1000" required/></label>
+<div style="display:flex;justify-content:flex-end;margin:10px 0;"><button type="submit" class="btn btn-purple">Save details</button></div>
+</form>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-inc-modal-close">Close</button></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="sc-vuln-modal" role="dialog" aria-modal="true" aria-labelledby="sc-vuln-title">
+    <div class="modal" style="max-width:720px;width:720px;">
+      <div class="modal-title" id="sc-vuln-title">Finding</div>
+<div id="sc-v-record" style="font-family:var(--mono);font-size:12px;overflow-wrap:anywhere;line-height:1.9;white-space:pre-wrap;margin-bottom:10px;"></div>
+<form id="sc-vuln-form">
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,170px),1fr));gap:10px;margin-bottom:12px;">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Title<input id="sc-v-title" type="text" maxlength="200" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Severity<select id="sc-v-severity"><option value="critical">critical</option><option value="high">high</option><option value="medium" selected>medium</option><option value="low">low</option><option value="info">info</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Component<input id="sc-v-component" type="text" maxlength="200" required/></label>
+<label id="sc-v-source-row" style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Source<select id="sc-v-source"><option value="dependency_audit">dependency audit</option><option value="static_analysis">static analysis</option><option value="secret_scan">secret scan</option><option value="config_check">config check</option><option value="staging_scan">staging scan</option><option value="manual_review" selected>manual review</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">CVE<input id="sc-v-cve" type="text" maxlength="30" pattern="CVE-\d{4}-\d{4,10}" placeholder="CVE-2026-12345"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Affected version<input id="sc-v-affected" type="text" maxlength="120"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Fixed version<input id="sc-v-fixed" type="text" maxlength="120"/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Owner<input id="sc-v-owner" type="text" maxlength="120"/></label>
+</div>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Recommendation<textarea id="sc-v-fix" maxlength="5000" style="min-height:70px;"></textarea></label>
+<div id="sc-v-change">
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Status<select id="sc-v-status"><option value="open">open</option><option value="acknowledged">acknowledged</option><option value="investigating">investigating</option><option value="mitigated">mitigated</option><option value="resolved">resolved</option><option value="accepted_risk">accepted risk</option><option value="false_positive">false positive</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">New evidence (needed to mark mitigated, resolved or accepted risk)<textarea id="sc-v-evidence" maxlength="5000" style="min-height:70px;"></textarea></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Reason for this change<input id="sc-v-reason" type="text" maxlength="1000"/></label>
+</div>
+<div style="display:flex;justify-content:flex-end;margin:10px 0;"><button type="submit" class="btn btn-purple">Save finding</button></div>
+</form>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-vuln-modal-close">Close</button></div>
     </div>
   </div>
 
@@ -4116,6 +4244,7 @@
 <script src="/static/dashboard.js"></script>
 <script src="/static/admin_outreach.js"></script>
 <script src="/static/security_center.js"></script>
+<script src="/static/security_cases.js"></script>
 
   <!-- ═══ Feature 9: FIRST ORDER CELEBRATION MODAL ═══════════════════════ -->
   <div id="first-order-modal" role="dialog" aria-modal="true" aria-label="Your first order" data-a11y-esc-hide style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);
