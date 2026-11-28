@@ -217,6 +217,12 @@ class CampaignService:
         }
         """
         import crud
+        from services.restrictions import feature_blocked
+
+        if not dry_run and feature_blocked(business_id, "campaigns"):
+            return {"ok": False, "error": "Campaign sending is temporarily restricted for this account. "
+                                          "Please contact support.",
+                    "audience": audience, "total": 0, "sent": 0, "skipped": 0, "failed": 0, "dry_run": False}
 
         business = crud.get_business_by_id(business_id)
         if not business:

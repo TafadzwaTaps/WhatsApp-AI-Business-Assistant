@@ -137,6 +137,11 @@ if not os.getenv("RENDER"):      # security audit F-12: local dev origins never 
 _extra_origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "").split(",") if o.strip()]
 _cors_origins = list(dict.fromkeys(_default_origins + _extra_origins))  # dedupe, keep order
 
+# Security audit Stage 4d: temporary address blocks. Added first, so it runs inside the CORS and
+# security-header layers and a refusal still carries their headers.
+from services.restrictions import IPRestrictionMiddleware
+app.add_middleware(IPRestrictionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -882,6 +887,11 @@ try:
     app.include_router(security_cases_router)
 except Exception as _scc_err:
     log.warning("security_cases routes not loaded (non-fatal): %s", _scc_err)
+try:
+    from routes.security_containment_routes import router as security_containment_router
+    app.include_router(security_containment_router)
+except Exception as _sct_err:
+    log.warning("security_containment routes not loaded (non-fatal): %s", _sct_err)
 
 # ── Security event writer and retention (security audit Stage 4a) ──────────
 try:

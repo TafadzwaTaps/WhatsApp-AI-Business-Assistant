@@ -47,6 +47,9 @@ EVENT_RULES = {
     "ai_quota_reached":              ("info",   "blocked"),
     "data_export":                   ("info",   "allowed"),
     "admin_action":                  ("info",   "allowed"),
+    "ip_blocked_request":            ("low",    "blocked"),
+    "restricted_feature_blocked":    ("low",    "blocked"),
+    "restriction_check_failed":      ("high",   "allowed"),
 }
 EVENT_TYPES = tuple(EVENT_RULES)
 _SEVERITIES = ("info", "low", "medium", "high", "critical")

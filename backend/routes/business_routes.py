@@ -1320,6 +1320,9 @@ class BroadcastRequest(BaseModel):
 def broadcast(body: BroadcastRequest, request: Request, user=Depends(require_business), _plan=Depends(require_plan("STARTER")), _restrict=Depends(require_not_restricted()), _verified=Depends(require_email_verified())):
     _rate_check("broadcast", request)
     bid      = user["business_id"]
+    from services.restrictions import feature_blocked
+    if feature_blocked(bid, "campaigns"):
+        raise HTTPException(403, "Broadcasts are temporarily restricted for this account. Please contact support.")
     business = crud.get_business_by_id(bid)
     try:
         token = crud.get_decrypted_token(business)

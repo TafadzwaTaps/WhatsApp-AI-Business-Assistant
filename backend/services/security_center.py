@@ -55,6 +55,13 @@ _CATALOG = {
                     "Confirm the export was expected."),
     "admin_action": ("Admin action", "A Super Admin action was performed.", "It was allowed.",
                      "See the audit trail."),
+    "ip_blocked_request": ("Blocked address refused", "An address under a temporary block made a request.",
+                           "The request was refused.", "Lift the block if this is a legitimate user."),
+    "restricted_feature_blocked": ("Restricted feature refused", "A business used a feature that is restricted.",
+                                   "The action was refused.", "Review whether the restriction is still needed."),
+    "restriction_check_failed": ("Restrictions not enforced", "The list of restrictions could not be read.",
+                                 "Requests were allowed through.",
+                                 "Check the database now: temporary blocks are not being applied."),
 }
 _UNKNOWN = ("Other event", "Recorded by the application.", "Not recorded.", "Review the details.")
 

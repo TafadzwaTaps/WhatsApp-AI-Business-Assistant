@@ -169,6 +169,9 @@
     byId('sc-detail-body').innerHTML = rows.map(([label, value]) =>
       `<div><span style="color:var(--text-dim);">${escHtml(label)}:</span> ${text(value)}</div>`).join('');
     byId('sc-detail-json').textContent = JSON.stringify(event.details || {}, null, 2);
+    const block = byId('sc-detail-block');
+    block.dataset.ip = event.ip || '';
+    block.style.display = event.ip ? '' : 'none';
     byId('sc-detail-modal').classList.add('open');
     byId('sc-detail-close').focus();
   }
@@ -251,6 +254,7 @@
     loadEvents(1);
     loadAudit(1);
     if (window.loadSecurityCases) window.loadSecurityCases();
+    if (window.loadSecurityContainment) window.loadSecurityContainment();
   }
 
   window.SecurityCenter = {

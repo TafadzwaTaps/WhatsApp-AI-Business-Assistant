@@ -120,4 +120,8 @@ def _security_events_stay_in_memory():
         patch.setattr(security_events, "_start_worker", lambda: None)
         patch.setattr(store, "_rpc_retry_at", 0.0)
         security_events._reset_for_tests()
+        from services import restrictions
+        patch.setattr(restrictions, "_refresh_in_background", lambda: None)
+        restrictions._reset_for_tests()
         yield
+        restrictions._reset_for_tests()

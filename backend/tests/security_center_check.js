@@ -9,7 +9,7 @@ function element(id) {
   if (!elements[id]) {
     elements[id] = {
       id, innerHTML: '', textContent: '', value: id === 'sc-days' ? '7' : '', disabled: false, options: [{}],
-      handlers: {}, dataset: {},
+      handlers: {}, dataset: {}, style: {},
       addEventListener(type, fn) { this.handlers[type] = fn; },
       add(option) { this.options.push(option); }, reset() {}, focus() {}, scrollIntoView() {},
       classList: { names: new Set(), add(n) { this.names.add(n); }, remove(n) { this.names.delete(n); } },
