@@ -3537,7 +3537,8 @@ def generate_reply(
     # DB hiccup here means replies keep working, never that they stop.
     try:
         from core.platform_controls import is_paused
-        if is_paused("ai_replies"):
+        from services.restrictions import feature_blocked
+        if is_paused("ai_replies") or feature_blocked(business_id, "ai_replies"):
             # Never talk over a human agent; otherwise tell the customer at most once per
             # 30 minutes instead of on every message.
             if message_is_from_agent:

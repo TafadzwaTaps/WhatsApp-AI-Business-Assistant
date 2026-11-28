@@ -460,7 +460,7 @@
     </div>
   </div>
 
-  <!-- SUPERADMIN SECURITY CENTER (security audit Stages 4b and 4c) -->
+  <!-- SUPERADMIN SECURITY CENTER (security audit Stages 4b to 4d) -->
   <div id="section-admin-security" class="section">
     <div class="topbar">
       <h1 class="page-title">Security <span class="purple">Center</span></h1>
@@ -495,6 +495,54 @@
 <button type="button" class="btn btn-ghost" id="sc-incidents-prev" disabled>Previous</button>
 <span id="sc-incidents-page">Page 1</span>
 <button type="button" class="btn btn-ghost" id="sc-incidents-next" disabled>Next</button>
+</div>
+      </div>
+    </div>
+
+    <div class="panel full" style="margin-bottom:16px;">
+      <div class="panel-header"><div class="panel-title"><svg class="ic" aria-hidden="true" focusable="false"><use href="#i-alert-circle"/></svg> Containment</div></div>
+      <div class="panel-body">
+<div id="sc-c-status" role="status" style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:12px;">Loading…</div>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));gap:12px;margin-bottom:16px;align-items:start;">
+<form id="sc-ip-form" style="display:flex;flex-direction:column;gap:8px;border:1px solid var(--border);border-radius:10px;padding:14px;">
+<h3 style="font-size:12px;text-transform:uppercase;">Block an address</h3>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">IP address<input id="sc-c-ip" type="text" maxlength="64" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">For<select id="sc-c-ip-minutes"><option value="60">1 hour</option><option value="360">6 hours</option><option value="1440" selected>24 hours</option><option value="10080">7 days</option><option value="43200">30 days</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Reason<input id="sc-c-ip-reason" type="text" maxlength="1000" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Incident ID (optional)<input id="sc-c-ip-incident" type="number" min="1"/></label>
+<button type="submit" class="btn btn-purple">Block address</button>
+</form>
+<form id="sc-feature-form" style="display:flex;flex-direction:column;gap:8px;border:1px solid var(--border);border-radius:10px;padding:14px;">
+<h3 style="font-size:12px;text-transform:uppercase;">Restrict a business feature</h3>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Business ID<input id="sc-c-f-business" type="number" min="1" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Feature<select id="sc-c-feature"><option value="ai_replies">AI replies to customers</option><option value="campaigns">Campaigns and broadcasts</option><option value="uploads">Image uploads</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">For<select id="sc-c-f-minutes"><option value="60">1 hour</option><option value="360">6 hours</option><option value="1440" selected>24 hours</option><option value="10080">7 days</option><option value="43200">30 days</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Reason<input id="sc-c-f-reason" type="text" maxlength="1000" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Incident ID (optional)<input id="sc-c-f-incident" type="number" min="1"/></label>
+<button type="submit" class="btn btn-purple">Restrict feature</button>
+</form>
+<form id="sc-signout-form" style="display:flex;flex-direction:column;gap:8px;border:1px solid var(--border);border-radius:10px;padding:14px;">
+<h3 style="font-size:12px;text-transform:uppercase;">Sign a business out everywhere</h3>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Business ID<input id="sc-c-s-business" type="number" min="1" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Reason<input id="sc-c-s-reason" type="text" maxlength="1000" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Incident ID (optional)<input id="sc-c-s-incident" type="number" min="1"/></label>
+<button type="submit" class="btn btn-purple">Sign out</button>
+</form>
+<form id="sc-suspend-form" style="display:flex;flex-direction:column;gap:8px;border:1px solid var(--border);border-radius:10px;padding:14px;">
+<h3 style="font-size:12px;text-transform:uppercase;">Suspend or restore a business</h3>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Business ID<input id="sc-c-u-business" type="number" min="1" required/></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Action<select id="sc-c-u-action"><option value="suspend">Suspend</option><option value="activate">Restore</option></select></label>
+<label style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px;color:var(--text-dim);">Reason<input id="sc-c-u-reason" type="text" maxlength="1000" required/></label>
+<button type="submit" class="btn btn-purple">Apply</button>
+</form>
+</div>
+<label style="display:flex;gap:6px;align-items:center;font-family:var(--mono);font-size:11px;margin-bottom:8px;"><input type="checkbox" id="sc-c-ended" style="width:auto;"/> Show ended restrictions</label>
+<table><thead><tr><th scope="col">Created</th><th scope="col">Restriction</th><th scope="col">Target</th><th scope="col">Reason</th><th scope="col">Expires</th><th scope="col">State</th><th scope="col">Lift</th></tr></thead>
+<tbody id="sc-restrictions"></tbody></table>
+<div style="display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:12px;font-family:var(--mono);font-size:11px;">
+<button type="button" class="btn btn-ghost" id="sc-restrictions-prev" disabled>Previous</button>
+<span id="sc-restrictions-page">Page 1</span>
+<button type="button" class="btn btn-ghost" id="sc-restrictions-next" disabled>Next</button>
 </div>
       </div>
     </div>
@@ -583,7 +631,7 @@
       <div id="sc-detail-body" style="font-family:var(--mono);font-size:12px;line-height:1.9;overflow-wrap:anywhere;"></div>
       <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-top:12px;">Recorded details (secrets removed)</div>
       <pre id="sc-detail-json" style="font-family:var(--mono);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;"></pre>
-      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-detail-close">Close</button></div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" id="sc-detail-block">Block this address…</button><button type="button" class="btn btn-ghost" id="sc-detail-close">Close</button></div>
     </div>
   </div>
 
@@ -4245,6 +4293,7 @@
 <script src="/static/admin_outreach.js"></script>
 <script src="/static/security_center.js"></script>
 <script src="/static/security_cases.js"></script>
+<script src="/static/security_containment.js"></script>
 
   <!-- ═══ Feature 9: FIRST ORDER CELEBRATION MODAL ═══════════════════════ -->
   <div id="first-order-modal" role="dialog" aria-modal="true" aria-label="Your first order" data-a11y-esc-hide style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);

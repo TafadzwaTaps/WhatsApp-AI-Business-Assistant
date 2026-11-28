@@ -234,6 +234,11 @@ def screen_upload(
     Run both layers and log any rejection for traceability (who + why).
     Returns (ok, error_message_for_user).
     """
+    if business_id is not None:
+        from services.restrictions import feature_blocked
+        if feature_blocked(business_id, "uploads"):
+            return False, "Uploads are temporarily restricted for this account. Please contact support."
+
     ok, reason = check_structural(data, content_type)
     if not ok:
         _log_rejection(

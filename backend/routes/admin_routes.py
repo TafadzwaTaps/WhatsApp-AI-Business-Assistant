@@ -707,7 +707,8 @@ def platform_suspend_business(business_id: int, request: Request, reason: str = 
 
 
 @router.post("/platform/businesses/{business_id}/activate")
-def platform_activate_business(business_id: int, request: Request, user=Depends(require_superadmin)):
+def platform_activate_business(business_id: int, request: Request, reason: str = "",
+                               user=Depends(require_superadmin)):
     biz = crud.get_business_by_id(business_id)
     if not biz: raise HTTPException(404, f"Business {business_id} not found")
     class _D:
@@ -727,7 +728,7 @@ def platform_activate_business(business_id: int, request: Request, user=Depends(
     log_admin_action(
         actor_username=user.get("username"), action="business.activate",
         target_type="business", target_id=business_id, business_id=business_id,
-        metadata={"previous_is_active": biz.get("is_active")},
+        reason=reason or None, metadata={"previous_is_active": biz.get("is_active")},
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
